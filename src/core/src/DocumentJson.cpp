@@ -1,9 +1,10 @@
 #include "tbe/core/Document.hpp"
 
-#include <charconv>
 #include <cctype>
+#include <cerrno>
 #include <map>
 #include <sstream>
+#include <cstdlib>
 #include <stdexcept>
 
 namespace tbe::core {
@@ -205,10 +206,12 @@ private:
             }
         }
 
-        auto value = 0.0;
         const auto token = input_.substr(start, pos_ - start);
-        const auto parsed = std::from_chars(token.data(), token.data() + token.size(), value);
-        if (parsed.ec != std::errc{}) {
+        std::string buffer{token};
+        char* parse_end = nullptr;
+        errno = 0;
+        const auto value = std::strtod(buffer.c_str(), &parse_end);
+        if (parse_end != (buffer.c_str() + buffer.size()) || errno == ERANGE) {
             throw std::invalid_argument("invalid JSON number");
         }
 
@@ -251,12 +254,88 @@ std::string kind_to_string(ElementKind kind) {
         return "Window";
     case ElementKind::Room:
         return "Room";
+    case ElementKind::Roof:
+        return "Roof";
     case ElementKind::Column:
         return "Column";
+    case ElementKind::Beam:
+        return "Beam";
+    case ElementKind::Stair:
+        return "Stair";
     case ElementKind::Slab:
         return "Slab";
     }
     return "Unknown";
+}
+
+std::string material_category_to_string(MaterialCategory category) {
+    switch (category) {
+    case MaterialCategory::Structural: return "Structural";
+    case MaterialCategory::Finish: return "Finish";
+    case MaterialCategory::Insulation: return "Insulation";
+    case MaterialCategory::Glass: return "Glass";
+    case MaterialCategory::Generic: return "Generic";
+    }
+    return "Generic";
+}
+
+MaterialCategory string_to_material_category(const std::string& value) {
+    if (value == "Structural") return MaterialCategory::Structural;
+    if (value == "Finish") return MaterialCategory::Finish;
+    if (value == "Insulation") return MaterialCategory::Insulation;
+    if (value == "Glass") return MaterialCategory::Glass;
+    return MaterialCategory::Generic;
+}
+
+std::string wall_layer_function_to_string(WallLayerFunction function) {
+    switch (function) {
+    case WallLayerFunction::Core: return "Core";
+    case WallLayerFunction::InteriorFinish: return "InteriorFinish";
+    case WallLayerFunction::ExteriorFinish: return "ExteriorFinish";
+    case WallLayerFunction::Insulation: return "Insulation";
+    case WallLayerFunction::AirGap: return "AirGap";
+    case WallLayerFunction::Generic: return "Generic";
+    }
+    return "Generic";
+}
+
+WallLayerFunction string_to_wall_layer_function(const std::string& value) {
+    if (value == "Core") return WallLayerFunction::Core;
+    if (value == "InteriorFinish") return WallLayerFunction::InteriorFinish;
+    if (value == "ExteriorFinish") return WallLayerFunction::ExteriorFinish;
+    if (value == "Insulation") return WallLayerFunction::Insulation;
+    if (value == "AirGap") return WallLayerFunction::AirGap;
+    return WallLayerFunction::Generic;
+}
+
+std::string layered_assembly_kind_to_string(LayeredAssemblyKind kind) {
+    switch (kind) {
+    case LayeredAssemblyKind::Floor: return "Floor";
+    case LayeredAssemblyKind::Ceiling: return "Ceiling";
+    }
+    return "Floor";
+}
+
+LayeredAssemblyKind string_to_layered_assembly_kind(const std::string& value) {
+    if (value == "Ceiling") {
+        return LayeredAssemblyKind::Ceiling;
+    }
+    return LayeredAssemblyKind::Floor;
+}
+
+std::string roof_type_to_string(RoofType roof_type) {
+    switch (roof_type) {
+    case RoofType::Flat: return "Flat";
+    case RoofType::SimpleGable: return "SimpleGable";
+    }
+    return "Flat";
+}
+
+RoofType string_to_roof_type(const std::string& value) {
+    if (value == "SimpleGable") {
+        return RoofType::SimpleGable;
+    }
+    return RoofType::Flat;
 }
 
 ElementKind string_to_kind(const std::string& kind) {
@@ -274,6 +353,21 @@ ElementKind string_to_kind(const std::string& kind) {
     }
     if (kind == "Room") {
         return ElementKind::Room;
+    }
+    if (kind == "Roof") {
+        return ElementKind::Roof;
+    }
+    if (kind == "Column") {
+        return ElementKind::Column;
+    }
+    if (kind == "Beam") {
+        return ElementKind::Beam;
+    }
+    if (kind == "Stair") {
+        return ElementKind::Stair;
+    }
+    if (kind == "Slab") {
+        return ElementKind::Slab;
     }
     throw std::invalid_argument("unsupported element kind in JSON");
 }
@@ -312,6 +406,13 @@ double as_number(const JsonValue& value) {
         throw std::invalid_argument("expected JSON number");
     }
     return value.number_value;
+}
+
+bool as_bool(const JsonValue& value) {
+    if (value.type != JsonValue::Type::Bool) {
+        throw std::invalid_argument("expected JSON bool");
+    }
+    return value.bool_value;
 }
 
 ElementId as_id(const JsonValue& value) {
@@ -424,6 +525,124 @@ std::string Document::to_json() const {
     out << "{\"schema\":\"tbe.document.v1\",";
     out << "\"name\":\"" << escape_json(name_) << "\",";
     out << "\"next_id\":" << next_id_ << ',';
+    out << "\"materials\":[";
+    {
+        auto first = true;
+        for (const auto& [material_id, material] : materials()) {
+            if (!first) {
+                out << ',';
+            }
+            first = false;
+            out << "{\"material_id\":" << material_id
+                << ",\"name\":\"" << escape_json(material.name) << "\""
+                << ",\"category\":\"" << material_category_to_string(material.category) << "\"";
+            if (material.density_kg_per_m3.has_value()) {
+                out << ",\"density\":" << *material.density_kg_per_m3;
+            }
+            if (material.unit_cost.has_value()) {
+                out << ",\"unit_cost\":" << *material.unit_cost;
+            }
+            out << ",\"metadata\":{";
+            auto first_meta = true;
+            for (const auto& [key, value] : material.metadata) {
+                if (!first_meta) {
+                    out << ',';
+                }
+                first_meta = false;
+                out << "\"" << escape_json(key) << "\":\"" << escape_json(value) << "\"";
+            }
+            out << "}}";
+        }
+    }
+    out << "],";
+    out << "\"wall_types\":[";
+    {
+        auto first = true;
+        for (const auto& [wall_type_id, wall_type] : wall_types()) {
+            if (!first) {
+                out << ',';
+            }
+            first = false;
+            out << "{\"wall_type_id\":" << wall_type_id
+                << ",\"name\":\"" << escape_json(wall_type.name) << "\",\"layers\":[";
+            for (std::size_t index = 0; index < wall_type.layers.size(); ++index) {
+                if (index != 0) {
+                    out << ',';
+                }
+                const auto& layer = wall_type.layers[index];
+                out << "{\"material_id\":" << layer.material_id
+                    << ",\"thickness\":" << layer.thickness_meters
+                    << ",\"function\":\"" << wall_layer_function_to_string(layer.function) << "\"}";
+            }
+            out << "]}";
+        }
+    }
+    out << "],";
+    out << "\"assemblies\":[";
+    {
+        auto first = true;
+        for (const auto& [assembly_id, assembly] : layered_assemblies()) {
+            if (!first) {
+                out << ',';
+            }
+            first = false;
+            out << "{\"assembly_id\":" << assembly_id
+                << ",\"kind\":\"" << layered_assembly_kind_to_string(assembly.kind) << "\""
+                << ",\"name\":\"" << escape_json(assembly.name) << "\",\"layers\":[";
+            for (std::size_t index = 0; index < assembly.layers.size(); ++index) {
+                if (index != 0) {
+                    out << ',';
+                }
+                const auto& layer = assembly.layers[index];
+                out << "{\"material_id\":" << layer.material_id
+                    << ",\"thickness\":" << layer.thickness_meters
+                    << ",\"function\":\"" << wall_layer_function_to_string(layer.function) << "\"}";
+            }
+            out << "]}";
+        }
+    }
+    out << "],";
+    out << "\"floor_systems\":[";
+    {
+        auto first = true;
+        for (const auto& [system_id, system] : floor_systems()) {
+            if (!first) {
+                out << ',';
+            }
+            first = false;
+            out << "{\"system_id\":" << system_id
+                << ",\"room_id\":" << system.room_id
+                << ",\"level_id\":" << system.level_id
+                << ",\"assembly_id\":" << system.assembly_id
+                << ",\"area\":" << system.area_square_meters
+                << ",\"dirty\":" << (system.dirty ? "true" : "false")
+                << ",\"boundary_polygon\":";
+            write_points(out, system.boundary_polygon);
+            out << '}';
+        }
+    }
+    out << "],";
+    out << "\"ceiling_systems\":[";
+    {
+        auto first = true;
+        for (const auto& [system_id, system] : ceiling_systems()) {
+            if (!first) {
+                out << ',';
+            }
+            first = false;
+            out << "{\"system_id\":" << system_id
+                << ",\"room_id\":" << system.room_id
+                << ",\"level_id\":" << system.level_id
+                << ",\"assembly_id\":" << system.assembly_id
+                << ",\"area\":" << system.area_square_meters
+                << ",\"height_offset\":" << system.height_offset_meters
+                << ",\"dirty\":" << (system.dirty ? "true" : "false")
+                << ",\"boundary_polygon\":";
+            write_points(out, system.boundary_polygon);
+            out << '}';
+        }
+    }
+    out << "],";
     out << "\"elements\":[";
 
     for (std::size_t index = 0; index < elements_.size(); ++index) {
@@ -442,7 +661,7 @@ std::string Document::to_json() const {
             out << "\"elevation\":" << level->elevation_meters << ',';
             out << "\"default_wall_height\":" << level->default_wall_height_meters << '}';
         } else if (const auto* wall = element.wall()) {
-            out << ",\"wall\":{\"level_id\":" << wall->level_id << ",\"axis\":";
+            out << ",\"wall\":{\"level_id\":" << wall->level_id << ",\"wall_type_id\":" << wall->wall_type_id << ",\"axis\":";
             write_line(out, wall->axis);
             out << ",\"thickness\":" << wall->thickness_meters;
             out << ",\"height\":" << wall->height_meters;
@@ -473,12 +692,14 @@ std::string Document::to_json() const {
             }
             out << "]}";
         } else if (const auto* door = element.door()) {
-            out << ",\"door\":{\"host_wall_id\":" << door->host_wall_id;
+            out << ",\"door\":{\"level_id\":" << door->level_id;
+            out << ",\"host_wall_id\":" << door->host_wall_id;
             out << ",\"offset\":" << door->offset_meters;
             out << ",\"width\":" << door->width_meters;
             out << ",\"height\":" << door->height_meters << '}';
         } else if (const auto* window = element.window()) {
-            out << ",\"window\":{\"host_wall_id\":" << window->host_wall_id;
+            out << ",\"window\":{\"level_id\":" << window->level_id;
+            out << ",\"host_wall_id\":" << window->host_wall_id;
             out << ",\"offset\":" << window->offset_meters;
             out << ",\"width\":" << window->width_meters;
             out << ",\"height\":" << window->height_meters;
@@ -486,12 +707,89 @@ std::string Document::to_json() const {
         } else if (const auto* room = element.room()) {
             out << ",\"room\":{\"boundary_wall_ids\":";
             write_ids(out, room->boundary_wall_ids);
-            out << ",\"area\":" << room->area_square_meters;
-            out << ",\"perimeter\":" << room->perimeter_meters;
             out << ",\"level_id\":" << room->level_id;
-            out << ",\"boundary_polygon\":";
-            write_points(out, room->boundary_polygon);
+            out << ",\"preferred_boundary_mode\":\"" << (room->preferred_boundary_mode == RoomBoundaryMode::InteriorFinishFace ? "InteriorFinishFace" : "Centerline") << '"';
+            out << ",\"centerline_area\":" << room->centerline_area_square_meters;
+            out << ",\"interior_area\":" << room->interior_area_square_meters;
+            out << ",\"centerline_perimeter\":" << room->centerline_perimeter_meters;
+            out << ",\"interior_perimeter\":" << room->interior_perimeter_meters;
+            out << ",\"floor_finish_area\":" << room->floor_finish_area_square_meters;
+            out << ",\"ceiling_area\":" << room->ceiling_area_square_meters;
+            out << ",\"baseboard_length\":" << room->baseboard_length_meters;
+            out << ",\"interior_wall_finish_area\":" << room->interior_wall_finish_area_square_meters;
+            out << ",\"centerline_boundary_polygon\":";
+            write_points(out, room->centerline_boundary_polygon);
+            out << ",\"interior_boundary_polygon\":";
+            write_points(out, room->interior_boundary_polygon);
             out << '}';
+        } else if (const auto* slab = element.slab()) {
+            out << ",\"slab\":{\"level_id\":" << slab->level_id
+                << ",\"thickness\":" << slab->thickness_meters
+                << ",\"material_id\":" << slab->material_id
+                << ",\"assembly_id\":" << slab->assembly_id
+                << ",\"elevation_offset\":" << slab->elevation_offset_meters
+                << ",\"generated_geometry_dirty\":" << (slab->generated_geometry_dirty ? "true" : "false")
+                << ",\"area\":" << slab->area_square_meters
+                << ",\"volume\":" << slab->volume_cubic_meters
+                << ",\"boundary_polygon\":";
+            write_points(out, slab->boundary_polygon);
+            out << '}';
+        } else if (const auto* roof = element.roof()) {
+            out << ",\"roof\":{\"level_id\":" << roof->level_id
+                << ",\"roof_type\":\"" << roof_type_to_string(roof->roof_type) << "\""
+                << ",\"thickness\":" << roof->thickness_meters
+                << ",\"material_id\":" << roof->material_id
+                << ",\"assembly_id\":" << roof->assembly_id
+                << ",\"generated_geometry_dirty\":" << (roof->generated_geometry_dirty ? "true" : "false")
+                << ",\"area\":" << roof->area_square_meters
+                << ",\"volume\":" << roof->volume_cubic_meters;
+            if (roof->slope_degrees.has_value()) {
+                out << ",\"slope_degrees\":" << *roof->slope_degrees;
+            }
+            if (roof->overhang_meters.has_value()) {
+                out << ",\"overhang_meters\":" << *roof->overhang_meters;
+            }
+            out << ",\"boundary_polygon\":";
+            write_points(out, roof->boundary_polygon);
+            out << '}';
+        } else if (const auto* column = element.column()) {
+            out << ",\"column\":{\"level_id\":" << column->level_id
+                << ",\"position\":";
+            write_point(out, column->position);
+            out << ",\"width\":" << column->width_meters
+                << ",\"depth\":" << column->depth_meters
+                << ",\"height\":" << column->height_meters
+                << ",\"material_id\":" << column->material_id
+                << ",\"generated_geometry_dirty\":" << (column->generated_geometry_dirty ? "true" : "false")
+                << ",\"volume\":" << column->volume_cubic_meters << '}';
+        } else if (const auto* beam = element.beam()) {
+            out << ",\"beam\":{\"level_id\":" << beam->level_id
+                << ",\"start\":";
+            write_point(out, beam->start);
+            out << ",\"end\":";
+            write_point(out, beam->end);
+            out << ",\"width\":" << beam->width_meters
+                << ",\"height\":" << beam->height_meters
+                << ",\"material_id\":" << beam->material_id
+                << ",\"generated_geometry_dirty\":" << (beam->generated_geometry_dirty ? "true" : "false")
+                << ",\"length\":" << beam->length_meters
+                << ",\"volume\":" << beam->volume_cubic_meters << '}';
+        } else if (const auto* stair = element.stair()) {
+            out << ",\"stair\":{\"base_level_id\":" << stair->base_level_id
+                << ",\"top_level_id\":" << stair->top_level_id
+                << ",\"start\":";
+            write_point(out, stair->start);
+            out << ",\"direction\":";
+            write_point(out, stair->direction);
+            out << ",\"width\":" << stair->width_meters
+                << ",\"total_rise\":" << stair->total_rise_meters
+                << ",\"total_run\":" << stair->total_run_meters
+                << ",\"riser_count\":" << stair->riser_count
+                << ",\"tread_count\":" << stair->tread_count
+                << ",\"material_id\":" << stair->material_id
+                << ",\"generated_geometry_dirty\":" << (stair->generated_geometry_dirty ? "true" : "false")
+                << ",\"footprint_area\":" << stair->footprint_area_square_meters
+                << ",\"volume\":" << stair->volume_cubic_meters << '}';
         }
 
         out << '}';
@@ -507,6 +805,105 @@ Document Document::from_json(std::string_view json) {
 
     auto document = Document(as_string(field(root_object, "name")));
     std::vector<Element> elements;
+
+    if (const auto materials_it = root_object.find("materials"); materials_it != root_object.end()) {
+        for (const auto& item : as_array(materials_it->second)) {
+            const auto& object = as_object(item);
+            MaterialDefinition material{
+                .material_id = as_id(field(object, "material_id")),
+                .name = as_string(field(object, "name")),
+                .category = string_to_material_category(as_string(field(object, "category"))),
+            };
+            if (const auto density = object.find("density"); density != object.end()) {
+                material.density_kg_per_m3 = as_number(density->second);
+            }
+            if (const auto unit_cost = object.find("unit_cost"); unit_cost != object.end()) {
+                material.unit_cost = as_number(unit_cost->second);
+            }
+            if (const auto metadata = object.find("metadata"); metadata != object.end()) {
+                for (const auto& [key, value] : as_object(metadata->second)) {
+                    material.metadata[key] = as_string(value);
+                }
+            }
+            document.update_material(std::move(material));
+        }
+    }
+
+    if (const auto wall_types_it = root_object.find("wall_types"); wall_types_it != root_object.end()) {
+        for (const auto& item : as_array(wall_types_it->second)) {
+            const auto& object = as_object(item);
+            WallTypeData wall_type{
+                .wall_type_id = as_id(field(object, "wall_type_id")),
+                .name = as_string(field(object, "name")),
+            };
+            for (const auto& layer_value : as_array(field(object, "layers"))) {
+                const auto& layer = as_object(layer_value);
+                wall_type.layers.push_back(WallAssemblyLayer{
+                    .material_id = as_id(field(layer, "material_id")),
+                    .thickness_meters = as_number(field(layer, "thickness")),
+                    .function = string_to_wall_layer_function(as_string(field(layer, "function"))),
+                });
+            }
+            document.update_wall_type(std::move(wall_type));
+        }
+    }
+
+    if (const auto assemblies_it = root_object.find("assemblies"); assemblies_it != root_object.end()) {
+        for (const auto& item : as_array(assemblies_it->second)) {
+            const auto& object = as_object(item);
+            LayeredAssemblyData assembly{
+                .assembly_id = as_id(field(object, "assembly_id")),
+                .kind = string_to_layered_assembly_kind(as_string(field(object, "kind"))),
+                .name = as_string(field(object, "name")),
+            };
+            for (const auto& layer_value : as_array(field(object, "layers"))) {
+                const auto& layer = as_object(layer_value);
+                assembly.layers.push_back(WallAssemblyLayer{
+                    .material_id = as_id(field(layer, "material_id")),
+                    .thickness_meters = as_number(field(layer, "thickness")),
+                    .function = string_to_wall_layer_function(as_string(field(layer, "function"))),
+                });
+            }
+            document.update_layered_assembly(std::move(assembly));
+        }
+    }
+
+    if (const auto systems_it = root_object.find("floor_systems"); systems_it != root_object.end()) {
+        for (const auto& item : as_array(systems_it->second)) {
+            const auto& object = as_object(item);
+            FloorSystemData system{
+                .system_id = as_id(field(object, "system_id")),
+                .room_id = as_id(field(object, "room_id")),
+                .level_id = as_id(field(object, "level_id")),
+                .assembly_id = as_id(field(object, "assembly_id")),
+                .area_square_meters = as_number(field(object, "area")),
+                .dirty = object.find("dirty") != object.end() && as_bool(field(object, "dirty")),
+            };
+            for (const auto& point_value : as_array(field(object, "boundary_polygon"))) {
+                system.boundary_polygon.push_back(parse_point(point_value));
+            }
+            document.floor_systems_[system.system_id] = std::move(system);
+        }
+    }
+
+    if (const auto systems_it = root_object.find("ceiling_systems"); systems_it != root_object.end()) {
+        for (const auto& item : as_array(systems_it->second)) {
+            const auto& object = as_object(item);
+            CeilingSystemData system{
+                .system_id = as_id(field(object, "system_id")),
+                .room_id = as_id(field(object, "room_id")),
+                .level_id = as_id(field(object, "level_id")),
+                .assembly_id = as_id(field(object, "assembly_id")),
+                .area_square_meters = as_number(field(object, "area")),
+                .height_offset_meters = object.find("height_offset") != object.end() ? as_number(field(object, "height_offset")) : 0.0,
+                .dirty = object.find("dirty") != object.end() && as_bool(field(object, "dirty")),
+            };
+            for (const auto& point_value : as_array(field(object, "boundary_polygon"))) {
+                system.boundary_polygon.push_back(parse_point(point_value));
+            }
+            document.ceiling_systems_[system.system_id] = std::move(system);
+        }
+    }
 
     for (const auto& item : as_array(field(root_object, "elements"))) {
         const auto& object = as_object(item);
@@ -526,6 +923,7 @@ Document Document::from_json(std::string_view json) {
             const auto& wall = as_object(field(object, "wall"));
             WallData data{
                 .level_id = as_id(field(wall, "level_id")),
+                .wall_type_id = wall.find("wall_type_id") != wall.end() ? as_id(field(wall, "wall_type_id")) : 0,
                 .axis = parse_line(field(wall, "axis")),
                 .thickness_meters = as_number(field(wall, "thickness")),
                 .height_meters = as_number(field(wall, "height")),
@@ -556,6 +954,7 @@ Document Document::from_json(std::string_view json) {
         } else if (kind == ElementKind::Door) {
             const auto& door = as_object(field(object, "door"));
             elements.emplace_back(id, kind, std::move(name), DoorData{
+                .level_id = as_id(field(door, "level_id")),
                 .host_wall_id = as_id(field(door, "host_wall_id")),
                 .offset_meters = as_number(field(door, "offset")),
                 .width_meters = as_number(field(door, "width")),
@@ -564,6 +963,7 @@ Document Document::from_json(std::string_view json) {
         } else if (kind == ElementKind::Window) {
             const auto& window = as_object(field(object, "window"));
             elements.emplace_back(id, kind, std::move(name), WindowData{
+                .level_id = as_id(field(window, "level_id")),
                 .host_wall_id = as_id(field(window, "host_wall_id")),
                 .offset_meters = as_number(field(window, "offset")),
                 .width_meters = as_number(field(window, "width")),
@@ -573,17 +973,140 @@ Document Document::from_json(std::string_view json) {
         } else if (kind == ElementKind::Room) {
             const auto& room = as_object(field(object, "room"));
             RoomData data{
-                .area_square_meters = as_number(field(room, "area")),
-                .perimeter_meters = as_number(field(room, "perimeter")),
                 .level_id = as_id(field(room, "level_id")),
             };
+            const auto preferred_mode = room.find("preferred_boundary_mode");
+            if (preferred_mode != room.end() && as_string(preferred_mode->second) == "InteriorFinishFace") {
+                data.preferred_boundary_mode = RoomBoundaryMode::InteriorFinishFace;
+            }
             for (const auto& id_value : as_array(field(room, "boundary_wall_ids"))) {
                 data.boundary_wall_ids.push_back(as_id(id_value));
             }
-            for (const auto& point_value : as_array(field(room, "boundary_polygon"))) {
+            if (const auto found = room.find("centerline_boundary_polygon"); found != room.end()) {
+                for (const auto& point_value : as_array(found->second)) {
+                    data.centerline_boundary_polygon.push_back(parse_point(point_value));
+                }
+            } else {
+                for (const auto& point_value : as_array(field(room, "boundary_polygon"))) {
+                    data.centerline_boundary_polygon.push_back(parse_point(point_value));
+                }
+            }
+            if (const auto found = room.find("interior_boundary_polygon"); found != room.end()) {
+                for (const auto& point_value : as_array(found->second)) {
+                    data.interior_boundary_polygon.push_back(parse_point(point_value));
+                }
+            }
+            data.centerline_area_square_meters = room.find("centerline_area") != room.end()
+                ? as_number(field(room, "centerline_area"))
+                : as_number(field(room, "area"));
+            data.interior_area_square_meters = room.find("interior_area") != room.end()
+                ? as_number(field(room, "interior_area"))
+                : data.centerline_area_square_meters;
+            data.centerline_perimeter_meters = room.find("centerline_perimeter") != room.end()
+                ? as_number(field(room, "centerline_perimeter"))
+                : as_number(field(room, "perimeter"));
+            data.interior_perimeter_meters = room.find("interior_perimeter") != room.end()
+                ? as_number(field(room, "interior_perimeter"))
+                : data.centerline_perimeter_meters;
+            data.floor_finish_area_square_meters = room.find("floor_finish_area") != room.end()
+                ? as_number(field(room, "floor_finish_area"))
+                : data.interior_area_square_meters;
+            data.ceiling_area_square_meters = room.find("ceiling_area") != room.end()
+                ? as_number(field(room, "ceiling_area"))
+                : data.interior_area_square_meters;
+            data.baseboard_length_meters = room.find("baseboard_length") != room.end()
+                ? as_number(field(room, "baseboard_length"))
+                : data.interior_perimeter_meters;
+            data.interior_wall_finish_area_square_meters = room.find("interior_wall_finish_area") != room.end()
+                ? as_number(field(room, "interior_wall_finish_area"))
+                : 0.0;
+            elements.emplace_back(id, kind, std::move(name), data, revision);
+        } else if (kind == ElementKind::Slab) {
+            const auto& slab = as_object(field(object, "slab"));
+            SlabData data{
+                .level_id = as_id(field(slab, "level_id")),
+                .thickness_meters = as_number(field(slab, "thickness")),
+                .material_id = slab.find("material_id") != slab.end() ? as_id(field(slab, "material_id")) : 0,
+                .assembly_id = slab.find("assembly_id") != slab.end() ? as_id(field(slab, "assembly_id")) : 0,
+                .elevation_offset_meters = slab.find("elevation_offset") != slab.end() ? as_number(field(slab, "elevation_offset")) : 0.0,
+                .generated_geometry_dirty = true,
+                .area_square_meters = slab.find("area") != slab.end() ? as_number(field(slab, "area")) : 0.0,
+                .volume_cubic_meters = slab.find("volume") != slab.end() ? as_number(field(slab, "volume")) : 0.0,
+            };
+            for (const auto& point_value : as_array(field(slab, "boundary_polygon"))) {
+                data.boundary_polygon.push_back(parse_point(point_value));
+            }
+            data.mesh = {};
+            elements.emplace_back(id, kind, std::move(name), data, revision);
+        } else if (kind == ElementKind::Roof) {
+            const auto& roof = as_object(field(object, "roof"));
+            RoofData data{
+                .level_id = as_id(field(roof, "level_id")),
+                .boundary_polygon = {},
+                .roof_type = string_to_roof_type(as_string(field(roof, "roof_type"))),
+                .thickness_meters = as_number(field(roof, "thickness")),
+                .material_id = roof.find("material_id") != roof.end() ? as_id(field(roof, "material_id")) : 0,
+                .assembly_id = roof.find("assembly_id") != roof.end() ? as_id(field(roof, "assembly_id")) : 0,
+                .generated_geometry_dirty = true,
+                .mesh = {},
+                .area_square_meters = roof.find("area") != roof.end() ? as_number(field(roof, "area")) : 0.0,
+                .volume_cubic_meters = roof.find("volume") != roof.end() ? as_number(field(roof, "volume")) : 0.0,
+            };
+            if (const auto found = roof.find("slope_degrees"); found != roof.end()) {
+                data.slope_degrees = as_number(found->second);
+            }
+            if (const auto found = roof.find("overhang_meters"); found != roof.end()) {
+                data.overhang_meters = as_number(found->second);
+            }
+            for (const auto& point_value : as_array(field(roof, "boundary_polygon"))) {
                 data.boundary_polygon.push_back(parse_point(point_value));
             }
             elements.emplace_back(id, kind, std::move(name), data, revision);
+        } else if (kind == ElementKind::Column) {
+            const auto& column = as_object(field(object, "column"));
+            elements.emplace_back(id, kind, std::move(name), ColumnData{
+                .level_id = as_id(field(column, "level_id")),
+                .position = parse_point(field(column, "position")),
+                .width_meters = as_number(field(column, "width")),
+                .depth_meters = as_number(field(column, "depth")),
+                .height_meters = as_number(field(column, "height")),
+                .material_id = column.find("material_id") != column.end() ? as_id(field(column, "material_id")) : 0,
+                .generated_geometry_dirty = true,
+                .mesh = {},
+                .volume_cubic_meters = column.find("volume") != column.end() ? as_number(field(column, "volume")) : 0.0,
+            }, revision);
+        } else if (kind == ElementKind::Beam) {
+            const auto& beam = as_object(field(object, "beam"));
+            elements.emplace_back(id, kind, std::move(name), BeamData{
+                .level_id = as_id(field(beam, "level_id")),
+                .start = parse_point(field(beam, "start")),
+                .end = parse_point(field(beam, "end")),
+                .width_meters = as_number(field(beam, "width")),
+                .height_meters = as_number(field(beam, "height")),
+                .material_id = beam.find("material_id") != beam.end() ? as_id(field(beam, "material_id")) : 0,
+                .generated_geometry_dirty = true,
+                .mesh = {},
+                .length_meters = beam.find("length") != beam.end() ? as_number(field(beam, "length")) : 0.0,
+                .volume_cubic_meters = beam.find("volume") != beam.end() ? as_number(field(beam, "volume")) : 0.0,
+            }, revision);
+        } else if (kind == ElementKind::Stair) {
+            const auto& stair = as_object(field(object, "stair"));
+            elements.emplace_back(id, kind, std::move(name), StairData{
+                .base_level_id = as_id(field(stair, "base_level_id")),
+                .top_level_id = stair.find("top_level_id") != stair.end() ? as_id(field(stair, "top_level_id")) : 0,
+                .start = parse_point(field(stair, "start")),
+                .direction = parse_point(field(stair, "direction")),
+                .width_meters = as_number(field(stair, "width")),
+                .total_rise_meters = as_number(field(stair, "total_rise")),
+                .total_run_meters = as_number(field(stair, "total_run")),
+                .riser_count = static_cast<int>(as_number(field(stair, "riser_count"))),
+                .tread_count = static_cast<int>(as_number(field(stair, "tread_count"))),
+                .material_id = stair.find("material_id") != stair.end() ? as_id(field(stair, "material_id")) : 0,
+                .generated_geometry_dirty = true,
+                .mesh = {},
+                .footprint_area_square_meters = stair.find("footprint_area") != stair.end() ? as_number(field(stair, "footprint_area")) : 0.0,
+                .volume_cubic_meters = stair.find("volume") != stair.end() ? as_number(field(stair, "volume")) : 0.0,
+            }, revision);
         }
     }
 

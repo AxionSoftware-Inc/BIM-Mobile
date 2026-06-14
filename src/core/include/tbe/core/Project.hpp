@@ -14,6 +14,8 @@ public:
     [[nodiscard]] std::string_view name() const noexcept;
     [[nodiscard]] Document& active_document() noexcept;
     [[nodiscard]] const Document& active_document() const noexcept;
+    [[nodiscard]] std::string to_json() const;
+    [[nodiscard]] static Project from_json(std::string_view json);
 
 private:
     std::string name_;
@@ -21,4 +23,3 @@ private:
 };
 
 } // namespace tbe::core
-
