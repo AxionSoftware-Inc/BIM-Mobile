@@ -2,6 +2,15 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import ObjViewer from "./ObjViewer";
+import {
+  computeOpeningPlacementPreview,
+  extractWallAxis,
+  projectPointToWallAxis,
+  wallThicknessMeters,
+  type OpeningPlacementPreview,
+  type SvgPoint,
+  type WallAxis,
+} from "../lib/openingPlacement";
 
 type JsonPrimitive = string | number | boolean | null;
 type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
@@ -87,6 +96,20 @@ type SvgMetadata = {
   kind: string | null;
   hitKind: string | null;
   svgId: string | null;
+};
+
+type SvgViewBox = {
+  minX: number;
+  minY: number;
+  width: number;
+  height: number;
+};
+
+type ArtifactStats = {
+  svgElementCount: number;
+  objVertexCount: number;
+  objFaceCount: number;
+  objObjectCount: number;
 };
 
 const kindFilterKeys = [
@@ -226,6 +249,68 @@ function extractSvgIds(svg: string) {
   return matches.map((match) => match[1]);
 }
 
+function extractObjStats(obj: string | null): ArtifactStats {
+  if (!obj) {
+    return {
+      svgElementCount: 0,
+      objVertexCount: 0,
+      objFaceCount: 0,
+      objObjectCount: 0,
+    };
+  }
+  const vertexCount = (obj.match(/^v\s+/gm) ?? []).length;
+  const faceCount = (obj.match(/^f\s+/gm) ?? []).length;
+  const objectCount = (obj.match(/^[og]\s+/gm) ?? []).length;
+  return {
+    svgElementCount: 0,
+    objVertexCount: vertexCount,
+    objFaceCount: faceCount,
+    objObjectCount: objectCount,
+  };
+}
+
+function extractSvgViewBox(svg: string) {
+  const match = svg.match(/viewBox="([^"]+)"/i);
+  if (!match) {
+    return null;
+  }
+  const values = match[1]
+    .trim()
+    .split(/[\s,]+/)
+    .map((value) => Number(value));
+  if (values.length !== 4 || values.some((value) => !Number.isFinite(value))) {
+    return null;
+  }
+  const [minX, minY, width, height] = values;
+  if (width <= 0 || height <= 0) {
+    return null;
+  }
+  return { minX, minY, width, height } satisfies SvgViewBox;
+}
+
+function prepareSvgMarkup(svg: string) {
+  if (!svg) {
+    return svg;
+  }
+  return svg.replace(/^<svg\b([^>]*)>/i, (match, attrs) => {
+    const cleanedAttrs = attrs
+      .replace(/\swidth="[^"]*"/i, "")
+      .replace(/\sheight="[^"]*"/i, "");
+    return `<svg${cleanedAttrs} width="100%" height="100%" preserveAspectRatio="xMidYMid meet" style="display:block">`;
+  });
+}
+
+function extractExportTimestamp(metadata: JsonObject | null) {
+  const keys = ["export_timestamp", "exported_at", "updated_at", "timestamp"];
+  for (const key of keys) {
+    const value = metadata?.[key];
+    if (typeof value === "string" && value.length > 0) {
+      return value;
+    }
+  }
+  return null;
+}
+
 function countValidationIssues(value: ValidationIssue[] | number) {
   return Array.isArray(value) ? value.length : value;
 }
@@ -291,7 +376,18 @@ function buildSelectionDetails(
   }
 
   const element = selection.value as DebugElement | null;
-  const latestElement = element?.id != null ? data?.debug.elements.find((candidate) => candidate.id === element.id) ?? element : element;
+  const latestElement = element?.id != null ? data?.debug.elements.find((candidate) => candidate.id === element.id) ?? null : element;
+  if (element?.id != null && latestElement === null) {
+    return {
+      title: `${element.kind ?? "Element"} ${element.id}`,
+      body: safeJsonStringify({
+        id: element.id,
+        kind: element.kind ?? null,
+        name: element.name ?? null,
+        note: "Selected element is no longer present in the refreshed artifacts.",
+      }),
+    };
+  }
   const project = data?.projectJson;
   const debug = data?.debug;
   const projectDocument = project && isObject(project.document) ? project.document : null;
@@ -417,6 +513,199 @@ function findElementByIdLoose(data: ViewerData | null, elementId: string | null)
   return Number.isFinite(numericId) ? findElementById(data, numericId) : null;
 }
 
+function projectDocumentElements(projectDocument: JsonObject | null) {
+  return asArray<JsonObject>(projectDocument?.elements);
+}
+
+function findProjectElement(projectDocument: JsonObject | null, elementId: number | null) {
+  if (projectDocument === null || elementId === null || !Number.isFinite(elementId)) {
+    return null;
+  }
+  return projectDocumentElements(projectDocument).find((candidate) => toNumber(candidate.id, -1) === elementId) ?? null;
+}
+
+function findProjectWallElement(projectDocument: JsonObject | null, wallId: number | null) {
+  if (projectDocument === null || wallId === null || !Number.isFinite(wallId)) {
+    return null;
+  }
+  return projectDocumentElements(projectDocument).find((candidate) => toNumber(candidate.id, -1) === wallId && candidate.kind === "Wall") ?? null;
+}
+
+function findProjectOpeningHostWall(projectDocument: JsonObject | null, openingId: number | null) {
+  if (projectDocument === null || openingId === null || !Number.isFinite(openingId)) {
+    return null;
+  }
+  for (const element of projectDocumentElements(projectDocument)) {
+    if (element.kind !== "Wall" || !isObject(element.wall)) {
+      continue;
+    }
+    const openings = asArray<JsonObject>(element.wall.openings);
+    if (openings.some((opening) => toNumber(opening.element_id ?? opening.id ?? opening.opening_id, -1) === openingId)) {
+      return element;
+    }
+  }
+  return null;
+}
+
+function nearestWallHit(projectDocument: JsonObject | null, point: { x: number; y: number }, tolerance = 0.4) {
+  if (!projectDocument) {
+    return null;
+  }
+
+  let best:
+    | {
+        wall: JsonObject;
+        axis: WallAxis;
+        projection: ReturnType<typeof projectPointToWallAxis>;
+        distance: number;
+      }
+    | null = null;
+
+  for (const element of projectDocumentElements(projectDocument)) {
+    if (element.kind !== "Wall") {
+      continue;
+    }
+    const axis = projectWallAxis(element);
+    if (!axis) {
+      continue;
+    }
+    const projection = projectPointToWallAxis(point, axis);
+    if (!projection || projection.distance > tolerance) {
+      continue;
+    }
+    if (!best || projection.distance < best.distance) {
+      best = {
+        wall: element,
+        axis,
+        projection,
+        distance: projection.distance,
+      };
+    }
+  }
+
+  return best;
+}
+
+function nearestOpeningHit(projectDocument: JsonObject | null, point: { x: number; y: number }, tolerance = 0.35) {
+  if (!projectDocument) {
+    return null;
+  }
+
+  let best:
+    | {
+        opening: JsonObject;
+        kind: "door" | "window";
+        hostWall: JsonObject;
+        hostAxis: WallAxis;
+        offset: number;
+        distance: number;
+      }
+    | null = null;
+
+  for (const wallElement of projectDocumentElements(projectDocument)) {
+    if (wallElement.kind !== "Wall") {
+      continue;
+    }
+    const axis = projectWallAxis(wallElement);
+    if (!axis) {
+      continue;
+    }
+    const wallThickness = wallThicknessMeters(isObject(wallElement.wall) ? wallElement.wall : null, 0.2);
+    for (const opening of asArray<JsonObject>(isObject(wallElement.wall) ? wallElement.wall.openings : [])) {
+      const openingKind = String(opening.kind ?? "").toLowerCase() === "window" ? "window" : "door";
+      const offset = toNumber(opening.offset_meters ?? opening.offset, NaN);
+      const width = Math.max(0.05, toNumber(opening.width_meters ?? opening.width, 0));
+      if (!Number.isFinite(offset) || width <= 0) {
+        continue;
+      }
+      const projection = projectPointToWallAxis(point, axis);
+      if (!projection) {
+        continue;
+      }
+      const alongDistance = Math.abs(projection.offset - offset);
+      const maxAlongDistance = Math.max(width / 2 + 0.25, 0.15);
+      const maxPerpendicular = Math.max(tolerance, wallThickness * 1.2);
+      if (alongDistance <= maxAlongDistance && projection.distance <= maxPerpendicular) {
+        if (!best || projection.distance < best.distance) {
+          best = {
+            opening,
+            kind: openingKind,
+            hostWall: wallElement,
+            hostAxis: axis,
+            offset,
+            distance: projection.distance,
+          };
+        }
+      }
+    }
+  }
+
+  return best;
+}
+
+function projectWallAxis(projectWallElement: JsonObject | null) {
+  return projectWallElement && isObject(projectWallElement.wall) ? extractWallAxis(projectWallElement.wall) : null;
+}
+
+function translateWallAxis(axis: WallAxis, deltaX: number, deltaY: number): WallAxis {
+  return {
+    start: { x: axis.start.x + deltaX, y: axis.start.y + deltaY },
+    end: { x: axis.end.x + deltaX, y: axis.end.y + deltaY },
+  };
+}
+
+function wallLength(axis: WallAxis) {
+  return Math.hypot(axis.end.x - axis.start.x, axis.end.y - axis.start.y);
+}
+
+function wallEndpoints(axis: WallAxis) {
+  return [axis.start, axis.end];
+}
+
+function findNearestEndpointSnap(
+  projectDocument: JsonObject | null,
+  movingWallId: number,
+  originalAxis: WallAxis,
+  delta: { x: number; y: number },
+  tolerance = 0.15,
+) {
+  let bestAdjustment: { deltaX: number; deltaY: number; snapped: boolean } = {
+    deltaX: delta.x,
+    deltaY: delta.y,
+    snapped: false,
+  };
+  let bestDistance = tolerance;
+
+  for (const candidate of projectDocumentElements(projectDocument)) {
+    if (candidate.kind !== "Wall" || toNumber(candidate.id, -1) === movingWallId) {
+      continue;
+    }
+    const candidateAxis = projectWallAxis(candidate);
+    if (!candidateAxis) {
+      continue;
+    }
+    for (const source of wallEndpoints(originalAxis)) {
+      for (const target of wallEndpoints(candidateAxis)) {
+        const movedSource = {
+          x: source.x + delta.x,
+          y: source.y + delta.y,
+        };
+        const distance = Math.hypot(movedSource.x - target.x, movedSource.y - target.y);
+        if (distance <= bestDistance) {
+          bestDistance = distance;
+          bestAdjustment = {
+            deltaX: delta.x + (target.x - movedSource.x),
+            deltaY: delta.y + (target.y - movedSource.y),
+            snapped: true,
+          };
+        }
+      }
+    }
+  }
+
+  return bestAdjustment;
+}
+
 function sortMaterialTakeoff(rows: ScheduleRow[]) {
   return [...rows].sort((left, right) => {
     const leftCategory = toStringValue(left.category, toStringValue(left.material_category, ""));
@@ -432,13 +721,207 @@ function sortMaterialTakeoff(rows: ScheduleRow[]) {
 
 function createDefaultOpeningDraft() {
   return {
+    hostWallId: null as number | null,
     offsetMeters: 1.2,
     widthMeters: 0.9,
     heightMeters: 2.1,
     sillHeightMeters: 0.9,
     clearanceMeters: 0.05,
+    svgPoint: null as { x: number; y: number } | null,
+    modelPoint: null as { x: number; y: number } | null,
+    preview: null as OpeningPlacementPreview | null,
   };
 }
+
+function isSvgElement(value: unknown): value is SVGElement {
+  return typeof SVGElement !== "undefined" && value instanceof SVGElement;
+}
+
+function findClosestSvgElement(target: Element | null, kinds: string[]) {
+  let current: Element | null = target;
+  while (current) {
+    if (
+      isSvgElement(current) &&
+      current.getAttribute("data-element-id") &&
+      kinds.includes(normalizeKindKey(current.getAttribute("data-kind")))
+    ) {
+      return {
+        elementId: current.getAttribute("data-element-id") as string,
+        kind: current.getAttribute("data-kind"),
+        hitKind: current.getAttribute("data-hit-kind"),
+        svgId: current.id || null,
+        element: current,
+      };
+    }
+    current = current.parentElement;
+  }
+  return null;
+}
+
+function findClosestSvgWall(target: Element | null) {
+  return findClosestSvgElement(target, ["wall"]);
+}
+
+function findClosestSvgOpening(target: Element | null) {
+  return findClosestSvgElement(target, ["door", "window"]);
+}
+
+function svgPointFromClient(
+  host: HTMLDivElement,
+  clientX: number,
+  clientY: number,
+  viewBox: SvgViewBox | null,
+) {
+  const svg = host.querySelector("svg");
+  if (!svg || !viewBox) {
+    return null;
+  }
+  const rect = svg.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) {
+    return null;
+  }
+  return {
+    x: viewBox.minX + ((clientX - rect.left) / rect.width) * viewBox.width,
+    y: viewBox.minY + ((clientY - rect.top) / rect.height) * viewBox.height,
+  };
+}
+
+function modelPointFromSvgPoint(point: SvgPoint | null) {
+  if (!point) {
+    return null;
+  }
+  return {
+    x: point.x,
+    y: -point.y,
+  };
+}
+
+function wallPreviewPoints(
+  axis: WallAxis | null,
+  offsetMeters: number,
+  widthMeters: number,
+  thicknessMeters: number,
+) {
+  if (!axis) {
+    return "";
+  }
+  const dx = axis.end.x - axis.start.x;
+  const dy = axis.end.y - axis.start.y;
+  const length = Math.hypot(dx, dy);
+  if (length <= 1.0e-9) {
+    return "";
+  }
+  const ux = dx / length;
+  const uy = dy / length;
+  const nx = -uy;
+  const ny = ux;
+  const center = {
+    x: axis.start.x + (ux * offsetMeters),
+    y: axis.start.y + (uy * offsetMeters),
+  };
+  const halfWidth = widthMeters / 2;
+  const halfThickness = thicknessMeters / 2;
+  const points = [
+    { x: center.x - (ux * halfWidth) - (nx * halfThickness), y: center.y - (uy * halfWidth) - (ny * halfThickness) },
+    { x: center.x + (ux * halfWidth) - (nx * halfThickness), y: center.y + (uy * halfWidth) - (ny * halfThickness) },
+    { x: center.x + (ux * halfWidth) + (nx * halfThickness), y: center.y + (uy * halfWidth) + (ny * halfThickness) },
+    { x: center.x - (ux * halfWidth) + (nx * halfThickness), y: center.y - (uy * halfWidth) + (ny * halfThickness) },
+  ];
+  return points.map((point) => `${point.x},${-point.y}`).join(" ");
+}
+
+function snapValue(value: number, step: number) {
+  if (!Number.isFinite(value) || step <= 0) {
+    return value;
+  }
+  return Math.round(value / step) * step;
+}
+
+function formatSigned(value: number) {
+  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}`;
+}
+
+function openingDragPreviewPoints(
+  axis: WallAxis | null,
+  offsetMeters: number,
+  widthMeters: number,
+  thicknessMeters: number,
+) {
+  return wallPreviewPoints(axis, offsetMeters, widthMeters, thicknessMeters);
+}
+
+type WallDragPreview = {
+  kind: "wall";
+  wallId: number;
+  wallLabel: string;
+  originalAxis: WallAxis;
+  previewAxis: WallAxis;
+  startSvgPoint: SvgPoint;
+  currentSvgPoint: SvgPoint;
+  rawDelta: { x: number; y: number };
+  delta: { x: number; y: number };
+  snapped: boolean;
+};
+
+type OpeningDragPreview = {
+  kind: "opening";
+  openingKind: "door" | "window";
+  openingId: number;
+  openingLabel: string;
+  hostWallId: number;
+  hostWallAxis: WallAxis | null;
+  widthMeters: number;
+  heightMeters: number;
+  sillHeightMeters: number;
+  originalOffsetMeters: number;
+  rawOffsetMeters: number;
+  requestedOffsetMeters: number;
+  previewOffsetMeters: number;
+  svgPoint: SvgPoint | null;
+  modelPoint: { x: number; y: number } | null;
+  preview: OpeningPlacementPreview | null;
+  snapped: boolean;
+};
+
+type DragPreview = WallDragPreview | OpeningDragPreview;
+
+type WallDragSession = {
+  kind: "wall";
+  pointerId: number;
+  wallId: number;
+  wallLabel: string;
+  originalAxis: WallAxis;
+  startSvgPoint: SvgPoint | null;
+  startModelPoint: { x: number; y: number } | null;
+};
+
+type OpeningDragSession = {
+  kind: "opening";
+  pointerId: number;
+  openingKind: "door" | "window";
+  openingId: number;
+  openingLabel: string;
+  hostWallId: number;
+  hostWall: JsonObject | null;
+  hostWallAxis: WallAxis | null;
+  widthMeters: number;
+  heightMeters: number;
+  sillHeightMeters: number;
+  clearanceMeters: number;
+  originalOffsetMeters: number;
+  startSvgPoint: SvgPoint | null;
+  startModelPoint: { x: number; y: number } | null;
+};
+
+type EditDragSession = WallDragSession | OpeningDragSession;
+
+type InteractionMode =
+  | "select"
+  | "draft-wall"
+  | "draft-door"
+  | "draft-window"
+  | "move-wall"
+  | "move-opening";
 
 function extractValidationSummary(debug: DebugReport | null) {
   const issues = debug?.validation.issues ?? 0;
@@ -477,35 +960,67 @@ export default function Home() {
   const [selection, setSelection] = useState<Selection>({ kind: "none" });
   const [loadError, setLoadError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"2d" | "3d">("2d");
-  const [interactionMode, setInteractionMode] = useState<"select" | "draft-wall" | "draft-door" | "draft-window">("select");
+  const [interactionMode, setInteractionMode] = useState<InteractionMode>("select");
   const [artifactRevision, setArtifactRevision] = useState(0);
+  const [artifactLoadedAt, setArtifactLoadedAt] = useState(() => Date.now());
   const [scale, setScale] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [dragging, setDragging] = useState(false);
+  const [dragPreview, setDragPreview] = useState<DragPreview | null>(null);
+  const [snapToGrid, setSnapToGrid] = useState(true);
   const [selectedSvgId, setSelectedSvgId] = useState<string | null>(null);
   const [hoveredSvgMeta, setHoveredSvgMeta] = useState<SvgMetadata | null>(null);
   const [hoveredSvgPoint, setHoveredSvgPoint] = useState<{ x: number; y: number } | null>(null);
   const [selectedSvgPoint, setSelectedSvgPoint] = useState<{ x: number; y: number } | null>(null);
+  const [hoveredProjectElementId, setHoveredProjectElementId] = useState<number | null>(null);
+  const [hoveredProjectInfo, setHoveredProjectInfo] = useState<string>("Move the cursor over an element to highlight it.");
   const [draftWall, setDraftWall] = useState<{ start: { x: number; y: number }; end?: { x: number; y: number } | null } | null>(null);
   const [openingDraft, setOpeningDraft] = useState(createDefaultOpeningDraft);
   const [draftWallParams, setDraftWallParams] = useState({ heightMeters: 3.0, thicknessMeters: 0.2 });
-  const [editStatus, setEditStatus] = useState<{ tone: "neutral" | "good" | "warn" | "bad"; message: string }>({
+  const [editStatus, setEditStatus] = useState<{
+    tone: "neutral" | "good" | "warn" | "bad";
+    message: string;
+    command: string | null;
+    timestamp: number | null;
+    validation: { errors: number; warnings: number };
+    updatedFiles: string[];
+    output: string;
+    error: string | null;
+  }>({
     tone: "neutral",
     message: "No local edits yet.",
+    command: null,
+    timestamp: null,
+    validation: { errors: 0, warnings: 0 },
+    updatedFiles: [],
+    output: "",
+    error: null,
   });
   const [editBusy, setEditBusy] = useState(false);
+  const [editFormError, setEditFormError] = useState<string | null>(null);
+  const [bridgeStatus, setBridgeStatus] = useState<{ configured: boolean; message: string; instructions: string[] }>({
+    configured: false,
+    message: "Bridge status unknown.",
+    instructions: [],
+  });
   const [svgClickInfo, setSvgClickInfo] = useState<string>(
-    "SVG click selection is approximate until exported ids are embedded.",
+    "Top view selection uses the exported project model.",
   );
   const [sourceMode, setSourceMode] = useState<"sample" | "project" | "artifacts">("sample");
   const [kindVisibility, setKindVisibility] = useState<Record<KindFilterKey, boolean>>(() =>
     Object.fromEntries(kindFilterKeys.map((key) => [key, true])) as Record<KindFilterKey, boolean>,
   );
   const dragOrigin = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
+  const editDragRef = useRef<EditDragSession | null>(null);
+  const suppressNextSvgClickRef = useRef(false);
   const svgHostRef = useRef<HTMLDivElement | null>(null);
   const projectInputRef = useRef<HTMLInputElement | null>(null);
   const artifactInputRef = useRef<HTMLInputElement | null>(null);
   const currentSvgIds = useMemo(() => extractSvgIds(data?.svg ?? ""), [data]);
+  const currentSvgViewBox = useMemo(() => extractSvgViewBox(data?.svg ?? ""), [data]);
+  const renderedSvgMarkup = useMemo(() => prepareSvgMarkup(data?.svg ?? ""), [data]);
+  const artifactStats = useMemo(() => extractObjStats(data?.obj ?? null), [data]);
+  const exportTimestamp = useMemo(() => extractExportTimestamp(data?.metadata ?? null), [data]);
   const visibleDebugElements = useMemo(
     () =>
       (data?.debug.elements ?? []).filter((element) => {
@@ -528,6 +1043,17 @@ export default function Home() {
     }
     return data?.debug.elements.find((element) => element.id === currentId) ?? selection.value;
   }, [data, selection]);
+  const selectedEditableId = selectedElement?.id ?? null;
+  const selectedProjectElementId = useMemo(() => {
+    if (selectedEditableId !== null) {
+      return selectedEditableId;
+    }
+    if (selectedSvgId !== null) {
+      const parsedId = Number(selectedSvgId);
+      return Number.isFinite(parsedId) ? parsedId : null;
+    }
+    return null;
+  }, [selectedEditableId, selectedSvgId]);
   const selectedWallElement = useMemo(() => {
     if (selectedElement?.kind === "Wall") {
       return selectedElement;
@@ -541,17 +1067,22 @@ export default function Home() {
     return null;
   }, [data, selectedElement, selectedSvgId]);
   const selectedWallId = selectedWallElement?.id ?? null;
-  const selectedEditableId = selectedElement?.id ?? null;
   const selectedProjectDocument = useMemo(
     () => (data?.projectJson && isObject(data.projectJson.document) ? data.projectJson.document : null),
     [data],
   );
   const selectedProjectElement = useMemo(() => {
-    if (selectedEditableId === null || !selectedProjectDocument) {
+    if (selectedProjectElementId === null || !selectedProjectDocument) {
       return null;
     }
-    return asArray<JsonObject>(selectedProjectDocument.elements).find((candidate) => toNumber(candidate.id, -1) === selectedEditableId) ?? null;
-  }, [selectedEditableId, selectedProjectDocument]);
+    return asArray<JsonObject>(selectedProjectDocument.elements).find((candidate) => toNumber(candidate.id, -1) === selectedProjectElementId) ?? null;
+  }, [selectedProjectDocument, selectedProjectElementId]);
+  const hoveredProjectElement = useMemo(() => {
+    if (hoveredProjectElementId === null) {
+      return null;
+    }
+    return data?.debug.elements.find((element) => element.id === hoveredProjectElementId) ?? null;
+  }, [data, hoveredProjectElementId]);
   const selectedWallProjectElement = useMemo(
     () => (selectedProjectElement?.kind === "Wall" ? selectedProjectElement : null),
     [selectedProjectElement],
@@ -564,14 +1095,166 @@ export default function Home() {
     () => (selectedProjectElement?.kind === "Window" ? selectedProjectElement : null),
     [selectedProjectElement],
   );
+  const selectedOpeningProjectElement = selectedDoorProjectElement ?? selectedWindowProjectElement ?? null;
+  const selectedOpeningHostWallProjectElement = useMemo(
+    () => findProjectOpeningHostWall(selectedProjectDocument, toNumber(selectedOpeningProjectElement?.id, NaN)),
+    [selectedOpeningProjectElement?.id, selectedProjectDocument],
+  );
+  const selectedOpeningHostWall = useMemo(
+    () => projectWallAxis(selectedOpeningHostWallProjectElement),
+    [selectedOpeningHostWallProjectElement],
+  );
+  const selectedWallProjectWall = useMemo(
+    () => (isObject(selectedWallProjectElement?.wall) ? selectedWallProjectElement.wall : null),
+    [selectedWallProjectElement],
+  );
+  const selectedWallAxis = useMemo(
+    () => extractWallAxis(selectedWallProjectWall),
+    [selectedWallProjectWall],
+  );
+  const selectedWallThickness = useMemo(
+    () => wallThicknessMeters(selectedWallProjectWall, 0.2),
+    [selectedWallProjectWall],
+  );
+  const selectedWallLength = useMemo(() => {
+    if (!selectedWallAxis) {
+      return null;
+    }
+    return Math.hypot(selectedWallAxis.end.x - selectedWallAxis.start.x, selectedWallAxis.end.y - selectedWallAxis.start.y);
+  }, [selectedWallAxis]);
+  const activeOpeningKind = interactionMode === "draft-door" ? "door" : interactionMode === "draft-window" ? "window" : null;
   const draftLength = draftWall?.start && draftWall?.end ? formatDraftLength(draftWall.start, draftWall.end) : null;
   const openingModeLabel = interactionMode === "draft-door" ? "Door" : interactionMode === "draft-window" ? "Window" : null;
   const hoveredDetails = useMemo(() => {
+    if (hoveredProjectElement) {
+      return `${hoveredProjectElement.kind ?? "Element"} #${hoveredProjectElement.id ?? "?"}`;
+    }
     if (!hoveredSvgMeta) {
       return null;
     }
     return `${hoveredSvgMeta.kind ?? "element"} #${hoveredSvgMeta.elementId}${hoveredSvgMeta.hitKind ? ` • ${hoveredSvgMeta.hitKind}` : ""}`;
-  }, [hoveredSvgMeta]);
+  }, [hoveredProjectElement, hoveredSvgMeta]);
+
+  const handleProjectHover = (info: {
+    elementId: number | null;
+    kind: string | null;
+    hitKind: string | null;
+    modelPoint: { x: number; y: number } | null;
+  }) => {
+    setHoveredProjectElementId(info.elementId ?? null);
+    if (info.elementId !== null) {
+      setHoveredProjectInfo(
+        `${info.kind ?? "Element"} #${info.elementId}${info.hitKind ? ` • ${info.hitKind}` : ""}${info.modelPoint ? ` • model ${info.modelPoint.x.toFixed(2)}, ${info.modelPoint.y.toFixed(2)}` : ""}`,
+      );
+    } else if (info.modelPoint) {
+      setHoveredProjectInfo(`Top view point ${info.modelPoint.x.toFixed(2)}, ${info.modelPoint.y.toFixed(2)}`);
+    } else {
+      setHoveredProjectInfo("Move the cursor over an element to highlight it.");
+    }
+  };
+
+  const handleProjectPick = (info: {
+    elementId: number | null;
+    kind: string | null;
+    hitKind: string | null;
+    modelPoint: { x: number; y: number } | null;
+  }) => {
+    const pickedId = info.elementId ?? null;
+    const pickedElement = pickedId !== null ? findElementById(data, pickedId) : null;
+    const pickedKind = normalizeKindKey(info.kind);
+    const matchedWall = pickedId !== null ? findProjectWallElement(selectedProjectDocument, pickedId) : null;
+    const nearestWall = info.modelPoint ? nearestWallHit(selectedProjectDocument, info.modelPoint, 0.45) : null;
+    const wallCandidate = matchedWall ?? nearestWall?.wall ?? null;
+
+    if (interactionMode === "draft-wall") {
+      if (!info.modelPoint) {
+        setSvgClickInfo("Click inside the top view to place the wall.");
+        return;
+      }
+      setSelection({ kind: "none" });
+      setSelectedSvgId(null);
+      setSelectedSvgPoint(null);
+      setHoveredSvgMeta(null);
+      setHoveredSvgPoint(null);
+      setHoveredProjectElementId(null);
+      setDraftWall((current) => {
+        if (!current || current.end) {
+          setSvgClickInfo("Draft wall start set. Click again to preview the wall.");
+          return { start: info.modelPoint as { x: number; y: number }, end: null };
+        }
+        const nextDraft = { ...current, end: info.modelPoint as { x: number; y: number } };
+        setSvgClickInfo(`Draft wall preview only. Approx length ${formatDraftLength(nextDraft.start, nextDraft.end).toFixed(2)} m.`);
+        return nextDraft;
+      });
+      return;
+    }
+
+    if (interactionMode === "draft-door" || interactionMode === "draft-window") {
+      const openingKind = interactionMode === "draft-door" ? "door" : "window";
+      const isWallHit = pickedKind === "wall" && wallCandidate;
+      const hostWall = isWallHit ? wallCandidate : nearestWall?.wall ?? null;
+      const hostWallAxis = hostWall ? projectWallAxis(hostWall) : null;
+      if (!hostWall || !hostWallAxis || !info.modelPoint) {
+        setEditFormError("Click a wall to place opening.");
+        setSvgClickInfo("Click a wall to place opening.");
+        return;
+      }
+      const projected = projectPointToWallAxis(info.modelPoint, hostWallAxis);
+      const offsetMeters = projected ? Math.max(0, projected.offset) : openingDraft.offsetMeters;
+      setOpeningDraft((current) => ({
+        ...current,
+        hostWallId: toNumber(hostWall.id, current.hostWallId ?? 0),
+        offsetMeters,
+        svgPoint: null,
+        modelPoint: info.modelPoint,
+        preview: null,
+      }));
+      setSelectedSvgId(String(hostWall.id ?? ""));
+      setHoveredProjectElementId(Number.isFinite(Number(hostWall.id)) ? Number(hostWall.id) : null);
+      const hostWallNumericId = Number(hostWall.id);
+      setSelection({
+        kind: "element",
+        label: `${hostWall.kind ?? "Wall"} #${hostWall.id ?? "-"}`,
+        value: (findElementById(data, Number.isFinite(hostWallNumericId) ? hostWallNumericId : null) ?? { id: hostWall.id, kind: "Wall", name: "Wall" }) as DebugElement,
+        svgMeta: {
+          elementId: String(hostWall.id ?? ""),
+          kind: "Wall",
+          hitKind: "wall_body",
+          svgId: null,
+        },
+      });
+      setSvgClickInfo(
+        `${openingModeLabel ?? "Opening"} host wall #${hostWall.id ?? "-"} selected. model ${info.modelPoint.x.toFixed(2)}, ${info.modelPoint.y.toFixed(2)} offset ${offsetMeters.toFixed(2)}m.`,
+      );
+      return;
+    }
+
+    if (pickedElement) {
+      setSelection({
+        kind: "element",
+        label: `${pickedElement.kind ?? "Element"} #${pickedElement.id ?? "?"}`,
+        value: pickedElement,
+        svgMeta: {
+          elementId: String(pickedElement.id ?? ""),
+          kind: pickedElement.kind ?? null,
+          hitKind: info.hitKind ?? null,
+          svgId: null,
+        },
+      });
+      setSelectedSvgId(pickedId !== null ? String(pickedId) : null);
+      setHoveredProjectElementId(pickedId);
+      setSvgClickInfo(`Selected ${pickedElement.kind ?? "element"} #${pickedElement.id ?? "?"}`);
+      return;
+    }
+
+    if (info.modelPoint) {
+      setSelection({ kind: "none" });
+      setSelectedSvgId(null);
+      setSelectedSvgPoint({ x: info.modelPoint.x, y: -info.modelPoint.y });
+      setHoveredProjectElementId(null);
+      setSvgClickInfo(`Top view click at ${info.modelPoint.x.toFixed(2)}, ${info.modelPoint.y.toFixed(2)}.`);
+    }
+  };
 
   useEffect(() => {
     let active = true;
@@ -593,6 +1276,115 @@ export default function Home() {
       active = false;
     };
   }, [artifactRevision]);
+
+  useEffect(() => {
+    let active = true;
+    fetch("/api/edit/status")
+      .then(async (response) => {
+        const payload = (await response.json()) as { configured?: boolean; message?: string; instructions?: string[] };
+        if (!active) {
+          return;
+        }
+        setBridgeStatus({
+          configured: payload.configured ?? false,
+          message: payload.message ?? "Bridge status unavailable.",
+          instructions: payload.instructions ?? [],
+        });
+      })
+      .catch(() => {
+        if (!active) {
+          return;
+        }
+        setBridgeStatus({
+          configured: false,
+          message: "Bridge status unavailable.",
+          instructions: [],
+        });
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!activeOpeningKind || viewMode !== "2d") {
+      return;
+    }
+    const wallId = openingDraft.hostWallId ?? selectedWallProjectElement?.id ?? null;
+    if (!wallId || !data?.projectJson) {
+      return;
+    }
+
+    let active = true;
+    const timer = window.setTimeout(() => {
+      void fetch("/api/edit/preview-opening-placement", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project_json: data.projectJson,
+          host_wall: selectedWallProjectWall,
+          host_wall_id: wallId,
+          kind: activeOpeningKind,
+          requested_offset_meters: openingDraft.offsetMeters,
+          width_meters: openingDraft.widthMeters,
+          height_meters: openingDraft.heightMeters,
+          sill_height_meters: activeOpeningKind === "window" ? openingDraft.sillHeightMeters : 0,
+          clearance_meters: openingDraft.clearanceMeters,
+          svg_point: openingDraft.svgPoint,
+          model_point: openingDraft.modelPoint,
+        }),
+      })
+        .then(async (response) => {
+          const payload = (await response.json()) as {
+            success: boolean;
+            message: string;
+            error: string | null;
+            preview?: OpeningPlacementPreview;
+          };
+          if (!active) {
+            return;
+          }
+          if (!response.ok || !payload.success || !payload.preview) {
+            setEditFormError(payload.error ?? payload.message ?? "Failed to preview opening placement.");
+            setOpeningDraft((current) => ({ ...current, preview: null }));
+            return;
+          }
+          setEditFormError(null);
+          setOpeningDraft((current) => ({
+            ...current,
+            preview: payload.preview ?? null,
+          }));
+          setSvgClickInfo(payload.message ?? "Opening preview updated.");
+        })
+        .catch((error: unknown) => {
+          if (!active) {
+            return;
+          }
+          const message = error instanceof Error ? error.message : String(error);
+          setEditFormError(message);
+          setOpeningDraft((current) => ({ ...current, preview: null }));
+        });
+    }, 120);
+
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [
+    activeOpeningKind,
+    data?.projectJson,
+    openingDraft.clearanceMeters,
+    openingDraft.heightMeters,
+    openingDraft.hostWallId,
+    openingDraft.modelPoint,
+    openingDraft.offsetMeters,
+    openingDraft.sillHeightMeters,
+    openingDraft.svgPoint,
+    openingDraft.widthMeters,
+    selectedWallProjectElement?.id,
+    selectedWallProjectWall,
+    viewMode,
+  ]);
 
   useEffect(() => {
     const host = svgHostRef.current;
@@ -651,6 +1443,24 @@ export default function Home() {
   }, [selectedSvgId, hoveredSvgMeta, kindVisibility, data]);
 
   useEffect(() => {
+    if (!data || selectedEditableId === null) {
+      return;
+    }
+    const stillExists = data.debug.elements.some((element) => element.id === selectedEditableId);
+    if (!stillExists) {
+      const timer = window.setTimeout(() => {
+        setSelection({ kind: "none" });
+        setSelectedSvgId(null);
+        setSelectedSvgPoint(null);
+        setHoveredSvgMeta(null);
+        setHoveredSvgPoint(null);
+        setSvgClickInfo(`Selected element ${selectedEditableId} is no longer present in the refreshed artifacts.`);
+      }, 0);
+      return () => window.clearTimeout(timer);
+    }
+  }, [data, selectedEditableId]);
+
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         resetEditDrafts("Draft cancelled.");
@@ -668,7 +1478,10 @@ export default function Home() {
   function resetEditDrafts(message?: string) {
     setDraftWall(null);
     setOpeningDraft(createDefaultOpeningDraft());
+    setDragPreview(null);
+    editDragRef.current = null;
     setInteractionMode("select");
+    setEditFormError(null);
     if (message) {
       setSvgClickInfo(message);
     }
@@ -682,8 +1495,22 @@ export default function Home() {
     setSelectedSvgPoint(null);
     setHoveredSvgMeta(null);
     setHoveredSvgPoint(null);
+    setHoveredProjectElementId(null);
+    setHoveredProjectInfo("Move the cursor over an element to highlight it.");
+    setEditFormError(null);
     resetEditDrafts("Reloaded bundled sample.");
+    setArtifactLoadedAt(Date.now());
     setArtifactRevision((value) => value + 1);
+  };
+
+  const refreshArtifacts = () => {
+    setLoadError(null);
+    setArtifactLoadedAt(Date.now());
+    setArtifactRevision((value) => value + 1);
+    setDragPreview(null);
+    editDragRef.current = null;
+    setHoveredProjectElementId(null);
+    setSvgClickInfo("Artifacts reloaded.");
   };
 
   const loadProjectJsonFile = async (file: File) => {
@@ -709,6 +1536,9 @@ export default function Home() {
     setSelectedSvgPoint(null);
     setHoveredSvgMeta(null);
     setHoveredSvgPoint(null);
+    setHoveredProjectElementId(null);
+    setHoveredProjectInfo("Move the cursor over an element to highlight it.");
+    setEditFormError(null);
     resetEditDrafts(`Loaded project.json: ${file.name}`);
   };
 
@@ -748,28 +1578,34 @@ export default function Home() {
     setSelectedSvgPoint(null);
     setHoveredSvgMeta(null);
     setHoveredSvgPoint(null);
+    setHoveredProjectElementId(null);
+    setHoveredProjectInfo("Move the cursor over an element to highlight it.");
+    setEditFormError(null);
     resetEditDrafts("Imported static artifact pair.");
   };
 
   const importProjectJsonClick = () => projectInputRef.current?.click();
   const importArtifactsClick = () => artifactInputRef.current?.click();
 
-  const postLocalEdit = async <
-    TResponse extends {
-      success: boolean;
-      error?: string;
-      message?: string;
-      validation?: { issues?: number; warnings?: number; errors?: number };
-      commandOutput?: { opening_id?: number; wall_id?: number; element_id?: number };
-    },
-  >(
+  const postLocalEdit = async (
     route: string,
     body: Record<string, unknown>,
     fallbackMessage: string,
-    onSuccess?: (result: TResponse) => void,
+    onSuccess?: (result: {
+      success: boolean;
+      command: string;
+      message: string;
+      validation: { errors: number; warnings: number };
+      updatedFiles: string[];
+      output: string;
+      error: string | null;
+      artifactPaths?: Record<string, string>;
+      commandOutput?: { opening_id?: number; wall_id?: number; element_id?: number };
+    }) => void,
   ) => {
     setEditBusy(true);
     setLoadError(null);
+    setEditFormError(null);
     try {
       const response = await fetch(route, {
         method: "POST",
@@ -778,46 +1614,368 @@ export default function Home() {
         },
         body: JSON.stringify(body),
       });
-      const payload = (await response.json()) as TResponse;
+      const payload = (await response.json()) as {
+        success: boolean;
+        command: string;
+        message: string;
+        validation: { errors: number; warnings: number };
+        updatedFiles: string[];
+        output: string;
+        error: string | null;
+        artifactPaths?: Record<string, string>;
+        commandOutput?: { opening_id?: number; wall_id?: number; element_id?: number };
+      };
       if (!response.ok || !payload.success) {
-        throw new Error(payload.error ?? fallbackMessage);
+        throw new Error(payload.error ?? payload.message ?? fallbackMessage);
       }
-      const errors = payload.validation?.errors ?? 0;
-      const warnings = payload.validation?.warnings ?? 0;
+      const errors = payload.validation.errors ?? 0;
+      const warnings = payload.validation.warnings ?? 0;
       setEditStatus({
         tone: errors > 0 || warnings > 0 ? "warn" : "good",
-        message: payload.message ?? `${fallbackMessage} Validation: ${errors} errors, ${warnings} warnings.`,
+        message: payload.message ?? `${payload.command} completed. Validation: ${errors} errors, ${warnings} warnings.`,
+        command: payload.command,
+        timestamp: Date.now(),
+        validation: { errors, warnings },
+        updatedFiles: payload.updatedFiles ?? [],
+        output: payload.output ?? "",
+        error: payload.error ?? null,
       });
       onSuccess?.(payload);
+      setArtifactLoadedAt(Date.now());
       setArtifactRevision((value) => value + 1);
       return payload;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      setEditStatus({ tone: "bad", message });
+      setEditStatus((current) => ({
+        ...current,
+        tone: "bad",
+        message,
+        error: message,
+        timestamp: Date.now(),
+      }));
       throw error;
     } finally {
       setEditBusy(false);
     }
   };
 
-  const submitDraftWall = async () => {
-    if (!draftWall?.start || !draftWall.end) {
-      setEditStatus({ tone: "bad", message: "Draw a wall preview first." });
+  const updateWallDragPreview = (session: WallDragSession, currentSvgPoint: SvgPoint | null, currentModelPoint: { x: number; y: number } | null) => {
+    const startModelPoint = session.startModelPoint ?? currentModelPoint;
+    if (!startModelPoint || !currentModelPoint) {
+      setDragPreview({
+        kind: "wall",
+        wallId: session.wallId,
+        wallLabel: session.wallLabel,
+        originalAxis: session.originalAxis,
+        previewAxis: session.originalAxis,
+        startSvgPoint: session.startSvgPoint ?? currentSvgPoint ?? { x: 0, y: 0 },
+        currentSvgPoint: currentSvgPoint ?? session.startSvgPoint ?? { x: 0, y: 0 },
+        rawDelta: { x: 0, y: 0 },
+        delta: { x: 0, y: 0 },
+        snapped: false,
+      });
+      return;
+    }
+
+    const rawDelta = {
+      x: currentModelPoint.x - startModelPoint.x,
+      y: currentModelPoint.y - startModelPoint.y,
+    };
+    const gridDelta = snapToGrid
+      ? {
+          x: snapValue(rawDelta.x, 0.1),
+          y: snapValue(rawDelta.y, 0.1),
+        }
+      : rawDelta;
+    const snappedDelta = findNearestEndpointSnap(
+      selectedProjectDocument,
+      session.wallId,
+      session.originalAxis,
+      gridDelta,
+      snapToGrid ? 0.18 : 0,
+    );
+    const previewAxis = translateWallAxis(session.originalAxis, snappedDelta.deltaX, snappedDelta.deltaY);
+    setDragPreview({
+      kind: "wall",
+      wallId: session.wallId,
+      wallLabel: session.wallLabel,
+      originalAxis: session.originalAxis,
+      previewAxis,
+      startSvgPoint: session.startSvgPoint ?? currentSvgPoint ?? { x: 0, y: 0 },
+      currentSvgPoint: currentSvgPoint ?? session.startSvgPoint ?? { x: 0, y: 0 },
+      rawDelta,
+      delta: { x: snappedDelta.deltaX, y: snappedDelta.deltaY },
+      snapped: snappedDelta.snapped || gridDelta.x !== rawDelta.x || gridDelta.y !== rawDelta.y,
+    });
+  };
+
+  const updateOpeningDragPreview = (
+    session: OpeningDragSession,
+    currentSvgPoint: SvgPoint | null,
+    currentModelPoint: { x: number; y: number } | null,
+  ) => {
+    const hostWallAxis = session.hostWallAxis ?? projectWallAxis(session.hostWall);
+    const projected = currentModelPoint && hostWallAxis ? projectPointToWallAxis(currentModelPoint, hostWallAxis) : null;
+    const requestedOffset = projected ? projected.offset : session.originalOffsetMeters;
+    const snappedOffset = snapToGrid ? snapValue(requestedOffset, 0.05) : requestedOffset;
+    const preview = computeOpeningPlacementPreview({
+      project_json: data?.projectJson ?? null,
+      host_wall: session.hostWall,
+      host_wall_id: session.hostWallId,
+      kind: session.openingKind,
+      requested_offset_meters: snappedOffset,
+      width_meters: session.widthMeters,
+      height_meters: session.heightMeters,
+      sill_height_meters: session.openingKind === "window" ? session.sillHeightMeters : 0,
+      clearance_meters: session.clearanceMeters,
+      svg_point: currentSvgPoint,
+      model_point: currentModelPoint,
+    });
+
+    setDragPreview({
+      kind: "opening",
+      openingKind: session.openingKind,
+      openingId: session.openingId,
+      openingLabel: session.openingLabel,
+      hostWallId: session.hostWallId,
+      hostWallAxis,
+      widthMeters: session.widthMeters,
+      heightMeters: session.heightMeters,
+      sillHeightMeters: session.sillHeightMeters,
+      originalOffsetMeters: session.originalOffsetMeters,
+      rawOffsetMeters: requestedOffset,
+      requestedOffsetMeters: snappedOffset,
+      previewOffsetMeters: preview.adjusted_offset_meters,
+      svgPoint: currentSvgPoint,
+      modelPoint: currentModelPoint,
+      preview,
+      snapped: preview.adjusted_offset_meters !== snappedOffset,
+    });
+    setOpeningDraft((current) => ({
+      ...current,
+      hostWallId: session.hostWallId,
+      offsetMeters: snappedOffset,
+      svgPoint: currentSvgPoint,
+      modelPoint: currentModelPoint,
+      preview,
+    }));
+  };
+
+  const beginWallMoveDrag = (target: Element | null, event: React.PointerEvent<HTMLDivElement>) => {
+    const svgPoint = svgHostRef.current ? svgPointFromClient(svgHostRef.current, event.clientX, event.clientY, currentSvgViewBox) : null;
+    const modelPoint = modelPointFromSvgPoint(svgPoint);
+    const wallMeta = findClosestSvgWall(target);
+    const nearest = !wallMeta && modelPoint ? nearestWallHit(selectedProjectDocument, modelPoint, Math.max(0.45, selectedWallThickness * 1.8)) : null;
+    const matchedElement = wallMeta ? findElementByIdLoose(data, wallMeta.elementId) : nearest ? findElementByIdLoose(data, String(nearest.wall.id ?? "")) : null;
+    if (!wallMeta || !matchedElement || matchedElement.kind !== "Wall") {
+      if (!nearest) {
+        setEditFormError("Click a wall to move it.");
+        setSvgClickInfo("Move wall mode: click a wall to start the drag.");
+        return false;
+      }
+    }
+    const nearestWallId = Number(nearest?.wall.id);
+    const resolvedWallId = matchedElement?.id ?? (Number.isFinite(nearestWallId) ? nearestWallId : null) ?? Number(wallMeta?.elementId);
+    const wallProjectElement = findProjectWallElement(selectedProjectDocument, resolvedWallId);
+    const wallAxis = projectWallAxis(wallProjectElement);
+    if (!wallProjectElement || !wallAxis) {
+      setEditFormError("Selected wall has no usable axis.");
+      setSvgClickInfo("Selected wall has no usable axis.");
+      return false;
+    }
+    editDragRef.current = {
+      kind: "wall",
+      pointerId: event.pointerId,
+      wallId: toNumber(wallProjectElement.id, matchedElement?.id ?? NaN),
+      wallLabel: `${matchedElement?.kind ?? "Wall"} #${matchedElement?.id ?? wallMeta?.elementId ?? nearest?.wall.id ?? "?"}`,
+      originalAxis: wallAxis,
+      startSvgPoint: svgPoint,
+      startModelPoint: modelPoint,
+    };
+    setSelectedSvgId(wallMeta?.elementId ?? String(nearest?.wall.id ?? matchedElement?.id ?? ""));
+    setSelection({
+      kind: "element",
+      label: `${matchedElement?.kind ?? "Wall"} #${matchedElement?.id ?? wallMeta?.elementId ?? nearest?.wall.id ?? "?"}`,
+      value: (matchedElement ?? (nearest?.wall as DebugElement)) as DebugElement,
+      svgMeta: {
+        elementId: wallMeta?.elementId ?? String(nearest?.wall.id ?? matchedElement?.id ?? ""),
+        kind: matchedElement?.kind ?? "Wall",
+        hitKind: wallMeta?.hitKind ?? "wall_body",
+        svgId: wallMeta?.svgId ?? null,
+      },
+    });
+    setEditFormError(null);
+    setSvgClickInfo(
+      `Move wall preview started. ${svgPoint ? `SVG ${svgPoint.x.toFixed(2)}, ${svgPoint.y.toFixed(2)}` : "-"} ${modelPoint ? `model ${modelPoint.x.toFixed(2)}, ${modelPoint.y.toFixed(2)}` : "-"}.`,
+    );
+    if (event.currentTarget.hasPointerCapture(event.pointerId) === false) {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    }
+    return true;
+  };
+
+  const beginOpeningMoveDrag = (target: Element | null, event: React.PointerEvent<HTMLDivElement>) => {
+    const svgPoint = svgHostRef.current ? svgPointFromClient(svgHostRef.current, event.clientX, event.clientY, currentSvgViewBox) : null;
+    const modelPoint = modelPointFromSvgPoint(svgPoint);
+    const openingMeta = findClosestSvgOpening(target);
+    const nearest = !openingMeta && modelPoint ? nearestOpeningHit(selectedProjectDocument, modelPoint, 0.4) : null;
+    const matchedElement = openingMeta ? findElementByIdLoose(data, openingMeta.elementId) : nearest ? findElementByIdLoose(data, String(nearest.opening.element_id ?? nearest.opening.id ?? "")) : null;
+    if (!openingMeta && !nearest && (!matchedElement || (matchedElement.kind !== "Door" && matchedElement.kind !== "Window"))) {
+      setEditFormError("Click a door or window to move it.");
+      setSvgClickInfo("Move opening mode: click a door or window to start the drag.");
+      return false;
+    }
+
+    const nearestOpeningId = Number(nearest?.opening.element_id);
+    const resolvedOpeningId = matchedElement?.id ?? (Number.isFinite(nearestOpeningId) ? nearestOpeningId : null);
+    const openingProjectElement = findProjectElement(selectedProjectDocument, resolvedOpeningId);
+    const openingElementId = toNumber(openingProjectElement?.id ?? matchedElement?.id ?? resolvedOpeningId ?? null, NaN);
+    const hostWallProjectElement = findProjectOpeningHostWall(selectedProjectDocument, openingElementId);
+    const hostWallAxis = projectWallAxis(hostWallProjectElement);
+    if (!hostWallProjectElement || !hostWallAxis || !isObject(hostWallProjectElement.wall)) {
+      setEditFormError("Opening host wall could not be found.");
+      setSvgClickInfo("Opening host wall could not be found.");
+      return false;
+    }
+    const openingKey = (matchedElement?.kind ?? nearest?.kind) === "Window" ? "window" : "door";
+    const openingData = isObject(openingProjectElement?.[openingKey]) ? (openingProjectElement?.[openingKey] as JsonObject) : null;
+    const widthMeters = toNumber(openingData?.width ?? openingData?.width_meters, openingKey === "door" ? 0.9 : 1.2);
+    const heightMeters = toNumber(openingData?.height ?? openingData?.height_meters, openingKey === "door" ? 2.1 : 1.2);
+    const sillHeightMeters = toNumber(openingData?.sill_height ?? openingData?.sill_height_meters, openingKey === "door" ? 0 : 0.9);
+    const offsetMeters = toNumber(openingData?.offset ?? openingData?.offset_meters, 1.2);
+
+    editDragRef.current = {
+      kind: "opening",
+      pointerId: event.pointerId,
+      openingKind: openingKey,
+      openingId: openingElementId,
+      openingLabel: `${matchedElement?.kind ?? nearest?.kind ?? "Opening"} #${matchedElement?.id ?? openingMeta?.elementId ?? nearest?.opening.element_id ?? "?"}`,
+      hostWallId: toNumber(hostWallProjectElement.id, -1),
+      hostWall: hostWallProjectElement,
+      hostWallAxis,
+      widthMeters,
+      heightMeters,
+      sillHeightMeters,
+      clearanceMeters: 0.05,
+      originalOffsetMeters: offsetMeters,
+      startSvgPoint: svgPoint,
+      startModelPoint: modelPoint,
+    };
+    setSelectedSvgId(openingMeta?.elementId ?? String(nearest?.opening.element_id ?? matchedElement?.id ?? ""));
+    setSelection({
+      kind: "element",
+      label: `${matchedElement?.kind ?? nearest?.kind ?? "Opening"} #${matchedElement?.id ?? openingMeta?.elementId ?? nearest?.opening.element_id ?? "?"}`,
+      value: (matchedElement ?? (openingProjectElement as DebugElement)) as DebugElement,
+      svgMeta: {
+        elementId: openingMeta?.elementId ?? String(nearest?.opening.element_id ?? matchedElement?.id ?? ""),
+        kind: matchedElement?.kind ?? nearest?.kind ?? "Opening",
+        hitKind: openingMeta?.hitKind ?? "opening",
+        svgId: openingMeta?.svgId ?? null,
+      },
+    });
+    setEditFormError(null);
+    setSvgClickInfo(
+      `Move ${(matchedElement?.kind ?? nearest?.kind ?? "opening")} preview started on wall #${hostWallProjectElement.id ?? "-"}${svgPoint ? ` • SVG ${svgPoint.x.toFixed(2)}, ${svgPoint.y.toFixed(2)}` : ""}${modelPoint ? ` • model ${modelPoint.x.toFixed(2)}, ${modelPoint.y.toFixed(2)}` : ""}.`,
+    );
+    if (event.currentTarget.hasPointerCapture(event.pointerId) === false) {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    }
+    return true;
+  };
+
+  const beginEditDrag = (target: Element | null, event: React.PointerEvent<HTMLDivElement>) => {
+    if (interactionMode === "move-wall") {
+      return beginWallMoveDrag(target, event);
+    }
+    if (interactionMode === "move-opening") {
+      return beginOpeningMoveDrag(target, event);
+    }
+    return false;
+  };
+
+  const cancelEditDrag = (message = "Drag cancelled.") => {
+    setDraftWall(null);
+    setOpeningDraft(createDefaultOpeningDraft());
+    setDragPreview(null);
+    editDragRef.current = null;
+    setEditFormError(null);
+    setSvgClickInfo(message);
+  };
+
+  const commitWallDrag = async () => {
+    if (!dragPreview || dragPreview.kind !== "wall") {
+      return;
+    }
+    if (dragPreview.previewAxis.start.x === dragPreview.originalAxis.start.x && dragPreview.previewAxis.start.y === dragPreview.originalAxis.start.y && dragPreview.previewAxis.end.x === dragPreview.originalAxis.end.x && dragPreview.previewAxis.end.y === dragPreview.originalAxis.end.y) {
+      setEditFormError("Wall has not moved yet.");
       return;
     }
     try {
-      const payload = await postLocalEdit<{
-        success: boolean;
-        error?: string;
-        message?: string;
-        validation?: { issues?: number; warnings?: number; errors?: number };
-      }>("/api/edit/create-wall", {
+      await postLocalEdit(
+        "/api/edit/set-wall-axis",
+        {
+          wall_id: dragPreview.wallId,
+          start: dragPreview.previewAxis.start,
+          end: dragPreview.previewAxis.end,
+        },
+        "Failed to move wall.",
+      );
+      setDragPreview(null);
+      editDragRef.current = null;
+      setInteractionMode("select");
+      setSvgClickInfo(`Wall ${dragPreview.wallId} moved. Selection preserved if the wall still exists.`);
+    } catch {
+      // handled by postLocalEdit
+    }
+  };
+
+  const commitOpeningDrag = async () => {
+    if (!dragPreview || dragPreview.kind !== "opening") {
+      return;
+    }
+    if (!dragPreview.preview || !dragPreview.preview.can_place) {
+      setEditFormError(dragPreview.preview?.message ?? "Opening placement is not valid.");
+      return;
+    }
+    try {
+      const route = dragPreview.openingKind === "door" ? "/api/edit/update-door" : "/api/edit/update-window";
+      const body: Record<string, unknown> = {
+        [`${dragPreview.openingKind}_id`]: dragPreview.openingId,
+        offset_meters: dragPreview.preview.adjusted_offset_meters,
+        width_meters: dragPreview.widthMeters,
+        height_meters: dragPreview.heightMeters,
+      };
+      if (dragPreview.openingKind === "window") {
+        body.sill_height_meters = dragPreview.sillHeightMeters;
+      }
+      await postLocalEdit(route, body, `Failed to move ${dragPreview.openingKind}.`);
+      setDragPreview(null);
+      editDragRef.current = null;
+      setInteractionMode("select");
+      setSvgClickInfo(`${dragPreview.openingKind === "door" ? "Door" : "Window"} ${dragPreview.openingId} moved. Selection preserved if the opening still exists.`);
+    } catch {
+      // handled by postLocalEdit
+    }
+  };
+
+  const submitDraftWall = async () => {
+    if (!draftWall?.start || !draftWall.end) {
+      setEditFormError("Draw a wall preview first.");
+      setEditStatus((current) => ({ ...current, tone: "bad", message: "Draw a wall preview first.", error: "Draw a wall preview first.", timestamp: Date.now() }));
+      return;
+    }
+    if (draftLength === null || draftLength < 0.05) {
+      setEditFormError("Wall axis must have non-zero length.");
+      setEditStatus((current) => ({ ...current, tone: "bad", message: "Wall axis must have non-zero length.", error: "Wall axis must have non-zero length.", timestamp: Date.now() }));
+      return;
+    }
+    try {
+      const payload = await postLocalEdit("/api/edit/create-wall", {
           start: draftWall.start,
           end: draftWall.end,
           height_meters: draftWallParams.heightMeters,
           thickness_meters: draftWallParams.thicknessMeters,
-        },
-        "Failed to create wall.");
+        }, "Failed to create wall.");
       setDraftWall(null);
       setInteractionMode("select");
       setSelection({ kind: "none" });
@@ -832,44 +1990,72 @@ export default function Home() {
   };
 
   const submitInsertOpening = async (kind: "door" | "window") => {
-    if (!selectedWallId) {
-      setEditStatus({ tone: "bad", message: "Select a wall first." });
+    const hostWallId = openingDraft.hostWallId ?? selectedWallId;
+    if (!hostWallId) {
+      setEditFormError("Select a wall first.");
+      setEditStatus((current) => ({ ...current, tone: "bad", message: "Select a wall first.", error: "Select a wall first.", timestamp: Date.now() }));
       return;
     }
-    if (selectedWallElement?.kind !== "Wall") {
-      setEditStatus({ tone: "bad", message: "Select a wall first." });
+    if (selectedWallElement?.kind !== "Wall" && selectedWallProjectElement?.kind !== "Wall") {
+      setEditFormError("Select a wall first.");
+      setEditStatus((current) => ({ ...current, tone: "bad", message: "Select a wall first.", error: "Select a wall first.", timestamp: Date.now() }));
+      return;
+    }
+    const offset = openingDraft.preview?.can_place ? openingDraft.preview.adjusted_offset_meters : openingDraft.offsetMeters;
+    const width = openingDraft.widthMeters;
+    const height = openingDraft.heightMeters;
+    const sillHeight = openingDraft.sillHeightMeters;
+    if (offset < 0) {
+      setEditFormError("Offset must be zero or greater.");
+      return;
+    }
+    if (width <= 0 || height <= 0) {
+      setEditFormError("Width and height must be greater than zero.");
+      return;
+    }
+    if (kind === "window" && sillHeight < 0) {
+      setEditFormError("Sill height must be zero or greater.");
       return;
     }
     try {
       const route = kind === "door" ? "/api/edit/insert-door" : "/api/edit/insert-window";
+      setSvgClickInfo(
+        `POST ${route} host wall ${hostWallId} offset ${offset.toFixed(2)}m width ${width.toFixed(2)}m height ${height.toFixed(2)}m`,
+      );
       const body =
         kind === "door"
           ? {
-              host_wall_id: selectedWallId,
-              offset_meters: openingDraft.offsetMeters,
-              width_meters: openingDraft.widthMeters,
-              height_meters: openingDraft.heightMeters,
+              host_wall_id: hostWallId,
+              offset_meters: offset,
+              width_meters: width,
+              height_meters: height,
               clearance_meters: openingDraft.clearanceMeters,
             }
           : {
-              host_wall_id: selectedWallId,
-              offset_meters: openingDraft.offsetMeters,
-              width_meters: openingDraft.widthMeters,
-              height_meters: openingDraft.heightMeters,
-              sill_height_meters: openingDraft.sillHeightMeters,
+              host_wall_id: hostWallId,
+              offset_meters: offset,
+              width_meters: width,
+              height_meters: height,
+              sill_height_meters: sillHeight,
               clearance_meters: openingDraft.clearanceMeters,
             };
-      const payload = await postLocalEdit<{
-        success: boolean;
-        error?: string;
-        message?: string;
-        validation?: { issues?: number; warnings?: number; errors?: number };
-        commandOutput?: { opening_id?: number; wall_id?: number; placement?: { warnings?: string[] } };
-      }>(route, body, `Failed to insert ${kind}.`);
+      const payload = await postLocalEdit(route, body, `Failed to insert ${kind}.`);
       const openingId = payload.commandOutput?.opening_id ?? null;
       setInteractionMode("select");
       setOpeningDraft(createDefaultOpeningDraft());
-      setSelection({ kind: "none" });
+      if (selectedWallElement) {
+        setSelection({
+          kind: "element",
+          label: `${selectedWallElement.kind ?? "Wall"} #${selectedWallElement.id ?? selectedWallId}`,
+          value: selectedWallElement,
+          svgMeta: {
+            elementId: String(selectedWallElement.id ?? selectedWallId),
+            kind: selectedWallElement.kind ?? "Wall",
+            hitKind: "wall_body",
+            svgId: selectedSvgId ?? null,
+          },
+        });
+      }
       setSelectedSvgPoint(null);
       setHoveredSvgMeta(null);
       setHoveredSvgPoint(null);
@@ -884,7 +2070,8 @@ export default function Home() {
 
   const submitDeleteSelected = async () => {
     if (selectedEditableId === null) {
-      setEditStatus({ tone: "bad", message: "Select an element first." });
+      setEditFormError("Select an element first.");
+      setEditStatus((current) => ({ ...current, tone: "bad", message: "Select an element first.", error: "Select an element first.", timestamp: Date.now() }));
       return;
     }
     const label = selectedElement?.label ?? `element ${selectedEditableId}`;
@@ -892,7 +2079,7 @@ export default function Home() {
       return;
     }
     try {
-      await postLocalEdit<{ success: boolean; error?: string; message?: string; validation?: { issues?: number; warnings?: number; errors?: number } }>(
+      await postLocalEdit(
         "/api/edit/delete-element",
         { element_id: selectedEditableId },
         "Failed to delete element.",
@@ -902,6 +2089,7 @@ export default function Home() {
           setSelectedSvgPoint(null);
           setHoveredSvgMeta(null);
           setHoveredSvgPoint(null);
+          setHoveredProjectElementId(null);
           setSvgClickInfo("Element deleted.");
         },
       );
@@ -912,21 +2100,37 @@ export default function Home() {
 
   const submitWallAxisUpdate = async (form: HTMLFormElement) => {
     if (!selectedWallProjectElement?.id) {
-      setEditStatus({ tone: "bad", message: "Select a wall first." });
+      setEditFormError("Select a wall first.");
+      setEditStatus((current) => ({ ...current, tone: "bad", message: "Select a wall first.", error: "Select a wall first.", timestamp: Date.now() }));
       return;
     }
     const formData = new FormData(form);
+    const startX = Number(formData.get("start_x"));
+    const startY = Number(formData.get("start_y"));
+    const endX = Number(formData.get("end_x"));
+    const endY = Number(formData.get("end_y"));
+    if (![startX, startY, endX, endY].every((value) => Number.isFinite(value))) {
+      setEditFormError("Wall axis coordinates must be finite numbers.");
+      return;
+    }
+    if (Math.hypot(endX - startX, endY - startY) < 0.05) {
+      setEditFormError("Wall axis cannot be zero length.");
+      return;
+    }
     const body = {
       wall_id: selectedWallProjectElement.id,
       start: {
-        x: Number(formData.get("start_x")),
-        y: Number(formData.get("start_y")),
+        x: startX,
+        y: startY,
       },
       end: {
-        x: Number(formData.get("end_x")),
-        y: Number(formData.get("end_y")),
+        x: endX,
+        y: endY,
       },
     };
+    setSvgClickInfo(
+      `POST /api/edit/set-wall-axis wall ${selectedWallProjectElement.id} start ${startX.toFixed(2)},${startY.toFixed(2)} end ${endX.toFixed(2)},${endY.toFixed(2)}`,
+    );
     await postLocalEdit("/api/edit/set-wall-axis", body, "Failed to update wall axis.", () => {
       setSvgClickInfo(`Wall ${selectedWallProjectElement.id} axis updated.`);
     });
@@ -934,19 +2138,33 @@ export default function Home() {
 
   const submitWallPropertiesUpdate = async (form: HTMLFormElement) => {
     if (!selectedWallProjectElement?.id) {
-      setEditStatus({ tone: "bad", message: "Select a wall first." });
+      setEditFormError("Select a wall first.");
+      setEditStatus((current) => ({ ...current, tone: "bad", message: "Select a wall first.", error: "Select a wall first.", timestamp: Date.now() }));
       return;
     }
     const formData = new FormData(form);
     const wallTypeValue = String(formData.get("wall_type_id") ?? "").trim();
+    const heightMeters = Number(formData.get("height_meters"));
+    const thicknessMeters = Number(formData.get("thickness_meters"));
+    if (!Number.isFinite(heightMeters) || heightMeters <= 0) {
+      setEditFormError("Wall height must be greater than zero.");
+      return;
+    }
+    if (!Number.isFinite(thicknessMeters) || thicknessMeters <= 0) {
+      setEditFormError("Wall thickness must be greater than zero.");
+      return;
+    }
     const body: Record<string, unknown> = {
       wall_id: selectedWallProjectElement.id,
-      height_meters: Number(formData.get("height_meters")),
-      thickness_meters: Number(formData.get("thickness_meters")),
+      height_meters: heightMeters,
+      thickness_meters: thicknessMeters,
     };
     if (wallTypeValue.length > 0 && Number.isFinite(Number(wallTypeValue))) {
       body.wall_type_id = Number(wallTypeValue);
     }
+    setSvgClickInfo(
+      `POST /api/edit/update-wall wall ${selectedWallProjectElement.id} height ${heightMeters.toFixed(2)} thickness ${thicknessMeters.toFixed(2)}`,
+    );
     await postLocalEdit("/api/edit/update-wall", body, "Failed to update wall properties.", () => {
       setSvgClickInfo(`Wall ${selectedWallProjectElement.id} properties updated.`);
     });
@@ -955,19 +2173,43 @@ export default function Home() {
   const submitOpeningUpdate = async (kind: "door" | "window", form: HTMLFormElement) => {
     const selectedOpeningId = kind === "door" ? selectedDoorProjectElement?.id : selectedWindowProjectElement?.id;
     if (!selectedOpeningId) {
-      setEditStatus({ tone: "bad", message: `Select a ${kind} first.` });
+      setEditFormError(`Select a ${kind} first.`);
+      setEditStatus((current) => ({ ...current, tone: "bad", message: `Select a ${kind} first.`, error: `Select a ${kind} first.`, timestamp: Date.now() }));
       return;
     }
     const formData = new FormData(form);
+    const offsetMeters = Number(formData.get("offset_meters"));
+    const widthMeters = Number(formData.get("width_meters"));
+    const heightMeters = Number(formData.get("height_meters"));
+    if (!Number.isFinite(offsetMeters) || offsetMeters < 0) {
+      setEditFormError("Offset must be zero or greater.");
+      return;
+    }
+    if (!Number.isFinite(widthMeters) || widthMeters <= 0) {
+      setEditFormError("Width must be greater than zero.");
+      return;
+    }
+    if (!Number.isFinite(heightMeters) || heightMeters <= 0) {
+      setEditFormError("Height must be greater than zero.");
+      return;
+    }
     const body: Record<string, unknown> = {
       [`${kind}_id`]: selectedOpeningId,
-      offset_meters: Number(formData.get("offset_meters")),
-      width_meters: Number(formData.get("width_meters")),
-      height_meters: Number(formData.get("height_meters")),
+      offset_meters: offsetMeters,
+      width_meters: widthMeters,
+      height_meters: heightMeters,
     };
     if (kind === "window") {
-      body.sill_height_meters = Number(formData.get("sill_height_meters"));
+      const sillHeightMeters = Number(formData.get("sill_height_meters"));
+      if (!Number.isFinite(sillHeightMeters) || sillHeightMeters < 0) {
+        setEditFormError("Sill height must be zero or greater.");
+        return;
+      }
+      body.sill_height_meters = sillHeightMeters;
     }
+    setSvgClickInfo(
+      `POST ${kind === "door" ? "/api/edit/update-door" : "/api/edit/update-window"} ${kind} ${selectedOpeningId} offset ${offsetMeters.toFixed(2)}m width ${widthMeters.toFixed(2)}m height ${heightMeters.toFixed(2)}m`,
+    );
     await postLocalEdit(kind === "door" ? "/api/edit/update-door" : "/api/edit/update-window", body, `Failed to update ${kind}.`, () => {
       setSvgClickInfo(`${kind === "door" ? "Door" : "Window"} ${selectedOpeningId} updated.`);
     });
@@ -980,7 +2222,18 @@ export default function Home() {
   };
 
   const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (viewMode === "2d" && interactionMode === "draft-wall") {
+    if (viewMode !== "2d") {
+      return;
+    }
+    const target = event.target as Element | null;
+    if (interactionMode === "draft-wall") {
+      return;
+    }
+    if (interactionMode === "move-wall" || interactionMode === "move-opening") {
+      event.preventDefault();
+      if (beginEditDrag(target, event)) {
+        return;
+      }
       return;
     }
     setDragging(true);
@@ -990,6 +2243,23 @@ export default function Home() {
 
   const onPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
     const target = event.target as Element | null;
+    if (editDragRef.current) {
+      const svgPoint = svgHostRef.current ? svgPointFromClient(svgHostRef.current, event.clientX, event.clientY, currentSvgViewBox) : null;
+      const modelPoint = modelPointFromSvgPoint(svgPoint);
+      if (editDragRef.current.kind === "wall") {
+        updateWallDragPreview(editDragRef.current, svgPoint, modelPoint);
+      } else {
+        updateOpeningDragPreview(editDragRef.current, svgPoint, modelPoint);
+      }
+      if (svgPoint) {
+        setSvgClickInfo(
+          editDragRef.current.kind === "wall"
+            ? `Wall drag preview • SVG ${svgPoint.x.toFixed(2)}, ${svgPoint.y.toFixed(2)}${modelPoint ? ` • model ${modelPoint.x.toFixed(2)}, ${modelPoint.y.toFixed(2)}` : ""}`
+            : `Opening drag preview • SVG ${svgPoint.x.toFixed(2)}, ${svgPoint.y.toFixed(2)}${modelPoint ? ` • model ${modelPoint.x.toFixed(2)}, ${modelPoint.y.toFixed(2)}` : ""}`,
+        );
+      }
+      return;
+    }
     if (target) {
       const clickable = target.closest("[data-element-id]") as SVGElement | null;
       if (clickable) {
@@ -1008,7 +2278,26 @@ export default function Home() {
             x: event.clientX - rect.left,
             y: event.clientY - rect.top,
           });
+          return;
         }
+      }
+      const svgPoint = svgHostRef.current ? svgPointFromClient(svgHostRef.current, event.clientX, event.clientY, currentSvgViewBox) : null;
+      const modelPoint = modelPointFromSvgPoint(svgPoint);
+      const nearbyOpening = modelPoint ? nearestOpeningHit(selectedProjectDocument, modelPoint, 0.35) : null;
+      const nearbyWall = modelPoint ? nearestWallHit(selectedProjectDocument, modelPoint, 0.45) : null;
+      const nearby = nearbyOpening ?? nearbyWall;
+      if (nearby) {
+        const rect = (event.currentTarget as HTMLDivElement).getBoundingClientRect();
+        setHoveredSvgMeta({
+          elementId: String(nearbyOpening ? nearbyOpening.opening.element_id ?? nearbyOpening.opening.id ?? "-" : nearbyWall?.wall.id ?? "-"),
+          kind: nearbyOpening ? (nearbyOpening.kind === "window" ? "Window" : "Door") : "Wall",
+          hitKind: nearbyOpening ? "opening" : "wall_body",
+          svgId: nearbyOpening ? null : null,
+        });
+        setHoveredSvgPoint({
+          x: event.clientX - rect.left,
+          y: event.clientY - rect.top,
+        });
       } else {
         setHoveredSvgMeta(null);
         setHoveredSvgPoint(null);
@@ -1025,11 +2314,19 @@ export default function Home() {
   const stopDragging = () => {
     setDragging(false);
     dragOrigin.current = null;
+    if (editDragRef.current) {
+      suppressNextSvgClickRef.current = true;
+      editDragRef.current = null;
+    }
     setHoveredSvgMeta(null);
     setHoveredSvgPoint(null);
   };
 
   const handleSvgClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (suppressNextSvgClickRef.current) {
+      suppressNextSvgClickRef.current = false;
+      return;
+    }
     const target = event.target as Element | null;
     if (!target) {
       return;
@@ -1056,32 +2353,53 @@ export default function Home() {
     }
 
     if (viewMode === "2d" && (interactionMode === "draft-door" || interactionMode === "draft-window")) {
-      const clickable = target.closest("[data-element-id]") as Element | null;
-      if (clickable) {
-        const kind = normalizeKindKey(clickable.getAttribute("data-kind"));
-        const elementId = clickable.getAttribute("data-element-id");
-        if (kind === "wall" && elementId) {
-          const matchedElement = findElementByIdLoose(data, elementId);
-          if (matchedElement) {
-            setSelection({
-              kind: "element",
-              label: `${matchedElement.kind ?? "Wall"} #${matchedElement.id ?? elementId}`,
-              value: matchedElement,
-              svgMeta: {
-                elementId,
-                kind: matchedElement.kind ?? null,
-                hitKind: clickable.getAttribute("data-hit-kind"),
-                svgId: clickable.id || null,
-              },
-            });
-            setSelectedSvgId(elementId);
-            setSelectedSvgPoint(null);
-            setSvgClickInfo(`${openingModeLabel ?? "Opening"} host wall selected.`);
-            return;
-          }
-        }
+      const wallMeta = findClosestSvgWall(target);
+      const wallProjectElement = data?.projectJson && isObject(data.projectJson.document)
+        ? asArray<JsonObject>(data.projectJson.document.elements).find((candidate) => toNumber(candidate.id, -1) === toNumber(wallMeta?.elementId ?? -1, -1))
+        : null;
+      const svgPoint = svgHostRef.current ? svgPointFromClient(svgHostRef.current, event.clientX, event.clientY, currentSvgViewBox) : null;
+      const modelPoint = modelPointFromSvgPoint(svgPoint);
+      const nearbyWall = !wallMeta && modelPoint ? nearestWallHit(selectedProjectDocument, modelPoint, 0.45) : null;
+      const wallCandidate = wallProjectElement ?? (nearbyWall?.wall ?? null);
+      const wallAxis = extractWallAxis(isObject(wallCandidate?.wall) ? wallCandidate.wall : null);
+      const projected = modelPoint && wallAxis ? projectPointToWallAxis(modelPoint, wallAxis) : null;
+      const offsetMeters = projected ? Math.max(0, projected.offset) : openingDraft.offsetMeters;
+      const displayRect = (event.currentTarget as HTMLDivElement).getBoundingClientRect();
+      const hostWallId = toNumber(wallCandidate?.id ?? nearbyWall?.wall.id ?? null, NaN);
+      if (!Number.isFinite(hostWallId)) {
+        setSvgClickInfo("Click a wall to place opening.");
+        setEditFormError("Click a wall to place opening.");
+        return;
       }
-      setSvgClickInfo("Select a wall first.");
+      setSelection({
+        kind: "element",
+        label: `Wall #${hostWallId}`,
+        value: (wallCandidate as JsonObject) ?? null,
+        svgMeta: {
+          elementId: String(hostWallId),
+          kind: "Wall",
+          hitKind: wallMeta?.hitKind ?? "wall_body",
+          svgId: wallMeta?.svgId ?? null,
+        },
+      });
+      setSelectedSvgId(String(hostWallId));
+      setSelectedSvgPoint({
+        x: event.clientX - displayRect.left,
+        y: event.clientY - displayRect.top,
+      });
+      setHoveredSvgMeta(null);
+      setHoveredSvgPoint(null);
+      setOpeningDraft((current) => ({
+        ...current,
+        hostWallId,
+        offsetMeters,
+        svgPoint,
+        modelPoint,
+        preview: null,
+      }));
+      setSvgClickInfo(
+        `${openingModeLabel ?? "Opening"} host wall #${hostWallId} selected. SVG ${svgPoint ? `${svgPoint.x.toFixed(2)}, ${svgPoint.y.toFixed(2)}` : "-"} model ${modelPoint ? `${modelPoint.x.toFixed(2)}, ${modelPoint.y.toFixed(2)}` : "-"} offset ${offsetMeters.toFixed(2)}m.`,
+      );
       return;
     }
 
@@ -1122,6 +2440,69 @@ export default function Home() {
       }
     }
     const rect = (event.currentTarget as HTMLDivElement).getBoundingClientRect();
+    const svgPoint = svgHostRef.current ? svgPointFromClient(svgHostRef.current, event.clientX, event.clientY, currentSvgViewBox) : null;
+    const modelPoint = modelPointFromSvgPoint(svgPoint);
+    const nearbyOpening = modelPoint ? nearestOpeningHit(selectedProjectDocument, modelPoint, 0.35) : null;
+    const nearbyWall = modelPoint ? nearestWallHit(selectedProjectDocument, modelPoint, 0.45) : null;
+    if (nearbyOpening) {
+      const id = String(nearbyOpening.opening.element_id ?? nearbyOpening.opening.id ?? "");
+      const matchedElement = findElementByIdLoose(data, id);
+      const svgMeta: SvgMetadata = {
+        elementId: id,
+        kind: nearbyOpening.kind === "window" ? "Window" : "Door",
+        hitKind: "opening",
+        svgId: null,
+      };
+      setSelectedSvgId(id);
+      setSelection(
+        matchedElement
+          ? {
+              kind: "element",
+              label: `${matchedElement.kind ?? svgMeta.kind} #${matchedElement.id ?? id}`,
+              value: matchedElement,
+              svgMeta,
+            }
+          : {
+              kind: "svg-only",
+              label: `${svgMeta.kind} #${svgMeta.elementId}`,
+              svgMeta,
+              approxPoint: null,
+            },
+      );
+      setSelectedSvgPoint({
+        x: event.clientX - rect.left,
+        y: event.clientY - rect.top,
+      });
+      setHoveredSvgMeta(null);
+      setHoveredSvgPoint(null);
+      setSvgClickInfo(`Selected nearby ${svgMeta.kind} #${svgMeta.elementId} using model proximity.`);
+      return;
+    }
+    if (nearbyWall) {
+      const id = String(nearbyWall.wall.id ?? "");
+      const matchedElement = findElementByIdLoose(data, id);
+      const svgMeta: SvgMetadata = {
+        elementId: id,
+        kind: "Wall",
+        hitKind: "wall_body",
+        svgId: null,
+      };
+      setSelectedSvgId(id);
+      setSelection({
+        kind: "element",
+        label: `${matchedElement?.kind ?? "Wall"} #${matchedElement?.id ?? id}`,
+        value: matchedElement ?? (nearbyWall.wall as DebugElement),
+        svgMeta,
+      });
+      setSelectedSvgPoint({
+        x: event.clientX - rect.left,
+        y: event.clientY - rect.top,
+      });
+      setHoveredSvgMeta(null);
+      setHoveredSvgPoint(null);
+      setSvgClickInfo(`Selected nearby wall #${id} using model proximity.`);
+      return;
+    }
     const approxPoint = {
       x: event.clientX - rect.left,
       y: event.clientY - rect.top,
@@ -1147,15 +2528,45 @@ export default function Home() {
   const validationWarnings = validation.warnings;
   const validationErrors = validation.errors;
   const validationIssueList = validationIssuesList(validation.issues);
+  const wallScheduleCount = data?.debug.schedules.walls.length ?? 0;
+  const openingScheduleCount = data?.debug.schedules.openings.length ?? 0;
+  const roomScheduleCount = data?.debug.schedules.rooms.length ?? 0;
+  const sceneElementCount = data?.debug.elements.length ?? currentSvgIds.length;
+  const debugWallCount = data?.debug.elements.filter((element) => normalizeKindKey(element.kind) === "wall").length ?? 0;
+  const debugOpeningCount = data?.debug.elements.filter((element) => {
+    const kind = normalizeKindKey(element.kind);
+    return kind === "door" || kind === "window";
+  }).length ?? 0;
+  const debugRoomCount = data?.debug.elements.filter((element) => normalizeKindKey(element.kind) === "room").length ?? 0;
+  const artifactConsistencyWarning = data
+    ? (() => {
+        const messages = [
+          !data.projectJson && (!data.obj || artifactStats.objFaceCount === 0) ? "No 3D source available." : null,
+          wallScheduleCount !== debugWallCount ? `wall count mismatch (${wallScheduleCount} schedule / ${debugWallCount} debug).` : null,
+          openingScheduleCount !== debugOpeningCount ? `opening count mismatch (${openingScheduleCount} schedule / ${debugOpeningCount} debug).` : null,
+          roomScheduleCount !== debugRoomCount ? `room count mismatch (${roomScheduleCount} schedule / ${debugRoomCount} debug).` : null,
+        ].filter((item): item is string => Boolean(item));
+        return messages.length > 0 ? messages.join(" ") : null;
+      })()
+    : null;
   const lastEditBadge = editBusy
     ? "Creating..."
     : editStatus.tone === "good"
       ? "Success"
       : editStatus.tone === "warn"
         ? "Warnings"
+      : editStatus.tone === "bad"
+        ? "Error"
+        : "Idle";
+  const editStatusToneClass =
+    editStatus.tone === "good"
+      ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+      : editStatus.tone === "warn"
+        ? "border-amber-200 bg-amber-50 text-amber-900"
         : editStatus.tone === "bad"
-          ? "Error"
-          : "Idle";
+          ? "border-rose-200 bg-rose-50 text-rose-900"
+          : "border-slate-200 bg-slate-50 text-slate-700";
+  const editStatusLabel = editStatus.tone === "bad" ? "Failed" : "Succeeded";
 
   return (
     <main className="min-h-screen bg-[linear-gradient(180deg,#f5f7f6_0%,#edf1ee_100%)] text-slate-900">
@@ -1171,9 +2582,41 @@ export default function Home() {
             <Badge label="Schema" value={data?.project.schemaVersion?.toString() ?? "-"} />
             <StatusBadge errors={countValidationIssues(validationErrors)} warnings={countValidationIssues(validationWarnings)} />
             <Badge label="Last edit" value={lastEditBadge} />
+            <Badge label="Zoom" value={`${Math.round(scale * 100)}%`} />
+            <Badge label="Walls" value={wallScheduleCount} />
+            <Badge label="Openings" value={openingScheduleCount} />
+            <Badge label="Rooms" value={roomScheduleCount} />
+            <Badge label="Scene ids" value={sceneElementCount} />
           </div>
         </div>
       </header>
+
+      {!bridgeStatus.configured ? (
+        <div className="border-b border-amber-200 bg-amber-50 px-6 py-3 text-sm text-amber-900">
+          <div className="mx-auto flex max-w-[1800px] flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="font-medium">Bridge not configured</p>
+              <p className="mt-1 text-xs">{bridgeStatus.message}</p>
+              {bridgeStatus.instructions.length > 0 ? (
+                <ul className="mt-2 list-disc space-y-1 pl-5 text-xs">
+                  {bridgeStatus.instructions.map((instruction) => (
+                    <li key={instruction}>{instruction}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+            <button
+              type="button"
+              className="rounded-full border border-amber-300 bg-white px-3 py-1.5 text-xs font-medium text-amber-900 hover:bg-amber-100"
+              onClick={() => {
+                void reloadSample();
+              }}
+            >
+              Reload sample
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       <section className="mx-auto grid max-w-[1800px] grid-cols-[320px_minmax(0,1fr)_400px] gap-4 px-4 py-4">
         <aside className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -1230,6 +2673,21 @@ export default function Home() {
 
           <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
             Static artifact mode uses exported files only. SVG click-selection works only if the exporter embeds element ids or `data-element-id` attributes.
+          </div>
+
+          <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+            <p className="font-medium text-slate-900">Artifact sync</p>
+            <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+              <div className="rounded-xl bg-white px-3 py-2">Exported: {exportTimestamp ?? "not provided"}</div>
+              <div className="rounded-xl bg-white px-3 py-2">OBJ vertices: {artifactStats.objVertexCount}</div>
+              <div className="rounded-xl bg-white px-3 py-2">OBJ faces: {artifactStats.objFaceCount}</div>
+              <div className="rounded-xl bg-white px-3 py-2">OBJ objects: {artifactStats.objObjectCount || 1}</div>
+            </div>
+            {artifactConsistencyWarning ? (
+              <p className="mt-2 text-[11px] text-amber-700">{artifactConsistencyWarning}</p>
+            ) : (
+              <p className="mt-2 text-[11px] text-emerald-700">2D and 3D artifacts look consistent enough for viewer use.</p>
+            )}
           </div>
 
           {loadError ? (
@@ -1401,11 +2859,11 @@ export default function Home() {
           <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 px-4 py-3">
             <div>
               <p className="text-sm font-medium text-slate-500">Viewer</p>
-              <p className="text-lg font-semibold">{viewMode === "2d" ? "SVG floorplan" : "3D OBJ view"}</p>
+              <p className="text-lg font-semibold">{viewMode === "2d" ? "2D top view" : "3D scene"}</p>
               <p className="text-xs text-slate-500">
                 {viewMode === "2d"
-                  ? `SVG ids detected: ${currentSvgIds.length > 0 ? `${currentSvgIds.length}` : "none"}`
-                  : "OBJ geometry is read-only and selection is metadata-free for now."}
+                  ? `Scene elements: ${data?.debug.elementCount ?? 0}`
+                  : "3D scene is built from the exported project JSON so walls, rooms, and openings stay separate."}
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -1414,6 +2872,8 @@ export default function Home() {
                 onClick={() => {
                   setViewMode("2d");
                   setInteractionMode("select");
+                  setDragPreview(null);
+                  editDragRef.current = null;
                 }}
               >
                 2D Floorplan
@@ -1424,6 +2884,8 @@ export default function Home() {
                   setViewMode("3d");
                   setInteractionMode("select");
                   setDraftWall(null);
+                  setDragPreview(null);
+                  editDragRef.current = null;
                 }}
               >
                 3D View
@@ -1470,139 +2932,67 @@ export default function Home() {
                   >
                     Add window
                   </button>
-                  <button className="rounded-full border border-slate-200 px-3 py-1.5 hover:bg-slate-50" onClick={() => setScale((value) => Math.min(4, value + 0.1))}>
-                    Zoom +
+                  <button
+                    className={`rounded-full border px-3 py-1.5 ${interactionMode === "move-wall" ? "border-sky-300 bg-sky-50 text-sky-800" : "border-slate-200 hover:bg-slate-50"}`}
+                    onClick={() => {
+                      setInteractionMode((current) => (current === "move-wall" ? "select" : "move-wall"));
+                      setDraftWall(null);
+                      setOpeningDraft(createDefaultOpeningDraft());
+                      setDragPreview(null);
+                      editDragRef.current = null;
+                      setSvgClickInfo("Move wall mode. Select and drag a wall to preview a translation.");
+                    }}
+                  >
+                    Move wall
                   </button>
-                  <button className="rounded-full border border-slate-200 px-3 py-1.5 hover:bg-slate-50" onClick={() => setScale((value) => Math.max(0.25, value - 0.1))}>
-                    Zoom -
+                  <button
+                    className={`rounded-full border px-3 py-1.5 ${interactionMode === "move-opening" ? "border-sky-300 bg-sky-50 text-sky-800" : "border-slate-200 hover:bg-slate-50"}`}
+                    onClick={() => {
+                      setInteractionMode((current) => (current === "move-opening" ? "select" : "move-opening"));
+                      setDraftWall(null);
+                      setOpeningDraft(createDefaultOpeningDraft());
+                      setDragPreview(null);
+                      editDragRef.current = null;
+                      setSvgClickInfo("Move opening mode. Select and drag a door or window along its host wall.");
+                    }}
+                  >
+                    Move opening
                   </button>
-                  <button className="rounded-full border border-slate-200 px-3 py-1.5 hover:bg-slate-50" onClick={resetView}>
-                    Reset
+                  <button
+                    className={`rounded-full border px-3 py-1.5 ${snapToGrid ? "border-sky-300 bg-sky-50 text-sky-800" : "border-slate-200 hover:bg-slate-50"}`}
+                    onClick={() => setSnapToGrid((current) => !current)}
+                  >
+                    Snap {snapToGrid ? "on" : "off"}
                   </button>
                 </>
               ) : (
                 <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-600">
-                  OBJ preview only. Metadata-based picking comes later.
+                  3D preview comes from the exported project model.
                 </div>
               )}
             </div>
           </div>
 
-          {viewMode === "2d" ? (
-            <div
-              ref={svgHostRef}
-              className="relative h-[calc(100vh-190px)] overflow-hidden bg-[radial-gradient(circle_at_top,#f8faf8_0,#eef4f0_55%,#e6ece8_100%)]"
-              onClick={handleSvgClick}
-              onWheel={onWheel}
-              onPointerDown={onPointerDown}
-              onPointerMove={onPointerMove}
-              onPointerUp={stopDragging}
-              onPointerLeave={stopDragging}
-            >
-              {data ? (
-                <div
-                  className={`absolute inset-0 origin-top-left ${dragging ? "cursor-grabbing" : interactionMode === "draft-wall" ? "cursor-crosshair" : "cursor-grab"}`}
-                  style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})` }}
-                >
-                  <div className="p-6">
-                    <div className="relative inline-block rounded-2xl border border-slate-200 bg-white/80 p-4 shadow-lg">
-                      <div className="svg-canvas max-w-full" dangerouslySetInnerHTML={{ __html: data.svg }} />
-                      {draftWall?.start ? (
-                        <svg className="pointer-events-none absolute inset-0 h-full w-full overflow-visible">
-                          {draftWall.end ? (
-                            <>
-                              <line
-                                x1={draftWall.start.x}
-                                y1={draftWall.start.y}
-                                x2={draftWall.end.x}
-                                y2={draftWall.end.y}
-                                stroke="#f59e0b"
-                                strokeWidth="3"
-                                strokeDasharray="8 6"
-                              />
-                              <circle cx={draftWall.start.x} cy={draftWall.start.y} r="5" fill="#f59e0b" />
-                              <circle cx={draftWall.end.x} cy={draftWall.end.y} r="5" fill="#f59e0b" />
-                              <text x={(draftWall.start.x + draftWall.end.x) / 2 + 8} y={(draftWall.start.y + draftWall.end.y) / 2 - 8} fill="#92400e" fontSize="12">
-                                {draftLength ? `Preview ${draftLength.toFixed(1)} px` : "Draft preview only"}
-                              </text>
-                            </>
-                          ) : (
-                            <circle cx={draftWall.start.x} cy={draftWall.start.y} r="5" fill="#f59e0b" />
-                          )}
-                        </svg>
-                      ) : null}
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex h-full items-center justify-center text-slate-500">Loading floorplan SVG...</div>
-              )}
-
-              {selectedSvgPoint ? (
-                <div
-                  className="pointer-events-none absolute z-10 rounded-full border-2 border-rose-600 bg-rose-100/60"
-                  style={{
-                    left: `${selectedSvgPoint.x - 10}px`,
-                    top: `${selectedSvgPoint.y - 10}px`,
-                    width: 20,
-                    height: 20,
-                  }}
-                />
-              ) : null}
-
-              {hoveredSvgMeta && hoveredSvgPoint ? (
-                <div
-                  className="pointer-events-none absolute z-20 rounded-lg border border-slate-200 bg-slate-900/90 px-2.5 py-1.5 text-xs text-white shadow-lg"
-                  style={{
-                    left: `${Math.min(hoveredSvgPoint.x + 14, 280)}px`,
-                    top: `${Math.max(hoveredSvgPoint.y - 12, 8)}px`,
-                  }}
-                >
-                  <div className="font-medium">
-                    {hoveredSvgMeta.kind ?? "Element"} #{hoveredSvgMeta.elementId}
-                  </div>
-                  <div className="text-[11px] text-slate-200">{hoveredSvgMeta.hitKind ?? "hover"}</div>
-                </div>
-              ) : null}
-
-              {interactionMode === "draft-wall" ? (
-                <div className="pointer-events-none absolute left-4 bottom-4 z-20 rounded-2xl border border-amber-200 bg-amber-50/95 px-3 py-2 text-xs text-amber-900 shadow">
-                  Draft preview only. First click sets start, second click sets end. Press Esc to cancel.
-                </div>
-              ) : interactionMode === "draft-door" || interactionMode === "draft-window" ? (
-                <div className="pointer-events-none absolute left-4 bottom-4 z-20 rounded-2xl border border-amber-200 bg-amber-50/95 px-3 py-2 text-xs text-amber-900 shadow">
-                  {openingModeLabel ?? "Opening"} draft. Select a wall, then confirm placement from the side panel.
-                </div>
-              ) : null}
-            </div>
-          ) : (
-            <div className="h-[calc(100vh-190px)] p-4">
-              <ObjViewer objText={data?.obj ?? null} />
-            </div>
-          )}
-
-          <style jsx global>{`
-            .svg-canvas [data-element-id] {
-              transition:
-                opacity 140ms ease,
-                filter 140ms ease,
-                transform 140ms ease;
-            }
-            .svg-canvas [data-kind-hidden="true"] {
-              opacity: 0.12;
-              pointer-events: none;
-            }
-            .svg-canvas [data-hovered-svg="true"] * {
-              stroke: #0ea5e9 !important;
-              stroke-width: 2px !important;
-              filter: drop-shadow(0 0 4px rgba(14, 165, 233, 0.55));
-            }
-            .svg-canvas [data-selected-svg="true"] * {
-              stroke: #059669 !important;
-              stroke-width: 2.5px !important;
-              filter: drop-shadow(0 0 6px rgba(5, 150, 105, 0.75));
-            }
-          `}</style>
+          <div className="h-[calc(100vh-190px)] p-4">
+            {data ? (
+              <ObjViewer
+                key={viewMode}
+                projectJson={data.projectJson ?? null}
+                objText={data.obj ?? null}
+                loadedAtLabel={new Date(artifactLoadedAt).toLocaleTimeString()}
+                preset={viewMode === "2d" ? "top" : "isometric"}
+                interactive={Boolean(data)}
+                selectedElementId={selectedEditableId}
+                hoveredElementId={hoveredProjectElementId}
+                onHover={handleProjectHover}
+                onPick={handleProjectPick}
+              />
+            ) : (
+              <div className="flex h-full items-center justify-center rounded-2xl border border-slate-200 bg-white/80 text-slate-500">
+                Loading project scene...
+              </div>
+            )}
+          </div>
         </section>
 
         <aside className="space-y-4 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -1611,9 +3001,10 @@ export default function Home() {
             <p className="text-sm uppercase tracking-[0.2em] text-slate-500">Selected</p>
             <h2 className="mt-1 text-lg font-semibold">{selectedDetails?.title ?? "None"}</h2>
             <p className="mt-2 text-xs text-slate-500">{svgClickInfo}</p>
+            <p className="mt-1 text-xs text-slate-500">{hoveredProjectInfo}</p>
             {hoveredDetails ? <p className="mt-1 text-xs text-emerald-700">Hover: {hoveredDetails}</p> : null}
             <pre className="mt-3 max-h-80 overflow-auto whitespace-pre-wrap text-xs leading-5 text-slate-700">
-              {selectedDetails?.body ?? "Click a row on the left or click SVG elements with embedded ids."}
+              {selectedDetails?.body ?? "Click a row on the left or click elements in the top view."}
             </pre>
           </div>
 
@@ -1713,6 +3104,7 @@ export default function Home() {
                   );
                 })()}
               </div>
+              {editFormError ? <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{editFormError}</div> : null}
               <div className="mt-3 flex flex-wrap gap-2">
                 <button
                   type="submit"
@@ -1757,6 +3149,7 @@ export default function Home() {
             >
               <p className="font-medium">Door editor</p>
               <p className="mt-1 text-xs">Offset and size edits are numeric only for now.</p>
+              {editFormError ? <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{editFormError}</div> : null}
               {(() => {
                 const door = isObject(selectedDoorProjectElement.door) ? selectedDoorProjectElement.door : null;
                 return (
@@ -1797,7 +3190,8 @@ export default function Home() {
                     <div className="space-y-1">
                       <span className="block uppercase tracking-[0.18em] text-sky-700">Host</span>
                       <div className="rounded-lg border border-sky-200 bg-white px-2 py-1.5 text-slate-700">
-                        wall {toNumber(door?.host_wall_id, 0) || "-"}
+                        wall {String(selectedOpeningHostWallProjectElement?.id ?? (toNumber(door?.host_wall_id, 0) || "-"))}
+                        {selectedOpeningHostWall ? ` • ${wallLength(selectedOpeningHostWall).toFixed(2)} m` : ""}
                       </div>
                     </div>
                   </div>
@@ -1834,6 +3228,7 @@ export default function Home() {
             >
               <p className="font-medium">Window editor</p>
               <p className="mt-1 text-xs">Offset, width, height, and sill height can be edited numerically.</p>
+              {editFormError ? <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{editFormError}</div> : null}
               {(() => {
                 const windowElement = isObject(selectedWindowProjectElement.window) ? selectedWindowProjectElement.window : null;
                 return (
@@ -1882,6 +3277,13 @@ export default function Home() {
                         defaultValue={toNumber(windowElement?.sill_height, 0.9)}
                       />
                     </label>
+                    <div className="space-y-1">
+                      <span className="block uppercase tracking-[0.18em] text-violet-700">Host</span>
+                      <div className="rounded-lg border border-violet-200 bg-white px-2 py-1.5 text-slate-700">
+                        wall {String(selectedOpeningHostWallProjectElement?.id ?? (toNumber(windowElement?.host_wall_id, 0) || "-"))}
+                        {selectedOpeningHostWall ? ` • ${wallLength(selectedOpeningHostWall).toFixed(2)} m` : ""}
+                      </div>
+                    </div>
                   </div>
                 );
               })()}
@@ -1922,7 +3324,110 @@ export default function Home() {
             </div>
           ) : null}
 
-          {interactionMode === "draft-wall" ? (
+          {interactionMode === "move-wall" ? (
+            dragPreview?.kind === "wall" ? (
+              <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">
+                <p className="font-medium">Move wall preview</p>
+                <p className="mt-1 text-xs">Drag is preview-only. Confirm will call the local edit bridge once the axis looks right.</p>
+                <div className="mt-3 grid grid-cols-2 gap-3 text-xs">
+                  <div className="rounded-lg bg-white/80 px-2 py-1">Wall #{dragPreview.wallId}</div>
+                  <div className="rounded-lg bg-white/80 px-2 py-1">{snapToGrid ? "Snap on" : "Snap off"}</div>
+                  <div className="rounded-lg bg-white/80 px-2 py-1">Raw Δx {formatSigned(dragPreview.rawDelta.x)} m</div>
+                  <div className="rounded-lg bg-white/80 px-2 py-1">Raw Δy {formatSigned(dragPreview.rawDelta.y)} m</div>
+                  <div className="rounded-lg bg-white/80 px-2 py-1">Preview Δx {formatSigned(dragPreview.delta.x)} m</div>
+                  <div className="rounded-lg bg-white/80 px-2 py-1">Preview Δy {formatSigned(dragPreview.delta.y)} m</div>
+                  <div className="rounded-lg bg-white/80 px-2 py-1">Start {dragPreview.originalAxis.start.x.toFixed(2)}, {dragPreview.originalAxis.start.y.toFixed(2)}</div>
+                  <div className="rounded-lg bg-white/80 px-2 py-1">End {dragPreview.previewAxis.end.x.toFixed(2)}, {dragPreview.previewAxis.end.y.toFixed(2)}</div>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="rounded-full bg-sky-600 px-3 py-1.5 font-medium text-white hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    onClick={() => {
+                      void commitWallDrag();
+                    }}
+                    disabled={editBusy || Math.hypot(dragPreview.delta.x, dragPreview.delta.y) < 1e-6}
+                  >
+                    {editBusy ? "Moving..." : "Confirm move"}
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-full border border-sky-200 bg-white px-3 py-1.5 font-medium text-sky-900 hover:bg-sky-100"
+                    onClick={() => {
+                      cancelEditDrag("Wall move cancelled.");
+                    }}
+                    disabled={editBusy}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">
+                <p className="font-medium">Move wall mode</p>
+                <p className="mt-1 text-xs">Select a wall, then drag it in the 2D floorplan to preview a translation. Press Esc to cancel.</p>
+              </div>
+            )
+          ) : interactionMode === "move-opening" ? (
+            dragPreview?.kind === "opening" ? (
+              <div className={`rounded-2xl border p-4 text-sm ${dragPreview.preview?.can_place ? (dragPreview.preview.valid ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-amber-200 bg-amber-50 text-amber-900") : "border-rose-200 bg-rose-50 text-rose-900"}`}>
+                <p className="font-medium">Move {dragPreview.openingKind} preview</p>
+                <p className="mt-1 text-xs">Drag along the host wall. Confirm uses the local edit bridge; invalid placements stay preview-only.</p>
+                <div className="mt-3 grid grid-cols-2 gap-3 text-xs">
+                  <div className="rounded-lg bg-white/80 px-2 py-1">Opening #{dragPreview.openingId}</div>
+                  <div className="rounded-lg bg-white/80 px-2 py-1">Host wall #{dragPreview.hostWallId}</div>
+                  <div className="rounded-lg bg-white/80 px-2 py-1">{snapToGrid ? "Snap on" : "Snap off"}</div>
+                  <div className="rounded-lg bg-white/80 px-2 py-1">Raw {dragPreview.rawOffsetMeters.toFixed(2)} m</div>
+                  <div className="rounded-lg bg-white/80 px-2 py-1">Requested {dragPreview.requestedOffsetMeters.toFixed(2)} m</div>
+                  <div className="rounded-lg bg-white/80 px-2 py-1">Adjusted {dragPreview.previewOffsetMeters.toFixed(2)} m</div>
+                  <div className="rounded-lg bg-white/80 px-2 py-1">Free {dragPreview.preview?.free_intervals.length ?? 0}</div>
+                  <div className="rounded-lg bg-white/80 px-2 py-1">Blocked {dragPreview.preview?.blocked_intervals.length ?? 0}</div>
+                </div>
+                {dragPreview.preview ? (
+                  <div className="mt-3 rounded-xl border border-white/70 bg-white/80 px-3 py-2 text-xs text-slate-700">
+                    <p className="font-medium text-slate-900">{dragPreview.preview.message}</p>
+                    {dragPreview.preview.warnings.length > 0 ? (
+                      <ul className="mt-2 list-disc space-y-1 pl-5">
+                        {dragPreview.preview.warnings.map((warning) => (
+                          <li key={warning}>{warning}</li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    <p className="mt-2">
+                      SVG {dragPreview.svgPoint ? `${dragPreview.svgPoint.x.toFixed(2)}, ${dragPreview.svgPoint.y.toFixed(2)}` : "-"} • model {dragPreview.modelPoint ? `${dragPreview.modelPoint.x.toFixed(2)}, ${dragPreview.modelPoint.y.toFixed(2)}` : "-"}
+                    </p>
+                  </div>
+                ) : null}
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="rounded-full bg-emerald-600 px-3 py-1.5 font-medium text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    onClick={() => {
+                      void commitOpeningDrag();
+                    }}
+                    disabled={editBusy || !(dragPreview.preview?.can_place ?? false)}
+                  >
+                    {editBusy ? "Moving..." : "Confirm move"}
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-full border border-emerald-200 bg-white px-3 py-1.5 font-medium text-emerald-900 hover:bg-emerald-100"
+                    onClick={() => {
+                      cancelEditDrag("Opening move cancelled.");
+                    }}
+                    disabled={editBusy}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">
+                <p className="font-medium">Move opening mode</p>
+                <p className="mt-1 text-xs">Select a door or window, then drag it along the host wall to preview offset changes. Press Esc to cancel.</p>
+              </div>
+            )
+          ) : interactionMode === "draft-wall" ? (
             draftWall?.start && draftWall.end ? (
               <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
                 <p className="font-medium">Draft wall confirmation</p>
@@ -2008,19 +3513,45 @@ export default function Home() {
           ) : interactionMode === "draft-door" || interactionMode === "draft-window" ? (
             <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
               <p className="font-medium">{openingModeLabel ?? "Opening"} placement</p>
-              <p className="mt-1 text-xs">This uses the selected wall and manual offsets for now. The local engine helper validates placement and refreshes the exported artifacts.</p>
+              <p className="mt-1 text-xs">Click a wall to compute a wall-local offset, or use the manual fields below. The local engine helper validates placement and refreshes the exported artifacts.</p>
               {selectedWallElement ? (
                 <div className="mt-3 rounded-xl border border-amber-200 bg-white px-3 py-2 text-xs text-slate-700">
                   <p className="font-medium text-slate-900">Host wall</p>
                   <p>id {selectedWallElement.id ?? "-"}</p>
                   <p>{selectedWallElement.name ?? "Unnamed wall"}</p>
+                  <p>wall-local length {selectedWallLength ? `${selectedWallLength.toFixed(2)} m` : "-"}</p>
+                  <p>thickness {selectedWallThickness.toFixed(2)} m</p>
+                  <p>selected id {openingDraft.hostWallId ?? selectedWallElement.id ?? "-"}</p>
                   <p className="mt-1 text-[11px] text-slate-500">Select another wall in the SVG or side panel to change the host.</p>
                 </div>
               ) : (
                 <div className="mt-3 rounded-xl border border-amber-200 bg-white px-3 py-2 text-xs text-slate-700">
-                  Select a wall first.
+                  Click a wall to place opening.
                 </div>
               )}
+              {openingDraft.preview ? (
+                <div className={`mt-3 rounded-xl border px-3 py-2 text-xs ${openingDraft.preview.valid ? "border-emerald-200 bg-emerald-50 text-emerald-800" : openingDraft.preview.can_place ? "border-amber-200 bg-amber-50 text-amber-800" : "border-rose-200 bg-rose-50 text-rose-800"}`}>
+                  <p className="font-medium">Placement feedback</p>
+                  <p className="mt-1">{openingDraft.preview.message}</p>
+                  <div className="mt-2 grid grid-cols-2 gap-2">
+                    <div className="rounded-lg bg-white/80 px-2 py-1">Requested {openingDraft.preview.requested_offset_meters.toFixed(2)} m</div>
+                    <div className="rounded-lg bg-white/80 px-2 py-1">Adjusted {openingDraft.preview.adjusted_offset_meters.toFixed(2)} m</div>
+                    <div className="rounded-lg bg-white/80 px-2 py-1">Free intervals {openingDraft.preview.free_intervals.length}</div>
+                    <div className="rounded-lg bg-white/80 px-2 py-1">Blocked {openingDraft.preview.blocked_intervals.length}</div>
+                  </div>
+                  {openingDraft.preview.warnings.length > 0 ? (
+                    <ul className="mt-2 list-disc space-y-1 pl-5">
+                      {openingDraft.preview.warnings.map((warning) => (
+                        <li key={warning}>{warning}</li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  <p className="mt-2 font-medium">Debug</p>
+                  <p className="mt-1 text-[11px]">
+                    SVG {openingDraft.svgPoint ? `${openingDraft.svgPoint.x.toFixed(2)}, ${openingDraft.svgPoint.y.toFixed(2)}` : "-"} • model {openingDraft.modelPoint ? `${openingDraft.modelPoint.x.toFixed(2)}, ${openingDraft.modelPoint.y.toFixed(2)}` : "-"}
+                  </p>
+                </div>
+              ) : null}
               <div className="mt-3 grid grid-cols-2 gap-3 text-xs">
                 <label className="space-y-1">
                   <span className="block uppercase tracking-[0.18em] text-amber-700">Offset m</span>
@@ -2114,7 +3645,7 @@ export default function Home() {
                 <button
                   className="rounded-full bg-amber-600 px-3 py-1.5 font-medium text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60"
                   onClick={() => submitInsertOpening(interactionMode === "draft-door" ? "door" : "window")}
-                  disabled={editBusy || !selectedWallElement}
+                  disabled={editBusy || !selectedWallElement || (openingDraft.preview ? !openingDraft.preview.can_place : false)}
                 >
                   {editBusy ? "Inserting..." : `Insert ${openingModeLabel ?? "opening"}`}
                 </button>
@@ -2132,19 +3663,38 @@ export default function Home() {
           ) : null}
 
           {editStatus.message ? (
-            <div
-              className={`rounded-2xl border p-4 text-sm ${
-                editStatus.tone === "good"
-                  ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-                  : editStatus.tone === "warn"
-                    ? "border-amber-200 bg-amber-50 text-amber-900"
-                    : editStatus.tone === "bad"
-                      ? "border-rose-200 bg-rose-50 text-rose-900"
-                      : "border-slate-200 bg-slate-50 text-slate-700"
-              }`}
-            >
-              <p className="font-medium">Edit status</p>
-              <p className="mt-1 text-xs">{editStatus.message}</p>
+            <div className={`rounded-2xl border p-4 text-sm ${editStatusToneClass}`}>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="font-medium">Edit status</p>
+                  <p className="mt-1 text-xs">{editStatus.command ? `Last command: ${editStatus.command}` : "No command yet."}</p>
+                </div>
+                <div className="text-right text-xs">
+                  <p className="font-medium">{editStatusLabel}</p>
+                  <p>{editStatus.timestamp ? new Date(editStatus.timestamp).toLocaleString() : "-"}</p>
+                </div>
+              </div>
+              <p className="mt-2 text-xs">{editStatus.message}</p>
+              <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                <Pill label="Errors" value={editStatus.validation.errors} tone={editStatus.validation.errors === 0 ? "good" : "bad"} />
+                <Pill label="Warnings" value={editStatus.validation.warnings} tone={editStatus.validation.warnings === 0 ? "good" : "warn"} />
+                <Pill label="Files" value={editStatus.updatedFiles.length} tone={editStatus.updatedFiles.length > 0 ? "good" : "neutral"} />
+              </div>
+              {editStatus.output ? (
+                <details className="mt-3 rounded-xl border border-current/10 bg-white/70 px-3 py-2 text-xs">
+                  <summary className="cursor-pointer font-medium">Helper output</summary>
+                  <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words">{editStatus.output}</pre>
+                </details>
+              ) : null}
+              <div className="mt-3">
+                <button
+                  type="button"
+                  className="rounded-full border border-current/20 bg-white px-3 py-1.5 text-xs font-medium hover:bg-black/5"
+                  onClick={refreshArtifacts}
+                >
+                  Reload artifacts
+                </button>
+              </div>
             </div>
           ) : null}
 

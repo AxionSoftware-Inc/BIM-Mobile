@@ -13,6 +13,15 @@ Temporary read-only BIM viewer prototype for exported engine artifacts.
 - kind filters for walls, rooms, openings, slabs, floors, ceilings, roofs, columns, beams, and stairs
 - local dev-only wall, door, and window edit bridges that refresh exported artifacts
 - local dev-only numeric edit bridges for delete, wall axis, wall properties, door/window properties, and opening moves
+- a small artifact sync readout showing wall/opening/room counts, SVG id count, OBJ vertices/faces, and reload time
+
+## Coordinate Systems
+
+- Engine/BIM coordinates use `X/Y` for the floor plan plane and `Z` for vertical height.
+- SVG uses `X` to the right and `Y` down unless the exported `viewBox` or transforms change that.
+- Three.js uses `X/Z` for the ground plane and `Y` up.
+
+The viewer maps engine plan geometry into `Three.js` so walls stand upright on the grid instead of lying flat.
 
 ## Sample artifacts
 
@@ -59,10 +68,17 @@ Click-selection works only when the SVG export embeds element ids or `data-eleme
 - Hovering a marked SVG group shows the kind and element id in a small tooltip.
 - If ids are missing, the click falls back to an approximate screen-space marker and the right panel remains panel-driven.
 - The current engine SVG export sample now embeds metadata, so wall/room/opening selection should work directly from the SVG.
+- The viewer now keeps the SVG fitted to the available panel using the exported `viewBox`, so the floorplan is easier to read and the highlight overlays stay aligned.
 
 ## 3D View
 
 The 3D tab reads `public/sample/walls.obj` and renders it with `three.js`.
+
+The OBJ viewer remaps engine coordinates into Three.js space so the model sits on the ground plane:
+
+- engine `X` → Three `X`
+- engine `Y` → Three `Z` with sign adjusted to keep the scene readable
+- engine `Z` → Three `Y`
 
 If you update the viewer from a fresh checkout, make sure dependencies are installed:
 
@@ -71,6 +87,7 @@ npm install
 ```
 
 The 3D tab includes orbit controls, reset camera, and a solid/wireframe toggle. It is still read-only and does not do per-element selection yet.
+The 3D panel also shows basic diagnostics so it is obvious when the OBJ is missing, empty, or out of sync with the 2D export.
 
 ## Add Wall Draft
 
@@ -100,6 +117,38 @@ Workflow:
 4. Click `Insert door` or `Insert window`.
 5. The route calls the local helper, regenerates exported artifacts, and reloads the viewer.
 
+If the selection is not a wall, the form will stay in place and show a clear message instead of silently failing.
+
+The click-to-place workflow now also computes a wall-local offset preview:
+
+- click a wall while in `Add door` or `Add window`
+- the viewer projects the pointer onto the wall axis and fills the offset preview
+- if placement is blocked, the preview shows valid/free intervals and the confirm button stays disabled
+- if coordinate mapping is approximate, the manual offset input still remains available
+
+## Move Wall / Move Opening
+
+The viewer has preview-first drag editing for walls and hosted openings:
+
+- `Move wall` lets you drag a wall in 2D and preview the translated axis before committing
+- `Move opening` lets you drag a door or window along its host wall and preview the wall-local offset
+- the `Snap on/off` toggle affects preview only, so the commit always uses the displayed preview values
+- `Cancel` clears the preview overlay and returns the viewer to normal selection mode
+
+Manual verification checklist:
+
+1. Select a wall.
+2. Switch to `Move wall`.
+3. Drag the wall and confirm the preview axis looks right.
+4. Confirm the move and make sure room area and validation refresh.
+5. Select a door or window.
+6. Switch to `Move opening`.
+7. Drag along the host wall and verify the preview offset and interval feedback.
+8. Confirm the move and ensure the opening count and validation refresh.
+9. Try an out-of-range or overlapping opening and verify the confirm button stays disabled or shows a clear warning.
+10. Press `Cancel` and make sure the overlay disappears and selection remains usable.
+11. Reload the sample and confirm the viewer still behaves normally.
+
 ## Edit Selected Element
 
 When a wall, door, or window is selected, the right panel exposes numeric edit controls:
@@ -110,6 +159,9 @@ When a wall, door, or window is selected, the right panel exposes numeric edit c
 - window selection shows offset, width, height, and sill height fields.
 - `Apply axis`, `Update wall`, `Update door`, and `Update window` push the changes through the local helper and refresh the exported artifacts.
 - the bridge also supports `move_hosted_opening` for direct opening offset moves, which can be wired into the UI later if needed.
+- inline validation catches zero-length walls, negative offsets, and invalid sizes before the route is called.
+- after a successful insert, the selected wall stays selected so the opening form remains grounded in the same host wall.
+- the status panel shows the last command, validation counts, helper output, and a manual artifact reload button.
 
 Limitations:
 
@@ -138,6 +190,20 @@ Required env vars for the route:
 - `TBE_WORKING_PROJECT`
 - `TBE_VIEWER_SAMPLE_DIR`
 
+The edit routes all return the same JSON shape:
+
+```json
+{
+  "success": true,
+  "command": "create_wall",
+  "message": "create_wall completed successfully.",
+  "validation": { "errors": 0, "warnings": 0 },
+  "updatedFiles": ["project.json", "debug_report.json", "floorplan.svg"],
+  "output": "...helper stdout or stderr...",
+  "error": null
+}
+```
+
 Build the helper with the normal CMake preset:
 
 ```bash
@@ -161,6 +227,31 @@ Limitations:
 - no browser-to-C-ABI bridge
 - no arbitrary shell execution from the browser
 - refreshes exported artifacts, not a live in-memory engine session
+- if the bridge is not configured, the UI stays read-only and shows a setup banner
+- current 3D OBJ is a single mesh preview; if wall groups appear missing, the diagnostics panel should be checked first
+
+## Smoke Test
+
+Run the local edit smoke script after starting the Next.js dev server:
+
+```bash
+npm run smoke:edit
+```
+
+It exercises the local edit bridge in sequence:
+
+- create wall
+- insert door
+- update door
+- insert window
+- update window
+- delete window
+- move wall axis
+- update wall properties
+- validates the final debug report reports zero validation errors
+- verifies wall/opening counts change as expected in the refreshed artifacts
+
+If the bridge is not configured or the dev server is not running, the script fails with a clear message.
 
 ## Filters
 
@@ -204,3 +295,4 @@ Then open [http://localhost:3000](http://localhost:3000).
 - SVG selection depends on engine metadata attributes like `data-element-id`, `data-kind`, and `data-hit-kind`.
 - 3D OBJ selection is not yet metadata-aware.
 - Next step is to replace the static artifact flow with a live engine bridge once the macOS Flutter toolchain is fixed.
+- Static mode still works if the bridge env vars are missing; only edit actions are disabled.

@@ -7,6 +7,9 @@
 
 namespace tbe::core {
 
+inline constexpr int TBE_SCHEMA_VERSION = 1;
+inline constexpr std::string_view TBE_ENGINE_VERSION = "mvp-level12";
+
 class Project {
 public:
     explicit Project(std::string name);

@@ -10,12 +10,18 @@
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace {
 
 bool near(double left, double right) {
     return std::abs(left - right) < 1.0e-9;
+}
+
+std::string read_text(const std::filesystem::path& path) {
+    std::ifstream in(path);
+    return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
 }
 
 double min_x(const std::vector<tbe::core::Point2>& points) {
@@ -359,6 +365,14 @@ int main() {
 
     tbe::core::MoveWallCommand move_right{edit_right.created_id(), tbe::core::Point2{.x = 1.0, .y = 0.0}};
     editable_processor.execute(editable_document, move_right);
+    const auto moved_dirty_rooms = editable_document.dirty_room_ids();
+    if (moved_dirty_rooms.empty()) {
+        editable_document.mark_rooms_dirty_for_wall(edit_right.created_id());
+    }
+    assert(!editable_document.dirty_room_ids().empty());
+    const auto moved_dirty_areas = sorted_room_areas(editable_document, editable_document.recompute_dirty_rooms());
+    const auto moved_full_areas = sorted_room_areas(editable_document, editable_document.recompute_all_rooms());
+    assert(moved_dirty_areas == moved_full_areas);
     const auto moved_room_ids = editable_document.detect_rooms();
     assert(moved_room_ids.size() == 1);
     const auto* moved_room = editable_document.find_ptr(moved_room_ids.front())->room();
@@ -383,11 +397,31 @@ int main() {
 
     tbe::core::InsertDoorCommand editable_door{"Editable Door", edit_bottom.created_id(), 2.0, 0.9, 2.1};
     editable_processor.execute(editable_document, editable_door);
+    tbe::core::InsertWindowCommand editable_window{"Editable Window", edit_bottom.created_id(), 4.5, 1.0, 1.0, 0.9};
+    editable_processor.execute(editable_document, editable_window);
+    const auto editable_wall_schedule_before = editable_document.generate_wall_schedule();
     tbe::core::MoveHostedOpeningCommand move_door{editable_door.created_id(), 3.0};
     editable_processor.execute(editable_document, move_door);
     const auto* moved_door = editable_document.find_ptr(editable_door.created_id())->door();
     assert(moved_door != nullptr);
     assert(near(moved_door->offset_meters, 3.0));
+    assert(editable_document.find_ptr(edit_bottom.created_id())->wall()->geometry.dirty);
+
+    tbe::core::ResizeDoorCommand resize_door{editable_door.created_id(), 1.1, 2.1};
+    editable_processor.execute(editable_document, resize_door);
+    tbe::core::ResizeWindowCommand resize_window{editable_window.created_id(), 1.2, 1.0, 0.9};
+    editable_processor.execute(editable_document, resize_window);
+    editable_document.regenerate_dirty_geometry();
+    const auto editable_wall_schedule_after = editable_document.generate_wall_schedule();
+    const auto editable_wall_row_before = std::find_if(editable_wall_schedule_before.begin(), editable_wall_schedule_before.end(), [wall_id = edit_bottom.created_id()](const auto& row) {
+        return row.wall_id == wall_id;
+    });
+    const auto editable_wall_row_after = std::find_if(editable_wall_schedule_after.begin(), editable_wall_schedule_after.end(), [wall_id = edit_bottom.created_id()](const auto& row) {
+        return row.wall_id == wall_id;
+    });
+    assert(editable_wall_row_before != editable_wall_schedule_before.end());
+    assert(editable_wall_row_after != editable_wall_schedule_after.end());
+    assert(editable_wall_row_after->net_area_square_meters < editable_wall_row_before->net_area_square_meters);
 
     bool rejected_outside_move = false;
     try {
@@ -402,6 +436,37 @@ int main() {
     assert(editable_document.detect_rooms().empty());
     editable_processor.undo_last(editable_document);
     assert(editable_document.detect_rooms().size() == 1);
+
+    tbe::core::Document opening_torture_document{"Opening Torture"};
+    const auto opening_level = opening_torture_document.create_level("Level 1", 0.0, 3.0);
+    const auto opening_bottom = opening_torture_document.create_wall(
+        "Bottom",
+        tbe::core::Line2{.start = {.x = 0.0, .y = 0.0}, .end = {.x = 8.0, .y = 0.0}},
+        0.2,
+        3.0,
+        opening_level
+    );
+    opening_torture_document.create_wall("Top", tbe::core::Line2{.start = {.x = 8.0, .y = 4.0}, .end = {.x = 0.0, .y = 4.0}}, 0.2, 3.0, opening_level);
+    opening_torture_document.create_wall("Right", tbe::core::Line2{.start = {.x = 8.0, .y = 0.0}, .end = {.x = 8.0, .y = 4.0}}, 0.2, 3.0, opening_level);
+    opening_torture_document.create_wall("Left", tbe::core::Line2{.start = {.x = 0.0, .y = 4.0}, .end = {.x = 0.0, .y = 0.0}}, 0.2, 3.0, opening_level);
+    opening_torture_document.auto_join_walls();
+    const auto opening_door = opening_torture_document.create_door("Door", opening_bottom, 1.6, 0.9, 2.1);
+    const auto opening_window = opening_torture_document.create_window("Window", opening_bottom, 4.6, 1.2, 1.0, 0.9);
+    tbe::core::Project opening_project{"Opening Project"};
+    opening_project.active_document() = opening_torture_document;
+    const auto opening_saved_json = opening_project.to_json();
+    auto opening_loaded_project = tbe::core::Project::from_json(opening_saved_json);
+    opening_loaded_project.active_document().regenerate_dirty_geometry();
+    assert(opening_loaded_project.active_document().find_ptr(opening_door) != nullptr);
+    assert(opening_loaded_project.active_document().find_ptr(opening_window) != nullptr);
+    tbe::core::CommandProcessor opening_processor;
+    tbe::core::DeleteElementCommand delete_opening_host{opening_bottom};
+    opening_processor.execute(opening_torture_document, delete_opening_host);
+    const auto opening_delete_validation = opening_torture_document.validate_document();
+    const bool door_removed_or_invalid = opening_torture_document.find_ptr(opening_door) == nullptr || opening_torture_document.find_ptr(opening_door)->door() == nullptr;
+    const bool window_removed_or_invalid = opening_torture_document.find_ptr(opening_window) == nullptr || opening_torture_document.find_ptr(opening_window)->window() == nullptr;
+    assert(door_removed_or_invalid || opening_delete_validation.error_count() > 0);
+    assert(window_removed_or_invalid || opening_delete_validation.error_count() > 0);
 
     tbe::core::CreateWallCommand undo_wall{
         "Undo Wall",
@@ -561,6 +626,12 @@ int main() {
     export_document.export_debug_report_json(debug_path);
     assert(std::filesystem::exists(svg_path));
     assert(std::filesystem::file_size(svg_path) > 0);
+    const auto svg_text = read_text(svg_path);
+    assert(svg_text.find("data-element-id=\"") != std::string::npos);
+    assert(svg_text.find("data-kind=\"wall\"") != std::string::npos);
+    assert(svg_text.find("data-kind=\"room\"") != std::string::npos);
+    assert(svg_text.find("id=\"tbe-wall-") != std::string::npos);
+    assert(svg_text.find("id=\"tbe-room-") != std::string::npos);
     assert(std::filesystem::exists(obj_path));
     assert(std::filesystem::file_size(obj_path) > 0);
     assert(std::filesystem::exists(debug_path));
@@ -589,6 +660,83 @@ int main() {
     assert(reversed_a->joins.front().other_wall_id == reversed_wall_b);
     reversed_document.auto_join_walls();
     assert(reversed_document.find_ptr(reversed_wall_a)->wall()->joins.size() == 1);
+
+    struct CornerCase {
+        const char* name;
+        tbe::core::Line2 first;
+        tbe::core::Line2 second;
+    };
+    const std::vector<CornerCase> corner_cases{
+        {"NE", {{0.0, 0.0}, {4.0, 0.0}}, {{4.0, 0.0}, {4.0, 3.0}}},
+        {"NW", {{4.0, 0.0}, {0.0, 0.0}}, {{0.0, 0.0}, {0.0, 3.0}}},
+        {"SE", {{0.0, 3.0}, {4.0, 3.0}}, {{4.0, 3.0}, {4.0, 0.0}}},
+        {"SW", {{4.0, 3.0}, {0.0, 3.0}}, {{0.0, 3.0}, {0.0, 0.0}}},
+    };
+    for (const auto& corner_case : corner_cases) {
+        tbe::core::Document corner_document{corner_case.name};
+        const auto corner_level = corner_document.create_level("Level 1", 0.0, 3.0);
+        const auto first_wall = corner_document.create_wall("First", corner_case.first, 0.2, 3.0, corner_level);
+        const auto second_wall = corner_document.create_wall("Second", corner_case.second, 0.2, 3.0, corner_level);
+        corner_document.auto_join_walls();
+        const auto* first = corner_document.find_ptr(first_wall)->wall();
+        const auto* second = corner_document.find_ptr(second_wall)->wall();
+        assert(first != nullptr);
+        assert(second != nullptr);
+        assert(first->joins.size() == 1);
+        assert(second->joins.size() == 1);
+        assert(first->joins.front().other_wall_id == second_wall);
+        assert(second->joins.front().other_wall_id == first_wall);
+    }
+
+    tbe::core::Document tolerance_document{"Tolerance Join"};
+    const auto tolerance_level = tolerance_document.create_level("Level 1", 0.0, 3.0);
+    const auto tolerance_wall_a = tolerance_document.create_wall(
+        "Tolerance A",
+        tbe::core::Line2{.start = {.x = 0.0, .y = 0.0}, .end = {.x = 4.0, .y = 0.0}},
+        0.2,
+        3.0,
+        tolerance_level
+    );
+    const auto tolerance_wall_b = tolerance_document.create_wall(
+        "Tolerance B",
+        tbe::core::Line2{.start = {.x = 4.0 + 1.0e-10, .y = 0.0}, .end = {.x = 4.0 + 1.0e-10, .y = 3.0}},
+        0.2,
+        3.0,
+        tolerance_level
+    );
+    tolerance_document.auto_join_walls();
+    assert(tolerance_document.find_ptr(tolerance_wall_a)->wall()->joins.size() == 1);
+    assert(tolerance_document.find_ptr(tolerance_wall_b)->wall()->joins.size() == 1);
+
+    tbe::core::Document t_junction_document{"T Junction"};
+    const auto t_level = t_junction_document.create_level("Level 1", 0.0, 3.0);
+    const auto t_base = t_junction_document.create_wall(
+        "Base",
+        tbe::core::Line2{.start = {.x = -2.0, .y = 0.0}, .end = {.x = 2.0, .y = 0.0}},
+        0.2,
+        3.0,
+        t_level
+    );
+    const auto t_up = t_junction_document.create_wall(
+        "Up",
+        tbe::core::Line2{.start = {.x = -1.0, .y = 0.0}, .end = {.x = -1.0, .y = 2.0}},
+        0.2,
+        3.0,
+        t_level
+    );
+    const auto t_down = t_junction_document.create_wall(
+        "Down",
+        tbe::core::Line2{.start = {.x = 1.0, .y = 0.0}, .end = {.x = 1.0, .y = -2.0}},
+        0.2,
+        3.0,
+        t_level
+    );
+    t_junction_document.auto_join_walls();
+    tbe::core::GeometryService t_junction_geometry;
+    const auto t_base_profile = t_junction_geometry.build_wall_profile(*t_junction_document.find_ptr(t_base)->wall());
+    assert(t_base_profile.t_junction_placeholders >= 2);
+    assert(t_junction_document.find_ptr(t_up)->wall()->joins.size() == 1);
+    assert(t_junction_document.find_ptr(t_down)->wall()->joins.size() == 1);
 
     tbe::core::Document multi_room_document{"Multi Room"};
     const auto multi_level = multi_room_document.create_level("Level 1", 0.0, 3.0);
@@ -647,6 +795,7 @@ int main() {
     assert(near(multi_areas[2], 16.0));
     const auto repeated_ids = multi_room_document.detect_rooms();
     assert(repeated_ids.size() == 3);
+    assert(multi_room_ids == repeated_ids);
     assert(multi_room_document.detect_rooms().size() == 3);
 
     tbe::core::CommandProcessor multi_processor;
@@ -795,6 +944,29 @@ int main() {
     assert(std::all_of(floor_schedule.begin(), floor_schedule.end(), [](const auto& row) {
         return !row.layer_quantities.empty();
     }));
+    const auto material_takeoff = shared_wall_document.generate_material_takeoff();
+    double expected_floor_tile_volume = 0.0;
+    double expected_ceiling_gypsum_volume = 0.0;
+    for (const auto& row : floor_schedule) {
+        expected_floor_tile_volume += row.layer_quantities.at(floor_tile_material);
+    }
+    for (const auto& row : ceiling_schedule) {
+        expected_ceiling_gypsum_volume += row.layer_quantities.at(gypsum_material);
+    }
+    const auto floor_tile_takeoff = std::find_if(material_takeoff.begin(), material_takeoff.end(), [floor_tile_material](const auto& row) {
+        return row.material_id == floor_tile_material;
+    });
+    const auto gypsum_takeoff = std::find_if(material_takeoff.begin(), material_takeoff.end(), [gypsum_material](const auto& row) {
+        return row.material_id == gypsum_material;
+    });
+    assert(floor_tile_takeoff != material_takeoff.end());
+    assert(gypsum_takeoff != material_takeoff.end());
+    assert(floor_tile_takeoff->quantity_type == tbe::core::QuantityType::Volume);
+    assert(gypsum_takeoff->quantity_type == tbe::core::QuantityType::Volume);
+    assert(near(floor_tile_takeoff->quantity, expected_floor_tile_volume));
+    assert(near(gypsum_takeoff->quantity, expected_ceiling_gypsum_volume));
+    assert(floor_tile_takeoff->source_element_ids.size() == floor_schedule.size());
+    assert(gypsum_takeoff->source_element_ids.size() == ceiling_schedule.size());
     shared_wall_document.mark_rooms_dirty_for_wall(shared_mid);
     assert(std::all_of(shared_wall_document.floor_systems().begin(), shared_wall_document.floor_systems().end(), [](const auto& item) {
         return item.second.dirty;
@@ -835,7 +1007,6 @@ int main() {
     assert(near(beam_schedule.front().volume_cubic_meters, 0.6));
     assert(stair_schedule.front().riser_count == 17);
     assert(near(stair_schedule.front().total_run_meters, 4.0));
-    const auto material_takeoff = shared_wall_document.generate_material_takeoff();
     assert(std::any_of(material_takeoff.begin(), material_takeoff.end(), [brick_material](const auto& row) {
         return row.material_id == brick_material && row.quantity > 0.0;
     }));
@@ -860,6 +1031,248 @@ int main() {
     assert(shared_wall_document.find_ptr(column_id)->column() != nullptr);
     assert(shared_wall_document.find_ptr(beam_id)->beam() != nullptr);
     assert(shared_wall_document.find_ptr(stair_id)->stair() != nullptr);
+
+    tbe::core::Document quantity_document{"Quantity Exact"};
+    const auto quantity_level = quantity_document.create_level("Level 1", 0.0, 3.0);
+    const auto quantity_brick = quantity_document.create_material("Qty Brick", tbe::core::MaterialCategory::Structural, 1800.0, 120.0);
+    const auto quantity_plaster = quantity_document.create_material("Qty Plaster", tbe::core::MaterialCategory::Finish, 950.0, 40.0);
+    const auto quantity_glass = quantity_document.create_material("Qty Glass", tbe::core::MaterialCategory::Glass, 2500.0, 80.0);
+    const auto quantity_concrete = quantity_document.create_material("Qty Concrete", tbe::core::MaterialCategory::Structural, 2400.0, 110.0);
+    const auto quantity_tile = quantity_document.create_material("Qty Tile", tbe::core::MaterialCategory::Finish, 2100.0, 55.0);
+    const auto quantity_gypsum = quantity_document.create_material("Qty Gypsum", tbe::core::MaterialCategory::Finish, 850.0, 28.0);
+    const auto quantity_wall_type = quantity_document.create_wall_type("Qty Wall", {
+        tbe::core::WallAssemblyLayer{.material_id = quantity_plaster, .thickness_meters = 0.02, .function = tbe::core::WallLayerFunction::InteriorFinish},
+        tbe::core::WallAssemblyLayer{.material_id = quantity_brick, .thickness_meters = 0.20, .function = tbe::core::WallLayerFunction::Core},
+        tbe::core::WallAssemblyLayer{.material_id = quantity_plaster, .thickness_meters = 0.02, .function = tbe::core::WallLayerFunction::ExteriorFinish},
+    });
+    const auto quantity_floor_assembly = quantity_document.create_layered_assembly(tbe::core::LayeredAssemblyKind::Floor, "Qty Floor", {
+        tbe::core::WallAssemblyLayer{.material_id = quantity_tile, .thickness_meters = 0.015, .function = tbe::core::WallLayerFunction::InteriorFinish},
+        tbe::core::WallAssemblyLayer{.material_id = quantity_concrete, .thickness_meters = 0.12, .function = tbe::core::WallLayerFunction::Core},
+    });
+    const auto quantity_ceiling_assembly = quantity_document.create_layered_assembly(tbe::core::LayeredAssemblyKind::Ceiling, "Qty Ceiling", {
+        tbe::core::WallAssemblyLayer{.material_id = quantity_gypsum, .thickness_meters = 0.015, .function = tbe::core::WallLayerFunction::InteriorFinish},
+    });
+    const auto q_bottom = quantity_document.create_wall("Qty Bottom", tbe::core::Line2{.start = {.x = 0.0, .y = 0.0}, .end = {.x = 4.0, .y = 0.0}}, 0.20, 3.0, quantity_level);
+    const auto q_right = quantity_document.create_wall("Qty Right", tbe::core::Line2{.start = {.x = 4.0, .y = 0.0}, .end = {.x = 4.0, .y = 3.0}}, 0.20, 3.0, quantity_level);
+    const auto q_top = quantity_document.create_wall("Qty Top", tbe::core::Line2{.start = {.x = 4.0, .y = 3.0}, .end = {.x = 0.0, .y = 3.0}}, 0.20, 3.0, quantity_level);
+    const auto q_left = quantity_document.create_wall("Qty Left", tbe::core::Line2{.start = {.x = 0.0, .y = 3.0}, .end = {.x = 0.0, .y = 0.0}}, 0.20, 3.0, quantity_level);
+    quantity_document.set_wall_type(q_bottom, quantity_wall_type);
+    quantity_document.set_wall_type(q_right, quantity_wall_type);
+    quantity_document.set_wall_type(q_top, quantity_wall_type);
+    quantity_document.set_wall_type(q_left, quantity_wall_type);
+    quantity_document.auto_join_walls();
+    const auto q_door = quantity_document.create_door("Qty Door", q_bottom, 1.0, 0.9, 2.1);
+    const auto q_window = quantity_document.create_window("Qty Window", q_bottom, 3.0, 1.0, 1.2, 0.9);
+    const auto quantity_room_ids = quantity_document.detect_rooms();
+    assert(quantity_room_ids.size() == 1);
+    const auto quantity_floor_ids = quantity_document.generate_floor_systems_for_all_rooms(quantity_floor_assembly);
+    const auto quantity_ceiling_ids = quantity_document.generate_ceiling_systems_for_all_rooms(quantity_ceiling_assembly, 2.8);
+    assert(quantity_floor_ids.size() == 1);
+    assert(quantity_ceiling_ids.size() == 1);
+    const auto q_slab = quantity_document.create_slab(quantity_level, {
+        {.x = 0.0, .y = 0.0},
+        {.x = 4.0, .y = 0.0},
+        {.x = 4.0, .y = 3.0},
+        {.x = 0.0, .y = 3.0},
+    }, 0.18, quantity_concrete);
+    const auto q_roof = quantity_document.create_roof(quantity_level, {
+        {.x = -0.2, .y = -0.2},
+        {.x = 4.2, .y = -0.2},
+        {.x = 4.2, .y = 3.2},
+        {.x = -0.2, .y = 3.2},
+    }, tbe::core::RoofType::Flat, 0.16, quantity_concrete);
+    const auto q_column = quantity_document.create_column(quantity_level, {.x = 1.0, .y = 1.0}, 0.3, 0.4, 3.0, quantity_concrete);
+    const auto q_beam = quantity_document.create_beam(quantity_level, {.x = 0.5, .y = 1.0}, {.x = 3.5, .y = 1.0}, 0.25, 0.4, quantity_concrete);
+    const auto q_stair = quantity_document.create_stair(quantity_level, quantity_level, {.x = 3.0, .y = 0.4}, {.x = 0.0, .y = 1.0}, 1.0, 3.0, 4.0, 17, 16, quantity_concrete);
+    quantity_document.regenerate_dirty_geometry();
+
+    const auto quantity_wall_schedule = quantity_document.generate_wall_schedule();
+    const auto quantity_opening_schedule = quantity_document.generate_opening_schedule();
+    const auto quantity_room_schedule = quantity_document.generate_room_schedule();
+    const auto quantity_floor_schedule = quantity_document.generate_floor_finish_schedule();
+    const auto quantity_ceiling_schedule = quantity_document.generate_ceiling_schedule();
+    const auto quantity_slab_schedule = quantity_document.generate_slab_schedule();
+    const auto quantity_roof_schedule = quantity_document.generate_roof_schedule();
+    const auto quantity_column_schedule = quantity_document.generate_column_schedule();
+    const auto quantity_beam_schedule = quantity_document.generate_beam_schedule();
+    const auto quantity_stair_schedule = quantity_document.generate_stair_schedule();
+    const auto quantity_takeoff = quantity_document.generate_material_takeoff();
+
+    const auto quantity_bottom_row = std::find_if(quantity_wall_schedule.begin(), quantity_wall_schedule.end(), [q_bottom](const auto& row) {
+        return row.wall_id == q_bottom;
+    });
+    assert(quantity_bottom_row != quantity_wall_schedule.end());
+    assert(near(quantity_bottom_row->length_meters, 4.0));
+    assert(near(quantity_bottom_row->height_meters, 3.0));
+    assert(near(quantity_bottom_row->gross_area_square_meters, 12.0));
+    assert(near(quantity_bottom_row->opening_area_square_meters, 3.09));
+    assert(near(quantity_bottom_row->net_area_square_meters, 8.91));
+    assert(near(quantity_bottom_row->gross_volume_cubic_meters, 2.88));
+    assert(near(quantity_bottom_row->net_volume_cubic_meters, 2.1384));
+    assert(quantity_bottom_row->material_volume_by_id.size() == 2);
+    assert(near(quantity_bottom_row->material_volume_by_id.at(quantity_brick), 1.782));
+    assert(near(quantity_bottom_row->material_volume_by_id.at(quantity_plaster), 0.3564));
+
+    assert(quantity_opening_schedule.size() == 2);
+    const auto quantity_door_row = std::find_if(quantity_opening_schedule.begin(), quantity_opening_schedule.end(), [q_door](const auto& row) {
+        return row.element_id == q_door;
+    });
+    const auto quantity_window_row = std::find_if(quantity_opening_schedule.begin(), quantity_opening_schedule.end(), [q_window](const auto& row) {
+        return row.element_id == q_window;
+    });
+    assert(quantity_door_row != quantity_opening_schedule.end());
+    assert(quantity_window_row != quantity_opening_schedule.end());
+    assert(near(quantity_door_row->width_meters, 0.9));
+    assert(near(quantity_door_row->height_meters, 2.1));
+    assert(near(quantity_door_row->area_square_meters, 1.89));
+    assert(quantity_door_row->host_wall_id == q_bottom);
+    assert(quantity_door_row->level_id == quantity_level);
+    assert(near(quantity_window_row->width_meters, 1.0));
+    assert(near(quantity_window_row->height_meters, 1.2));
+    assert(near(quantity_window_row->area_square_meters, 1.2));
+    assert(quantity_window_row->host_wall_id == q_bottom);
+    assert(quantity_window_row->level_id == quantity_level);
+
+    assert(quantity_room_schedule.size() == 1);
+    assert(near(quantity_room_schedule.front().centerline_area_square_meters, 12.0));
+    assert(quantity_room_schedule.front().interior_area_square_meters > 0.0);
+    assert(quantity_room_schedule.front().interior_area_square_meters < quantity_room_schedule.front().centerline_area_square_meters);
+    assert(near(quantity_room_schedule.front().floor_finish_area_square_meters, quantity_room_schedule.front().interior_area_square_meters));
+    assert(near(quantity_room_schedule.front().ceiling_area_square_meters, quantity_room_schedule.front().interior_area_square_meters));
+    assert(near(quantity_room_schedule.front().baseboard_length_meters, quantity_room_schedule.front().interior_perimeter_meters));
+
+    assert(quantity_floor_schedule.size() == 1);
+    assert(quantity_ceiling_schedule.size() == 1);
+    assert(quantity_slab_schedule.size() == 1);
+    assert(quantity_roof_schedule.size() == 1);
+    assert(quantity_column_schedule.size() == 1);
+    assert(quantity_beam_schedule.size() == 1);
+    assert(quantity_stair_schedule.size() == 1);
+
+    const auto quantity_room_area = quantity_room_schedule.front().interior_area_square_meters;
+    const auto quantity_floor_row = quantity_floor_schedule.front();
+    const auto quantity_ceiling_row = quantity_ceiling_schedule.front();
+    assert(near(quantity_floor_row.area_square_meters, quantity_room_area));
+    assert(near(quantity_ceiling_row.area_square_meters, quantity_room_area));
+    assert(near(quantity_floor_row.layer_quantities.at(quantity_tile), quantity_room_area * 0.015));
+    assert(near(quantity_floor_row.layer_quantities.at(quantity_concrete), quantity_room_area * 0.12));
+    assert(near(quantity_ceiling_row.layer_quantities.at(quantity_gypsum), quantity_room_area * 0.015));
+
+    assert(near(quantity_slab_schedule.front().area_square_meters, 12.0));
+    assert(near(quantity_slab_schedule.front().volume_cubic_meters, 2.16));
+    assert(near(quantity_roof_schedule.front().area_square_meters, 14.96));
+    assert(near(quantity_roof_schedule.front().volume_cubic_meters, 2.3936));
+    assert(near(quantity_column_schedule.front().volume_cubic_meters, 0.36));
+    assert(near(quantity_beam_schedule.front().length_meters, 3.0));
+    assert(near(quantity_beam_schedule.front().volume_cubic_meters, 0.3));
+    assert(quantity_stair_schedule.front().riser_count == 17);
+    assert(near(quantity_stair_schedule.front().total_run_meters, 4.0));
+    assert(near(quantity_stair_schedule.front().volume_cubic_meters, 6.0));
+
+    const auto quantity_concrete_row = std::find_if(quantity_takeoff.begin(), quantity_takeoff.end(), [quantity_concrete](const auto& row) {
+        return row.material_id == quantity_concrete;
+    });
+    const auto quantity_tile_row = std::find_if(quantity_takeoff.begin(), quantity_takeoff.end(), [quantity_tile](const auto& row) {
+        return row.material_id == quantity_tile;
+    });
+    const auto quantity_gypsum_row = std::find_if(quantity_takeoff.begin(), quantity_takeoff.end(), [quantity_gypsum](const auto& row) {
+        return row.material_id == quantity_gypsum;
+    });
+    const auto quantity_glass_row = std::find_if(quantity_takeoff.begin(), quantity_takeoff.end(), [quantity_glass](const auto& row) {
+        return row.material_id == quantity_glass;
+    });
+    const auto quantity_brick_row = std::find_if(quantity_takeoff.begin(), quantity_takeoff.end(), [quantity_brick](const auto& row) {
+        return row.material_id == quantity_brick;
+    });
+    const auto quantity_plaster_row = std::find_if(quantity_takeoff.begin(), quantity_takeoff.end(), [quantity_plaster](const auto& row) {
+        return row.material_id == quantity_plaster;
+    });
+    double expected_wall_brick_volume = 0.0;
+    double expected_wall_plaster_volume = 0.0;
+    for (const auto& row : quantity_wall_schedule) {
+        expected_wall_brick_volume += row.material_volume_by_id.at(quantity_brick);
+        expected_wall_plaster_volume += row.material_volume_by_id.at(quantity_plaster);
+    }
+    assert(quantity_concrete_row != quantity_takeoff.end());
+    assert(quantity_tile_row != quantity_takeoff.end());
+    assert(quantity_gypsum_row != quantity_takeoff.end());
+    assert(quantity_glass_row != quantity_takeoff.end());
+    assert(quantity_brick_row != quantity_takeoff.end());
+    assert(quantity_plaster_row != quantity_takeoff.end());
+    assert(quantity_concrete_row->quantity_type == tbe::core::QuantityType::Volume);
+    assert(quantity_tile_row->quantity_type == tbe::core::QuantityType::Volume);
+    assert(quantity_gypsum_row->quantity_type == tbe::core::QuantityType::Volume);
+    assert(quantity_glass_row->quantity_type == tbe::core::QuantityType::Area);
+    assert(quantity_concrete_row->quantity > 0.0);
+    assert(quantity_tile_row->quantity > 0.0);
+    assert(quantity_gypsum_row->quantity > 0.0);
+    assert(near(quantity_glass_row->quantity, 1.2));
+    assert(near(quantity_brick_row->quantity, expected_wall_brick_volume));
+    assert(near(quantity_plaster_row->quantity, expected_wall_plaster_volume));
+    assert(quantity_concrete_row->source_element_ids.size() >= 6);
+    assert(std::find(quantity_concrete_row->source_element_ids.begin(), quantity_concrete_row->source_element_ids.end(), q_slab) != quantity_concrete_row->source_element_ids.end());
+    assert(std::find(quantity_concrete_row->source_element_ids.begin(), quantity_concrete_row->source_element_ids.end(), q_roof) != quantity_concrete_row->source_element_ids.end());
+    assert(std::find(quantity_concrete_row->source_element_ids.begin(), quantity_concrete_row->source_element_ids.end(), q_column) != quantity_concrete_row->source_element_ids.end());
+    assert(std::find(quantity_concrete_row->source_element_ids.begin(), quantity_concrete_row->source_element_ids.end(), q_beam) != quantity_concrete_row->source_element_ids.end());
+    assert(std::find(quantity_concrete_row->source_element_ids.begin(), quantity_concrete_row->source_element_ids.end(), q_stair) != quantity_concrete_row->source_element_ids.end());
+    assert(std::find(quantity_concrete_row->source_element_ids.begin(), quantity_concrete_row->source_element_ids.end(), quantity_floor_ids.front()) != quantity_concrete_row->source_element_ids.end());
+    assert(quantity_concrete_row->estimated_cost.has_value());
+    const auto expected_concrete_quantity =
+        quantity_room_area * 0.12 +
+        12.0 * 0.18 +
+        14.96 * 0.16 +
+        0.36 +
+        0.3 +
+        6.0;
+    assert(near(quantity_concrete_row->quantity, expected_concrete_quantity));
+    assert(near(*quantity_concrete_row->estimated_cost, quantity_concrete_row->quantity * 110.0));
+
+    quantity_document.move_hosted_opening(q_door, 2.0);
+    quantity_document.resize_window(q_window, 1.1, 1.0, 0.9);
+    quantity_document.regenerate_dirty_geometry();
+    const auto quantity_wall_schedule_after_edit = quantity_document.generate_wall_schedule();
+    const auto quantity_opening_schedule_after_edit = quantity_document.generate_opening_schedule();
+    const auto quantity_bottom_after_edit = std::find_if(quantity_wall_schedule_after_edit.begin(), quantity_wall_schedule_after_edit.end(), [q_bottom](const auto& row) {
+        return row.wall_id == q_bottom;
+    });
+    const auto quantity_door_after_edit = std::find_if(quantity_opening_schedule_after_edit.begin(), quantity_opening_schedule_after_edit.end(), [q_door](const auto& row) {
+        return row.element_id == q_door;
+    });
+    const auto quantity_window_after_edit = std::find_if(quantity_opening_schedule_after_edit.begin(), quantity_opening_schedule_after_edit.end(), [q_window](const auto& row) {
+        return row.element_id == q_window;
+    });
+    assert(quantity_bottom_after_edit != quantity_wall_schedule_after_edit.end());
+    assert(quantity_door_after_edit != quantity_opening_schedule_after_edit.end());
+    assert(quantity_window_after_edit != quantity_opening_schedule_after_edit.end());
+    assert(near(quantity_document.find_ptr(q_door)->door()->offset_meters, 2.0));
+    assert(near(quantity_document.find_ptr(q_window)->window()->width_meters, 1.1));
+    assert(near(quantity_door_after_edit->area_square_meters, 1.89));
+    assert(near(quantity_window_after_edit->area_square_meters, 1.1));
+    assert(near(quantity_bottom_after_edit->opening_area_square_meters, 2.99));
+    assert(near(quantity_bottom_after_edit->net_area_square_meters, 9.01));
+
+    auto quantity_roundtrip_json = quantity_document.to_json();
+    for (int iteration = 0; iteration < 10; ++iteration) {
+        auto roundtrip_document = tbe::core::Document::from_json(quantity_roundtrip_json);
+        roundtrip_document.regenerate_dirty_geometry();
+        const auto roundtrip_wall_schedule = roundtrip_document.generate_wall_schedule();
+        const auto roundtrip_room_schedule = roundtrip_document.generate_room_schedule();
+        const auto roundtrip_opening_schedule = roundtrip_document.generate_opening_schedule();
+        const auto roundtrip_takeoff = roundtrip_document.generate_material_takeoff();
+        const auto roundtrip_bottom = std::find_if(roundtrip_wall_schedule.begin(), roundtrip_wall_schedule.end(), [q_bottom](const auto& row) {
+            return row.wall_id == q_bottom;
+        });
+        assert(roundtrip_bottom != roundtrip_wall_schedule.end());
+        assert(near(roundtrip_bottom->net_area_square_meters, 9.01));
+        assert(roundtrip_room_schedule.size() == 1);
+        assert(roundtrip_opening_schedule.size() == 2);
+        const auto roundtrip_concrete = std::find_if(roundtrip_takeoff.begin(), roundtrip_takeoff.end(), [quantity_concrete](const auto& row) {
+            return row.material_id == quantity_concrete;
+        });
+        assert(roundtrip_concrete != roundtrip_takeoff.end());
+        assert(near(roundtrip_concrete->quantity, expected_concrete_quantity));
+        quantity_roundtrip_json = roundtrip_document.to_json();
+    }
 
     tbe::core::Document l_shape_document{"L Shape"};
     const auto l_level = l_shape_document.create_level("Level 1", 0.0, 3.0);
@@ -1021,6 +1434,171 @@ int main() {
     assert(!loaded_materials_project.active_document().generate_floor_finish_schedule().empty());
     assert(!loaded_materials_project.active_document().generate_ceiling_schedule().empty());
 
+    tbe::core::Document building_torture_document{"Building Torture"};
+    const auto building_level = building_torture_document.create_level("Level 1", 0.0, 3.2);
+    const auto upper_level = building_torture_document.create_level("Level 2", 3.2, 3.2);
+    const auto building_brick = building_torture_document.create_material("Brick", tbe::core::MaterialCategory::Structural, 1800.0, 120.0);
+    const auto building_plaster = building_torture_document.create_material("Plaster", tbe::core::MaterialCategory::Finish, 950.0, 40.0);
+    const auto building_concrete = building_torture_document.create_material("Concrete", tbe::core::MaterialCategory::Structural, 2400.0, 110.0);
+    const auto building_tile = building_torture_document.create_material("Tile", tbe::core::MaterialCategory::Finish, 2100.0, 55.0);
+    const auto building_gypsum = building_torture_document.create_material("Gypsum", tbe::core::MaterialCategory::Finish, 850.0, 28.0);
+    const auto building_wall_type = building_torture_document.create_wall_type("Masonry", {
+        tbe::core::WallAssemblyLayer{.material_id = building_plaster, .thickness_meters = 0.02, .function = tbe::core::WallLayerFunction::InteriorFinish},
+        tbe::core::WallAssemblyLayer{.material_id = building_brick, .thickness_meters = 0.20, .function = tbe::core::WallLayerFunction::Core},
+        tbe::core::WallAssemblyLayer{.material_id = building_plaster, .thickness_meters = 0.02, .function = tbe::core::WallLayerFunction::ExteriorFinish},
+    });
+    const auto building_floor_assembly = building_torture_document.create_layered_assembly(tbe::core::LayeredAssemblyKind::Floor, "Floor", {
+        tbe::core::WallAssemblyLayer{.material_id = building_tile, .thickness_meters = 0.015, .function = tbe::core::WallLayerFunction::InteriorFinish},
+        tbe::core::WallAssemblyLayer{.material_id = building_concrete, .thickness_meters = 0.12, .function = tbe::core::WallLayerFunction::Core},
+    });
+    const auto building_ceiling_assembly = building_torture_document.create_layered_assembly(tbe::core::LayeredAssemblyKind::Ceiling, "Ceiling", {
+        tbe::core::WallAssemblyLayer{.material_id = building_gypsum, .thickness_meters = 0.015, .function = tbe::core::WallLayerFunction::InteriorFinish},
+    });
+    const auto b_bottom = building_torture_document.create_wall("Bottom", {{0.0, 0.0}, {12.0, 0.0}}, 0.24, 3.2, building_level);
+    const auto b_top = building_torture_document.create_wall("Top", {{12.0, 4.0}, {0.0, 4.0}}, 0.24, 3.2, building_level);
+    const auto b_right = building_torture_document.create_wall("Right", {{12.0, 0.0}, {12.0, 4.0}}, 0.24, 3.2, building_level);
+    const auto b_left = building_torture_document.create_wall("Left", {{0.0, 4.0}, {0.0, 0.0}}, 0.24, 3.2, building_level);
+    const auto b_shared = building_torture_document.create_wall("Shared", {{6.0, 0.0}, {6.0, 4.0}}, 0.24, 3.2, building_level);
+    building_torture_document.set_wall_type(b_bottom, building_wall_type);
+    building_torture_document.set_wall_type(b_top, building_wall_type);
+    building_torture_document.set_wall_type(b_right, building_wall_type);
+    building_torture_document.set_wall_type(b_left, building_wall_type);
+    building_torture_document.set_wall_type(b_shared, building_wall_type);
+    building_torture_document.auto_join_walls();
+    const auto b_door = building_torture_document.create_door("Door", b_left, 1.5, 0.95, 2.1);
+    const auto b_window = building_torture_document.create_window("Window", b_right, 1.8, 1.2, 1.1, 0.9);
+    (void)b_door;
+    (void)b_window;
+    const auto building_rooms = building_torture_document.detect_rooms();
+    assert(building_rooms.size() == 2);
+    building_torture_document.generate_floor_systems_for_all_rooms(building_floor_assembly);
+    building_torture_document.generate_ceiling_systems_for_all_rooms(building_ceiling_assembly, 3.0);
+    const auto building_floor_schedule_before_move = building_torture_document.generate_floor_finish_schedule();
+    const auto building_ceiling_schedule_before_move = building_torture_document.generate_ceiling_schedule();
+    building_torture_document.set_wall_axis(b_shared, {{6.5, 0.0}, {6.5, 4.0}});
+    building_torture_document.mark_rooms_dirty_for_wall(b_shared);
+    assert(std::all_of(building_torture_document.floor_systems().begin(), building_torture_document.floor_systems().end(), [](const auto& item) {
+        return item.second.dirty;
+    }));
+    assert(std::all_of(building_torture_document.ceiling_systems().begin(), building_torture_document.ceiling_systems().end(), [](const auto& item) {
+        return item.second.dirty;
+    }));
+    const auto building_dirty_rooms = building_torture_document.recompute_dirty_rooms();
+    assert(!building_dirty_rooms.empty());
+    const auto b_slab = building_torture_document.create_slab(building_level, {
+        {.x = 0.0, .y = 0.0},
+        {.x = 12.0, .y = 0.0},
+        {.x = 12.0, .y = 4.0},
+        {.x = 0.0, .y = 4.0},
+    }, 0.18, building_concrete);
+    const auto b_roof = building_torture_document.create_roof(building_level, {
+        {.x = -0.2, .y = -0.2},
+        {.x = 12.2, .y = -0.2},
+        {.x = 12.2, .y = 4.2},
+        {.x = -0.2, .y = 4.2},
+    }, tbe::core::RoofType::Flat, 0.16, building_concrete);
+    const auto b_column = building_torture_document.create_column(building_level, {.x = 1.0, .y = 1.0}, 0.3, 0.4, 3.2, building_concrete);
+    const auto b_beam = building_torture_document.create_beam(building_level, {.x = 1.0, .y = 1.0}, {.x = 11.0, .y = 1.0}, 0.25, 0.4, building_concrete);
+    const auto b_stair = building_torture_document.create_stair(building_level, upper_level, {.x = 9.5, .y = 0.4}, {.x = 0.0, .y = 1.0}, 1.0, 3.2, 4.0, 18, 17, building_concrete);
+    building_torture_document.regenerate_dirty_geometry();
+    const auto building_wall_schedule = building_torture_document.generate_wall_schedule();
+    const auto building_opening_schedule = building_torture_document.generate_opening_schedule();
+    const auto building_room_schedule = building_torture_document.generate_room_schedule();
+    const auto building_floor_schedule = building_torture_document.generate_floor_finish_schedule();
+    const auto building_ceiling_schedule = building_torture_document.generate_ceiling_schedule();
+    const auto building_slab_schedule = building_torture_document.generate_slab_schedule();
+    const auto building_roof_schedule = building_torture_document.generate_roof_schedule();
+    const auto building_column_schedule = building_torture_document.generate_column_schedule();
+    const auto building_beam_schedule = building_torture_document.generate_beam_schedule();
+    const auto building_stair_schedule = building_torture_document.generate_stair_schedule();
+    const auto building_takeoff = building_torture_document.generate_material_takeoff();
+    assert(building_wall_schedule.size() == 5);
+    assert(building_opening_schedule.size() == 2);
+    assert(building_room_schedule.size() == 2);
+    assert(building_floor_schedule.size() == 2);
+    assert(building_ceiling_schedule.size() == 2);
+    assert(building_slab_schedule.size() == 1);
+    assert(building_roof_schedule.size() == 1);
+    assert(building_column_schedule.size() == 1);
+    assert(building_beam_schedule.size() == 1);
+    assert(building_stair_schedule.size() == 1);
+    assert(std::all_of(building_takeoff.begin(), building_takeoff.end(), [](const auto& row) {
+        return row.quantity >= 0.0;
+    }));
+    assert(std::any_of(building_takeoff.begin(), building_takeoff.end(), [building_concrete](const auto& row) {
+        return row.material_id == building_concrete;
+    }));
+    assert(building_floor_schedule_before_move.size() == building_floor_schedule.size());
+    assert(building_ceiling_schedule_before_move.size() == building_ceiling_schedule.size());
+    assert(std::any_of(building_floor_schedule.begin(), building_floor_schedule.end(), [](const auto& row) {
+        return row.area_square_meters > 0.0;
+    }));
+    const auto building_json = tbe::core::Project{"Building Project"}.to_json();
+    (void)building_json;
+    tbe::core::Project building_project{"Building Project"};
+    building_project.active_document() = building_torture_document;
+    const auto building_saved_json = building_project.to_json();
+    auto building_loaded_project = tbe::core::Project::from_json(building_saved_json);
+    auto& building_loaded_document = building_loaded_project.active_document();
+    building_loaded_document.regenerate_dirty_geometry();
+    assert(building_loaded_document.detect_rooms().size() == 2);
+    assert(!building_loaded_document.generate_slab_schedule().empty());
+    assert(!building_loaded_document.generate_roof_schedule().empty());
+    assert(!building_loaded_document.generate_column_schedule().empty());
+    assert(!building_loaded_document.generate_beam_schedule().empty());
+    assert(!building_loaded_document.generate_stair_schedule().empty());
+    building_loaded_document.delete_element(b_shared);
+    const auto building_after_delete_rooms = building_loaded_document.detect_rooms();
+    const auto building_after_delete_floor_schedule = building_loaded_document.generate_floor_finish_schedule();
+    const auto building_after_delete_ceiling_schedule = building_loaded_document.generate_ceiling_schedule();
+    assert(building_after_delete_rooms.size() != 2);
+    assert(building_after_delete_floor_schedule.size() <= 2);
+    assert(building_after_delete_ceiling_schedule.size() <= 2);
+
+    (void)b_bottom;
+    (void)b_top;
+    (void)b_right;
+    (void)b_left;
+
+    tbe::core::Document invalid_slab_document{"Invalid Slab"};
+    const auto invalid_slab_level = invalid_slab_document.create_level("Level 1", 0.0, 3.0);
+    invalid_slab_document.restore_element(tbe::core::Element{
+        20,
+        tbe::core::ElementKind::Slab,
+        "Bad Slab",
+        tbe::core::SlabData{
+            .level_id = invalid_slab_level,
+            .boundary_polygon = {{0.0, 0.0}, {0.0, 0.0}, {0.0, 0.0}},
+            .thickness_meters = 0.0,
+            .material_id = 999,
+            .assembly_id = 999,
+            .elevation_offset_meters = 0.0,
+        }
+    });
+    const auto invalid_slab_report = invalid_slab_document.validate_document();
+    assert(invalid_slab_report.error_count() > 0);
+    assert(std::any_of(invalid_slab_report.issues.begin(), invalid_slab_report.issues.end(), [](const auto& issue) {
+        return issue.code == tbe::core::ValidationIssueCode::WallTooShort || issue.code == tbe::core::ValidationIssueCode::NonPositiveRoomArea;
+    }));
+
+    tbe::core::Document invalid_roof_document{"Invalid Roof"};
+    const auto invalid_roof_level = invalid_roof_document.create_level("Level 1", 0.0, 3.0);
+    invalid_roof_document.restore_element(tbe::core::Element{
+        21,
+        tbe::core::ElementKind::Roof,
+        "Bad Roof",
+        tbe::core::RoofData{
+            .level_id = invalid_roof_level,
+            .boundary_polygon = {{0.0, 0.0}, {0.0, 0.0}, {0.0, 0.0}},
+            .roof_type = tbe::core::RoofType::Flat,
+            .thickness_meters = 0.0,
+            .material_id = 999,
+            .assembly_id = 999,
+        }
+    });
+    const auto invalid_roof_report = invalid_roof_document.validate_document();
+    assert(invalid_roof_report.error_count() > 0);
+
     tbe::core::Document invalid_material_document{"Invalid Material"};
     const auto invalid_material_level = invalid_material_document.create_level("Level 1", 0.0, 3.0);
     const auto invalid_wall = invalid_material_document.create_wall(
@@ -1090,6 +1668,25 @@ int main() {
     invalid_structure_document.regenerate_dirty_geometry();
     const auto invalid_structure_report = invalid_structure_document.validate_document();
     assert(invalid_structure_report.error_count() > 0);
+
+    tbe::core::Document short_wall_document{"Short Wall"};
+    const auto short_level = short_wall_document.create_level("Level 1", 0.0, 3.0);
+    short_wall_document.restore_element(tbe::core::Element{
+        77,
+        tbe::core::ElementKind::Wall,
+        "Tiny Wall",
+        tbe::core::WallData{
+            .level_id = short_level,
+            .axis = tbe::core::Line2{.start = {.x = 0.0, .y = 0.0}, .end = {.x = 0.0, .y = 0.0}},
+            .thickness_meters = 0.2,
+            .height_meters = 3.0,
+        }
+    });
+    const auto short_wall_report = short_wall_document.validate_document();
+    assert(short_wall_report.error_count() > 0);
+    assert(std::any_of(short_wall_report.issues.begin(), short_wall_report.issues.end(), [](const auto& issue) {
+        return issue.code == tbe::core::ValidationIssueCode::WallTooShort;
+    }));
 
     return 0;
 }

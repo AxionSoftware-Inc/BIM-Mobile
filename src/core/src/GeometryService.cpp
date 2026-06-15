@@ -154,6 +154,20 @@ MeshBuffer extrude_profile(const WallProfile2D& profile, double height_meters) {
     return mesh;
 }
 
+Point3 to_world_point(const Point3& local_point, const Line2& axis) {
+    const auto direction = unit_direction(axis);
+    const Point2 perpendicular{
+        .x = -direction.y,
+        .y = direction.x,
+    };
+
+    return Point3{
+        .x = axis.start.x + (local_point.x * direction.x) + (local_point.y * perpendicular.x),
+        .y = axis.start.y + (local_point.x * direction.y) + (local_point.y * perpendicular.y),
+        .z = local_point.z,
+    };
+}
+
 } // namespace
 
 std::string GeometryService::backend_name() const {
@@ -243,6 +257,10 @@ WallProfile2D GeometryService::build_wall_profile(const WallData& wall) const {
 GeneratedGeometry GeometryService::build_wall_geometry(const WallData& wall, Revision source_revision) const {
     auto profile = build_wall_profile(wall);
     auto mesh = extrude_profile(profile, wall.height_meters);
+
+    for (auto& vertex : mesh.vertices) {
+        vertex = to_world_point(vertex, wall.axis);
+    }
 
     const auto gross_volume = wall_length(wall.axis) * wall.height_meters * wall.thickness_meters;
 

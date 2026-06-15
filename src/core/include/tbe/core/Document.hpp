@@ -96,6 +96,7 @@ public:
     void update_floor_system_from_room(ElementId room_id);
     void update_ceiling_system_from_room(ElementId room_id);
     void set_wall_type(ElementId wall_id, ElementId wall_type_id);
+    void set_wall_properties(ElementId wall_id, double thickness_meters, double height_meters, ElementId wall_type_id = 0);
     void set_wall_axis(ElementId wall_id, Line2 axis);
     ElementId split_wall(ElementId wall_id, double offset_meters);
     void delete_element(ElementId element_id);

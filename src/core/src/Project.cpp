@@ -76,6 +76,8 @@ const Document& Project::active_document() const noexcept {
 std::string Project::to_json() const {
     std::ostringstream out;
     out << "{\"schema\":\"tbe.project.v1\",";
+    out << "\"schema_version\":" << TBE_SCHEMA_VERSION << ',';
+    out << "\"engine_version\":\"" << escape_json_string(TBE_ENGINE_VERSION) << "\",";
     out << "\"project_name\":\"" << escape_json_string(name_) << "\",";
     out << "\"document\":" << document_.to_json() << '}';
     return out.str();

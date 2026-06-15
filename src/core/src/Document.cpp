@@ -67,6 +67,54 @@ std::string escape_json(std::string_view value) {
     return escaped;
 }
 
+std::string escape_xml(std::string_view value) {
+    std::string escaped;
+    escaped.reserve(value.size());
+    for (const auto ch : value) {
+        switch (ch) {
+        case '&': escaped.append("&amp;"); break;
+        case '<': escaped.append("&lt;"); break;
+        case '>': escaped.append("&gt;"); break;
+        case '"': escaped.append("&quot;"); break;
+        case '\'': escaped.append("&apos;"); break;
+        default: escaped.push_back(ch); break;
+        }
+    }
+    return escaped;
+}
+
+std::string svg_element_kind_name(ElementKind kind) {
+    switch (kind) {
+    case ElementKind::Level: return "level";
+    case ElementKind::Wall: return "wall";
+    case ElementKind::Door: return "door";
+    case ElementKind::Window: return "window";
+    case ElementKind::Room: return "room";
+    case ElementKind::Roof: return "roof";
+    case ElementKind::Column: return "column";
+    case ElementKind::Beam: return "beam";
+    case ElementKind::Stair: return "stair";
+    case ElementKind::Slab: return "slab";
+    }
+    return "unknown";
+}
+
+std::string svg_hit_kind_name(ElementKind kind) {
+    switch (kind) {
+    case ElementKind::Wall: return "wall_body";
+    case ElementKind::Door:
+    case ElementKind::Window: return "opening";
+    case ElementKind::Room: return "room_interior";
+    case ElementKind::Roof: return "roof";
+    case ElementKind::Column: return "column";
+    case ElementKind::Beam: return "beam";
+    case ElementKind::Stair: return "stair";
+    case ElementKind::Slab: return "slab";
+    case ElementKind::Level: return "level";
+    }
+    return "unknown";
+}
+
 std::optional<Point2> segment_intersection(Line2 first, Line2 second) {
     const auto x1 = first.start.x;
     const auto y1 = first.start.y;
@@ -541,6 +589,29 @@ void Document::set_wall_type(ElementId wall_id, ElementId wall_type_id) {
     }
     mark_wall_dirty(wall_element);
     refresh_dependencies_for_wall(wall_id);
+}
+
+void Document::set_wall_properties(ElementId wall_id, double thickness_meters, double height_meters, ElementId wall_type_id) {
+    auto& wall_element = require_wall(wall_id);
+    auto* wall = wall_element.wall();
+    if (thickness_meters <= 0.0 || height_meters <= 0.0) {
+        throw std::invalid_argument("wall thickness and height must be positive");
+    }
+    if (wall_type_id != 0 && get_wall_type(wall_type_id) == nullptr) {
+        throw std::invalid_argument("wall type does not exist");
+    }
+    wall->thickness_meters = thickness_meters;
+    wall->height_meters = height_meters;
+    wall->wall_type_id = wall_type_id;
+    if (const auto* wall_type = get_wall_type(wall_type_id)) {
+        wall->thickness_meters = total_wall_type_thickness(*wall_type);
+    }
+    auto updated = *wall;
+    validate_wall_axis(updated.axis, wall->thickness_meters, wall->height_meters);
+    validate_wall_openings(updated);
+    mark_wall_dirty(wall_element);
+    refresh_dependencies_for_wall(wall_id);
+    invalidate_dependency_graph_cache();
 }
 
 void Document::set_wall_axis(ElementId wall_id, Line2 axis) {
@@ -2140,10 +2211,11 @@ std::vector<WallScheduleRow> Document::generate_wall_schedule() const {
         for (const auto& opening : wall->openings) {
             opening_area += opening.width_meters * opening.height_meters;
         }
+        const auto net_area = std::max(0.0, gross_area - opening_area);
         std::map<ElementId, double> material_volumes;
         if (const auto* wall_type = get_wall_type(wall->wall_type_id)) {
             for (const auto& layer : wall_type->layers) {
-                material_volumes[layer.material_id] += length_meters * wall->height_meters * layer.thickness_meters;
+                material_volumes[layer.material_id] += net_area * layer.thickness_meters;
             }
         }
         const auto room_count = std::count_if(adjacencies.begin(), adjacencies.end(), [&](const WallRoomAdjacency& adjacency) {
@@ -2159,11 +2231,11 @@ std::vector<WallScheduleRow> Document::generate_wall_schedule() const {
             .height_meters = wall->height_meters,
             .gross_area_square_meters = gross_area,
             .opening_area_square_meters = opening_area,
-            .net_area_square_meters = gross_area - opening_area,
+            .net_area_square_meters = net_area,
             .gross_volume_cubic_meters = gross_area * wall_thickness(*wall),
-            .net_volume_cubic_meters = std::max(0.0, (gross_area - opening_area) * wall_thickness(*wall)),
-            .interior_finish_area_square_meters = room_count == 0 ? 0.0 : std::max(0.0, (gross_area - opening_area) * static_cast<double>(std::min<std::size_t>(room_count, 2))),
-            .exterior_finish_area_square_meters = room_count < 2 ? std::max(0.0, gross_area - opening_area) : 0.0,
+            .net_volume_cubic_meters = net_area * wall_thickness(*wall),
+            .interior_finish_area_square_meters = room_count == 0 ? 0.0 : net_area * static_cast<double>(std::min<std::size_t>(room_count, 2)),
+            .exterior_finish_area_square_meters = room_count < 2 ? net_area : 0.0,
             .material_volume_by_id = std::move(material_volumes),
         });
     }
@@ -2211,6 +2283,7 @@ std::vector<RoomScheduleRow> Document::generate_room_schedule() const {
             .centerline_area_square_meters = room->centerline_area_square_meters,
             .interior_area_square_meters = room->interior_area_square_meters,
             .interior_perimeter_meters = room->interior_perimeter_meters,
+            .baseboard_length_meters = room->baseboard_length_meters,
             .floor_finish_area_square_meters = room->floor_finish_area_square_meters,
             .ceiling_area_square_meters = room->ceiling_area_square_meters,
             .interior_wall_finish_area_square_meters = room->interior_wall_finish_area_square_meters,
@@ -2499,6 +2572,9 @@ std::vector<MaterialTakeoffRow> Document::generate_material_takeoff() const {
                     takeoff.unit = "m3";
                     takeoff.quantity += column->volume_cubic_meters;
                     takeoff.source_element_ids.push_back(element.id());
+                    if (material != nullptr && material->unit_cost.has_value()) {
+                        takeoff.estimated_cost = takeoff.estimated_cost.value_or(0.0) + (column->volume_cubic_meters * *material->unit_cost);
+                    }
                 }
             } else if (const auto* beam = element.beam()) {
                 if (beam->material_id != 0) {
@@ -2510,6 +2586,9 @@ std::vector<MaterialTakeoffRow> Document::generate_material_takeoff() const {
                     takeoff.unit = "m3";
                     takeoff.quantity += beam->volume_cubic_meters;
                     takeoff.source_element_ids.push_back(element.id());
+                    if (material != nullptr && material->unit_cost.has_value()) {
+                        takeoff.estimated_cost = takeoff.estimated_cost.value_or(0.0) + (beam->volume_cubic_meters * *material->unit_cost);
+                    }
                 }
             } else if (const auto* stair = element.stair()) {
                 if (stair->material_id != 0) {
@@ -2521,6 +2600,9 @@ std::vector<MaterialTakeoffRow> Document::generate_material_takeoff() const {
                     takeoff.unit = "m3";
                     takeoff.quantity += stair->volume_cubic_meters;
                     takeoff.source_element_ids.push_back(element.id());
+                    if (material != nullptr && material->unit_cost.has_value()) {
+                        takeoff.estimated_cost = takeoff.estimated_cost.value_or(0.0) + (stair->volume_cubic_meters * *material->unit_cost);
+                    }
                 }
             }
             continue;
@@ -2578,6 +2660,14 @@ void Document::export_floorplan_svg(const std::filesystem::path& path) const {
     out << "<rect x=\"-2\" y=\"-2\" width=\"20\" height=\"20\" fill=\"#faf7f0\"/>\n";
 
     for (const auto& element : elements_) {
+        const auto kind_name = svg_element_kind_name(element.kind());
+        const auto hit_kind_name = svg_hit_kind_name(element.kind());
+        out << "<g id=\"tbe-" << kind_name << '-' << element.id()
+            << "\" data-element-id=\"" << element.id()
+            << "\" data-kind=\"" << kind_name
+            << "\" data-hit-kind=\"" << hit_kind_name
+            << "\">\n";
+
         if (const auto* slab = element.slab()) {
             out << "<polygon points=\"";
             for (const auto& point : slab->boundary_polygon) {
@@ -2613,11 +2703,7 @@ void Document::export_floorplan_svg(const std::filesystem::path& path) const {
                     << add(stair->start, scale(normal, -1.0)).x << ',' << -add(stair->start, scale(normal, -1.0)).y
                     << "\" fill=\"#f4d35e\" fill-opacity=\"0.2\" stroke=\"#c26d00\" stroke-width=\"0.03\"/>\n";
             }
-        }
-    }
-
-    for (const auto& element : elements_) {
-        if (const auto* wall = element.wall()) {
+        } else if (const auto* wall = element.wall()) {
             out << "<line x1=\"" << wall->axis.start.x << "\" y1=\"" << -wall->axis.start.y
                 << "\" x2=\"" << wall->axis.end.x << "\" y2=\"" << -wall->axis.end.y
                 << "\" stroke=\"#243447\" stroke-width=\"" << wall->thickness_meters << "\" stroke-linecap=\"round\"/>\n";
@@ -2625,10 +2711,16 @@ void Document::export_floorplan_svg(const std::filesystem::path& path) const {
                 << "\" y=\"" << (-(wall->axis.start.y + wall->axis.end.y) / 2.0)
                 << "\" font-size=\"0.35\" fill=\"#7a3d1d\">W" << element.id() << "</text>\n";
             for (const auto& opening : wall->openings) {
+                const auto opening_kind_name = opening.kind == OpeningKind::Door ? std::string{"door"} : std::string{"window"};
+                out << "<g id=\"tbe-" << opening_kind_name << '-' << opening.element_id
+                    << "\" data-element-id=\"" << opening.element_id
+                    << "\" data-kind=\"" << opening_kind_name
+                    << "\" data-hit-kind=\"opening\">\n";
                 const auto start_x = wall->axis.start.x + opening.offset_meters - (opening.width_meters / 2.0);
                 out << "<rect x=\"" << start_x << "\" y=\"" << (-wall->axis.start.y - (wall->thickness_meters / 2.0))
                     << "\" width=\"" << opening.width_meters << "\" height=\"" << wall->thickness_meters
                     << "\" fill=\"#f4d35e\" stroke=\"#c26d00\" stroke-width=\"0.03\"/>\n";
+                out << "</g>\n";
             }
         } else if (const auto* room = element.room()) {
             out << "<polygon points=\"";
@@ -2662,14 +2754,15 @@ void Document::export_floorplan_svg(const std::filesystem::path& path) const {
                     << "\" y=\"" << -room->centerline_boundary_polygon.front().y - 0.5
                     << "\" font-size=\"0.35\" fill=\"#204b36\">R" << element.id() << " " << room->interior_area_square_meters << "m2";
                 if (!floor_name.empty()) {
-                    out << " F:" << escape_json(floor_name);
+                    out << " F:" << escape_xml(floor_name);
                 }
                 if (!ceiling_name.empty()) {
-                    out << " C:" << escape_json(ceiling_name);
+                    out << " C:" << escape_xml(ceiling_name);
                 }
                 out << "</text>\n";
             }
         }
+        out << "</g>\n";
     }
 
     out << "</svg>\n";

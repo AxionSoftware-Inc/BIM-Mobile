@@ -470,6 +470,7 @@ struct RoomScheduleRow {
     double centerline_area_square_meters{};
     double interior_area_square_meters{};
     double interior_perimeter_meters{};
+    double baseboard_length_meters{};
     double floor_finish_area_square_meters{};
     double ceiling_area_square_meters{};
     double interior_wall_finish_area_square_meters{};

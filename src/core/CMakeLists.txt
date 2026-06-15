@@ -8,6 +8,8 @@ add_library(tbe_core
     src/Project.cpp
 )
 
+set_target_properties(tbe_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 find_package(Threads REQUIRED)
 
 target_include_directories(tbe_core

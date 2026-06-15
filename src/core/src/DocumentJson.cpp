@@ -1,5 +1,6 @@
 #include "tbe/core/Document.hpp"
 
+#include <cmath>
 #include <cctype>
 #include <cerrno>
 #include <map>
@@ -41,12 +42,28 @@ public:
         auto value = parse_value();
         skip_ws();
         if (pos_ != input_.size()) {
-            throw std::invalid_argument("unexpected trailing JSON data");
+            fail("unexpected trailing JSON data");
         }
         return value;
     }
 
 private:
+    std::string context(std::size_t position) const {
+        const auto begin = position > 24 ? position - 24 : 0;
+        const auto end = std::min(input_.size(), position + 24);
+        std::string snippet{input_.substr(begin, end - begin)};
+        for (char& ch : snippet) {
+            if (ch == '\n' || ch == '\r' || ch == '\t') {
+                ch = ' ';
+            }
+        }
+        return snippet;
+    }
+
+    [[noreturn]] void fail(std::string_view message) const {
+        throw std::invalid_argument(std::string(message) + " at position " + std::to_string(pos_) + " near: " + context(pos_));
+    }
+
     void skip_ws() {
         while (pos_ < input_.size() && std::isspace(static_cast<unsigned char>(input_[pos_]))) {
             ++pos_;
@@ -56,14 +73,14 @@ private:
     char peek() {
         skip_ws();
         if (pos_ >= input_.size()) {
-            throw std::invalid_argument("unexpected end of JSON");
+            fail("unexpected end of JSON");
         }
         return input_[pos_];
     }
 
     char consume() {
         if (pos_ >= input_.size()) {
-            throw std::invalid_argument("unexpected end of JSON");
+            fail("unexpected end of JSON");
         }
         return input_[pos_++];
     }
@@ -71,7 +88,7 @@ private:
     void expect(char expected) {
         skip_ws();
         if (consume() != expected) {
-            throw std::invalid_argument("unexpected JSON token");
+            fail("unexpected JSON token");
         }
     }
 
@@ -110,7 +127,7 @@ private:
             pos_ += 4;
             return JsonValue{};
         }
-        throw std::invalid_argument("invalid JSON value");
+        fail("invalid JSON value");
     }
 
     JsonValue parse_object() {
@@ -133,7 +150,7 @@ private:
                 break;
             }
             if (token != ',') {
-                throw std::invalid_argument("expected JSON object separator");
+                fail("expected JSON object separator");
             }
         }
 
@@ -158,7 +175,7 @@ private:
                 break;
             }
             if (token != ',') {
-                throw std::invalid_argument("expected JSON array separator");
+                fail("expected JSON array separator");
             }
         }
 
@@ -182,7 +199,7 @@ private:
                 } else if (escaped == 't') {
                     output.push_back('\t');
                 } else {
-                    throw std::invalid_argument("unsupported JSON escape");
+                    fail("unsupported JSON escape");
                 }
             } else {
                 output.push_back(token);
@@ -205,6 +222,19 @@ private:
                 ++pos_;
             }
         }
+        if (pos_ < input_.size() && (input_[pos_] == 'e' || input_[pos_] == 'E')) {
+            ++pos_;
+            if (pos_ < input_.size() && (input_[pos_] == '+' || input_[pos_] == '-')) {
+                ++pos_;
+            }
+            const auto exponent_start = pos_;
+            while (pos_ < input_.size() && std::isdigit(static_cast<unsigned char>(input_[pos_]))) {
+                ++pos_;
+            }
+            if (exponent_start == pos_) {
+                fail("invalid JSON number");
+            }
+        }
 
         const auto token = input_.substr(start, pos_ - start);
         std::string buffer{token};
@@ -212,7 +242,7 @@ private:
         errno = 0;
         const auto value = std::strtod(buffer.c_str(), &parse_end);
         if (parse_end != (buffer.c_str() + buffer.size()) || errno == ERANGE) {
-            throw std::invalid_argument("invalid JSON number");
+            fail("invalid JSON number");
         }
 
         JsonValue json;
@@ -240,6 +270,22 @@ std::string escape_json(std::string_view value) {
         }
     }
     return escaped;
+}
+
+void ensure_finite(double value, std::string_view field_name) {
+    if (!std::isfinite(value)) {
+        throw std::invalid_argument(std::string("non-finite JSON numeric value in ") + std::string(field_name));
+    }
+}
+
+void ensure_finite_point(const Point2& point, std::string_view field_name) {
+    ensure_finite(point.x, std::string(field_name) + ".x");
+    ensure_finite(point.y, std::string(field_name) + ".y");
+}
+
+void ensure_finite_line(const Line2& line, std::string_view field_name) {
+    ensure_finite_point(line.start, std::string(field_name) + ".start");
+    ensure_finite_point(line.end, std::string(field_name) + ".end");
 }
 
 std::string kind_to_string(ElementKind kind) {
@@ -521,6 +567,129 @@ void write_points(std::ostream& out, const std::vector<Point2>& points) {
 } // namespace
 
 std::string Document::to_json() const {
+    for (const auto& [material_id, material] : materials()) {
+        (void)material_id;
+        if (material.density_kg_per_m3.has_value()) {
+            ensure_finite(*material.density_kg_per_m3, "material.density");
+        }
+        if (material.unit_cost.has_value()) {
+            ensure_finite(*material.unit_cost, "material.unit_cost");
+        }
+    }
+    for (const auto& [wall_type_id, wall_type] : wall_types()) {
+        (void)wall_type_id;
+        for (const auto& layer : wall_type.layers) {
+            ensure_finite(layer.thickness_meters, "wall_type.layer.thickness");
+        }
+    }
+    for (const auto& [assembly_id, assembly] : layered_assemblies()) {
+        (void)assembly_id;
+        for (const auto& layer : assembly.layers) {
+            ensure_finite(layer.thickness_meters, "assembly.layer.thickness");
+        }
+    }
+    for (const auto& [system_id, system] : floor_systems()) {
+        (void)system_id;
+        ensure_finite(system.area_square_meters, "floor_system.area");
+        for (const auto& point : system.boundary_polygon) {
+            ensure_finite_point(point, "floor_system.boundary_polygon");
+        }
+    }
+    for (const auto& [system_id, system] : ceiling_systems()) {
+        (void)system_id;
+        ensure_finite(system.area_square_meters, "ceiling_system.area");
+        ensure_finite(system.height_offset_meters, "ceiling_system.height_offset");
+        for (const auto& point : system.boundary_polygon) {
+            ensure_finite_point(point, "ceiling_system.boundary_polygon");
+        }
+    }
+    for (const auto& element : elements_) {
+        if (const auto* level = element.level()) {
+            ensure_finite(level->elevation_meters, "level.elevation");
+            ensure_finite(level->default_wall_height_meters, "level.default_wall_height");
+        } else if (const auto* wall = element.wall()) {
+            ensure_finite_line(wall->axis, "wall.axis");
+            ensure_finite(wall->thickness_meters, "wall.thickness");
+            ensure_finite(wall->height_meters, "wall.height");
+            for (const auto& join : wall->joins) {
+                ensure_finite_point(join.point, "wall.join.point");
+                ensure_finite_line(join.other_axis, "wall.join.other_axis");
+            }
+            for (const auto& opening : wall->openings) {
+                ensure_finite(opening.offset_meters, "wall.opening.offset");
+                ensure_finite(opening.width_meters, "wall.opening.width");
+                ensure_finite(opening.height_meters, "wall.opening.height");
+                ensure_finite(opening.sill_height_meters, "wall.opening.sill_height");
+            }
+        } else if (const auto* door = element.door()) {
+            ensure_finite(door->offset_meters, "door.offset");
+            ensure_finite(door->width_meters, "door.width");
+            ensure_finite(door->height_meters, "door.height");
+        } else if (const auto* window = element.window()) {
+            ensure_finite(window->offset_meters, "window.offset");
+            ensure_finite(window->width_meters, "window.width");
+            ensure_finite(window->height_meters, "window.height");
+            ensure_finite(window->sill_height_meters, "window.sill_height");
+        } else if (const auto* room = element.room()) {
+            ensure_finite(room->centerline_area_square_meters, "room.centerline_area");
+            ensure_finite(room->interior_area_square_meters, "room.interior_area");
+            ensure_finite(room->centerline_perimeter_meters, "room.centerline_perimeter");
+            ensure_finite(room->interior_perimeter_meters, "room.interior_perimeter");
+            ensure_finite(room->floor_finish_area_square_meters, "room.floor_finish_area");
+            ensure_finite(room->ceiling_area_square_meters, "room.ceiling_area");
+            ensure_finite(room->baseboard_length_meters, "room.baseboard_length");
+            ensure_finite(room->interior_wall_finish_area_square_meters, "room.interior_wall_finish_area");
+            for (const auto& point : room->centerline_boundary_polygon) {
+                ensure_finite_point(point, "room.centerline_boundary_polygon");
+            }
+            for (const auto& point : room->interior_boundary_polygon) {
+                ensure_finite_point(point, "room.interior_boundary_polygon");
+            }
+        } else if (const auto* slab = element.slab()) {
+            ensure_finite(slab->thickness_meters, "slab.thickness");
+            ensure_finite(slab->area_square_meters, "slab.area");
+            ensure_finite(slab->volume_cubic_meters, "slab.volume");
+            ensure_finite(slab->elevation_offset_meters, "slab.elevation_offset");
+            for (const auto& point : slab->boundary_polygon) {
+                ensure_finite_point(point, "slab.boundary_polygon");
+            }
+        } else if (const auto* roof = element.roof()) {
+            ensure_finite(roof->thickness_meters, "roof.thickness");
+            ensure_finite(roof->area_square_meters, "roof.area");
+            ensure_finite(roof->volume_cubic_meters, "roof.volume");
+            if (roof->slope_degrees.has_value()) {
+                ensure_finite(*roof->slope_degrees, "roof.slope_degrees");
+            }
+            if (roof->overhang_meters.has_value()) {
+                ensure_finite(*roof->overhang_meters, "roof.overhang_meters");
+            }
+            for (const auto& point : roof->boundary_polygon) {
+                ensure_finite_point(point, "roof.boundary_polygon");
+            }
+        } else if (const auto* column = element.column()) {
+            ensure_finite_point(column->position, "column.position");
+            ensure_finite(column->width_meters, "column.width");
+            ensure_finite(column->depth_meters, "column.depth");
+            ensure_finite(column->height_meters, "column.height");
+            ensure_finite(column->volume_cubic_meters, "column.volume");
+        } else if (const auto* beam = element.beam()) {
+            ensure_finite_point(beam->start, "beam.start");
+            ensure_finite_point(beam->end, "beam.end");
+            ensure_finite(beam->width_meters, "beam.width");
+            ensure_finite(beam->height_meters, "beam.height");
+            ensure_finite(beam->length_meters, "beam.length");
+            ensure_finite(beam->volume_cubic_meters, "beam.volume");
+        } else if (const auto* stair = element.stair()) {
+            ensure_finite_point(stair->start, "stair.start");
+            ensure_finite_point(stair->direction, "stair.direction");
+            ensure_finite(stair->width_meters, "stair.width");
+            ensure_finite(stair->total_rise_meters, "stair.total_rise");
+            ensure_finite(stair->total_run_meters, "stair.total_run");
+            ensure_finite(stair->footprint_area_square_meters, "stair.footprint_area");
+            ensure_finite(stair->volume_cubic_meters, "stair.volume");
+        }
+    }
+
     std::ostringstream out;
     out << "{\"schema\":\"tbe.document.v1\",";
     out << "\"name\":\"" << escape_json(name_) << "\",";
