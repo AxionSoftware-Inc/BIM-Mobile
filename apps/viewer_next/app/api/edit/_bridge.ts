@@ -23,6 +23,7 @@ export type EditArtifactPaths = {
   floorplan_svg?: string;
   walls_obj?: string;
   metadata_json?: string;
+  render_scene_json?: string;
 };
 
 export type EditValidationSummary = {
@@ -95,6 +96,9 @@ export function updatedFilesFromArtifactPaths(artifactPaths: EditArtifactPaths) 
   if (artifactPaths.metadata_json) {
     files.push("metadata.json");
   }
+  if (artifactPaths.render_scene_json) {
+    files.push("render_scene.json");
+  }
   return files;
 }
 
@@ -114,6 +118,9 @@ export async function copyArtifactsToSampleDir(sampleDir: string, artifactPaths:
   }
   if (artifactPaths.metadata_json) {
     await copyFile(artifactPaths.metadata_json, path.join(sampleDir, "metadata.json"));
+  }
+  if (artifactPaths.render_scene_json) {
+    await copyFile(artifactPaths.render_scene_json, path.join(sampleDir, "render_scene.json"));
   }
 }
 

@@ -1,147 +1,36 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="-2 -2 20 20">
 <rect x="-2" y="-2" width="20" height="20" fill="#faf7f0"/>
-<g id="tbe-wall-1" data-element-id="1" data-kind="wall" data-hit-kind="wall_body">
-<line x1="0" y1="-0" x2="8" y2="-0" stroke="#243447" stroke-width="0.2" stroke-linecap="round"/>
-<text x="4" y="-0" font-size="0.35" fill="#7a3d1d">W1</text>
-<g id="tbe-door-5" data-element-id="5" data-kind="door" data-hit-kind="opening">
-<rect x="0.55" y="-0.1" width="0.9" height="0.2" fill="#f4d35e" stroke="#c26d00" stroke-width="0.03"/>
-</g>
+<g id="tbe-level-1" data-element-id="1" data-kind="level" data-hit-kind="level">
 </g>
 <g id="tbe-wall-2" data-element-id="2" data-kind="wall" data-hit-kind="wall_body">
-<line x1="4" y1="-0" x2="4" y2="-3" stroke="#243447" stroke-width="0.2" stroke-linecap="round"/>
-<text x="4" y="-1.5" font-size="0.35" fill="#7a3d1d">W2</text>
-<g id="tbe-window-6" data-element-id="6" data-kind="window" data-hit-kind="opening">
-<rect x="5" y="-0.1" width="1" height="0.2" fill="#f4d35e" stroke="#c26d00" stroke-width="0.03"/>
+<line x1="0" y1="-0" x2="6" y2="-0" stroke="#243447" stroke-width="0.2" stroke-linecap="round"/>
+<text x="3" y="-0" font-size="0.35" fill="#7a3d1d">W2</text>
+<g id="tbe-door-6" data-element-id="6" data-kind="door" data-hit-kind="opening">
+<rect x="0.75" y="-0.1" width="0.9" height="0.2" fill="#f4d35e" stroke="#c26d00" stroke-width="0.03"/>
 </g>
 </g>
 <g id="tbe-wall-3" data-element-id="3" data-kind="wall" data-hit-kind="wall_body">
-<line x1="4" y1="-3" x2="0" y2="-3" stroke="#243447" stroke-width="0.2" stroke-linecap="round"/>
-<text x="2" y="-3" font-size="0.35" fill="#7a3d1d">W3</text>
-<g id="tbe-door-12" data-element-id="12" data-kind="door" data-hit-kind="opening">
-<rect x="4.95" y="-3.1" width="0.9" height="0.2" fill="#f4d35e" stroke="#c26d00" stroke-width="0.03"/>
+<line x1="6" y1="-0" x2="6" y2="-4" stroke="#243447" stroke-width="0.2" stroke-linecap="round"/>
+<text x="6" y="-2" font-size="0.35" fill="#7a3d1d">W3</text>
+<g id="tbe-window-7" data-element-id="7" data-kind="window" data-hit-kind="opening">
+<rect x="7.2" y="-0.1" width="1.2" height="0.2" fill="#f4d35e" stroke="#c26d00" stroke-width="0.03"/>
 </g>
 </g>
 <g id="tbe-wall-4" data-element-id="4" data-kind="wall" data-hit-kind="wall_body">
-<line x1="0" y1="-3" x2="0" y2="-0" stroke="#243447" stroke-width="0.2" stroke-linecap="round"/>
-<text x="0" y="-1.5" font-size="0.35" fill="#7a3d1d">W4</text>
+<line x1="6" y1="-4" x2="0" y2="-4" stroke="#243447" stroke-width="0.2" stroke-linecap="round"/>
+<text x="3" y="-4" font-size="0.35" fill="#7a3d1d">W4</text>
 </g>
-<g id="tbe-door-5" data-element-id="5" data-kind="door" data-hit-kind="opening">
+<g id="tbe-wall-5" data-element-id="5" data-kind="wall" data-hit-kind="wall_body">
+<line x1="0" y1="-4" x2="0" y2="-0" stroke="#243447" stroke-width="0.2" stroke-linecap="round"/>
+<text x="0" y="-2" font-size="0.35" fill="#7a3d1d">W5</text>
 </g>
-<g id="tbe-window-6" data-element-id="6" data-kind="window" data-hit-kind="opening">
+<g id="tbe-door-6" data-element-id="6" data-kind="door" data-hit-kind="opening">
 </g>
-<g id="tbe-level-8" data-element-id="8" data-kind="level" data-hit-kind="level">
+<g id="tbe-window-7" data-element-id="7" data-kind="window" data-hit-kind="opening">
 </g>
-<g id="tbe-wall-9" data-element-id="9" data-kind="wall" data-hit-kind="wall_body">
-<line x1="0.2" y1="-0.2" x2="2.2" y2="-0.2" stroke="#243447" stroke-width="0.2" stroke-linecap="round"/>
-<text x="1.2" y="-0.2" font-size="0.35" fill="#7a3d1d">W9</text>
-</g>
-<g id="tbe-wall-10" data-element-id="10" data-kind="wall" data-hit-kind="wall_body">
-<line x1="20" y1="-20" x2="24" y2="-20" stroke="#243447" stroke-width="0.2" stroke-linecap="round"/>
-<text x="22" y="-20" font-size="0.35" fill="#7a3d1d">W10</text>
-<g id="tbe-door-15" data-element-id="15" data-kind="door" data-hit-kind="opening">
-<rect x="20.95" y="-20.1" width="0.9" height="0.2" fill="#f4d35e" stroke="#c26d00" stroke-width="0.03"/>
-</g>
-</g>
-<g id="tbe-wall-11" data-element-id="11" data-kind="wall" data-hit-kind="wall_body">
-<line x1="20.2" y1="-20" x2="24.2" y2="-20" stroke="#243447" stroke-width="0.18" stroke-linecap="round"/>
-<text x="22.2" y="-20" font-size="0.35" fill="#7a3d1d">W11</text>
-<g id="tbe-door-18" data-element-id="18" data-kind="door" data-hit-kind="opening">
-<rect x="21.15" y="-20.09" width="0.9" height="0.18" fill="#f4d35e" stroke="#c26d00" stroke-width="0.03"/>
-</g>
-</g>
-<g id="tbe-door-12" data-element-id="12" data-kind="door" data-hit-kind="opening">
-</g>
-<g id="tbe-wall-14" data-element-id="14" data-kind="wall" data-hit-kind="wall_body">
-<line x1="20.2" y1="-20" x2="24.2" y2="-20" stroke="#243447" stroke-width="0.18" stroke-linecap="round"/>
-<text x="22.2" y="-20" font-size="0.35" fill="#7a3d1d">W14</text>
-<g id="tbe-door-21" data-element-id="21" data-kind="door" data-hit-kind="opening">
-<rect x="21.15" y="-20.09" width="0.9" height="0.18" fill="#f4d35e" stroke="#c26d00" stroke-width="0.03"/>
-</g>
-</g>
-<g id="tbe-door-15" data-element-id="15" data-kind="door" data-hit-kind="opening">
-</g>
-<g id="tbe-wall-17" data-element-id="17" data-kind="wall" data-hit-kind="wall_body">
-<line x1="20.2" y1="-20" x2="24.2" y2="-20" stroke="#243447" stroke-width="0.18" stroke-linecap="round"/>
-<text x="22.2" y="-20" font-size="0.35" fill="#7a3d1d">W17</text>
-<g id="tbe-door-24" data-element-id="24" data-kind="door" data-hit-kind="opening">
-<rect x="21.15" y="-20.09" width="0.9" height="0.18" fill="#f4d35e" stroke="#c26d00" stroke-width="0.03"/>
-</g>
-</g>
-<g id="tbe-door-18" data-element-id="18" data-kind="door" data-hit-kind="opening">
-</g>
-<g id="tbe-wall-20" data-element-id="20" data-kind="wall" data-hit-kind="wall_body">
-<line x1="20.2" y1="-20" x2="24.2" y2="-20" stroke="#243447" stroke-width="0.18" stroke-linecap="round"/>
-<text x="22.2" y="-20" font-size="0.35" fill="#7a3d1d">W20</text>
-<g id="tbe-door-27" data-element-id="27" data-kind="door" data-hit-kind="opening">
-<rect x="21.15" y="-20.09" width="0.9" height="0.18" fill="#f4d35e" stroke="#c26d00" stroke-width="0.03"/>
-</g>
-</g>
-<g id="tbe-door-21" data-element-id="21" data-kind="door" data-hit-kind="opening">
-</g>
-<g id="tbe-wall-23" data-element-id="23" data-kind="wall" data-hit-kind="wall_body">
-<line x1="20.2" y1="-20" x2="24.2" y2="-20" stroke="#243447" stroke-width="0.18" stroke-linecap="round"/>
-<text x="22.2" y="-20" font-size="0.35" fill="#7a3d1d">W23</text>
-<g id="tbe-door-30" data-element-id="30" data-kind="door" data-hit-kind="opening">
-<rect x="21.15" y="-20.09" width="0.9" height="0.18" fill="#f4d35e" stroke="#c26d00" stroke-width="0.03"/>
-</g>
-</g>
-<g id="tbe-door-24" data-element-id="24" data-kind="door" data-hit-kind="opening">
-</g>
-<g id="tbe-wall-26" data-element-id="26" data-kind="wall" data-hit-kind="wall_body">
-<line x1="20.2" y1="-20" x2="24.2" y2="-20" stroke="#243447" stroke-width="0.18" stroke-linecap="round"/>
-<text x="22.2" y="-20" font-size="0.35" fill="#7a3d1d">W26</text>
-<g id="tbe-door-33" data-element-id="33" data-kind="door" data-hit-kind="opening">
-<rect x="21.15" y="-20.09" width="0.9" height="0.18" fill="#f4d35e" stroke="#c26d00" stroke-width="0.03"/>
-</g>
-</g>
-<g id="tbe-door-27" data-element-id="27" data-kind="door" data-hit-kind="opening">
-</g>
-<g id="tbe-wall-29" data-element-id="29" data-kind="wall" data-hit-kind="wall_body">
-<line x1="20.2" y1="-20" x2="24.2" y2="-20" stroke="#243447" stroke-width="0.18" stroke-linecap="round"/>
-<text x="22.2" y="-20" font-size="0.35" fill="#7a3d1d">W29</text>
-<g id="tbe-door-37" data-element-id="37" data-kind="door" data-hit-kind="opening">
-<rect x="21.15" y="-20.09" width="0.9" height="0.18" fill="#f4d35e" stroke="#c26d00" stroke-width="0.03"/>
-</g>
-</g>
-<g id="tbe-door-30" data-element-id="30" data-kind="door" data-hit-kind="opening">
-</g>
-<g id="tbe-wall-32" data-element-id="32" data-kind="wall" data-hit-kind="wall_body">
-<line x1="20.2" y1="-20" x2="24.2" y2="-20" stroke="#243447" stroke-width="0.18" stroke-linecap="round"/>
-<text x="22.2" y="-20" font-size="0.35" fill="#7a3d1d">W32</text>
-<g id="tbe-door-40" data-element-id="40" data-kind="door" data-hit-kind="opening">
-<rect x="21.15" y="-20.09" width="0.9" height="0.18" fill="#f4d35e" stroke="#c26d00" stroke-width="0.03"/>
-</g>
-</g>
-<g id="tbe-door-33" data-element-id="33" data-kind="door" data-hit-kind="opening">
-</g>
-<g id="tbe-wall-35" data-element-id="35" data-kind="wall" data-hit-kind="wall_body">
-<line x1="22.2796" y1="-21.0339" x2="20.5304" y2="-20.068" stroke="#243447" stroke-width="0.2" stroke-linecap="round"/>
-<text x="21.405" y="-20.551" font-size="0.35" fill="#7a3d1d">W35</text>
-</g>
-<g id="tbe-wall-36" data-element-id="36" data-kind="wall" data-hit-kind="wall_body">
-<line x1="20.2" y1="-20" x2="24.2" y2="-20" stroke="#243447" stroke-width="0.18" stroke-linecap="round"/>
-<text x="22.2" y="-20" font-size="0.35" fill="#7a3d1d">W36</text>
-</g>
-<g id="tbe-door-37" data-element-id="37" data-kind="door" data-hit-kind="opening">
-</g>
-<g id="tbe-wall-39" data-element-id="39" data-kind="wall" data-hit-kind="wall_body">
-<line x1="20.2" y1="-20" x2="24.2" y2="-20" stroke="#243447" stroke-width="0.18" stroke-linecap="round"/>
-<text x="22.2" y="-20" font-size="0.35" fill="#7a3d1d">W39</text>
-</g>
-<g id="tbe-door-40" data-element-id="40" data-kind="door" data-hit-kind="opening">
-</g>
-<g id="tbe-wall-42" data-element-id="42" data-kind="wall" data-hit-kind="wall_body">
-<line x1="10.2784" y1="9.01318" x2="4.0188" y2="7.00597" stroke="#243447" stroke-width="0.2" stroke-linecap="round"/>
-<text x="7.1486" y="8.00957" font-size="0.35" fill="#7a3d1d">W42</text>
-<g id="tbe-door-43" data-element-id="43" data-kind="door" data-hit-kind="opening">
-<rect x="13.3003" y="8.91318" width="0.9" height="0.2" fill="#f4d35e" stroke="#c26d00" stroke-width="0.03"/>
-</g>
-</g>
-<g id="tbe-door-43" data-element-id="43" data-kind="door" data-hit-kind="opening">
-</g>
-<g id="tbe-room-7" data-element-id="7" data-kind="room" data-hit-kind="room_interior">
-<polygon points="0,-3 0,-0 4,-0 4,-3 " fill="#6fb98f" fill-opacity="0.18" stroke="#3f7d5d" stroke-width="0.05"/>
-<polygon points="0.1,-2.9 0.1,-0.1 3.9,-0.1 3.9,-2.9 " fill="none" stroke="#c04c34" stroke-width="0.04" stroke-dasharray="0.15 0.12"/>
-<text x="0.5" y="-3.5" font-size="0.35" fill="#204b36">R7 10.64m2</text>
+<g id="tbe-room-8" data-element-id="8" data-kind="room" data-hit-kind="room_interior">
+<polygon points="0,-4 0,-0 6,-0 6,-4 " fill="#6fb98f" fill-opacity="0.18" stroke="#3f7d5d" stroke-width="0.05"/>
+<polygon points="0.1,-3.9 0.1,-0.1 5.9,-0.1 5.9,-3.9 " fill="none" stroke="#c04c34" stroke-width="0.04" stroke-dasharray="0.15 0.12"/>
+<text x="0.5" y="-4.5" font-size="0.35" fill="#204b36">R8 22.04m2</text>
 </g>
 </svg>

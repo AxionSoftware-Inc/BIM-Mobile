@@ -81,3 +81,11 @@ This keeps the engine output simple while leaving room for later chunked streami
 - `exports/walls.obj`
 
 The render scene also exposes basic object, vertex, and index counts for quick diagnostics.
+
+## Renderer-neutral adapter plan
+
+- The C++ engine stays the source of truth for BIM semantics and geometry export.
+- The Next.js reference viewer consumes `render_scene.json` directly for 3D rendering.
+- Future Flutter UI will consume the same `render_scene.json` contract.
+- A future Filament adapter should translate `RenderScene` objects into renderer-specific buffers without touching project internals.
+- UI code should stay thin: load scene, filter kinds, select elements, and pass interaction back to the engine bridge.

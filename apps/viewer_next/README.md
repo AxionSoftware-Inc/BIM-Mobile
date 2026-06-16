@@ -1,11 +1,14 @@
 # viewer_next
 
-Temporary read-only BIM viewer prototype for exported engine artifacts.
+Reference/debug prototype for exported engine artifacts.
+
+This app stays available for inspection and smoke testing, but the future
+primary UI path is Flutter + Filament.
 
 ## What it shows
 
 - floorplan SVG from engine export
-- 3D OBJ preview from engine export
+- 3D `RenderScene` preview from engine export, with `walls.obj` as fallback
 - debug report JSON with element counts and validation summary
 - schedules, material takeoff, and selected element details
 - optional `walls.obj` and project metadata if present
@@ -30,6 +33,7 @@ The app loads files from `public/sample`:
 - `public/sample/project.json`
 - `public/sample/debug_report.json`
 - `public/sample/floorplan.svg`
+- `public/sample/render_scene.json`
 - `public/sample/walls.obj`
 - `public/sample/metadata.json`
 
@@ -44,6 +48,7 @@ If you export a newer engine package, refresh the viewer sample files with:
 ```bash
 cp c_basic_building_package/exports/floorplan.svg apps/viewer_next/public/sample/floorplan.svg
 cp c_basic_building_package/debug/debug_report.json apps/viewer_next/public/sample/debug_report.json
+cp c_basic_building_package/exports/render_scene.json apps/viewer_next/public/sample/render_scene.json
 cp c_basic_building_package/exports/walls.obj apps/viewer_next/public/sample/walls.obj
 cp c_basic_building_package/project.json apps/viewer_next/public/sample/project.json
 cp c_basic_building_package/metadata.json apps/viewer_next/public/sample/metadata.json
@@ -72,9 +77,11 @@ Click-selection works only when the SVG export embeds element ids or `data-eleme
 
 ## 3D View
 
-The 3D tab reads `public/sample/walls.obj` and renders it with `three.js`.
+The 3D tab reads `public/sample/render_scene.json` and renders it with `three.js`.
 
-The OBJ viewer remaps engine coordinates into Three.js space so the model sits on the ground plane:
+If `render_scene.json` is missing, the viewer falls back to `public/sample/walls.obj` and shows a warning.
+
+The `RenderScene` viewer remaps engine coordinates into Three.js space so the model sits on the ground plane:
 
 - engine `X` → Three `X`
 - engine `Y` → Three `Z` with sign adjusted to keep the scene readable
@@ -86,8 +93,8 @@ If you update the viewer from a fresh checkout, make sure dependencies are insta
 npm install
 ```
 
-The 3D tab includes orbit controls, reset camera, and a solid/wireframe toggle. It is still read-only and does not do per-element selection yet.
-The 3D panel also shows basic diagnostics so it is obvious when the OBJ is missing, empty, or out of sync with the 2D export.
+The 3D tab includes orbit controls, reset camera, and a solid/wireframe toggle. It is still read-only, but its meshes now preserve element ids and kinds through `RenderScene`.
+The 3D panel also shows basic diagnostics so it is obvious when the render scene is missing, empty, or out of sync with the 2D export.
 
 ## Add Wall Draft
 
@@ -180,7 +187,7 @@ Architecture:
 1. The browser sends a fixed JSON payload to `POST /api/edit/create-wall`.
 2. The Next.js route validates the input and calls the fixed helper executable with `execFile`.
 3. The helper loads the current project, creates the wall, recomputes rooms/schedules/validation, and exports a fresh package.
-4. The route copies the exported `project.json`, `debug_report.json`, `floorplan.svg`, `walls.obj`, and `metadata.json` back into `public/sample`.
+4. The route copies the exported `project.json`, `debug_report.json`, `floorplan.svg`, `render_scene.json`, `walls.obj`, and `metadata.json` back into `public/sample`.
 5. The viewer reloads the updated sample artifacts with a cache-busting query string.
 
 Required env vars for the route:
@@ -198,7 +205,7 @@ The edit routes all return the same JSON shape:
   "command": "create_wall",
   "message": "create_wall completed successfully.",
   "validation": { "errors": 0, "warnings": 0 },
-  "updatedFiles": ["project.json", "debug_report.json", "floorplan.svg"],
+  "updatedFiles": ["project.json", "debug_report.json", "floorplan.svg", "render_scene.json"],
   "output": "...helper stdout or stderr...",
   "error": null
 }
@@ -228,7 +235,7 @@ Limitations:
 - no arbitrary shell execution from the browser
 - refreshes exported artifacts, not a live in-memory engine session
 - if the bridge is not configured, the UI stays read-only and shows a setup banner
-- current 3D OBJ is a single mesh preview; if wall groups appear missing, the diagnostics panel should be checked first
+- `render_scene.json` is the primary 3D source; if it is missing, OBJ fallback is used and the diagnostics panel should be checked first
 
 ## Smoke Test
 
@@ -269,6 +276,7 @@ When the engine export changes, regenerate the sample files and copy them into `
 build/dev/apps/tbe_cli/tbe_cli
 cp <export-folder>/floorplan.svg apps/viewer_next/public/sample/floorplan.svg
 cp <export-folder>/debug_report.json apps/viewer_next/public/sample/debug_report.json
+cp <export-folder>/render_scene.json apps/viewer_next/public/sample/render_scene.json
 cp <export-folder>/project.json apps/viewer_next/public/sample/project.json
 cp <export-folder>/walls.obj apps/viewer_next/public/sample/walls.obj
 cp <export-folder>/metadata.json apps/viewer_next/public/sample/metadata.json
@@ -293,6 +301,6 @@ Then open [http://localhost:3000](http://localhost:3000).
 - SVG zoom and pan are intentionally simple.
 - Screen-to-model mapping is approximate for fallback clicks and is not yet a true CAD hit-test.
 - SVG selection depends on engine metadata attributes like `data-element-id`, `data-kind`, and `data-hit-kind`.
-- 3D OBJ selection is not yet metadata-aware.
-- Next step is to replace the static artifact flow with a live engine bridge once the macOS Flutter toolchain is fixed.
+- 3D selection now uses `render_scene.json` element metadata when available.
+- Next step is to reuse the same `RenderScene` contract in Flutter/Filament.
 - Static mode still works if the bridge env vars are missing; only edit actions are disabled.

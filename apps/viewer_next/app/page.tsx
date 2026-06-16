@@ -72,6 +72,7 @@ type ViewerData = {
   project: ProjectSummary;
   debug: DebugReport;
   projectJson: JsonObject | null;
+  renderScene: string | null;
   svg: string;
   obj: string | null;
   metadata: JsonObject | null;
@@ -112,6 +113,17 @@ type ArtifactStats = {
   objObjectCount: number;
 };
 
+type RenderSceneStats = {
+  objectCount: number;
+  selectableObjectCount: number;
+  levelCount: number;
+  vertexCount: number;
+  indexCount: number;
+  missingGeometryCount: number;
+  invalidBoundsCount: number;
+  kindCounts: Record<string, number>;
+};
+
 const kindFilterKeys = [
   "wall",
   "room",
@@ -131,6 +143,7 @@ type KindFilterKey = (typeof kindFilterKeys)[number];
 const sampleFiles = {
   projectJson: "/sample/project.json",
   debugJson: "/sample/debug_report.json",
+  renderScene: "/sample/render_scene.json",
   svg: "/sample/floorplan.svg",
   obj: "/sample/walls.obj",
   metadata: "/sample/metadata.json",
@@ -266,6 +279,70 @@ function extractObjStats(obj: string | null): ArtifactStats {
     objVertexCount: vertexCount,
     objFaceCount: faceCount,
     objObjectCount: objectCount,
+  };
+}
+
+function extractRenderSceneStats(renderScene: string | null): RenderSceneStats | null {
+  if (!renderScene) {
+    return null;
+  }
+  const parsed = safeJsonParse(renderScene);
+  if (!parsed) {
+    return null;
+  }
+  const objects = Array.isArray(parsed.objects) ? parsed.objects : [];
+  const kindCounts: Record<string, number> = {};
+  let selectableObjectCount = 0;
+  const levelIds = new Set<number>();
+  let missingGeometryCount = 0;
+  let invalidBoundsCount = 0;
+  for (const object of objects) {
+    const renderSceneObject = isObject(object) ? object : null;
+    const kind = normalizeKindKey(renderSceneObject?.kind);
+    kindCounts[kind] = (kindCounts[kind] ?? 0) + 1;
+    if (renderSceneObject?.selectable !== false) {
+      selectableObjectCount += 1;
+    }
+    const levelId = typeof renderSceneObject?.level_id === "number"
+      ? renderSceneObject.level_id
+      : typeof renderSceneObject?.levelId === "number"
+        ? renderSceneObject.levelId
+        : null;
+    if (typeof levelId === "number" && Number.isFinite(levelId)) {
+      levelIds.add(levelId);
+    }
+    const mesh = isObject(renderSceneObject?.mesh) ? renderSceneObject.mesh : null;
+    const meshPositions = Array.isArray(mesh?.positions) ? mesh.positions.length : 0;
+    const meshIndices = Array.isArray(mesh?.indices) ? mesh.indices.length : 0;
+    if (meshPositions === 0 || meshIndices === 0) {
+      missingGeometryCount += 1;
+    }
+    const bounds = isObject(renderSceneObject?.bounds) ? renderSceneObject.bounds : null;
+    const min = isObject(bounds?.min) ? bounds.min : null;
+    const max = isObject(bounds?.max) ? bounds.max : null;
+    const minX = typeof min?.x === "number" ? min.x : Number.NaN;
+    const minY = typeof min?.y === "number" ? min.y : Number.NaN;
+    const minZ = typeof min?.z === "number" ? min.z : Number.NaN;
+    const maxX = typeof max?.x === "number" ? max.x : Number.NaN;
+    const maxY = typeof max?.y === "number" ? max.y : Number.NaN;
+    const maxZ = typeof max?.z === "number" ? max.z : Number.NaN;
+    if (
+      !min || !max ||
+      ![minX, minY, minZ, maxX, maxY, maxZ].every((value) => Number.isFinite(value)) ||
+      minX > maxX || minY > maxY || minZ > maxZ
+    ) {
+      invalidBoundsCount += 1;
+    }
+  }
+  return {
+    objectCount: typeof parsed.object_count === "number" ? parsed.object_count : objects.length,
+    selectableObjectCount,
+    levelCount: levelIds.size,
+    vertexCount: typeof parsed.vertex_count === "number" ? parsed.vertex_count : 0,
+    indexCount: typeof parsed.index_count === "number" ? parsed.index_count : 0,
+    missingGeometryCount,
+    invalidBoundsCount,
+    kindCounts,
   };
 }
 
@@ -935,9 +1012,10 @@ function extractValidationSummary(debug: DebugReport | null) {
 
 async function loadBundledSampleData(revision: number): Promise<ViewerData> {
   const suffix = revision > 0 ? `?v=${revision}` : "";
-  const [projectJson, debugJson, svg, metadata, obj] = await Promise.all([
+  const [projectJson, debugJson, renderScene, svg, metadata, obj] = await Promise.all([
     fetch(`${sampleFiles.projectJson}${suffix}`).then((response) => response.json()),
     fetch(`${sampleFiles.debugJson}${suffix}`).then((response) => response.json()),
+    fetch(`${sampleFiles.renderScene}${suffix}`).then((response) => (response.ok ? response.text() : null)).catch(() => null),
     fetch(`${sampleFiles.svg}${suffix}`).then((response) => response.text()),
     fetch(`${sampleFiles.metadata}${suffix}`).then((response) => response.json()).catch(() => null),
     fetch(`${sampleFiles.obj}${suffix}`).then((response) => response.text()).catch(() => null),
@@ -949,6 +1027,7 @@ async function loadBundledSampleData(revision: number): Promise<ViewerData> {
     project: normalizeProjectSummary(projectObject, metadataObject, debug),
     debug,
     projectJson: projectObject,
+    renderScene: typeof renderScene === "string" ? renderScene : null,
     svg,
     obj: typeof obj === "string" ? obj : null,
     metadata: metadataObject,
@@ -1020,6 +1099,7 @@ export default function Home() {
   const currentSvgViewBox = useMemo(() => extractSvgViewBox(data?.svg ?? ""), [data]);
   const renderedSvgMarkup = useMemo(() => prepareSvgMarkup(data?.svg ?? ""), [data]);
   const artifactStats = useMemo(() => extractObjStats(data?.obj ?? null), [data]);
+  const renderSceneStats = useMemo(() => extractRenderSceneStats(data?.renderScene ?? null), [data]);
   const exportTimestamp = useMemo(() => extractExportTimestamp(data?.metadata ?? null), [data]);
   const visibleDebugElements = useMemo(
     () =>
@@ -1526,6 +1606,7 @@ export default function Home() {
       project: normalizeProjectSummary(parsed, metadata, debug),
       debug,
       projectJson: parsed,
+      renderScene: null,
       svg: data?.svg ?? "",
       obj: data?.obj ?? null,
       metadata,
@@ -1552,6 +1633,7 @@ export default function Home() {
     const svgFile = selectedFiles.find((file) => file.name.endsWith(".svg"));
     const projectFile = selectedFiles.find((file) => file.name.endsWith("project.json"));
     const metadataFile = selectedFiles.find((file) => file.name.endsWith("metadata.json"));
+    const renderSceneFile = selectedFiles.find((file) => file.name.endsWith("render_scene.json"));
     if (!debugFile || !svgFile) {
       throw new Error("Please select at least debug_report.json and floorplan.svg");
     }
@@ -1561,6 +1643,7 @@ export default function Home() {
       projectFile?.text().then((text) => JSON.parse(text) as unknown).catch(() => null) ?? Promise.resolve(null),
       metadataFile?.text().then((text) => JSON.parse(text) as unknown).catch(() => null) ?? Promise.resolve(null),
     ]);
+    const renderScene = renderSceneFile ? await renderSceneFile.text() : null;
     const debug = normalizeDebugReport(debugJson);
     const projectObject = isObject(projectJson) ? projectJson : null;
     const metadataObject = isObject(metadata) ? metadata : null;
@@ -1568,6 +1651,7 @@ export default function Home() {
       project: normalizeProjectSummary(projectObject, metadataObject, debug),
       debug,
       projectJson: projectObject,
+      renderScene,
       svg,
       obj: null,
       metadata: metadataObject,
@@ -2679,10 +2763,21 @@ export default function Home() {
             <p className="font-medium text-slate-900">Artifact sync</p>
             <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
               <div className="rounded-xl bg-white px-3 py-2">Exported: {exportTimestamp ?? "not provided"}</div>
+              <div className={`rounded-xl bg-white px-3 py-2 ${data?.renderScene ? "text-emerald-700" : "text-amber-700"}`}>
+                Render scene: {data?.renderScene ? "present" : "missing, OBJ fallback"}
+              </div>
               <div className="rounded-xl bg-white px-3 py-2">OBJ vertices: {artifactStats.objVertexCount}</div>
               <div className="rounded-xl bg-white px-3 py-2">OBJ faces: {artifactStats.objFaceCount}</div>
               <div className="rounded-xl bg-white px-3 py-2">OBJ objects: {artifactStats.objObjectCount || 1}</div>
+              <div className={`rounded-xl bg-white px-3 py-2 ${renderSceneStats ? "text-emerald-700" : "text-amber-700"}`}>
+                RenderScene objects: {renderSceneStats?.objectCount ?? "missing"}
+              </div>
             </div>
+            {!data?.renderScene ? <p className="mt-2 text-[11px] text-amber-700">render_scene.json is missing, so the 3D viewer uses OBJ fallback.</p> : null}
+            {data?.renderScene && !renderSceneStats ? <p className="mt-2 text-[11px] text-rose-700">render_scene.json could not be parsed, so 3D may fall back to OBJ.</p> : null}
+            {renderSceneStats && Math.abs((data?.debug.elementCount ?? 0) - renderSceneStats.objectCount) > 10 ? (
+              <p className="mt-2 text-[11px] text-amber-700">Debug report and RenderScene counts differ noticeably. Check the export if the 3D scene looks incomplete.</p>
+            ) : null}
             {artifactConsistencyWarning ? (
               <p className="mt-2 text-[11px] text-amber-700">{artifactConsistencyWarning}</p>
             ) : (
@@ -2863,7 +2958,7 @@ export default function Home() {
               <p className="text-xs text-slate-500">
                 {viewMode === "2d"
                   ? `Scene elements: ${data?.debug.elementCount ?? 0}`
-                  : "3D scene is built from the exported project JSON so walls, rooms, and openings stay separate."}
+                  : "3D scene is built from RenderScene first, with OBJ fallback if the scene file is missing."}
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -2978,10 +3073,12 @@ export default function Home() {
               <ObjViewer
                 key={viewMode}
                 projectJson={data.projectJson ?? null}
+                renderSceneText={data.renderScene ?? null}
                 objText={data.obj ?? null}
                 loadedAtLabel={new Date(artifactLoadedAt).toLocaleTimeString()}
                 preset={viewMode === "2d" ? "top" : "isometric"}
                 interactive={Boolean(data)}
+                kindVisibility={kindVisibility}
                 selectedElementId={selectedEditableId}
                 hoveredElementId={hoveredProjectElementId}
                 onHover={handleProjectHover}

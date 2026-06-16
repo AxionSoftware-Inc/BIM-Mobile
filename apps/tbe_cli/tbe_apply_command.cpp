@@ -586,6 +586,7 @@ int main(int argc, char** argv) {
         const auto project_copy = output_dir / "project.json";
         const auto debug_copy = output_dir / "debug" / "debug_report.json";
         const auto svg_copy = output_dir / "exports" / "floorplan.svg";
+        const auto render_scene_copy = output_dir / "exports" / "render_scene.json";
         const auto obj_copy = output_dir / "exports" / "walls.obj";
         const auto metadata_copy = output_dir / "metadata.json";
 
@@ -601,6 +602,7 @@ int main(int argc, char** argv) {
                   << "\"project_json\":\"" << escape_json(project_copy.string()) << "\","
                   << "\"debug_report_json\":\"" << escape_json(debug_copy.string()) << "\","
                   << "\"floorplan_svg\":\"" << escape_json(svg_copy.string()) << "\","
+                  << "\"render_scene_json\":\"" << escape_json(render_scene_copy.string()) << "\","
                   << "\"walls_obj\":\"" << escape_json(obj_copy.string()) << "\","
                   << "\"metadata_json\":\"" << escape_json(metadata_copy.string()) << "\""
                   << "}"

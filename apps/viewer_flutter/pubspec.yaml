@@ -22,3 +22,4 @@ flutter:
   uses-material-design: true
   assets:
     - assets/sample_project.json
+    - assets/render_scene.json

@@ -1,111 +1,228 @@
 # viewer_flutter
 
-Minimal read-only Flutter viewer skeleton for the hardened `tbe_capi` bridge.
+RenderScene-first Flutter viewer skeleton for the TabletBimEngine UI path.
+
+This app is intentionally minimal. It loads `render_scene.json`, shows scene
+diagnostics, and hosts a renderer-neutral viewport contract that is ready for a
+native Filament implementation.
+The older C ABI / FFI hooks stay in the package for future engine/status work,
+but they are not the primary 3D source in this pass.
 
 ## Scope
 
-This app is intentionally limited to viewer proof-of-integration work:
+- load bundled `assets/render_scene.json`
+- open an external RenderScene JSON file
+- parse and validate the scene safely
+- show object / vertex / triangle diagnostics
+- show object counts by kind
+- highlight/select elements from the object list
+- host a native Android platform-view skeleton
+- keep an iOS placeholder structure ready
 
-- load bundled sample project JSON
-- load external project JSON
-- call the C ABI through Dart FFI
-- export SVG/package through the native bridge
-- display a 2D SVG floorplan
-- show version, schedule, validation, and hit-test data
+It does **not** implement BIM editing, cloud sync, schedules, or photorealistic
+rendering.
 
-It does **not** implement editing yet.
+## Why Flutter + Filament
+
+The C++ engine now exports `RenderScene` as the stable 3D scene contract. Flutter
+is the future app UI path, and Filament is the native renderer planned for the
+mobile/desktop viewport. The current app proves the integration shape without
+making the UI depend on debug JSON, OBJ fallback files, or engine internals.
+
+## RenderScene flow
+
+The viewer loads `assets/render_scene.json` or a local file path, parses it in
+Dart, and then:
+
+1. shows diagnostics in Flutter,
+2. sends the scene payload to the native Android viewport skeleton when
+   available,
+3. keeps a desktop fallback preview for macOS / Linux / Windows development.
+
+The renderer contract is intentionally neutral:
+
+- `loadRenderScene`
+- `clearScene`
+- `fitCamera`
+- `setVisibleKinds`
+- `selectElement`
+- `highlightElement`
+
+## Native renderer status
+
+### Android
+
+The Android host contains a platform-view registered under
+`tbe/render_scene_view`. The current pass wires that view into a real Filament
+scene path:
+
+- `RenderScene` JSON is sent from Flutter to Android as JSON text.
+- Android builds a runtime unlit material with Filamat.
+- Each `RenderScene` object becomes a Filament renderable with its own mesh,
+  bounds, kind metadata, and color.
+- Engine coordinates are mapped to Filament so the model stands upright with
+  Z-up from the engine becoming Y-up in Filament.
+- Native logs include renderer creation, surface attach/detach, scene load
+  counts, and any material-build failures.
+
+The local machine that produced this checkout does **not** have a complete
+Android SDK installed, so I could not run `flutter build apk` or launch on a
+device here. The code is structured for a normal Android Studio / SDK / NDK /
+JDK setup and should be the first native target once that toolchain is present.
+
+### iOS
+
+The iOS runner includes a placeholder platform-view structure with the same
+Dart-facing contract, but full native rendering is deferred until the toolchain
+is available.
 
 ## Setup
 
-Generate or refresh the Flutter host runners:
+Refresh Flutter packages:
 
 ```bash
 cd apps/viewer_flutter
-flutter create . --platforms=macos,ios,android
 flutter pub get
 ```
 
-## Native Library Build
-
-Build the shared C API library from the repo root:
+Analyze the app:
 
 ```bash
-cmake --build --preset dev --target tbe_capi_shared
-```
-
-Expected macOS output:
-
-```text
-build/dev/src/api/libtbe_capi.dylib
-```
-
-## Library Discovery
-
-The Dart loader checks:
-
-1. `TBE_CAPI_PATH`
-2. `../../build/dev/src/api/libtbe_capi.dylib` relative to `apps/viewer_flutter`
-3. nearby `build/dev/src/api/...` debug/release variants while walking up the repo tree
-4. `libtbe_capi.dylib` on the dynamic loader path
-
-Recommended launch:
-
-```bash
-cd /Users/macbookpro/Documents/BIM-Mobile
-cmake --build --preset dev --target tbe_capi_shared
-cd apps/viewer_flutter
-export TBE_CAPI_PATH=/absolute/path/to/build/dev/src/api/libtbe_capi.dylib
 flutter analyze
-flutter run -d macos
 ```
 
-## Sample Data
+Run the widget tests:
 
-Bundled sample asset:
+```bash
+flutter test
+```
 
-- `assets/sample_project.json`
+### Android Filament build proof
 
-The sample is intended to include:
+The Android side now depends on:
 
-- two rooms
-- door/window
-- slab
-- floor/ceiling systems
-- roof
-- columns
-- beam
-- stair
+- `com.google.android.filament:filament-android:1.71.6`
+- `com.google.android.filament:filament-utils-android:1.71.6`
+- `com.google.android.filament:filamat-android:1.71.6`
 
-## Manual Verification Checklist
+The Filament runtime material is generated on-device from a small unlit source
+string, so the app does not depend on a precompiled `.filamat` asset for this
+first pass. The material source uses a single `baseColor` parameter and the
+scene objects are uploaded as triangle meshes with position-only vertex
+buffers.
+
+#### Android runtime validation checklist
+
+Required components:
+
+- Android Studio
+- Android SDK
+- Android NDK
+- CMake
+- JDK 17
+
+Useful checks:
+
+```bash
+flutter doctor -v
+flutter devices
+ls "$ANDROID_HOME"
+ls "$ANDROID_SDK_ROOT"
+./scripts/check_android_toolchain.sh
+```
+
+Build and run commands once the SDK is installed:
+
+```bash
+flutter build apk --debug
+flutter run -d <android-device-or-emulator>
+```
+
+If you need to point Flutter at a custom SDK path:
+
+```bash
+flutter config --android-sdk /path/to/Android/Sdk
+```
+
+Common errors and fixes:
+
+- `Unable to locate Android SDK`
+  - install Android Studio and the Android SDK platform/tools
+  - verify `ANDROID_HOME` or `ANDROID_SDK_ROOT`
+- `Android NDK missing`
+  - install the NDK from Android Studio SDK Manager
+- `xcodebuild` / `xcrun` errors on macOS
+  - switch to full Xcode with `sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer`
+- Gradle cannot resolve Filament
+  - confirm `google()` and `mavenCentral()` are enabled in `android/settings.gradle.kts`
+- app opens but viewport is blank
+  - check the logs for `RenderSceneFilament`
+  - confirm `render_scene.json` has objects and mesh data
+
+SDK path hints:
+
+- default macOS SDK path is usually `~/Library/Android/sdk`
+- the app also respects `ANDROID_HOME` and `ANDROID_SDK_ROOT`
+
+If Android build tooling is missing, run:
+
+```bash
+flutter doctor -v
+flutter devices
+flutter build apk
+```
+
+Expected blockers on this machine:
+
+- Android SDK is missing
+- Xcode is incomplete
+- CocoaPods is not installed
+
+## Engine validation
+
+The Flutter viewer does not own the engine build, but the RenderScene export
+path should stay green:
+
+```bash
+cmake --build --preset dev
+ctest --preset dev --output-on-failure
+```
+
+## Sample asset
+
+Bundled sample scene:
+
+- `assets/render_scene.json`
+
+The sample is copied from the engine export output and should contain walls,
+doors, windows, and the rest of the RenderScene diagnostics data.
+
+## Known limitations
+
+- the desktop preview is a fallback, not the final renderer
+- Android Filament rendering is wired in code, but the local SDK/toolchain was
+  not available here to run the APK proof
+- iOS is placeholder-only for now
+- no editing tools are implemented in this app
+- selection is still list-driven rather than full viewport picking
+
+## Manual Android checklist
+
+After installing the Android SDK, the first device/emulator smoke test should
+show:
 
 - app launches
-- engine version is shown
-- schema version is shown
-- bundled sample loads
-- validation errors show `0`
-- exported SVG is visible
-- clicking floorplan triggers hit-test
-- hit candidate list shows ordered element id / kind / hit kind / distance
-- selected hit marker appears at the tapped screen position
-- selected element panel updates
-- schedule summary is populated
-- app exits without crash
+- RenderScene diagnostics visible
+- Filament viewport appears
+- model is upright
+- object count is greater than zero
+- walls, doors, and windows are visible when present
+- fit camera works
+- visibility toggles do not crash the renderer
+- logs mention `RenderSceneFilament` and a scene load count
 
-## Troubleshooting dylib Loading
+## Future work
 
-- If the app opens with a native library error card, verify `build/dev/src/api/libtbe_capi.dylib` exists.
-- If you launch Flutter outside `apps/viewer_flutter`, set `TBE_CAPI_PATH` explicitly.
-- Rebuild the dylib after C API changes:
-
-```bash
-cmake --build --preset dev --target tbe_capi_shared
-```
-
-- If macOS blocks the library, remove stale copies and relaunch so Flutter loads the latest local build artifact.
-
-## Known Limitations
-
-- screen-to-model coordinate mapping is approximate and based on SVG `viewBox`
-- selected hit highlighting is a screen-space marker, not a true geometry overlay
-- validation detail display depends on parsing exported debug JSON when available
-- no editing, snapping UI, or 3D view is implemented yet
+- harden Android Filament rendering and add picking/highlight
+- add iOS/Metal rendering
+- connect live selection and editing after the renderer is stable

@@ -7,7 +7,7 @@ plugins {
 android {
     namespace = "com.example.viewer_flutter"
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
+    ndkVersion = "28.2.13676358"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -38,6 +38,12 @@ kotlin {
     compilerOptions {
         jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
     }
+}
+
+dependencies {
+    implementation("com.google.android.filament:filament-android:1.71.6")
+    implementation("com.google.android.filament:filament-utils-android:1.71.6")
+    implementation("com.google.android.filament:filamat-android:1.71.6")
 }
 
 flutter {

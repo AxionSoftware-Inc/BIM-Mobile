@@ -33,12 +33,13 @@ async function postJson(route, body) {
 }
 
 async function ensureArtifacts() {
-  const files = ["project.json", "debug_report.json", "floorplan.svg", "walls.obj", "metadata.json"];
+  const files = ["project.json", "debug_report.json", "floorplan.svg", "walls.obj", "metadata.json", "render_scene.json"];
   for (const file of files) {
     await stat(path.join(sampleDir, file));
   }
   await readJson(path.join(sampleDir, "project.json"));
   await readJson(path.join(sampleDir, "debug_report.json"));
+  await readJson(path.join(sampleDir, "render_scene.json"));
 }
 
 function firstWallId(projectJson) {
@@ -78,6 +79,8 @@ async function main() {
   const initialWallCount = countSchedules(initialDebug, "walls");
   const initialOpeningCount = countSchedules(initialDebug, "openings");
   const initialRoomCount = countSchedules(initialDebug, "rooms");
+  const initialRenderScene = await readJson(path.join(sampleDir, "render_scene.json"));
+  const initialRenderSceneObjects = Array.isArray(initialRenderScene?.objects) ? initialRenderScene.objects.length : 0;
 
   const createdWall = await postJson("/api/edit/create-wall", {
     start: { x: 20, y: 20 },
@@ -92,6 +95,10 @@ async function main() {
   const afterCreateDebug = await readDebug();
   if (countSchedules(afterCreateDebug, "walls") < initialWallCount + 1) {
     throw new Error("wall count did not increase after create_wall");
+  }
+  const afterCreateRenderScene = await readJson(path.join(sampleDir, "render_scene.json"));
+  if ((Array.isArray(afterCreateRenderScene?.objects) ? afterCreateRenderScene.objects.length : 0) < initialRenderSceneObjects + 1) {
+    throw new Error("render_scene object count did not increase after create_wall");
   }
 
   const insertedDoor = await postJson("/api/edit/insert-door", {
@@ -108,6 +115,10 @@ async function main() {
   const afterDoorDebug = await readDebug();
   if (countSchedules(afterDoorDebug, "openings") < initialOpeningCount + 1) {
     throw new Error("opening count did not increase after insert_door");
+  }
+  const afterDoorRenderScene = await readJson(path.join(sampleDir, "render_scene.json"));
+  if ((Array.isArray(afterDoorRenderScene?.objects) ? afterDoorRenderScene.objects.length : 0) <= (Array.isArray(afterCreateRenderScene?.objects) ? afterCreateRenderScene.objects.length : 0)) {
+    throw new Error("render_scene object count did not update after insert_door");
   }
 
   await postJson("/api/edit/update-door", {
@@ -132,6 +143,10 @@ async function main() {
   const afterWindowDebug = await readDebug();
   if (countSchedules(afterWindowDebug, "openings") < initialOpeningCount + 2) {
     throw new Error("opening count did not increase after insert_window");
+  }
+  const afterWindowRenderScene = await readJson(path.join(sampleDir, "render_scene.json"));
+  if ((Array.isArray(afterWindowRenderScene?.objects) ? afterWindowRenderScene.objects.length : 0) <= (Array.isArray(afterDoorRenderScene?.objects) ? afterDoorRenderScene.objects.length : 0)) {
+    throw new Error("render_scene object count did not update after insert_window");
   }
 
   await postJson("/api/edit/update-window", {
@@ -164,6 +179,7 @@ async function main() {
 
   await ensureArtifacts();
   const finalDebug = await readDebug();
+  const finalRenderScene = await readJson(path.join(sampleDir, "render_scene.json"));
   if (validationErrors(finalDebug) !== 0) {
     throw new Error(`final validation errors were not zero (${validationErrors(finalDebug)})`);
   }
@@ -178,13 +194,15 @@ async function main() {
       walls: initialWallCount,
       openings: initialOpeningCount,
       rooms: initialRoomCount,
+      renderSceneObjects: initialRenderSceneObjects,
     },
     finalCounts: {
       walls: countSchedules(finalDebug, "walls"),
       openings: countSchedules(finalDebug, "openings"),
       rooms: countSchedules(finalDebug, "rooms"),
+      renderSceneObjects: Array.isArray(finalRenderScene?.objects) ? finalRenderScene.objects.length : 0,
     },
-    artifacts: ["project.json", "debug_report.json", "floorplan.svg", "walls.obj", "metadata.json"],
+    artifacts: ["project.json", "debug_report.json", "floorplan.svg", "walls.obj", "metadata.json", "render_scene.json"],
   }, null, 2));
 }
 

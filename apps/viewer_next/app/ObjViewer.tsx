@@ -3,13 +3,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { buildRenderSceneGroup, normalizeRenderScene, renderSceneSummaryLabel } from "../lib/renderScene";
 
 type ObjViewerProps = {
   projectJson: JsonObject | null;
+  renderSceneText?: string | null;
   objText: string | null;
   loadedAtLabel?: string | null;
   preset?: ViewPreset;
   interactive?: boolean;
+  kindVisibility?: Record<string, boolean>;
   selectedElementId?: number | null;
   hoveredElementId?: number | null;
   onHover?: (info: {
@@ -793,10 +796,10 @@ function fitCameraToBounds(
       } else {
         camera.near = Math.max(0.1, maxDim / 100);
         camera.far = Math.max(2000, maxDim * 20);
-        camera.position.set(center.x + distance * 0.1, center.y + distance * 0.4, center.z + distance * 2.15);
+        camera.fov = 55;
+        camera.position.set(center.x + distance * 0.1, center.y + distance * 0.55, center.z + distance * 2.25);
         camera.updateProjectionMatrix();
       }
-      camera.position.set(center.x + distance * 0.1, center.y + distance * 0.4, center.z + distance * 2.15);
       controls.target.set(center.x, center.y, center.z);
       break;
     case "isometric":
@@ -816,7 +819,8 @@ function fitCameraToBounds(
       } else {
         camera.near = Math.max(0.1, maxDim / 100);
         camera.far = Math.max(2000, maxDim * 20);
-        camera.position.set(center.x + distance * 1.2, center.y + distance * 1.1, center.z + distance * 1.2);
+        camera.fov = 55;
+        camera.position.set(center.x + distance * 1.7, center.y + distance * 1.25, center.z + distance * 1.55);
         camera.updateProjectionMatrix();
       }
       controls.target.set(center.x, center.y, center.z);
@@ -923,10 +927,12 @@ function applyElementHighlights(root: THREE.Object3D | null, selectedElementId: 
 
 export default function ObjViewer({
   projectJson,
+  renderSceneText,
   objText,
   loadedAtLabel,
   preset = "isometric",
   interactive = false,
+  kindVisibility = {},
   selectedElementId = null,
   hoveredElementId = null,
   onHover,
@@ -944,16 +950,31 @@ export default function ObjViewer({
   const [wireframe, setWireframe] = useState(false);
   const [showGrid, setShowGrid] = useState(true);
   const [showAxes, setShowAxes] = useState(true);
+  const [autoRotate, setAutoRotate] = useState(false);
   const [viewPreset, setViewPreset] = useState<ViewPreset>(preset);
   const parsed = useMemo(() => (objText ? parseObj(objText) : null), [objText]);
+  const renderScene = useMemo(() => {
+    if (!renderSceneText) {
+      return null;
+    }
+    try {
+      return normalizeRenderScene(JSON.parse(renderSceneText));
+    } catch {
+      return null;
+    }
+  }, [renderSceneText]);
+  const renderSceneScene = useMemo(
+    () => (renderScene ? buildRenderSceneGroup(renderScene, { kindVisibility, wireframe }) : null),
+    [kindVisibility, renderScene, wireframe],
+  );
   const oriented = useMemo(() => (parsed ? orientGeometry(parsed) : null), [parsed]);
   const projectScene = useMemo(() => buildProjectScene(projectJson), [projectJson]);
   const projectPlanScene = useMemo(() => buildProjectPlanScene(projectJson), [projectJson]);
-  const activeProjectScene = viewPreset === "top" ? projectPlanScene : projectScene;
-  const sceneMode: "project" | "obj" = activeProjectScene ? "project" : "obj";
+  const activeProjectScene = viewPreset === "top" ? projectPlanScene : null;
+  const sceneMode: "project" | "renderScene" | "obj" = activeProjectScene ? "project" : renderSceneScene ? "renderScene" : "obj";
   const activeBounds = useMemo(
-    () => activeProjectScene?.bounds ?? oriented?.bounds ?? new THREE.Box3(),
-    [activeProjectScene?.bounds, oriented?.bounds],
+    () => activeProjectScene?.bounds ?? renderSceneScene?.bounds ?? oriented?.bounds ?? new THREE.Box3(),
+    [activeProjectScene?.bounds, oriented?.bounds, renderSceneScene?.bounds],
   );
   const activeDimensions = useMemo(() => {
     const bounds = activeBounds;
@@ -971,6 +992,8 @@ export default function ObjViewer({
 
   const status = sceneMode === "project"
     ? `${viewPreset === "top" ? "Top plan scene" : "Project scene"} • walls ${activeProjectScene?.walls ?? 0} • openings ${activeProjectScene?.openings ?? 0} • rooms ${activeProjectScene?.rooms ?? 0}`
+    : sceneMode === "renderScene"
+      ? `${renderSceneSummaryLabel(renderScene)} • selectable ${renderSceneScene?.diagnostics.selectableObjectCount ?? 0}`
     : !objText
       ? "No geometry loaded"
       : oriented
@@ -979,7 +1002,7 @@ export default function ObjViewer({
   const dimensions = activeDimensions
     ? `W ${activeDimensions.width.toFixed(1)} • D ${activeDimensions.depth.toFixed(1)} • H ${activeDimensions.height.toFixed(1)}`
     : null;
-  const loadedSource = sceneMode === "project" ? "project.json" : "/sample/walls.obj";
+  const loadedSource = sceneMode === "project" ? "project.json" : sceneMode === "renderScene" ? "/sample/render_scene.json" : "/sample/walls.obj";
 
   useEffect(() => {
     const host = hostRef.current;
@@ -994,7 +1017,7 @@ export default function ObjViewer({
 
     const camera = preset === "top"
       ? new THREE.OrthographicCamera(-100, 100, 100, -100, -5000, 5000)
-      : new THREE.PerspectiveCamera(45, 1, 0.1, 5000);
+      : new THREE.PerspectiveCamera(55, 1, 0.1, 5000);
     camera.position.set(140, preset === "top" ? 260 : 120, 160);
     cameraRef.current = camera;
 
@@ -1002,6 +1025,8 @@ export default function ObjViewer({
     renderer.setClearColor("#eef2f0");
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.shadowMap.enabled = false;
+    renderer.domElement.style.touchAction = "none";
+    renderer.domElement.style.cursor = "grab";
     rendererRef.current = renderer;
     host.appendChild(renderer.domElement);
 
@@ -1009,12 +1034,24 @@ export default function ObjViewer({
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
     controls.enableRotate = preset !== "top";
+    controls.enablePan = true;
+    controls.enableZoom = true;
+    controls.rotateSpeed = 0.65;
+    controls.autoRotate = false;
+    controls.autoRotateSpeed = 0.9;
     controls.screenSpacePanning = true;
+    controls.minPolarAngle = 0.08;
+    controls.maxPolarAngle = Math.PI - 0.08;
+    controls.minDistance = 0.5;
+    controls.maxDistance = 10000;
     controls.target.set(0, 0, 0);
     controlsRef.current = controls;
 
     const ambient = new THREE.AmbientLight(0xffffff, 1.35);
     scene.add(ambient);
+    const hemi = new THREE.HemisphereLight(0xf8fafc, 0xcbd5e1, 0.85);
+    hemi.position.set(0, 240, 0);
+    scene.add(hemi);
     const light1 = new THREE.DirectionalLight(0xffffff, 1.05);
     light1.position.set(140, 220, 180);
     scene.add(light1);
@@ -1087,6 +1124,12 @@ export default function ObjViewer({
   }, [objText, preset]);
 
   useEffect(() => {
+    if (controlsRef.current) {
+      controlsRef.current.autoRotate = autoRotate && viewPreset !== "top";
+    }
+  }, [autoRotate, viewPreset]);
+
+  useEffect(() => {
     if (gridRef.current) {
       gridRef.current.visible = showGrid;
     }
@@ -1112,8 +1155,8 @@ export default function ObjViewer({
       modelGroupRef.current = null;
     }
 
-    const sourceGroup = activeProjectScene?.root ?? null;
-    const sourceBounds = activeProjectScene?.bounds ?? oriented?.bounds ?? null;
+    const sourceGroup = activeProjectScene?.root ?? renderSceneScene?.root ?? null;
+    const sourceBounds = activeProjectScene?.bounds ?? renderSceneScene?.bounds ?? oriented?.bounds ?? null;
     if (sourceGroup && sourceBounds) {
       const group = cloneObject3DWithGeometry(sourceGroup);
       applyWireframeToObject(group, wireframe);
@@ -1153,30 +1196,28 @@ export default function ObjViewer({
       mesh.renderOrder = index * 2;
       group.add(mesh);
 
-      if (!wireframe) {
-        const edges = new THREE.LineSegments(
-          new THREE.EdgesGeometry(component.geometry.clone(), 18),
-          new THREE.LineBasicMaterial({
-            color: 0x0f172a,
-            transparent: true,
-            opacity: 0.72,
-            depthWrite: false,
-          }),
-        );
-        edges.name = `${component.name}-edges`;
-        edges.renderOrder = index * 2 + 1;
-        group.add(edges);
-      }
+      const edges = new THREE.LineSegments(
+        new THREE.EdgesGeometry(component.geometry.clone(), 18),
+        new THREE.LineBasicMaterial({
+          color: 0x0f172a,
+          transparent: true,
+          opacity: 0.78,
+          depthWrite: false,
+        }),
+      );
+      edges.name = `${component.name}-edges`;
+      edges.renderOrder = index * 2 + 1;
+      group.add(edges);
     });
 
     modelGroupRef.current = group;
     scene.add(group);
     fitCameraToBounds(camera, controls, oriented.bounds, viewPreset);
-  }, [activeProjectScene, oriented, viewPreset, wireframe]);
+  }, [activeProjectScene, oriented, renderSceneScene, viewPreset, wireframe]);
 
   useEffect(() => {
     applyElementHighlights(modelGroupRef.current, selectedElementId, hoveredElementId);
-  }, [hoveredElementId, selectedElementId, projectScene, oriented]);
+  }, [hoveredElementId, selectedElementId, projectScene, oriented, renderSceneScene]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -1363,7 +1404,9 @@ export default function ObjViewer({
           <p className="text-[11px] text-slate-500">
             {sceneMode === "project"
               ? `Walls: ${projectScene?.walls ?? 0} • Openings: ${projectScene?.openings ?? 0} • Rooms: ${projectScene?.rooms ?? 0}`
-              : `Objects: ${oriented?.objectCount ?? parsed?.objectCount ?? 0} • Components: ${oriented?.components.length ?? parsed?.components.length ?? 0} • Vertices: ${oriented?.vertexCount ?? parsed?.vertexCount ?? 0} • Faces: ${oriented?.faceCount ?? parsed?.faceCount ?? 0}`}
+              : sceneMode === "renderScene"
+                ? `RenderScene objects: ${renderSceneScene?.diagnostics.objectCount ?? renderScene?.objectCount ?? 0} • selectable: ${renderSceneScene?.diagnostics.selectableObjectCount ?? 0} • visible: ${renderSceneScene?.diagnostics.visibleObjectCount ?? 0} • levels: ${renderSceneScene?.diagnostics.levelCount ?? 0} • triangles: ${renderSceneScene?.diagnostics.triangleCount ?? 0} • missing geometry: ${renderSceneScene?.diagnostics.missingGeometryCount ?? 0} • invalid bounds: ${renderSceneScene?.diagnostics.invalidBoundsCount ?? 0}`
+                : `OBJ Objects: ${oriented?.objectCount ?? parsed?.objectCount ?? 0} • Components: ${oriented?.components.length ?? parsed?.components.length ?? 0} • Vertices: ${oriented?.vertexCount ?? parsed?.vertexCount ?? 0} • Faces: ${oriented?.faceCount ?? parsed?.faceCount ?? 0}`}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -1376,6 +1419,14 @@ export default function ObjViewer({
           <button className="rounded-full border border-slate-200 bg-white px-3 py-1.5 hover:bg-slate-50" onClick={() => setWireframe((value) => !value)}>
             {wireframe ? "Wireframe" : "Solid"}
           </button>
+          {viewPreset !== "top" ? (
+            <button
+              className={`rounded-full border px-3 py-1.5 ${autoRotate ? "border-cyan-300 bg-cyan-50 text-cyan-800" : "border-slate-200 bg-white hover:bg-slate-50"}`}
+              onClick={() => setAutoRotate((value) => !value)}
+            >
+              {autoRotate ? "Stop spin" : "Auto-rotate"}
+            </button>
+          ) : null}
           {viewPreset !== "top" ? (
             <>
               <button className="rounded-full border border-slate-200 bg-white px-3 py-1.5 hover:bg-slate-50" onClick={handleIsoView}>
@@ -1398,6 +1449,11 @@ export default function ObjViewer({
           </button>
         </div>
       </div>
+      {viewPreset !== "top" ? (
+        <div className="px-1 text-[11px] text-slate-500">
+          Drag to orbit, scroll to zoom, right-drag to pan. Use Auto-rotate if you want a continuous spin.
+        </div>
+      ) : null}
       <div
         ref={hostRef}
         className="min-h-0 flex-1 overflow-hidden rounded-2xl border border-slate-200 bg-[linear-gradient(180deg,#f4f7f5_0%,#e6ece7_100%)]"
