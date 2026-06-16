@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'render_scene_editor.dart';
 import 'render_scene_models.dart';
 import 'render_scene_repository.dart';
 import 'render_scene_viewport.dart';
@@ -15,11 +16,16 @@ class ViewerApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'BIM Viewer',
+      title: 'Tablet BIM',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF1F5D4E)),
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF1F5D4E),
+          brightness: Brightness.light,
+        ),
+        scaffoldBackgroundColor: const Color(0xFFF3F6F4),
         useMaterial3: true,
+        visualDensity: VisualDensity.standard,
       ),
       home: ViewerHomePage(
         source: source ?? const AssetRenderSceneSource(),
@@ -41,6 +47,20 @@ class ViewerHomePage extends StatefulWidget {
 }
 
 class _ViewerHomePageState extends State<ViewerHomePage> {
+  static const Set<String> _coreKindOrder = <String>{
+    'wall',
+    'door',
+    'window',
+    'room',
+    'slab',
+    'floor',
+    'ceiling',
+    'roof',
+    'column',
+    'beam',
+    'stair',
+  };
+
   final RenderSceneViewportController _viewportController =
       RenderSceneViewportController();
 
@@ -48,32 +68,68 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   String? _statusMessage;
   String? _loadError;
   bool _isBusy = false;
+  bool _showInspector = true;
+  bool _showObjectList = true;
+  bool _showDiagnostics = false;
+
   RenderSceneProjectionMode _projectionMode = RenderSceneProjectionMode.topDown;
   RenderSceneOrbitProjectionStyle _orbitProjectionStyle =
-      RenderSceneOrbitProjectionStyle.perspective;
+      RenderSceneOrbitProjectionStyle.orthographic;
   RenderSceneDisplayStyle _displayStyle = RenderSceneDisplayStyle.solid;
+  RenderSceneInteractionMode _interactionMode =
+      RenderSceneInteractionMode.select;
+  RenderScenePoint? _draftWallStart;
+  RenderScenePoint? _draftWallEnd;
+  RenderSceneObject? _draftHostWall;
+  double _draftOpeningOffsetMeters = 1.0;
+  double _draftOpeningWidthMeters = 0.9;
+  double _draftOpeningHeightMeters = 2.1;
+  double _draftOpeningSillHeightMeters = 0.9;
+  String? _editStatusMessage;
+  bool _snapDraftToGrid = true;
+
+  /// Empty means “show all” in RenderSceneViewportController.
+  Set<String> _visibleKinds = <String>{};
 
   @override
   void initState() {
     super.initState();
+    _viewportController.addListener(_onViewportChanged);
     _loadBundledSample();
   }
 
   @override
   void dispose() {
+    _viewportController.removeListener(_onViewportChanged);
     _viewportController.dispose();
     super.dispose();
   }
 
+  void _onViewportChanged() {
+    if (mounted) {
+      setState(() {
+        // Rebuild inspector/status when selection/highlight changes.
+      });
+    }
+  }
+
   Future<void> _loadBundledSample() async {
+    if (_isBusy) {
+      return;
+    }
+
     setState(() {
       _isBusy = true;
       _loadError = null;
       _statusMessage = 'Loading bundled RenderScene sample...';
     });
+
     try {
       final result = await widget.source.loadBundledSample();
-      await _applyLoadResult(result, sourceLabel: 'assets/render_scene.json');
+      await _applyLoadResult(
+        result,
+        sourceLabel: 'assets/render_scene.json',
+      );
     } catch (error) {
       setState(() {
         _loadError = error.toString();
@@ -87,18 +143,12 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     await _loadBundledSample();
   }
 
-  Future<void> _fitCamera() async {
-    setState(() {
-      _statusMessage = 'Fitting scene to view...';
-    });
-    await _viewportController.fitCamera();
-  }
-
   Future<void> _applyLoadResult(
     RenderSceneLoadResult result, {
     required String sourceLabel,
   }) async {
     final scene = result.scene;
+
     setState(() {
       _scene = scene;
       _loadError = result.errors.isNotEmpty ? result.errors.join('\n') : null;
@@ -106,225 +156,1931 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
           ? 'RenderScene load failed.'
           : 'Loaded ${scene.objectCount} objects from $sourceLabel';
       _isBusy = false;
+
+      if (scene != null) {
+        _visibleKinds = _sanitizeVisibleKinds(
+          visibleKinds: _visibleKinds,
+          scene: scene,
+        );
+      }
     });
-    if (scene != null) {
-      await _viewportController.loadRenderScene(scene);
-      await _viewportController.setProjectionMode(_projectionMode);
-      await _viewportController.fitCamera();
-    } else {
+
+    if (scene == null) {
       await _viewportController.clearScene();
+      return;
     }
+
+    await _viewportController.loadRenderScene(scene);
+    await _viewportController.setVisibleKinds(_visibleKinds);
+    await _viewportController.setProjectionMode(_projectionMode);
+    await _viewportController.setOrbitProjectionStyle(_orbitProjectionStyle);
+    await _viewportController.setDisplayStyle(_displayStyle);
+    _interactionMode = RenderSceneInteractionMode.select;
+    await _viewportController.setInteractionMode(_interactionMode);
+    _viewportController.clearDraft();
+    await _viewportController.fitCamera();
+  }
+
+  Set<String> _sanitizeVisibleKinds({
+    required Set<String> visibleKinds,
+    required RenderScene scene,
+  }) {
+    if (visibleKinds.isEmpty) {
+      return <String>{};
+    }
+
+    final available = scene.kindCounts.keys.toSet();
+    return visibleKinds.intersection(available);
+  }
+
+  Future<void> _fitCamera() async {
+    setState(() {
+      _statusMessage = _projectionMode == RenderSceneProjectionMode.topDown
+          ? 'Fitting 2D plan...'
+          : 'Fitting 3D scene...';
+    });
+
+    await _viewportController.fitCamera();
   }
 
   Future<void> _setProjectionMode(RenderSceneProjectionMode mode) async {
+    if (_projectionMode == mode) {
+      return;
+    }
+
     setState(() {
       _projectionMode = mode;
       _statusMessage = mode == RenderSceneProjectionMode.topDown
           ? '2D plan view'
           : '3D isometric view';
     });
+
     await _viewportController.setProjectionMode(mode);
+    await _viewportController.fitCamera();
   }
 
   Future<void> _setOrbitProjectionStyle(
     RenderSceneOrbitProjectionStyle style,
   ) async {
+    if (_orbitProjectionStyle == style) {
+      return;
+    }
+
     setState(() {
       _orbitProjectionStyle = style;
       _statusMessage = style == RenderSceneOrbitProjectionStyle.perspective
           ? '3D perspective view'
           : '3D orthographic view';
     });
+
     await _viewportController.setOrbitProjectionStyle(style);
+    await _viewportController.fitCamera();
   }
 
   Future<void> _setDisplayStyle(RenderSceneDisplayStyle style) async {
+    if (_displayStyle == style) {
+      return;
+    }
+
     setState(() {
       _displayStyle = style;
       _statusMessage = style == RenderSceneDisplayStyle.solid
-          ? 'Solid view'
-          : 'Wireframe view';
+          ? 'Solid display'
+          : 'Wireframe display';
     });
+
     await _viewportController.setDisplayStyle(style);
+  }
+
+  Future<void> _setVisibleKinds(Set<String> kinds) async {
+    setState(() {
+      _visibleKinds = kinds;
+      _statusMessage =
+          kinds.isEmpty ? 'Showing all categories' : 'Updated category filter';
+    });
+
+    await _viewportController.setVisibleKinds(kinds);
+  }
+
+  Future<void> _selectObject(RenderSceneObject object) async {
+    final id = object.elementId?.toString();
+
+    setState(() {
+      _statusMessage = id == null
+          ? 'Selected ${prettySceneKind(object.kind)}'
+          : 'Selected ${prettySceneKind(object.kind)} #$id';
+    });
+
+    await _viewportController.selectElement(id);
+    await _viewportController.highlightElement(id);
+  }
+
+  Future<void> _clearSelection() async {
+    setState(() {
+      _statusMessage = 'Selection cleared';
+    });
+
+    await _viewportController.selectElement(null);
+    await _viewportController.highlightElement(null);
+  }
+
+  Future<void> _setInteractionMode(RenderSceneInteractionMode mode) async {
+    if (_interactionMode == mode) {
+      return;
+    }
+
+    setState(() {
+      _interactionMode = mode;
+      _editStatusMessage = mode == RenderSceneInteractionMode.select
+          ? 'Selection mode'
+          : 'Editing mode: ${mode.name}';
+      _statusMessage = _editStatusMessage;
+    });
+
+    await _viewportController.setInteractionMode(mode);
+    await _clearDraft();
+
+    if (mode != RenderSceneInteractionMode.select &&
+        _projectionMode != RenderSceneProjectionMode.topDown) {
+      await _setProjectionMode(RenderSceneProjectionMode.topDown);
+    }
+  }
+
+  Future<void> _clearDraft() async {
+    setState(() {
+      _draftWallStart = null;
+      _draftWallEnd = null;
+      _draftHostWall = null;
+      _draftOpeningOffsetMeters = 1.0;
+      _draftOpeningWidthMeters = 0.9;
+      _draftOpeningHeightMeters = 2.1;
+      _draftOpeningSillHeightMeters = 0.9;
+    });
+
+    _viewportController.clearDraft();
+  }
+
+  Future<void> _handleSceneTap(RenderSceneTapDetails details) async {
+    final scene = _scene;
+    final tappedObject = details.pickedObject;
+    final modelPoint = details.modelPoint;
+
+    if (scene == null) {
+      return;
+    }
+
+    switch (_interactionMode) {
+      case RenderSceneInteractionMode.select:
+        return;
+      case RenderSceneInteractionMode.addWall:
+        await _handleAddWallTap(modelPoint);
+        return;
+      case RenderSceneInteractionMode.addDoor:
+      case RenderSceneInteractionMode.addWindow:
+        await _handleOpeningTap(scene, tappedObject, modelPoint);
+        return;
+    }
+  }
+
+  Future<void> _handleAddWallTap(RenderScenePoint? modelPoint) async {
+    if (modelPoint == null) {
+      setState(() {
+        _editStatusMessage = 'Tap the 2D plan to place wall endpoints.';
+      });
+      return;
+    }
+
+    final snappedPoint = _snapDraftToGrid ? _snapPoint(modelPoint) : modelPoint;
+
+    if (_draftWallStart == null) {
+      setState(() {
+        _draftWallStart = snappedPoint;
+        _draftWallEnd = snappedPoint;
+        _editStatusMessage = 'Wall start set. Tap again for the end point.';
+      });
+      _viewportController.setWallDraft(snappedPoint, snappedPoint);
+      return;
+    }
+
+    setState(() {
+      _draftWallEnd = snappedPoint;
+      _editStatusMessage = 'Wall draft ready. Confirm to create the wall.';
+    });
+    _viewportController.setWallDraft(_draftWallStart, snappedPoint);
+  }
+
+  Future<void> _handleOpeningTap(
+    RenderScene scene,
+    RenderSceneObject? tappedObject,
+    RenderScenePoint? modelPoint,
+  ) async {
+    final hostWall = _resolveHostWall(scene, tappedObject);
+    if (hostWall == null) {
+      setState(() {
+        _editStatusMessage = 'Click a wall to place opening.';
+        _draftHostWall = null;
+      });
+      return;
+    }
+
+    final point = modelPoint ?? RenderSceneEditor.wallCenterPoint(hostWall);
+    if (point == null) {
+      setState(() {
+        _editStatusMessage = 'Unable to resolve opening offset on this wall.';
+      });
+      return;
+    }
+
+    final snappedPoint = _snapDraftToGrid ? _snapPoint(point) : point;
+    final offset = RenderSceneEditor.wallOffsetMeters(hostWall, snappedPoint);
+    if (offset == null) {
+      setState(() {
+        _editStatusMessage = 'Unable to compute wall-local offset.';
+      });
+      return;
+    }
+
+    final wallLength = RenderSceneEditor.wallLength(hostWall) ?? 0.0;
+    final halfWidth = _openingWidthHalf;
+    final valid = offset >= halfWidth && offset <= wallLength - halfWidth;
+    final kind = _interactionMode == RenderSceneInteractionMode.addDoor
+        ? 'Door'
+        : 'Window';
+
+    setState(() {
+      _draftHostWall = hostWall;
+      _draftOpeningOffsetMeters =
+          _snapDraftToGrid ? _snapDouble(offset, 0.25) : offset;
+      _editStatusMessage = valid
+          ? '$kind preview on wall #${hostWall.elementId}'
+          : '$kind is near wall edge.';
+    });
+
+    _viewportController.setOpeningDraft(
+      RenderSceneOpeningDraft(
+        kind: kind,
+        hostWallId: hostWall.elementId,
+        offsetMeters: offset,
+        widthMeters: _draftOpeningWidthMeters,
+        heightMeters: _draftOpeningHeightMeters,
+        sillHeightMeters: _draftOpeningSillHeightMeters,
+        valid: valid,
+        message:
+            valid ? 'Ready to create $kind.' : 'Adjust the offset or width.',
+      ),
+    );
+  }
+
+  double get _openingWidthHalf => _draftOpeningWidthMeters * 0.5;
+
+  RenderSceneObject? _resolveHostWall(
+    RenderScene scene,
+    RenderSceneObject? tappedObject,
+  ) {
+    if (tappedObject != null && tappedObject.kindKey == 'wall') {
+      return tappedObject;
+    }
+
+    final selected = _selectedObject(scene);
+    if (selected != null && selected.kindKey == 'wall') {
+      return selected;
+    }
+
+    return _draftHostWall;
+  }
+
+  RenderScenePoint _snapPoint(RenderScenePoint point, [double step = 0.25]) {
+    if (!_snapDraftToGrid || step <= 0) {
+      return point;
+    }
+
+    double snap(double value) => (value / step).roundToDouble() * step;
+    return RenderScenePoint(
+      x: snap(point.x),
+      y: snap(point.y),
+      z: snap(point.z),
+    );
+  }
+
+  double _snapDouble(double value, double step) {
+    if (!_snapDraftToGrid || step <= 0) {
+      return value;
+    }
+    return (value / step).roundToDouble() * step;
+  }
+
+  bool get _draftCanConfirm {
+    switch (_interactionMode) {
+      case RenderSceneInteractionMode.select:
+        return false;
+      case RenderSceneInteractionMode.addWall:
+        final start = _draftWallStart;
+        final end = _draftWallEnd;
+        if (start == null || end == null) {
+          return false;
+        }
+        return start.distanceTo(end) >= 0.1;
+      case RenderSceneInteractionMode.addDoor:
+      case RenderSceneInteractionMode.addWindow:
+        final openingDraft = _viewportController.draftOpening;
+        final selectedWall = _selectedObject(_scene)?.kindKey == 'wall';
+        return openingDraft != null &&
+            openingDraft.valid &&
+            (_draftHostWall != null || selectedWall);
+    }
+  }
+
+  Future<void> _confirmDraft() async {
+    final scene = _scene;
+    if (scene == null) {
+      return;
+    }
+
+    switch (_interactionMode) {
+      case RenderSceneInteractionMode.select:
+        return;
+      case RenderSceneInteractionMode.addWall:
+        final start = _draftWallStart;
+        final end = _draftWallEnd;
+        if (start == null || end == null) {
+          setState(() {
+            _editStatusMessage = 'Set both wall endpoints before confirming.';
+          });
+          return;
+        }
+        final length = start.distanceTo(end);
+        if (length < 0.1) {
+          setState(() {
+            _editStatusMessage = 'Wall is too short.';
+          });
+          return;
+        }
+        final nextScene = RenderSceneEditor.addWall(
+          scene: scene,
+          start: start,
+          end: end,
+          heightMeters: 3.0,
+          thicknessMeters: 0.2,
+        );
+        await _applySceneChange(nextScene, message: 'Wall created.');
+        final created =
+            nextScene.objects.isNotEmpty ? nextScene.objects.last : null;
+        if (created != null) {
+          await _viewportController
+              .selectElement(created.elementId?.toString());
+          await _viewportController
+              .highlightElement(created.elementId?.toString());
+        }
+        await _clearDraft();
+        return;
+      case RenderSceneInteractionMode.addDoor:
+      case RenderSceneInteractionMode.addWindow:
+        final hostWall = _draftHostWall ?? _selectedObject(scene);
+        if (hostWall == null || hostWall.kindKey != 'wall') {
+          setState(() {
+            _editStatusMessage = 'Select a wall first.';
+          });
+          return;
+        }
+
+        final openingDraft = _viewportController.draftOpening;
+        if (openingDraft != null && !openingDraft.valid) {
+          setState(() {
+            _editStatusMessage = openingDraft.message;
+          });
+          return;
+        }
+
+        final offset = _draftOpeningOffsetMeters;
+        final nextScene = _interactionMode == RenderSceneInteractionMode.addDoor
+            ? RenderSceneEditor.addDoor(
+                scene: scene,
+                hostWall: hostWall,
+                offsetMeters: offset,
+                widthMeters: _draftOpeningWidthMeters,
+                heightMeters: _draftOpeningHeightMeters,
+              )
+            : RenderSceneEditor.addWindow(
+                scene: scene,
+                hostWall: hostWall,
+                offsetMeters: offset,
+                widthMeters: _draftOpeningWidthMeters,
+                heightMeters: _draftOpeningHeightMeters,
+                sillHeightMeters: _draftOpeningSillHeightMeters,
+              );
+        await _applySceneChange(
+          nextScene,
+          message:
+              '${_interactionMode == RenderSceneInteractionMode.addDoor ? 'Door' : 'Window'} created.',
+        );
+        final created =
+            nextScene.objects.isNotEmpty ? nextScene.objects.last : null;
+        if (created != null) {
+          await _viewportController
+              .selectElement(created.elementId?.toString());
+          await _viewportController
+              .highlightElement(created.elementId?.toString());
+        }
+        await _clearDraft();
+        return;
+    }
+  }
+
+  Future<void> _cancelDraft() async {
+    await _clearDraft();
+    setState(() {
+      _editStatusMessage = 'Draft canceled.';
+    });
+  }
+
+  void _syncOpeningDraft() {
+    final hostWall = _draftHostWall;
+    if (hostWall == null) {
+      _viewportController.setOpeningDraft(null);
+      return;
+    }
+
+    final wallLength = RenderSceneEditor.wallLength(hostWall) ?? 0.0;
+    final offset = _draftOpeningOffsetMeters;
+    final valid =
+        offset >= _openingWidthHalf && offset <= wallLength - _openingWidthHalf;
+    final kind = _interactionMode == RenderSceneInteractionMode.addDoor
+        ? 'Door'
+        : 'Window';
+
+    _viewportController.setOpeningDraft(
+      RenderSceneOpeningDraft(
+        kind: kind,
+        hostWallId: hostWall.elementId,
+        offsetMeters: offset,
+        widthMeters: _draftOpeningWidthMeters,
+        heightMeters: _draftOpeningHeightMeters,
+        sillHeightMeters: _draftOpeningSillHeightMeters,
+        valid: valid,
+        message: valid
+            ? 'Ready to create $kind.'
+            : 'Opening overlaps wall edge or is too wide.',
+      ),
+    );
+  }
+
+  Future<void> _applySceneChange(
+    RenderScene nextScene, {
+    required String message,
+  }) async {
+    final previousSelectedId = _viewportController.selectedElementId;
+    final previousHighlightedId = _viewportController.highlightedElementId;
+    final selectedBefore = _selectedObject(nextScene);
+    final nextSelected = previousSelectedId != null
+        ? nextScene.objectByStableId(previousSelectedId)
+        : null;
+
+    setState(() {
+      _scene = nextScene;
+      _statusMessage = message;
+      _editStatusMessage = message;
+      _loadError = null;
+      _visibleKinds = _sanitizeVisibleKinds(
+        visibleKinds: _visibleKinds,
+        scene: nextScene,
+      );
+    });
+
+    await _viewportController.updateRenderScene(nextScene);
+    await _viewportController.setVisibleKinds(_visibleKinds);
+
+    if (nextSelected != null) {
+      await _viewportController
+          .selectElement(nextSelected.elementId?.toString());
+      await _viewportController
+          .highlightElement(nextSelected.elementId?.toString());
+    } else if (previousSelectedId != null) {
+      await _viewportController.selectElement(null);
+      await _viewportController.highlightElement(null);
+    } else if (selectedBefore != null) {
+      await _viewportController
+          .selectElement(selectedBefore.elementId?.toString());
+      await _viewportController
+          .highlightElement(selectedBefore.elementId?.toString());
+    } else {
+      await _viewportController.highlightElement(previousHighlightedId);
+    }
   }
 
   String _topBarText(RenderScene? scene) {
     if (scene == null) {
       return 'No RenderScene loaded';
     }
+
     final wallCount = scene.kindCounts['wall'] ?? 0;
-    return '${scene.objectCount} objects · $wallCount walls · ${scene.vertexCount} vertices · ${scene.triangleCount} triangles';
+    final doorCount = scene.kindCounts['door'] ?? 0;
+    final windowCount = scene.kindCounts['window'] ?? 0;
+
+    return '${scene.objectCount} objects · '
+        '$wallCount walls · '
+        '$doorCount doors · '
+        '$windowCount windows · '
+        '${scene.vertexCount} vertices · '
+        '${scene.triangleCount} triangles';
+  }
+
+  RenderSceneObject? _selectedObject(RenderScene? scene) {
+    if (scene == null) {
+      return null;
+    }
+
+    final selectedId = _viewportController.selectedElementId;
+    if (selectedId == null) {
+      return null;
+    }
+
+    final parsedId = int.tryParse(selectedId);
+    return scene.objectById(parsedId);
+  }
+
+  List<String> _availableKinds(RenderScene? scene) {
+    if (scene == null) {
+      return <String>[];
+    }
+
+    final available = scene.kindCounts.keys.toSet();
+    final ordered = <String>[
+      for (final kind in _coreKindOrder)
+        if (available.contains(kind)) kind,
+      for (final kind in available)
+        if (!_coreKindOrder.contains(kind)) kind,
+    ];
+
+    return ordered;
   }
 
   @override
   Widget build(BuildContext context) {
     final scene = _scene;
-    final theme = Theme.of(context);
+    final selectedObject = _selectedObject(scene);
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('BIM Viewer'),
-        actions: <Widget>[
-          Padding(
-            padding: const EdgeInsets.only(right: 12),
-            child: IconButton(
-              tooltip: 'Reload sample',
-              onPressed: _isBusy ? null : _reloadCurrentScene,
-              icon: const Icon(Icons.refresh),
+      appBar: _buildAppBar(context, scene),
+      body: Column(
+        children: <Widget>[
+          Expanded(
+            child: Row(
+              children: <Widget>[
+                _buildLeftRail(context, scene),
+                Expanded(
+                  child: _buildViewportPanel(context),
+                ),
+                if (_showInspector)
+                  _buildRightPanel(
+                    context: context,
+                    scene: scene,
+                    selectedObject: selectedObject,
+                  ),
+              ],
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.only(right: 12),
-            child: IconButton(
-              tooltip: 'Fit scene',
-              onPressed: _isBusy ? null : _fitCamera,
-              icon: const Icon(Icons.center_focus_strong),
+          _buildStatusBar(context, scene),
+          if (_loadError != null) _buildErrorBanner(context, _loadError!),
+        ],
+      ),
+    );
+  }
+
+  PreferredSizeWidget _buildAppBar(BuildContext context, RenderScene? scene) {
+    final theme = Theme.of(context);
+
+    return AppBar(
+      titleSpacing: 16,
+      title: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          const Text('Tablet BIM'),
+          Text(
+            _topBarText(scene),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.only(right: 12),
-            child: SegmentedButton<RenderSceneProjectionMode>(
+        ],
+      ),
+      actions: <Widget>[
+        IconButton(
+          tooltip: 'Reload bundled RenderScene',
+          onPressed: _isBusy ? null : _reloadCurrentScene,
+          icon: const Icon(Icons.refresh),
+        ),
+        IconButton(
+          tooltip: 'Fit view',
+          onPressed: scene == null || _isBusy ? null : _fitCamera,
+          icon: const Icon(Icons.center_focus_strong),
+        ),
+        IconButton(
+          tooltip: 'Clear selection',
+          onPressed: _viewportController.selectedElementId == null
+              ? null
+              : _clearSelection,
+          icon: const Icon(Icons.deselect),
+        ),
+        IconButton(
+          tooltip: _showObjectList ? 'Hide object list' : 'Show object list',
+          onPressed: () {
+            setState(() {
+              _showObjectList = !_showObjectList;
+            });
+          },
+          icon: Icon(
+            _showObjectList ? Icons.view_list : Icons.view_list_outlined,
+          ),
+        ),
+        IconButton(
+          tooltip: _showInspector ? 'Hide inspector' : 'Show inspector',
+          onPressed: () {
+            setState(() {
+              _showInspector = !_showInspector;
+            });
+          },
+          icon: Icon(
+            _showInspector
+                ? Icons.keyboard_double_arrow_right
+                : Icons.keyboard_double_arrow_left,
+          ),
+        ),
+        const SizedBox(width: 8),
+      ],
+      bottom: PreferredSize(
+        preferredSize: const Size.fromHeight(64),
+        child: _buildToolbar(context, scene),
+      ),
+    );
+  }
+
+  Widget _buildToolbar(BuildContext context, RenderScene? scene) {
+    final is3D = _projectionMode == RenderSceneProjectionMode.isometric;
+
+    return Container(
+      height: 64,
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      alignment: Alignment.centerLeft,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: <Widget>[
+            SegmentedButton<RenderSceneProjectionMode>(
               segments: const <ButtonSegment<RenderSceneProjectionMode>>[
                 ButtonSegment<RenderSceneProjectionMode>(
                   value: RenderSceneProjectionMode.topDown,
+                  icon: Icon(Icons.map_outlined),
                   label: Text('2D'),
                 ),
                 ButtonSegment<RenderSceneProjectionMode>(
                   value: RenderSceneProjectionMode.isometric,
+                  icon: Icon(Icons.view_in_ar_outlined),
                   label: Text('3D'),
                 ),
               ],
               selected: <RenderSceneProjectionMode>{_projectionMode},
-              onSelectionChanged: (Set<RenderSceneProjectionMode> selection) {
-                if (selection.isNotEmpty) {
-                  _setProjectionMode(selection.first);
-                }
-              },
+              onSelectionChanged: scene == null
+                  ? null
+                  : (Set<RenderSceneProjectionMode> selection) {
+                      if (selection.isNotEmpty) {
+                        _setProjectionMode(selection.first);
+                      }
+                    },
             ),
-          ),
-          if (_projectionMode == RenderSceneProjectionMode.isometric)
-            Padding(
-              padding: const EdgeInsets.only(right: 12),
-              child: SegmentedButton<RenderSceneOrbitProjectionStyle>(
+            const SizedBox(width: 12),
+            SegmentedButton<RenderSceneDisplayStyle>(
+              segments: const <ButtonSegment<RenderSceneDisplayStyle>>[
+                ButtonSegment<RenderSceneDisplayStyle>(
+                  value: RenderSceneDisplayStyle.solid,
+                  icon: Icon(Icons.crop_square),
+                  label: Text('Solid'),
+                ),
+                ButtonSegment<RenderSceneDisplayStyle>(
+                  value: RenderSceneDisplayStyle.wireframe,
+                  icon: Icon(Icons.grid_3x3),
+                  label: Text('Wire'),
+                ),
+              ],
+              selected: <RenderSceneDisplayStyle>{_displayStyle},
+              onSelectionChanged: scene == null
+                  ? null
+                  : (Set<RenderSceneDisplayStyle> selection) {
+                      if (selection.isNotEmpty) {
+                        _setDisplayStyle(selection.first);
+                      }
+                    },
+            ),
+            const SizedBox(width: 12),
+            SegmentedButton<RenderSceneInteractionMode>(
+              segments: const <ButtonSegment<RenderSceneInteractionMode>>[
+                ButtonSegment<RenderSceneInteractionMode>(
+                  value: RenderSceneInteractionMode.select,
+                  icon: Icon(Icons.ads_click),
+                  label: Text('Select'),
+                ),
+                ButtonSegment<RenderSceneInteractionMode>(
+                  value: RenderSceneInteractionMode.addWall,
+                  icon: Icon(Icons.linear_scale),
+                  label: Text('Wall'),
+                ),
+                ButtonSegment<RenderSceneInteractionMode>(
+                  value: RenderSceneInteractionMode.addDoor,
+                  icon: Icon(Icons.meeting_room_outlined),
+                  label: Text('Door'),
+                ),
+                ButtonSegment<RenderSceneInteractionMode>(
+                  value: RenderSceneInteractionMode.addWindow,
+                  icon: Icon(Icons.window_outlined),
+                  label: Text('Window'),
+                ),
+              ],
+              selected: <RenderSceneInteractionMode>{_interactionMode},
+              onSelectionChanged: scene == null
+                  ? null
+                  : (Set<RenderSceneInteractionMode> selection) {
+                      if (selection.isNotEmpty) {
+                        _setInteractionMode(selection.first);
+                      }
+                    },
+            ),
+            if (is3D) ...<Widget>[
+              const SizedBox(width: 12),
+              SegmentedButton<RenderSceneOrbitProjectionStyle>(
                 segments: const <ButtonSegment<
                     RenderSceneOrbitProjectionStyle>>[
                   ButtonSegment<RenderSceneOrbitProjectionStyle>(
-                    value: RenderSceneOrbitProjectionStyle.perspective,
-                    label: Text('Perspective'),
+                    value: RenderSceneOrbitProjectionStyle.orthographic,
+                    icon: Icon(Icons.crop_free),
+                    label: Text('Ortho'),
                   ),
                   ButtonSegment<RenderSceneOrbitProjectionStyle>(
-                    value: RenderSceneOrbitProjectionStyle.orthographic,
-                    label: Text('Ortho'),
+                    value: RenderSceneOrbitProjectionStyle.perspective,
+                    icon: Icon(Icons.remove_red_eye_outlined),
+                    label: Text('Persp'),
                   ),
                 ],
                 selected: <RenderSceneOrbitProjectionStyle>{
                   _orbitProjectionStyle,
                 },
-                onSelectionChanged:
-                    (Set<RenderSceneOrbitProjectionStyle> selection) {
-                  if (selection.isNotEmpty) {
-                    _setOrbitProjectionStyle(selection.first);
-                  }
-                },
+                onSelectionChanged: scene == null
+                    ? null
+                    : (Set<RenderSceneOrbitProjectionStyle> selection) {
+                        if (selection.isNotEmpty) {
+                          _setOrbitProjectionStyle(selection.first);
+                        }
+                      },
               ),
+            ],
+            const SizedBox(width: 12),
+            FilledButton.tonalIcon(
+              onPressed: scene == null || _isBusy ? null : _fitCamera,
+              icon: const Icon(Icons.fit_screen),
+              label: const Text('Fit'),
             ),
-          Padding(
-            padding: const EdgeInsets.only(right: 12),
-            child: SegmentedButton<RenderSceneDisplayStyle>(
-              segments: const <ButtonSegment<RenderSceneDisplayStyle>>[
-                ButtonSegment<RenderSceneDisplayStyle>(
-                  value: RenderSceneDisplayStyle.solid,
-                  label: Text('Solid'),
-                ),
-                ButtonSegment<RenderSceneDisplayStyle>(
-                  value: RenderSceneDisplayStyle.wireframe,
-                  label: Text('Wire'),
-                ),
-              ],
-              selected: <RenderSceneDisplayStyle>{_displayStyle},
-              onSelectionChanged: (Set<RenderSceneDisplayStyle> selection) {
-                if (selection.isNotEmpty) {
-                  _setDisplayStyle(selection.first);
-                }
-              },
+            const SizedBox(width: 8),
+            OutlinedButton.icon(
+              onPressed: scene == null
+                  ? null
+                  : () {
+                      setState(() {
+                        _showDiagnostics = !_showDiagnostics;
+                      });
+                    },
+              icon: const Icon(Icons.analytics_outlined),
+              label:
+                  Text(_showDiagnostics ? 'Hide diagnostics' : 'Diagnostics'),
             ),
-          ),
-        ],
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(56),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                _topBarText(scene),
-                style: theme.textTheme.titleSmall,
-              ),
-            ),
-          ),
+          ],
         ),
       ),
-      body: Column(
-        children: <Widget>[
-          Expanded(
-            child: Container(
-              color: const Color(0xFFF4F7F5),
-              child: RenderSceneViewport(controller: _viewportController),
+    );
+  }
+
+  Widget _buildLeftRail(BuildContext context, RenderScene? scene) {
+    final theme = Theme.of(context);
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 180),
+      width: _showObjectList ? 280 : 72,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border(
+          right: BorderSide(color: theme.colorScheme.outlineVariant),
+        ),
+      ),
+      child: _showObjectList
+          ? _buildObjectListPanel(context, scene)
+          : _buildCollapsedRail(context),
+    );
+  }
+
+  Widget _buildCollapsedRail(BuildContext context) {
+    return Column(
+      children: <Widget>[
+        const SizedBox(height: 8),
+        IconButton(
+          tooltip: 'Show object list',
+          onPressed: () {
+            setState(() {
+              _showObjectList = true;
+            });
+          },
+          icon: const Icon(Icons.view_list),
+        ),
+        IconButton(
+          tooltip: 'Reload sample',
+          onPressed: _isBusy ? null : _reloadCurrentScene,
+          icon: const Icon(Icons.refresh),
+        ),
+        IconButton(
+          tooltip: 'Fit view',
+          onPressed: _scene == null ? null : _fitCamera,
+          icon: const Icon(Icons.center_focus_strong),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildObjectListPanel(BuildContext context, RenderScene? scene) {
+    final theme = Theme.of(context);
+    final availableKinds = _availableKinds(scene);
+    final objects = scene == null
+        ? <RenderSceneObject>[]
+        : scene.objectsForKinds(_visibleKinds);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 8, 8),
+          child: Row(
+            children: <Widget>[
+              Expanded(
+                child: Text(
+                  'Objects',
+                  style: theme.textTheme.titleMedium,
+                ),
+              ),
+              IconButton(
+                tooltip: 'Collapse object list',
+                onPressed: () {
+                  setState(() {
+                    _showObjectList = false;
+                  });
+                },
+                icon: const Icon(Icons.chevron_left),
+              ),
+            ],
+          ),
+        ),
+        if (scene != null)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: _KindFilterWrap(
+              availableKinds: availableKinds,
+              selectedKinds: _visibleKinds,
+              kindCounts: scene.kindCounts,
+              onChanged: _setVisibleKinds,
             ),
           ),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            color: const Color(0xFF0F172A),
-            child: DefaultTextStyle(
-              style: theme.textTheme.bodyMedium?.copyWith(
-                    color: Colors.white,
-                  ) ??
-                  const TextStyle(color: Colors.white),
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  children: <Widget>[
-                    Text(
-                      _statusMessage ??
-                          (_isBusy ? 'Loading scene...' : 'Ready'),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+        const Divider(height: 20),
+        Expanded(
+          child: scene == null
+              ? const _EmptyPanelMessage(
+                  icon: Icons.data_object,
+                  title: 'No scene loaded',
+                  message: 'Load a RenderScene sample to inspect objects.',
+                )
+              : objects.isEmpty
+                  ? const _EmptyPanelMessage(
+                      icon: Icons.filter_alt_off,
+                      title: 'No visible objects',
+                      message: 'Change category filters to show objects.',
+                    )
+                  : ListView.separated(
+                      padding: const EdgeInsets.fromLTRB(8, 0, 8, 12),
+                      itemCount: objects.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 4),
+                      itemBuilder: (BuildContext context, int index) {
+                        final object = objects[index];
+                        return _ObjectListTile(
+                          object: object,
+                          selected: object.elementId?.toString() ==
+                              _viewportController.selectedElementId,
+                          onTap: () => _selectObject(object),
+                        );
+                      },
                     ),
-                    const SizedBox(width: 16),
-                    Text('Objects: ${scene?.objectCount ?? 0}'),
-                    const SizedBox(width: 12),
-                    Text('Walls: ${scene?.kindCounts['wall'] ?? 0}'),
-                    const SizedBox(width: 12),
-                    Text(
-                        'Mode: ${_projectionMode == RenderSceneProjectionMode.topDown ? '2D' : '3D'}'),
-                    const SizedBox(width: 12),
-                    Text(
-                      'View: ${_orbitProjectionStyle == RenderSceneOrbitProjectionStyle.perspective ? 'Persp' : 'Ortho'}',
+        ),
+      ],
+    );
+  }
+
+  Widget _buildViewportPanel(BuildContext context) {
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        Container(
+          color: const Color(0xFFF4F7F5),
+          child: RenderSceneViewport(
+            controller: _viewportController,
+            interactionMode: _interactionMode,
+            onSceneTap: _handleSceneTap,
+          ),
+        ),
+        if (_isBusy)
+          Positioned.fill(
+            child: ColoredBox(
+              color: Colors.black.withValues(alpha: 0.08),
+              child: const Center(
+                child: Card(
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 24, vertical: 18),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(strokeWidth: 2.4),
+                        ),
+                        SizedBox(height: 14),
+                        Text('Loading scene...'),
+                      ],
                     ),
-                    const SizedBox(width: 12),
-                    Text(
-                        'Selected: ${_viewportController.selectedElementId ?? '-'}'),
-                    const SizedBox(width: 12),
-                    Text(
-                        'Style: ${_displayStyle == RenderSceneDisplayStyle.solid ? 'Solid' : 'Wire'}'),
-                  ],
+                  ),
                 ),
               ),
             ),
           ),
-          if (_loadError != null)
-            Container(
-              width: double.infinity,
-              color: const Color(0xFFFEE2E2),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: Text(
-                _loadError!,
-                style: const TextStyle(color: Color(0xFF991B1B)),
-              ),
+      ],
+    );
+  }
+
+  Widget _buildRightPanel({
+    required BuildContext context,
+    required RenderScene? scene,
+    required RenderSceneObject? selectedObject,
+  }) {
+    final theme = Theme.of(context);
+
+    return Container(
+      width: 340,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border(
+          left: BorderSide(color: theme.colorScheme.outlineVariant),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 8, 8),
+            child: Row(
+              children: <Widget>[
+                Expanded(
+                  child: Text(
+                    'Inspector',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.titleMedium,
+                  ),
+                ),
+              ],
             ),
+          ),
+          const Divider(height: 1),
+          Expanded(
+            child: scene == null
+                ? const _EmptyPanelMessage(
+                    icon: Icons.info_outline,
+                    title: 'No scene',
+                    message: 'Load a scene to inspect diagnostics.',
+                  )
+                : ListView(
+                    padding: const EdgeInsets.all(16),
+                    children: <Widget>[
+                      _DraftEditorCard(
+                        interactionMode: _interactionMode,
+                        draftWallStart: _draftWallStart,
+                        draftWallEnd: _draftWallEnd,
+                        draftHostWall: _draftHostWall,
+                        openingOffsetMeters: _draftOpeningOffsetMeters,
+                        openingWidthMeters: _draftOpeningWidthMeters,
+                        openingHeightMeters: _draftOpeningHeightMeters,
+                        openingSillHeightMeters: _draftOpeningSillHeightMeters,
+                        editStatusMessage: _editStatusMessage,
+                        snapEnabled: _snapDraftToGrid,
+                        canConfirm: _draftCanConfirm,
+                        onSnapToggled: (value) {
+                          setState(() {
+                            _snapDraftToGrid = value;
+                          });
+                          _syncOpeningDraft();
+                        },
+                        onOpeningOffsetChanged: (value) {
+                          setState(() {
+                            _draftOpeningOffsetMeters = value;
+                          });
+                          _syncOpeningDraft();
+                        },
+                        onOpeningWidthChanged: (value) {
+                          setState(() {
+                            _draftOpeningWidthMeters = value;
+                          });
+                          _syncOpeningDraft();
+                        },
+                        onOpeningHeightChanged: (value) {
+                          setState(() {
+                            _draftOpeningHeightMeters = value;
+                          });
+                          _syncOpeningDraft();
+                        },
+                        onOpeningSillHeightChanged: (value) {
+                          setState(() {
+                            _draftOpeningSillHeightMeters = value;
+                          });
+                          _syncOpeningDraft();
+                        },
+                        onConfirm: _confirmDraft,
+                        onCancel: _cancelDraft,
+                        onClearSelection: _clearSelection,
+                        onResetMode: () => _setInteractionMode(
+                          RenderSceneInteractionMode.select,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      if (selectedObject == null)
+                        const _EmptyPanelMessage(
+                          icon: Icons.ads_click,
+                          title: 'Nothing selected',
+                          message:
+                              'Tap an object in the model or choose one from the list.',
+                        )
+                      else
+                        _SelectedObjectCard(object: selectedObject),
+                      const SizedBox(height: 16),
+                      _SceneSummaryCard(scene: scene),
+                      if (_showDiagnostics) ...<Widget>[
+                        const SizedBox(height: 16),
+                        _DiagnosticsCard(scene: scene),
+                      ],
+                    ],
+                  ),
+          ),
         ],
       ),
     );
+  }
+
+  Widget _buildStatusBar(BuildContext context, RenderScene? scene) {
+    final theme = Theme.of(context);
+    final selectedId = _viewportController.selectedElementId;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      color: const Color(0xFF0F172A),
+      child: DefaultTextStyle(
+        style: theme.textTheme.bodyMedium?.copyWith(
+              color: Colors.white,
+            ) ??
+            const TextStyle(color: Colors.white),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: <Widget>[
+              Icon(
+                _loadError == null ? Icons.check_circle : Icons.error,
+                size: 18,
+                color: _loadError == null
+                    ? const Color(0xFF86EFAC)
+                    : const Color(0xFFFCA5A5),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                _statusMessage ?? (_isBusy ? 'Loading scene...' : 'Ready'),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(width: 18),
+              Text('Objects: ${scene?.objectCount ?? 0}'),
+              const SizedBox(width: 12),
+              Text('Triangles: ${scene?.triangleCount ?? 0}'),
+              const SizedBox(width: 12),
+              Text(
+                'Mode: ${_projectionMode == RenderSceneProjectionMode.topDown ? '2D' : '3D'}',
+              ),
+              const SizedBox(width: 12),
+              Text(
+                'Projection: ${_orbitProjectionStyle == RenderSceneOrbitProjectionStyle.perspective ? 'Perspective' : 'Orthographic'}',
+              ),
+              const SizedBox(width: 12),
+              Text(
+                'Style: ${_displayStyle == RenderSceneDisplayStyle.solid ? 'Solid' : 'Wire'}',
+              ),
+              const SizedBox(width: 12),
+              Text(
+                'Edit: ${_interactionMode.name}',
+              ),
+              const SizedBox(width: 12),
+              Text('Selected: ${selectedId ?? '-'}'),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildErrorBanner(BuildContext context, String message) {
+    return Container(
+      width: double.infinity,
+      color: const Color(0xFFFEE2E2),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          const Icon(Icons.error_outline, color: Color(0xFF991B1B)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              message,
+              style: const TextStyle(color: Color(0xFF991B1B)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _KindFilterWrap extends StatelessWidget {
+  const _KindFilterWrap({
+    required this.availableKinds,
+    required this.selectedKinds,
+    required this.kindCounts,
+    required this.onChanged,
+  });
+
+  final List<String> availableKinds;
+  final Set<String> selectedKinds;
+  final Map<String, int> kindCounts;
+  final ValueChanged<Set<String>> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    if (availableKinds.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final allSelected = selectedKinds.isEmpty;
+
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: <Widget>[
+        FilterChip(
+          label: const Text('All'),
+          selected: allSelected,
+          onSelected: (_) {
+            onChanged(<String>{});
+          },
+        ),
+        for (final kind in availableKinds)
+          FilterChip(
+            label: Text('${prettySceneKind(kind)} ${kindCounts[kind] ?? 0}'),
+            selected: allSelected || selectedKinds.contains(kind),
+            onSelected: (bool selected) {
+              final next =
+                  allSelected ? availableKinds.toSet() : selectedKinds.toSet();
+
+              if (selected) {
+                next.add(kind);
+              } else {
+                next.remove(kind);
+              }
+
+              if (next.length == availableKinds.length) {
+                onChanged(<String>{});
+              } else {
+                onChanged(next);
+              }
+            },
+          ),
+      ],
+    );
+  }
+}
+
+class _DraftEditorCard extends StatefulWidget {
+  const _DraftEditorCard({
+    required this.interactionMode,
+    required this.draftWallStart,
+    required this.draftWallEnd,
+    required this.draftHostWall,
+    required this.openingOffsetMeters,
+    required this.openingWidthMeters,
+    required this.openingHeightMeters,
+    required this.openingSillHeightMeters,
+    required this.editStatusMessage,
+    required this.snapEnabled,
+    required this.canConfirm,
+    required this.onSnapToggled,
+    required this.onOpeningOffsetChanged,
+    required this.onOpeningWidthChanged,
+    required this.onOpeningHeightChanged,
+    required this.onOpeningSillHeightChanged,
+    required this.onConfirm,
+    required this.onCancel,
+    required this.onClearSelection,
+    required this.onResetMode,
+  });
+
+  final RenderSceneInteractionMode interactionMode;
+  final RenderScenePoint? draftWallStart;
+  final RenderScenePoint? draftWallEnd;
+  final RenderSceneObject? draftHostWall;
+  final double openingOffsetMeters;
+  final double openingWidthMeters;
+  final double openingHeightMeters;
+  final double openingSillHeightMeters;
+  final String? editStatusMessage;
+  final bool snapEnabled;
+  final bool canConfirm;
+  final ValueChanged<bool> onSnapToggled;
+  final ValueChanged<double> onOpeningOffsetChanged;
+  final ValueChanged<double> onOpeningWidthChanged;
+  final ValueChanged<double> onOpeningHeightChanged;
+  final ValueChanged<double> onOpeningSillHeightChanged;
+  final VoidCallback onConfirm;
+  final VoidCallback onCancel;
+  final VoidCallback onClearSelection;
+  final VoidCallback onResetMode;
+
+  @override
+  State<_DraftEditorCard> createState() => _DraftEditorCardState();
+}
+
+class _DraftEditorCardState extends State<_DraftEditorCard> {
+  late final TextEditingController _offsetController;
+  late final TextEditingController _widthController;
+  late final TextEditingController _heightController;
+  late final TextEditingController _sillController;
+
+  @override
+  void initState() {
+    super.initState();
+    _offsetController =
+        TextEditingController(text: _format(widget.openingOffsetMeters));
+    _widthController =
+        TextEditingController(text: _format(widget.openingWidthMeters));
+    _heightController =
+        TextEditingController(text: _format(widget.openingHeightMeters));
+    _sillController =
+        TextEditingController(text: _format(widget.openingSillHeightMeters));
+  }
+
+  @override
+  void didUpdateWidget(covariant _DraftEditorCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _syncController(_offsetController, widget.openingOffsetMeters,
+        oldWidget.openingOffsetMeters);
+    _syncController(_widthController, widget.openingWidthMeters,
+        oldWidget.openingWidthMeters);
+    _syncController(_heightController, widget.openingHeightMeters,
+        oldWidget.openingHeightMeters);
+    _syncController(_sillController, widget.openingSillHeightMeters,
+        oldWidget.openingSillHeightMeters);
+  }
+
+  @override
+  void dispose() {
+    _offsetController.dispose();
+    _widthController.dispose();
+    _heightController.dispose();
+    _sillController.dispose();
+    super.dispose();
+  }
+
+  void _syncController(
+    TextEditingController controller,
+    double next,
+    double previous,
+  ) {
+    if ((next - previous).abs() < 1e-9) {
+      return;
+    }
+    controller.text = _format(next);
+  }
+
+  String _format(double value) {
+    return value.toStringAsFixed(2);
+  }
+
+  double? _parse(String text) {
+    return double.tryParse(text.trim());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final mode = widget.interactionMode;
+    final wall = widget.draftHostWall;
+
+    return _InfoCard(
+      title: 'Edit',
+      icon: Icons.build_outlined,
+      children: <Widget>[
+        _InfoRow(label: 'Mode', value: mode.name),
+        _InfoRow(
+          label: 'Snap',
+          value: widget.snapEnabled ? 'On' : 'Off',
+          trailing: Switch.adaptive(
+            value: widget.snapEnabled,
+            onChanged: widget.onSnapToggled,
+          ),
+        ),
+        if (widget.editStatusMessage != null)
+          Text(
+            widget.editStatusMessage!,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        const SizedBox(height: 8),
+        if (mode == RenderSceneInteractionMode.select)
+          const Text('Select mode: tap objects to inspect them.')
+        else if (mode == RenderSceneInteractionMode.addWall)
+          _WallDraftSummary(
+            start: widget.draftWallStart,
+            end: widget.draftWallEnd,
+          )
+        else
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              _InfoRow(
+                label: 'Host wall',
+                value: wall?.elementId?.toString() ?? 'Select a wall',
+              ),
+              const SizedBox(height: 8),
+              _NumericField(
+                label: 'Offset (m)',
+                controller: _offsetController,
+                onChanged: (value) {
+                  final parsed = _parse(value);
+                  if (parsed != null) {
+                    widget.onOpeningOffsetChanged(parsed);
+                  }
+                },
+              ),
+              _NumericField(
+                label: 'Width (m)',
+                controller: _widthController,
+                onChanged: (value) {
+                  final parsed = _parse(value);
+                  if (parsed != null) {
+                    widget.onOpeningWidthChanged(parsed);
+                  }
+                },
+              ),
+              _NumericField(
+                label: 'Height (m)',
+                controller: _heightController,
+                onChanged: (value) {
+                  final parsed = _parse(value);
+                  if (parsed != null) {
+                    widget.onOpeningHeightChanged(parsed);
+                  }
+                },
+              ),
+              if (mode == RenderSceneInteractionMode.addWindow)
+                _NumericField(
+                  label: 'Sill height (m)',
+                  controller: _sillController,
+                  onChanged: (value) {
+                    final parsed = _parse(value);
+                    if (parsed != null) {
+                      widget.onOpeningSillHeightChanged(parsed);
+                    }
+                  },
+                ),
+              const SizedBox(height: 8),
+              _InfoRow(
+                label: 'Preview',
+                value: wall == null ? 'No wall selected' : 'Ready',
+              ),
+            ],
+          ),
+        const SizedBox(height: 12),
+        Row(
+          children: <Widget>[
+            Expanded(
+              child: FilledButton(
+                onPressed: widget.canConfirm ? widget.onConfirm : null,
+                child: const Text('Confirm'),
+              ),
+            ),
+            const SizedBox(width: 8),
+            OutlinedButton(
+              onPressed: widget.onCancel,
+              child: const Text('Cancel'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        TextButton(
+          onPressed: widget.onResetMode,
+          child: const Text('Back to Select'),
+        ),
+        TextButton(
+          onPressed: widget.onClearSelection,
+          child: const Text('Clear selection'),
+        ),
+      ],
+    );
+  }
+}
+
+class _WallDraftSummary extends StatelessWidget {
+  const _WallDraftSummary({
+    required this.start,
+    required this.end,
+  });
+
+  final RenderScenePoint? start;
+  final RenderScenePoint? end;
+
+  @override
+  Widget build(BuildContext context) {
+    if (start == null || end == null) {
+      return const Text('Tap once to set the wall start point.');
+    }
+
+    final length = start!.distanceTo(end!);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        _InfoRow(
+          label: 'Start',
+          value:
+              '(${start!.x.toStringAsFixed(2)}, ${start!.y.toStringAsFixed(2)})',
+        ),
+        _InfoRow(
+          label: 'End',
+          value: '(${end!.x.toStringAsFixed(2)}, ${end!.y.toStringAsFixed(2)})',
+        ),
+        _InfoRow(
+          label: 'Length',
+          value: '${length.toStringAsFixed(2)} m',
+        ),
+      ],
+    );
+  }
+}
+
+class _NumericField extends StatelessWidget {
+  const _NumericField({
+    required this.label,
+    required this.controller,
+    required this.onChanged,
+  });
+
+  final String label;
+  final TextEditingController controller;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: TextField(
+        controller: controller,
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        decoration: InputDecoration(
+          labelText: label,
+          isDense: true,
+          border: const OutlineInputBorder(),
+        ),
+        onChanged: onChanged,
+      ),
+    );
+  }
+}
+
+class _ObjectListTile extends StatelessWidget {
+  const _ObjectListTile({
+    required this.object,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final RenderSceneObject object;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final kind = prettySceneKind(object.kind);
+    final id = object.elementId?.toString() ?? 'no-id';
+
+    return Material(
+      color: selected ? theme.colorScheme.primaryContainer : Colors.transparent,
+      borderRadius: BorderRadius.circular(12),
+      child: ListTile(
+        dense: true,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        onTap: onTap,
+        leading: CircleAvatar(
+          radius: 17,
+          backgroundColor: _kindUiColor(object.kindKey).withValues(alpha: 0.15),
+          child: Icon(
+            _kindIcon(object.kindKey),
+            size: 18,
+            color: _kindUiColor(object.kindKey),
+          ),
+        ),
+        title: Text(
+          '$kind #$id',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        subtitle: Text(
+          '${object.mesh.positions.length} vertices · ${object.mesh.triangleCount} tris',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        trailing: selected ? const Icon(Icons.check_circle) : null,
+      ),
+    );
+  }
+}
+
+class _SelectedObjectCard extends StatelessWidget {
+  const _SelectedObjectCard({
+    required this.object,
+  });
+
+  final RenderSceneObject object;
+
+  @override
+  Widget build(BuildContext context) {
+    final kind = prettySceneKind(object.kind);
+    final bounds = object.bounds;
+
+    return _InfoCard(
+      title: 'Selected object',
+      icon: _kindIcon(object.kindKey),
+      children: <Widget>[
+        _InfoRow(label: 'Kind', value: kind),
+        _InfoRow(
+            label: 'Element ID', value: object.elementId?.toString() ?? '-'),
+        _InfoRow(label: 'Level ID', value: object.levelId?.toString() ?? '-'),
+        _InfoRow(label: 'Selectable', value: object.selectable ? 'Yes' : 'No'),
+        _InfoRow(
+          label: 'Visible',
+          value: object.visibleByDefault ? 'Default' : 'Hidden',
+        ),
+        _InfoRow(label: 'Revision', value: object.revision.toString()),
+        _InfoRow(
+          label: 'Mesh',
+          value:
+              '${object.mesh.positions.length} vertices · ${object.mesh.triangleCount} triangles',
+        ),
+        _InfoRow(
+          label: 'Bounds',
+          value:
+              '${bounds.width.toStringAsFixed(2)} × ${bounds.depth.toStringAsFixed(2)} × ${bounds.height.toStringAsFixed(2)} m',
+        ),
+        _InfoRow(label: 'Material', value: object.materialCategory),
+      ],
+    );
+  }
+}
+
+class _SceneSummaryCard extends StatelessWidget {
+  const _SceneSummaryCard({
+    required this.scene,
+  });
+
+  final RenderScene scene;
+
+  @override
+  Widget build(BuildContext context) {
+    final bounds = scene.bounds;
+
+    return _InfoCard(
+      title: 'Scene summary',
+      icon: Icons.analytics_outlined,
+      children: <Widget>[
+        _InfoRow(label: 'Source', value: scene.source),
+        _InfoRow(label: 'Version', value: scene.sceneVersion.toString()),
+        _InfoRow(label: 'Units', value: scene.units),
+        _InfoRow(label: 'Coordinates', value: scene.coordinateSystem),
+        _InfoRow(label: 'Objects', value: scene.objectCount.toString()),
+        _InfoRow(label: 'Vertices', value: scene.vertexCount.toString()),
+        _InfoRow(label: 'Indices', value: scene.indexCount.toString()),
+        _InfoRow(label: 'Triangles', value: scene.triangleCount.toString()),
+        _InfoRow(
+          label: 'Bounds',
+          value:
+              '${bounds.width.toStringAsFixed(2)} × ${bounds.depth.toStringAsFixed(2)} × ${bounds.height.toStringAsFixed(2)} m',
+        ),
+      ],
+    );
+  }
+}
+
+class _DiagnosticsCard extends StatelessWidget {
+  const _DiagnosticsCard({
+    required this.scene,
+  });
+
+  final RenderScene scene;
+
+  @override
+  Widget build(BuildContext context) {
+    final diagnostics = scene.diagnostics;
+
+    return _InfoCard(
+      title: 'Diagnostics',
+      icon: Icons.bug_report_outlined,
+      children: <Widget>[
+        _InfoRow(label: 'Source', value: diagnostics.source),
+        _InfoRow(
+            label: 'Visible', value: diagnostics.visibleObjectCount.toString()),
+        _InfoRow(
+          label: 'Selectable',
+          value: diagnostics.selectableObjectCount.toString(),
+        ),
+        _InfoRow(
+          label: 'Missing geometry',
+          value: diagnostics.missingGeometryCount.toString(),
+        ),
+        _InfoRow(
+          label: 'Invalid bounds',
+          value: diagnostics.invalidBoundsCount.toString(),
+        ),
+        _InfoRow(label: 'Levels', value: diagnostics.levelCount.toString()),
+        const SizedBox(height: 8),
+        Text(
+          'Kinds',
+          style: Theme.of(context).textTheme.labelLarge,
+        ),
+        const SizedBox(height: 6),
+        for (final entry in diagnostics.kindCounts.entries)
+          _InfoRow(
+            label: prettySceneKind(entry.key),
+            value: entry.value.toString(),
+          ),
+        if (diagnostics.warnings.isNotEmpty) ...<Widget>[
+          const SizedBox(height: 12),
+          Text(
+            'Warnings',
+            style: Theme.of(context).textTheme.labelLarge,
+          ),
+          const SizedBox(height: 6),
+          for (final warning in diagnostics.warnings)
+            _BulletText(text: warning),
+        ],
+        if (diagnostics.errors.isNotEmpty) ...<Widget>[
+          const SizedBox(height: 12),
+          Text(
+            'Errors',
+            style: Theme.of(context)
+                .textTheme
+                .labelLarge
+                ?.copyWith(color: const Color(0xFF991B1B)),
+          ),
+          const SizedBox(height: 6),
+          for (final error in diagnostics.errors)
+            _BulletText(text: error, color: const Color(0xFF991B1B)),
+        ],
+      ],
+    );
+  }
+}
+
+class _InfoCard extends StatelessWidget {
+  const _InfoCard({
+    required this.title,
+    required this.icon,
+    required this.children,
+  });
+
+  final String title;
+  final IconData icon;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Card(
+      elevation: 0,
+      color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.52),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                Icon(icon, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: theme.textTheme.titleSmall,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            ...children,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _InfoRow extends StatelessWidget {
+  const _InfoRow({
+    required this.label,
+    required this.value,
+    this.trailing,
+  });
+
+  final String label;
+  final String value;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  value,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (trailing != null) trailing!,
+        ],
+      ),
+    );
+  }
+}
+
+class _BulletText extends StatelessWidget {
+  const _BulletText({
+    required this.text,
+    this.color,
+  });
+
+  final String text;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text('• ', style: TextStyle(color: color)),
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(color: color),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _EmptyPanelMessage extends StatelessWidget {
+  const _EmptyPanelMessage({
+    required this.icon,
+    required this.title,
+    required this.message,
+  });
+
+  final IconData icon;
+  final String title;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Icon(icon, size: 38, color: theme.colorScheme.onSurfaceVariant),
+            const SizedBox(height: 12),
+            Text(title, style: theme.textTheme.titleMedium),
+            const SizedBox(height: 6),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+IconData _kindIcon(String kind) {
+  switch (kind) {
+    case 'wall':
+      return Icons.linear_scale;
+    case 'door':
+      return Icons.door_front_door_outlined;
+    case 'window':
+      return Icons.window_outlined;
+    case 'room':
+      return Icons.meeting_room_outlined;
+    case 'slab':
+    case 'floor':
+      return Icons.layers_outlined;
+    case 'ceiling':
+      return Icons.flip_to_front_outlined;
+    case 'roof':
+      return Icons.roofing_outlined;
+    case 'column':
+      return Icons.view_column_outlined;
+    case 'beam':
+      return Icons.horizontal_rule;
+    case 'stair':
+      return Icons.stairs_outlined;
+    default:
+      return Icons.category_outlined;
+  }
+}
+
+Color _kindUiColor(String kind) {
+  switch (kind) {
+    case 'wall':
+      return const Color(0xFF1F5D4E);
+    case 'door':
+      return const Color(0xFFC2410C);
+    case 'window':
+      return const Color(0xFF0284C7);
+    case 'room':
+      return const Color(0xFF7C3AED);
+    case 'slab':
+    case 'floor':
+      return const Color(0xFF475569);
+    case 'ceiling':
+      return const Color(0xFF64748B);
+    case 'roof':
+      return const Color(0xFFB91C1C);
+    case 'column':
+      return const Color(0xFF374151);
+    case 'beam':
+      return const Color(0xFF92400E);
+    case 'stair':
+      return const Color(0xFF4338CA);
+    default:
+      return const Color(0xFF6B7280);
   }
 }
