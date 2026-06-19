@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 
@@ -13,6 +14,8 @@ class RenderScenePoint {
   final double x;
   final double y;
   final double z;
+
+  bool get isFinite => x.isFinite && y.isFinite && z.isFinite;
 
   Map<String, Object?> toJson() => <String, Object?>{'x': x, 'y': y, 'z': z};
 
@@ -30,6 +33,25 @@ class RenderScenePoint {
     }
     return RenderScenePoint(x: x, y: y, z: z);
   }
+
+  RenderScenePoint operator +(RenderScenePoint other) {
+    return RenderScenePoint(x: x + other.x, y: y + other.y, z: z + other.z);
+  }
+
+  RenderScenePoint operator -(RenderScenePoint other) {
+    return RenderScenePoint(x: x - other.x, y: y - other.y, z: z - other.z);
+  }
+
+  RenderScenePoint scale(double factor) {
+    return RenderScenePoint(x: x * factor, y: y * factor, z: z * factor);
+  }
+
+  double distanceTo(RenderScenePoint other) {
+    final dx = x - other.x;
+    final dy = y - other.y;
+    final dz = z - other.z;
+    return math.sqrt(dx * dx + dy * dy + dz * dz);
+  }
 }
 
 @immutable
@@ -41,6 +63,12 @@ class RenderSceneBounds {
 
   final RenderScenePoint min;
   final RenderScenePoint max;
+
+  RenderScenePoint get center => RenderScenePoint(
+        x: (min.x + max.x) * 0.5,
+        y: (min.y + max.y) * 0.5,
+        z: (min.z + max.z) * 0.5,
+      );
 
   double get width => (max.x - min.x).abs();
   double get depth => (max.y - min.y).abs();
@@ -64,6 +92,24 @@ class RenderSceneBounds {
         min: RenderScenePoint.zero(),
         max: RenderScenePoint.zero(),
       );
+
+  static RenderSceneBounds normalized({
+    required RenderScenePoint min,
+    required RenderScenePoint max,
+  }) {
+    return RenderSceneBounds(
+      min: RenderScenePoint(
+        x: min.x <= max.x ? min.x : max.x,
+        y: min.y <= max.y ? min.y : max.y,
+        z: min.z <= max.z ? min.z : max.z,
+      ),
+      max: RenderScenePoint(
+        x: min.x >= max.x ? min.x : max.x,
+        y: min.y >= max.y ? min.y : max.y,
+        z: min.z >= max.z ? min.z : max.z,
+      ),
+    );
+  }
 
   static RenderSceneBounds? fromJson(Object? value) {
     if (value is! Map) {
@@ -119,6 +165,7 @@ class RenderSceneBounds {
       ),
     );
   }
+
 }
 
 @immutable
@@ -127,11 +174,13 @@ class RenderSceneMesh {
     required this.positions,
     required this.indices,
     required this.normals,
+    this.invalidIndexCount = 0,
   });
 
   final List<RenderScenePoint> positions;
   final List<int> indices;
   final List<RenderScenePoint>? normals;
+  final int invalidIndexCount;
 
   int get triangleCount => indices.length ~/ 3;
 
@@ -140,6 +189,7 @@ class RenderSceneMesh {
   Map<String, Object?> toJson() => <String, Object?>{
         'positions': positions.map((point) => point.toJson()).toList(),
         'indices': indices,
+        if (invalidIndexCount > 0) 'invalid_index_count': invalidIndexCount,
         if (normals != null)
           'normals': normals!.map((point) => point.toJson()).toList(),
       };
@@ -148,6 +198,7 @@ class RenderSceneMesh {
         positions: <RenderScenePoint>[],
         indices: <int>[],
         normals: null,
+        invalidIndexCount: 0,
       );
 
   static RenderSceneMesh fromJson(Object? value, List<String> warnings) {
@@ -169,12 +220,15 @@ class RenderSceneMesh {
     }
 
     final indices = <int>[];
+    var invalidIndexCount = 0;
     final rawIndices = value['indices'];
     if (rawIndices is List) {
       for (final entry in rawIndices) {
         final parsed = _toFiniteDouble(entry);
         if (parsed != null) {
           indices.add(parsed.floor());
+        } else {
+          invalidIndexCount += 1;
         }
       }
     } else {
@@ -197,6 +251,7 @@ class RenderSceneMesh {
       positions: positions,
       indices: indices,
       normals: normals,
+      invalidIndexCount: invalidIndexCount,
     );
   }
 }
@@ -213,6 +268,7 @@ class RenderSceneObject {
     required this.bounds,
     required this.mesh,
     required this.materialCategory,
+    this.metadata = const <String, Object?>{},
   });
 
   final int? elementId;
@@ -224,8 +280,10 @@ class RenderSceneObject {
   final RenderSceneBounds bounds;
   final RenderSceneMesh mesh;
   final String materialCategory;
+  final Map<String, Object?> metadata;
 
   String get kindKey => normalizeSceneKind(kind);
+  String? get elementIdRaw => elementId?.toString();
 
   Map<String, Object?> toJson() => <String, Object?>{
         if (elementId != null) 'element_id': elementId,
@@ -237,6 +295,7 @@ class RenderSceneObject {
         'bounds': bounds.toJson(),
         'mesh': mesh.toJson(),
         'material_category': materialCategory,
+        if (metadata.isNotEmpty) 'metadata': metadata,
       };
 
   static RenderSceneObject fromJson(
@@ -259,6 +318,7 @@ class RenderSceneObject {
         ),
         mesh: RenderSceneMesh.empty(),
         materialCategory: 'generic',
+        metadata: const <String, Object?>{},
       );
     }
     final mesh = RenderSceneMesh.fromJson(value['mesh'], warnings);
@@ -284,6 +344,11 @@ class RenderSceneObject {
       mesh: mesh,
       materialCategory:
           toSceneString(value['material_category'], fallback: 'generic'),
+      metadata: value['metadata'] is Map
+          ? Map<String, Object?>.from(
+              (value['metadata'] as Map).cast<String, Object?>(),
+            )
+          : const <String, Object?>{},
     );
   }
 }
@@ -301,6 +366,7 @@ class RenderSceneDiagnostics {
     required this.levelCount,
     required this.missingGeometryCount,
     required this.invalidBoundsCount,
+    required this.invalidIndexCount,
     required this.kindCounts,
     required this.warnings,
     required this.errors,
@@ -316,6 +382,7 @@ class RenderSceneDiagnostics {
   final int levelCount;
   final int missingGeometryCount;
   final int invalidBoundsCount;
+  final int invalidIndexCount;
   final Map<String, int> kindCounts;
   final List<String> warnings;
   final List<String> errors;
@@ -331,6 +398,7 @@ class RenderSceneDiagnostics {
         'levelCount': levelCount,
         'missingGeometryCount': missingGeometryCount,
         'invalidBoundsCount': invalidBoundsCount,
+        'invalidIndexCount': invalidIndexCount,
         'kindCounts': kindCounts,
         'warnings': warnings,
         'errors': errors,
@@ -382,6 +450,18 @@ class RenderScene {
     }
     for (final object in objects) {
       if (object.elementId == elementId) {
+        return object;
+      }
+    }
+    return null;
+  }
+
+  RenderSceneObject? objectByStableId(String? elementId) {
+    if (elementId == null || elementId.isEmpty) {
+      return null;
+    }
+    for (final object in objects) {
+      if (object.elementId?.toString() == elementId) {
         return object;
       }
     }
@@ -460,6 +540,7 @@ RenderSceneLoadResult parseRenderSceneJson(
   var visibleObjectCount = 0;
   var missingGeometryCount = 0;
   var invalidBoundsCount = 0;
+  var invalidIndexCount = 0;
   final levelIds = <int>{};
   var vertexCount = 0;
   var indexCount = 0;
@@ -477,6 +558,7 @@ RenderSceneLoadResult parseRenderSceneJson(
     if (!object.bounds.isFinite) {
       invalidBoundsCount += 1;
     }
+    invalidIndexCount += object.mesh.invalidIndexCount;
     if (object.levelId != null) {
       levelIds.add(object.levelId!);
     }
@@ -529,6 +611,7 @@ RenderSceneLoadResult parseRenderSceneJson(
     levelCount: levelIds.length,
     missingGeometryCount: missingGeometryCount,
     invalidBoundsCount: invalidBoundsCount,
+    invalidIndexCount: invalidIndexCount,
     kindCounts: kindCounts,
     warnings: warnings,
     errors: errors,
