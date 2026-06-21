@@ -5,6 +5,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'render_scene_editor.dart';
 import 'render_scene_models.dart';
 import 'render_scene_viewport_controller.dart';
 import 'render_scene_viewport_painter.dart';
@@ -17,11 +18,19 @@ class RenderSceneViewport extends StatefulWidget {
     required this.controller,
     this.interactionMode = RenderSceneInteractionMode.select,
     this.onSceneTap,
+    this.onSceneSecondaryTap,
+    this.onSceneHover,
+    this.draftWallThicknessMeters = RenderSceneEditor.defaultWallThicknessMeters,
+    this.draftWallHeightMeters = RenderSceneEditor.defaultWallHeightMeters,
   });
 
   final RenderSceneViewportController controller;
   final RenderSceneInteractionMode interactionMode;
   final ValueChanged<RenderSceneTapDetails>? onSceneTap;
+  final ValueChanged<RenderSceneTapDetails>? onSceneSecondaryTap;
+  final ValueChanged<RenderSceneTapDetails>? onSceneHover;
+  final double draftWallThicknessMeters;
+  final double draftWallHeightMeters;
 
   @override
   State<RenderSceneViewport> createState() => _RenderSceneViewportState();
@@ -96,6 +105,10 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
       controller: widget.controller,
       interactionMode: widget.interactionMode,
       onSceneTap: widget.onSceneTap,
+      onSceneSecondaryTap: widget.onSceneSecondaryTap,
+      onSceneHover: widget.onSceneHover,
+      draftWallThicknessMeters: widget.draftWallThicknessMeters,
+      draftWallHeightMeters: widget.draftWallHeightMeters,
     );
   }
 }
@@ -135,11 +148,19 @@ class _FallbackRenderSceneView extends StatefulWidget {
     required this.controller,
     required this.interactionMode,
     required this.onSceneTap,
+    required this.onSceneSecondaryTap,
+    required this.onSceneHover,
+    required this.draftWallThicknessMeters,
+    required this.draftWallHeightMeters,
   });
 
   final RenderSceneViewportController controller;
   final RenderSceneInteractionMode interactionMode;
   final ValueChanged<RenderSceneTapDetails>? onSceneTap;
+  final ValueChanged<RenderSceneTapDetails>? onSceneSecondaryTap;
+  final ValueChanged<RenderSceneTapDetails>? onSceneHover;
+  final double draftWallThicknessMeters;
+  final double draftWallHeightMeters;
 
   @override
   State<_FallbackRenderSceneView> createState() =>
@@ -274,6 +295,9 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
             onPointerPanZoomEnd: (_) {
               _trackpadPreviousScale = 1.0;
             },
+            onPointerHover: (PointerHoverEvent event) {
+              _emitHover(scene, size, event.localPosition, event.position);
+            },
             onPointerMove: (PointerMoveEvent event) {
               if (_activePointer != event.pointer) {
                 return;
@@ -291,6 +315,10 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
 
               final delta = event.localPosition - last;
               if (controller.projectionMode ==
+                      RenderSceneProjectionMode.topDown &&
+                  widget.interactionMode != RenderSceneInteractionMode.select) {
+                _emitHover(scene, size, event.localPosition, event.position);
+              } else if (controller.projectionMode ==
                   RenderSceneProjectionMode.topDown) {
                 controller.panPlanBy(delta);
               } else if (_isSecondaryDrag) {
@@ -337,9 +365,16 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                     controller.screenToModelPlan(event.localPosition, size);
                 final details = RenderSceneTapDetails(
                   screenPosition: event.localPosition,
+                  globalPosition: event.position,
                   modelPoint: modelPoint,
                   pickedObject: picked,
                 );
+
+                if (_isSecondaryDrag) {
+                  widget.onSceneSecondaryTap?.call(details);
+                  _clearPointerState();
+                  return;
+                }
 
                 if (widget.interactionMode ==
                     RenderSceneInteractionMode.select) {
@@ -347,6 +382,9 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                     final id = picked.elementId?.toString();
                     await controller.selectElement(id);
                     await controller.highlightElement(id);
+                  } else {
+                    await controller.selectElement(null);
+                    await controller.highlightElement(null);
                   }
                 } else {
                   widget.onSceneTap?.call(details);
@@ -374,6 +412,9 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                       draftWallStart: controller.draftWallStart,
                       draftWallEnd: controller.draftWallEnd,
                       draftOpening: controller.draftOpening,
+                      draftSurface: controller.draftSurface,
+                      draftWallThicknessMeters: widget.draftWallThicknessMeters,
+                      draftWallHeightMeters: widget.draftWallHeightMeters,
                     ),
                     size: Size.infinite,
                   ),
@@ -399,6 +440,32 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
     );
   }
 
+  void _emitHover(
+    RenderScene scene,
+    Size size,
+    Offset localPosition,
+    Offset globalPosition,
+  ) {
+    final picked = pickObjectAt(
+      scene: scene,
+      size: size,
+      localPosition: localPosition,
+      projectionMode: controller.projectionMode,
+      orbitProjectionStyle: controller.orbitProjectionStyle,
+      planCamera: controller.planCamera,
+      camera: controller.camera,
+      visibleKinds: controller.visibleKinds,
+      padding: FallbackRenderScenePainter.padding,
+    );
+    final details = RenderSceneTapDetails(
+      screenPosition: localPosition,
+      globalPosition: globalPosition,
+      modelPoint: controller.screenToModelPlan(localPosition, size),
+      pickedObject: picked,
+    );
+    widget.onSceneHover?.call(details);
+  }
+
   String _viewportHintText() {
     switch (widget.interactionMode) {
       case RenderSceneInteractionMode.select:
@@ -411,6 +478,10 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
         return 'Add door: tap a wall to pick host and offset.';
       case RenderSceneInteractionMode.addWindow:
         return 'Add window: tap a wall to pick host and offset.';
+      case RenderSceneInteractionMode.addFloor:
+        return 'Add floor: select a room, then confirm to place floor.';
+      case RenderSceneInteractionMode.addCeiling:
+        return 'Add ceiling: select a room, then confirm to place ceiling.';
     }
   }
 

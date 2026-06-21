@@ -52,6 +52,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
   RenderScenePoint? _draftWallStart;
   RenderScenePoint? _draftWallEnd;
   RenderSceneOpeningDraft? _draftOpening;
+  RenderSceneSurfaceDraft? _draftSurface;
 
   MethodChannel? _channel;
 
@@ -109,6 +110,9 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
 
   @override
   RenderSceneOpeningDraft? get draftOpening => _draftOpening;
+
+  @override
+  RenderSceneSurfaceDraft? get draftSurface => _draftSurface;
 
   bool get hasNativeBridge => _channel != null;
 
@@ -170,6 +174,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     _draftWallStart = null;
     _draftWallEnd = null;
     _draftOpening = null;
+    _draftSurface = null;
 
     notifyListeners();
 
@@ -314,10 +319,17 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
   }
 
   @override
+  void setSurfaceDraft(RenderSceneSurfaceDraft? draft) {
+    _draftSurface = draft;
+    notifyListeners();
+  }
+
+  @override
   void clearDraft() {
     _draftWallStart = null;
     _draftWallEnd = null;
     _draftOpening = null;
+    _draftSurface = null;
     notifyListeners();
   }
 

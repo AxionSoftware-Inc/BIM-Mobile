@@ -30,17 +30,21 @@ enum RenderSceneInteractionMode {
   addWall,
   addDoor,
   addWindow,
+  addFloor,
+  addCeiling,
 }
 
 @immutable
 class RenderSceneTapDetails {
   const RenderSceneTapDetails({
     required this.screenPosition,
+    required this.globalPosition,
     required this.modelPoint,
     required this.pickedObject,
   });
 
   final Offset screenPosition;
+  final Offset globalPosition;
   final RenderScenePoint? modelPoint;
   final RenderSceneObject? pickedObject;
 }
@@ -77,6 +81,19 @@ class RenderSceneOpeningDraft {
   final double sillHeightMeters;
   final bool valid;
   final String message;
+}
+
+@immutable
+class RenderSceneSurfaceDraft {
+  const RenderSceneSurfaceDraft({
+    required this.kind,
+    required this.start,
+    required this.end,
+  });
+
+  final String kind;
+  final RenderScenePoint start;
+  final RenderScenePoint end;
 }
 
 @immutable
@@ -134,6 +151,7 @@ abstract class RenderSceneViewportActions extends ChangeNotifier {
   RenderScenePoint? get draftWallStart;
   RenderScenePoint? get draftWallEnd;
   RenderSceneOpeningDraft? get draftOpening;
+  RenderSceneSurfaceDraft? get draftSurface;
 
   Future<void> loadRenderScene(RenderScene scene);
   Future<void> clearScene();
@@ -146,6 +164,7 @@ abstract class RenderSceneViewportActions extends ChangeNotifier {
   Future<void> setInteractionMode(RenderSceneInteractionMode mode);
   void setWallDraft(RenderScenePoint? start, RenderScenePoint? end);
   void setOpeningDraft(RenderSceneOpeningDraft? draft);
+  void setSurfaceDraft(RenderSceneSurfaceDraft? draft);
   void clearDraft();
   void setViewportSize(Size size);
   void panPlanBy(Offset delta);

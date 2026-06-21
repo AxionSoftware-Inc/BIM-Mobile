@@ -368,7 +368,8 @@ RenderSceneMeshDTO make_opening_mesh(const tbe::core::Line2& axis, const tbe::co
     const auto width = opening.width_meters;
     const auto height = opening.height_meters;
     const auto half_width = width / 2.0;
-    const auto half_thickness = wall_thickness / 2.0;
+    const auto panel_thickness = std::max(0.05, wall_thickness * 0.5);
+    const auto half_thickness = std::min(panel_thickness, wall_thickness) / 2.0;
     const auto bottom = sill;
     const auto top = sill + height;
     const auto corners = std::array<Vec3, 8>{

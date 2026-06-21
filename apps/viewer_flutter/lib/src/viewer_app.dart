@@ -1,4 +1,7 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'render_scene_editor.dart';
 import 'render_scene_models.dart';
@@ -47,6 +50,10 @@ class ViewerHomePage extends StatefulWidget {
 }
 
 class _ViewerHomePageState extends State<ViewerHomePage> {
+  static const double _defaultWallThicknessMeters =
+      RenderSceneEditor.defaultWallThicknessMeters;
+  static const double _defaultWallHeightMeters =
+      RenderSceneEditor.defaultWallHeightMeters;
   static const Set<String> _coreKindOrder = <String>{
     'wall',
     'door',
@@ -80,6 +87,9 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       RenderSceneInteractionMode.select;
   RenderScenePoint? _draftWallStart;
   RenderScenePoint? _draftWallEnd;
+  RenderScenePoint? _draftSurfaceStart;
+  RenderScenePoint? _draftSurfaceEnd;
+  final Set<int> _draftSurfaceWallIds = <int>{};
   RenderSceneObject? _draftHostWall;
   double _draftOpeningOffsetMeters = 1.0;
   double _draftOpeningWidthMeters = 0.9;
@@ -105,11 +115,46 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     super.dispose();
   }
 
+  @override
+  void reassemble() {
+    super.reassemble();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && !_isBusy) {
+        _reloadCurrentScene();
+      }
+    });
+  }
+
   void _onViewportChanged() {
     if (mounted) {
       setState(() {
         // Rebuild inspector/status when selection/highlight changes.
       });
+    }
+  }
+
+  Future<void> _handleEscapePressed() async {
+    final hasDraft = _draftWallStart != null ||
+        _draftWallEnd != null ||
+        _draftSurfaceStart != null ||
+        _draftSurfaceEnd != null ||
+        _draftSurfaceWallIds.isNotEmpty ||
+        _draftHostWall != null ||
+        _viewportController.draftOpening != null ||
+        _viewportController.draftSurface != null;
+
+    if (hasDraft) {
+      await _cancelDraft();
+      return;
+    }
+
+    if (_interactionMode != RenderSceneInteractionMode.select) {
+      await _setInteractionMode(RenderSceneInteractionMode.select);
+      return;
+    }
+
+    if (_viewportController.selectedElementId != null) {
+      await _clearSelection();
     }
   }
 
@@ -147,7 +192,9 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     RenderSceneLoadResult result, {
     required String sourceLabel,
   }) async {
-    final scene = result.scene;
+    final rawScene = result.scene;
+    final scene =
+        rawScene == null ? null : RenderSceneEditor.normalizeSceneGeometry(rawScene);
 
     setState(() {
       _scene = scene;
@@ -310,6 +357,9 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     setState(() {
       _draftWallStart = null;
       _draftWallEnd = null;
+      _draftSurfaceStart = null;
+      _draftSurfaceEnd = null;
+      _draftSurfaceWallIds.clear();
       _draftHostWall = null;
       _draftOpeningOffsetMeters = 1.0;
       _draftOpeningWidthMeters = 0.9;
@@ -339,6 +389,81 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       case RenderSceneInteractionMode.addWindow:
         await _handleOpeningTap(scene, tappedObject, modelPoint);
         return;
+      case RenderSceneInteractionMode.addFloor:
+      case RenderSceneInteractionMode.addCeiling:
+        await _handleSurfaceTap(scene, tappedObject, modelPoint);
+        return;
+    }
+  }
+
+  void _handleSceneHover(RenderSceneTapDetails details) {
+    final modelPoint = details.modelPoint;
+    if (modelPoint == null) {
+      return;
+    }
+
+    switch (_interactionMode) {
+      case RenderSceneInteractionMode.select:
+        return;
+      case RenderSceneInteractionMode.addWall:
+        final start = _draftWallStart;
+        if (start == null) {
+          return;
+        }
+        final snappedPoint = _wallDraftPoint(
+          rawPoint: modelPoint,
+          referenceStart: start,
+        );
+        if (_draftWallEnd == snappedPoint) {
+          return;
+        }
+        setState(() {
+          _draftWallEnd = snappedPoint;
+          _editStatusMessage =
+              'Wall draft: ${start.distanceTo(snappedPoint).toStringAsFixed(2)} m';
+        });
+        _viewportController.setWallDraft(start, snappedPoint);
+        return;
+      case RenderSceneInteractionMode.addDoor:
+      case RenderSceneInteractionMode.addWindow:
+        final scene = _scene;
+        if (scene == null) {
+          return;
+        }
+        final hostWall = _resolveHostWall(scene, details.pickedObject);
+        if (hostWall == null) {
+          return;
+        }
+        _updateOpeningDraftPreview(
+          scene: scene,
+          hostWall: hostWall,
+          point: modelPoint,
+          announce: false,
+        );
+        return;
+      case RenderSceneInteractionMode.addFloor:
+      case RenderSceneInteractionMode.addCeiling:
+        final start = _draftSurfaceStart;
+        if (start == null || _draftSurfaceWallIds.isNotEmpty) {
+          return;
+        }
+        final snapped = _snapDraftToGrid ? _snapPoint(modelPoint) : modelPoint;
+        if (_draftSurfaceEnd == snapped) {
+          return;
+        }
+        setState(() {
+          _draftSurfaceEnd = snapped;
+        });
+        _viewportController.setSurfaceDraft(
+          RenderSceneSurfaceDraft(
+            kind: _interactionMode == RenderSceneInteractionMode.addFloor
+                ? 'floor'
+                : 'ceiling',
+            start: start,
+            end: snapped,
+          ),
+        );
+        return;
     }
   }
 
@@ -350,13 +475,17 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       return;
     }
 
-    final snappedPoint = _snapDraftToGrid ? _snapPoint(modelPoint) : modelPoint;
+    final snappedPoint = _wallDraftPoint(
+      rawPoint: modelPoint,
+      referenceStart: _draftWallStart,
+    );
 
     if (_draftWallStart == null) {
       setState(() {
         _draftWallStart = snappedPoint;
         _draftWallEnd = snappedPoint;
-        _editStatusMessage = 'Wall start set. Tap again for the end point.';
+        _editStatusMessage =
+            'Wall start set. Tap again for the end point. Ortho/snap is active.';
       });
       _viewportController.setWallDraft(snappedPoint, snappedPoint);
       return;
@@ -364,9 +493,57 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
 
     setState(() {
       _draftWallEnd = snappedPoint;
-      _editStatusMessage = 'Wall draft ready. Confirm to create the wall.';
+      _editStatusMessage =
+          'Wall endpoint set. Creating ${_draftWallStart!.distanceTo(snappedPoint).toStringAsFixed(2)} m wall...';
     });
     _viewportController.setWallDraft(_draftWallStart, snappedPoint);
+    await _commitWallDraft(autoContinue: true);
+  }
+
+  Future<void> _commitWallDraft({required bool autoContinue}) async {
+    final scene = _scene;
+    final start = _draftWallStart;
+    final end = _draftWallEnd;
+    if (scene == null || start == null || end == null) {
+      return;
+    }
+
+    final length = start.distanceTo(end);
+    if (length < 0.1) {
+      setState(() {
+        _editStatusMessage = 'Wall is too short.';
+      });
+      return;
+    }
+
+    final nextScene = RenderSceneEditor.addWall(
+      scene: scene,
+      start: start,
+      end: end,
+      heightMeters: _defaultWallHeightMeters,
+      thicknessMeters: _defaultWallThicknessMeters,
+    );
+    await _applySceneChange(nextScene, message: 'Wall created.');
+    final created = nextScene.objects.isNotEmpty ? nextScene.objects.last : null;
+    if (created != null) {
+      await _viewportController.selectElement(created.elementId?.toString());
+      await _viewportController.highlightElement(created.elementId?.toString());
+    }
+
+    if (autoContinue) {
+      setState(() {
+        _draftWallStart = end;
+        _draftWallEnd = end;
+        _editStatusMessage =
+            'Wall created. Tap next point to continue, or Cancel to stop.';
+      });
+      _viewportController.setWallDraft(end, end);
+    } else {
+      await _clearDraft();
+      setState(() {
+        _editStatusMessage = 'Wall created.';
+      });
+    }
   }
 
   Future<void> _handleOpeningTap(
@@ -390,13 +567,28 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       });
       return;
     }
+    _updateOpeningDraftPreview(
+      scene: scene,
+      hostWall: hostWall,
+      point: point,
+      announce: true,
+    );
+  }
 
+  void _updateOpeningDraftPreview({
+    required RenderScene scene,
+    required RenderSceneObject hostWall,
+    required RenderScenePoint point,
+    required bool announce,
+  }) {
     final snappedPoint = _snapDraftToGrid ? _snapPoint(point) : point;
     final offset = RenderSceneEditor.wallOffsetMeters(hostWall, snappedPoint);
     if (offset == null) {
-      setState(() {
-        _editStatusMessage = 'Unable to compute wall-local offset.';
-      });
+      if (announce) {
+        setState(() {
+          _editStatusMessage = 'Unable to compute wall-local offset.';
+        });
+      }
       return;
     }
 
@@ -406,27 +598,102 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     final kind = _interactionMode == RenderSceneInteractionMode.addDoor
         ? 'Door'
         : 'Window';
+    final snappedOffset = _snapDraftToGrid ? _snapDouble(offset, 0.25) : offset;
+    final sameWall = _draftHostWall?.elementId == hostWall.elementId;
+    final sameOffset = (_draftOpeningOffsetMeters - snappedOffset).abs() < 1e-6;
+    if (!announce && sameWall && sameOffset) {
+      return;
+    }
 
     setState(() {
       _draftHostWall = hostWall;
-      _draftOpeningOffsetMeters =
-          _snapDraftToGrid ? _snapDouble(offset, 0.25) : offset;
-      _editStatusMessage = valid
-          ? '$kind preview on wall #${hostWall.elementId}'
-          : '$kind is near wall edge.';
+      _draftOpeningOffsetMeters = snappedOffset;
+      if (announce) {
+        _editStatusMessage = valid
+            ? '$kind preview on wall #${hostWall.elementId}'
+            : '$kind is near wall edge.';
+      }
     });
 
     _viewportController.setOpeningDraft(
       RenderSceneOpeningDraft(
         kind: kind,
         hostWallId: hostWall.elementId,
-        offsetMeters: offset,
+        offsetMeters: snappedOffset,
         widthMeters: _draftOpeningWidthMeters,
         heightMeters: _draftOpeningHeightMeters,
         sillHeightMeters: _draftOpeningSillHeightMeters,
         valid: valid,
         message:
             valid ? 'Ready to create $kind.' : 'Adjust the offset or width.',
+      ),
+    );
+  }
+
+  Future<void> _handleSurfaceTap(
+    RenderScene scene,
+    RenderSceneObject? tappedObject,
+    RenderScenePoint? modelPoint,
+  ) async {
+    if (tappedObject != null && tappedObject.kindKey == 'wall') {
+      final wallId = tappedObject.elementId;
+      if (wallId != null) {
+        setState(() {
+          if (_draftSurfaceWallIds.contains(wallId)) {
+            _draftSurfaceWallIds.remove(wallId);
+          } else {
+            _draftSurfaceWallIds.add(wallId);
+          }
+          _editStatusMessage =
+              '${_draftSurfaceWallIds.length} wall selected for ${_interactionMode == RenderSceneInteractionMode.addFloor ? 'floor' : 'ceiling'} boundary.';
+        });
+        await _selectObject(tappedObject);
+        _syncSurfaceDraftFromWalls(scene);
+        return;
+      }
+    }
+
+    if (modelPoint == null) {
+      setState(() {
+        _editStatusMessage =
+            'Tap empty plan area to draw rectangle, or tap walls to multi-select boundary.';
+      });
+      return;
+    }
+
+    final snapped = _snapDraftToGrid ? _snapPoint(modelPoint) : modelPoint;
+    if (_draftSurfaceStart == null) {
+      setState(() {
+        _draftSurfaceStart = snapped;
+        _draftSurfaceEnd = snapped;
+        _draftSurfaceWallIds.clear();
+        _editStatusMessage =
+            'Surface draft start set. Tap opposite corner to finish rectangle.';
+      });
+      _viewportController.setSurfaceDraft(
+        RenderSceneSurfaceDraft(
+          kind: _interactionMode == RenderSceneInteractionMode.addFloor
+              ? 'floor'
+              : 'ceiling',
+          start: snapped,
+          end: snapped,
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _draftSurfaceEnd = snapped;
+      _editStatusMessage =
+          '${_interactionMode == RenderSceneInteractionMode.addFloor ? 'Floor' : 'Ceiling'} rectangle ready.';
+    });
+    _viewportController.setSurfaceDraft(
+      RenderSceneSurfaceDraft(
+        kind: _interactionMode == RenderSceneInteractionMode.addFloor
+            ? 'floor'
+            : 'ceiling',
+        start: _draftSurfaceStart!,
+        end: snapped,
       ),
     );
   }
@@ -462,6 +729,52 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     );
   }
 
+  RenderScenePoint _wallDraftPoint({
+    required RenderScenePoint rawPoint,
+    required RenderScenePoint? referenceStart,
+  }) {
+    final nearScenePoint = _snapToNearbyScenePoint(rawPoint);
+    var point = _snapDraftToGrid ? _snapPoint(nearScenePoint) : nearScenePoint;
+    final start = referenceStart;
+    if (start == null) {
+      return point;
+    }
+
+    final dx = point.x - start.x;
+    final dy = point.y - start.y;
+    if (dx.abs() < 1e-6 && dy.abs() < 1e-6) {
+      return point;
+    }
+
+    if (dx.abs() > dy.abs() * 1.35) {
+      point = RenderScenePoint(x: point.x, y: start.y, z: point.z);
+    } else if (dy.abs() > dx.abs() * 1.35) {
+      point = RenderScenePoint(x: start.x, y: point.y, z: point.z);
+    }
+    return point;
+  }
+
+  RenderScenePoint _snapToNearbyScenePoint(
+    RenderScenePoint point, {
+    double toleranceMeters = 0.45,
+  }) {
+    final scene = _scene;
+    if (scene == null) {
+      return point;
+    }
+
+    RenderScenePoint bestPoint = point;
+    var bestDistance = toleranceMeters;
+    for (final candidate in RenderSceneEditor.wallSnapPoints(scene)) {
+      final distance = candidate.distanceTo(point);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestPoint = candidate;
+      }
+    }
+    return bestPoint;
+  }
+
   double _snapDouble(double value, double step) {
     if (!_snapDraftToGrid || step <= 0) {
       return value;
@@ -487,6 +800,19 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         return openingDraft != null &&
             openingDraft.valid &&
             (_draftHostWall != null || selectedWall);
+      case RenderSceneInteractionMode.addFloor:
+      case RenderSceneInteractionMode.addCeiling:
+        if (_draftSurfaceWallIds.length >= 2) {
+          return true;
+        }
+        final start = _draftSurfaceStart;
+        final end = _draftSurfaceEnd;
+        if (start == null || end == null) {
+          return false;
+        }
+        final width = (end.x - start.x).abs();
+        final depth = (end.y - start.y).abs();
+        return width >= 0.1 && depth >= 0.1;
     }
   }
 
@@ -500,38 +826,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       case RenderSceneInteractionMode.select:
         return;
       case RenderSceneInteractionMode.addWall:
-        final start = _draftWallStart;
-        final end = _draftWallEnd;
-        if (start == null || end == null) {
-          setState(() {
-            _editStatusMessage = 'Set both wall endpoints before confirming.';
-          });
-          return;
-        }
-        final length = start.distanceTo(end);
-        if (length < 0.1) {
-          setState(() {
-            _editStatusMessage = 'Wall is too short.';
-          });
-          return;
-        }
-        final nextScene = RenderSceneEditor.addWall(
-          scene: scene,
-          start: start,
-          end: end,
-          heightMeters: 3.0,
-          thicknessMeters: 0.2,
-        );
-        await _applySceneChange(nextScene, message: 'Wall created.');
-        final created =
-            nextScene.objects.isNotEmpty ? nextScene.objects.last : null;
-        if (created != null) {
-          await _viewportController
-              .selectElement(created.elementId?.toString());
-          await _viewportController
-              .highlightElement(created.elementId?.toString());
-        }
-        await _clearDraft();
+        await _commitWallDraft(autoContinue: true);
         return;
       case RenderSceneInteractionMode.addDoor:
       case RenderSceneInteractionMode.addWindow:
@@ -583,6 +878,65 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         }
         await _clearDraft();
         return;
+      case RenderSceneInteractionMode.addFloor:
+      case RenderSceneInteractionMode.addCeiling:
+        RenderScene nextScene;
+        if (_draftSurfaceWallIds.length >= 2) {
+          final walls = scene.objects
+              .where((object) => _draftSurfaceWallIds.contains(object.elementId))
+              .where((object) => object.kindKey == 'wall')
+              .toList(growable: false);
+          nextScene = _interactionMode == RenderSceneInteractionMode.addFloor
+              ? RenderSceneEditor.addFloorFromWalls(scene: scene, walls: walls)
+              : RenderSceneEditor.addCeilingFromWalls(scene: scene, walls: walls);
+          if (identical(nextScene, scene)) {
+            setState(() {
+              _editStatusMessage =
+                  'At least 2 valid walls are required for wall-bound floor/ceiling.';
+            });
+            return;
+          }
+        } else {
+          final start = _draftSurfaceStart;
+          final end = _draftSurfaceEnd;
+          if (start == null || end == null) {
+            setState(() {
+              _editStatusMessage =
+                  'Draw a rectangle first, or multi-select walls.';
+            });
+            return;
+          }
+          final bounds = RenderSceneBounds.normalized(
+            min: RenderScenePoint(
+              x: math.min(start.x, end.x),
+              y: math.min(start.y, end.y),
+              z: 0,
+            ),
+            max: RenderScenePoint(
+              x: math.max(start.x, end.x),
+              y: math.max(start.y, end.y),
+              z: 0,
+            ),
+          );
+          nextScene = _interactionMode == RenderSceneInteractionMode.addFloor
+              ? RenderSceneEditor.addFloorFromBounds(scene: scene, bounds: bounds)
+              : RenderSceneEditor.addCeilingFromBounds(scene: scene, bounds: bounds);
+        }
+        await _applySceneChange(
+          nextScene,
+          message:
+              '${_interactionMode == RenderSceneInteractionMode.addFloor ? 'Floor' : 'Ceiling'} created.',
+        );
+        final created =
+            nextScene.objects.isNotEmpty ? nextScene.objects.last : null;
+        if (created != null) {
+          await _viewportController
+              .selectElement(created.elementId?.toString());
+          await _viewportController
+              .highlightElement(created.elementId?.toString());
+        }
+        await _clearDraft();
+        return;
     }
   }
 
@@ -621,6 +975,57 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
             ? 'Ready to create $kind.'
             : 'Opening overlaps wall edge or is too wide.',
       ),
+    );
+  }
+
+  void _syncSurfaceDraftFromWalls(RenderScene scene) {
+    final walls = scene.objects
+        .where((object) => _draftSurfaceWallIds.contains(object.elementId))
+        .where((object) => object.kindKey == 'wall')
+        .toList(growable: false);
+    final bounds = RenderSceneEditor.surfaceBoundsForWalls(walls);
+    if (bounds == null) {
+      _viewportController.setSurfaceDraft(null);
+      return;
+    }
+    _draftSurfaceStart = RenderScenePoint(
+      x: bounds.min.x,
+      y: bounds.min.y,
+      z: bounds.min.z,
+    );
+    _draftSurfaceEnd = RenderScenePoint(
+      x: bounds.max.x,
+      y: bounds.max.y,
+      z: bounds.max.z,
+    );
+    _viewportController.setSurfaceDraft(
+      RenderSceneSurfaceDraft(
+        kind: _interactionMode == RenderSceneInteractionMode.addFloor
+            ? 'floor'
+            : 'ceiling',
+        start: _draftSurfaceStart!,
+        end: _draftSurfaceEnd!,
+      ),
+    );
+  }
+
+  Future<void> _deleteSelectedObject() async {
+    final scene = _scene;
+    final selected = _selectedObject(scene);
+    if (scene == null || selected == null) {
+      setState(() {
+        _editStatusMessage = 'Delete uchun avval obyektni tanlang.';
+      });
+      return;
+    }
+
+    final nextScene = RenderSceneEditor.deleteObject(
+      scene: scene,
+      target: selected,
+    );
+    await _applySceneChange(
+      nextScene,
+      message: '${prettySceneKind(selected.kind)} o‘chirildi.',
     );
   }
 
@@ -719,29 +1124,47 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     final scene = _scene;
     final selectedObject = _selectedObject(scene);
 
-    return Scaffold(
-      appBar: _buildAppBar(context, scene),
-      body: Column(
-        children: <Widget>[
-          Expanded(
-            child: Row(
+    return Shortcuts(
+      shortcuts: const <ShortcutActivator, Intent>{
+        SingleActivator(LogicalKeyboardKey.escape): DismissIntent(),
+      },
+      child: Actions(
+        actions: <Type, Action<Intent>>{
+          DismissIntent: CallbackAction<DismissIntent>(
+            onInvoke: (DismissIntent intent) {
+              _handleEscapePressed();
+              return null;
+            },
+          ),
+        },
+        child: Focus(
+          autofocus: true,
+          child: Scaffold(
+            appBar: _buildAppBar(context, scene),
+            body: Column(
               children: <Widget>[
-                _buildLeftRail(context, scene),
                 Expanded(
-                  child: _buildViewportPanel(context),
-                ),
-                if (_showInspector)
-                  _buildRightPanel(
-                    context: context,
-                    scene: scene,
-                    selectedObject: selectedObject,
+                  child: Row(
+                    children: <Widget>[
+                      _buildLeftRail(context, scene),
+                      Expanded(
+                        child: _buildViewportPanel(context),
+                      ),
+                      if (_showInspector)
+                        _buildRightPanel(
+                          context: context,
+                          scene: scene,
+                          selectedObject: selectedObject,
+                        ),
+                    ],
                   ),
+                ),
+                _buildStatusBar(context, scene),
+                if (_loadError != null) _buildErrorBanner(context, _loadError!),
               ],
             ),
           ),
-          _buildStatusBar(context, scene),
-          if (_loadError != null) _buildErrorBanner(context, _loadError!),
-        ],
+        ),
       ),
     );
   }
@@ -894,6 +1317,16 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
                   value: RenderSceneInteractionMode.addWindow,
                   icon: Icon(Icons.window_outlined),
                   label: Text('Window'),
+                ),
+                ButtonSegment<RenderSceneInteractionMode>(
+                  value: RenderSceneInteractionMode.addFloor,
+                  icon: Icon(Icons.layers_outlined),
+                  label: Text('Floor'),
+                ),
+                ButtonSegment<RenderSceneInteractionMode>(
+                  value: RenderSceneInteractionMode.addCeiling,
+                  icon: Icon(Icons.flip_to_front_outlined),
+                  label: Text('Ceiling'),
                 ),
               ],
               selected: <RenderSceneInteractionMode>{_interactionMode},
@@ -1088,6 +1521,10 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
             controller: _viewportController,
             interactionMode: _interactionMode,
             onSceneTap: _handleSceneTap,
+            onSceneSecondaryTap: _handleSceneSecondaryTap,
+            onSceneHover: _handleSceneHover,
+            draftWallThicknessMeters: _defaultWallThicknessMeters,
+            draftWallHeightMeters: _defaultWallHeightMeters,
           ),
         ),
         if (_isBusy)
@@ -1167,6 +1604,9 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
                         interactionMode: _interactionMode,
                         draftWallStart: _draftWallStart,
                         draftWallEnd: _draftWallEnd,
+                        draftSurfaceStart: _draftSurfaceStart,
+                        draftSurfaceEnd: _draftSurfaceEnd,
+                        draftSurfaceWallCount: _draftSurfaceWallIds.length,
                         draftHostWall: _draftHostWall,
                         openingOffsetMeters: _draftOpeningOffsetMeters,
                         openingWidthMeters: _draftOpeningWidthMeters,
@@ -1234,6 +1674,54 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         ],
       ),
     );
+  }
+
+  Future<void> _handleSceneSecondaryTap(RenderSceneTapDetails details) async {
+    if (!mounted) {
+      return;
+    }
+
+    final overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox?;
+
+    final tappedObject = details.pickedObject;
+    if (tappedObject != null) {
+      await _selectObject(tappedObject);
+    }
+    if (!mounted) {
+      return;
+    }
+
+    final selected = tappedObject ?? _selectedObject(_scene);
+    if (selected == null || overlay == null) {
+      return;
+    }
+
+    final action = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromRect(
+        Rect.fromLTWH(
+          details.globalPosition.dx,
+          details.globalPosition.dy,
+          1,
+          1,
+        ),
+        Offset.zero & overlay.size,
+      ),
+      items: const <PopupMenuEntry<String>>[
+        PopupMenuItem<String>(
+          value: 'delete',
+          child: Text('Delete'),
+        ),
+      ],
+    );
+
+    if (!mounted) {
+      return;
+    }
+    if (action == 'delete') {
+      await _deleteSelectedObject();
+    }
   }
 
   Widget _buildStatusBar(BuildContext context, RenderScene? scene) {
@@ -1380,6 +1868,9 @@ class _DraftEditorCard extends StatefulWidget {
     required this.interactionMode,
     required this.draftWallStart,
     required this.draftWallEnd,
+    required this.draftSurfaceStart,
+    required this.draftSurfaceEnd,
+    required this.draftSurfaceWallCount,
     required this.draftHostWall,
     required this.openingOffsetMeters,
     required this.openingWidthMeters,
@@ -1402,6 +1893,9 @@ class _DraftEditorCard extends StatefulWidget {
   final RenderSceneInteractionMode interactionMode;
   final RenderScenePoint? draftWallStart;
   final RenderScenePoint? draftWallEnd;
+  final RenderScenePoint? draftSurfaceStart;
+  final RenderScenePoint? draftSurfaceEnd;
+  final int draftSurfaceWallCount;
   final RenderSceneObject? draftHostWall;
   final double openingOffsetMeters;
   final double openingWidthMeters;
@@ -1517,6 +2011,14 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
           _WallDraftSummary(
             start: widget.draftWallStart,
             end: widget.draftWallEnd,
+          )
+        else if (mode == RenderSceneInteractionMode.addFloor ||
+            mode == RenderSceneInteractionMode.addCeiling)
+          _SurfaceDraftSummary(
+            mode: mode,
+            start: widget.draftSurfaceStart,
+            end: widget.draftSurfaceEnd,
+            wallCount: widget.draftSurfaceWallCount,
           )
         else
           Column(
@@ -1636,6 +2138,72 @@ class _WallDraftSummary extends StatelessWidget {
         _InfoRow(
           label: 'Length',
           value: '${length.toStringAsFixed(2)} m',
+        ),
+      ],
+    );
+  }
+}
+
+class _SurfaceDraftSummary extends StatelessWidget {
+  const _SurfaceDraftSummary({
+    required this.mode,
+    required this.start,
+    required this.end,
+    required this.wallCount,
+  });
+
+  final RenderSceneInteractionMode mode;
+  final RenderScenePoint? start;
+  final RenderScenePoint? end;
+  final int wallCount;
+
+  @override
+  Widget build(BuildContext context) {
+    final label =
+        mode == RenderSceneInteractionMode.addFloor ? 'floor' : 'ceiling';
+    if (wallCount >= 2) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Text(
+            '$wallCount ta devor tanlangan. Confirm bossangiz $label devorlar chegarasidan hosil qilinadi.',
+          ),
+          if (start != null && end != null) ...<Widget>[
+            const SizedBox(height: 8),
+            _InfoRow(
+              label: 'Bounds',
+              value:
+                  '${(end!.x - start!.x).abs().toStringAsFixed(2)} × ${(end!.y - start!.y).abs().toStringAsFixed(2)} m',
+            ),
+          ],
+        ],
+      );
+    }
+
+    if (start == null || end == null) {
+      return Text(
+        'Bo‘sh joyga 2 marta bosib to‘rtburchak chizing, yoki 2+ devorni tanlab $label yarating.',
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        Text('Rectangle draft tayyor. Confirm bossangiz $label yaratiladi.'),
+        const SizedBox(height: 8),
+        _InfoRow(
+          label: 'Start',
+          value:
+              '(${start!.x.toStringAsFixed(2)}, ${start!.y.toStringAsFixed(2)})',
+        ),
+        _InfoRow(
+          label: 'End',
+          value: '(${end!.x.toStringAsFixed(2)}, ${end!.y.toStringAsFixed(2)})',
+        ),
+        _InfoRow(
+          label: 'Size',
+          value:
+              '${(end!.x - start!.x).abs().toStringAsFixed(2)} × ${(end!.y - start!.y).abs().toStringAsFixed(2)} m',
         ),
       ],
     );

@@ -21,6 +21,9 @@ class FallbackRenderScenePainter extends CustomPainter {
     required this.draftWallStart,
     required this.draftWallEnd,
     required this.draftOpening,
+    required this.draftSurface,
+    required this.draftWallThicknessMeters,
+    required this.draftWallHeightMeters,
   });
 
   static const double padding = 48;
@@ -37,6 +40,9 @@ class FallbackRenderScenePainter extends CustomPainter {
   final RenderScenePoint? draftWallStart;
   final RenderScenePoint? draftWallEnd;
   final RenderSceneOpeningDraft? draftOpening;
+  final RenderSceneSurfaceDraft? draftSurface;
+  final double draftWallThicknessMeters;
+  final double draftWallHeightMeters;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -62,8 +68,7 @@ class FallbackRenderScenePainter extends CustomPainter {
     _drawGrid(canvas, projection);
     _drawAxes(canvas, projection);
 
-    final triangles = <_TriangleRender>[];
-    final outlines = <_ObjectOutline>[];
+    final packets = <_RenderPacket>[];
     final filteredObjects = scene.objectsForKinds(visibleKinds);
 
     for (final object in filteredObjects) {
@@ -88,68 +93,70 @@ class FallbackRenderScenePainter extends CustomPainter {
               isHighlighted: isHighlighted,
             );
 
-      triangles.addAll(
-        _buildObjectTriangles(
-          object: object,
-          projection: projection,
-          fillColor: objectColor.withValues(alpha: fillAlpha),
-          strokeColor: objectColor.withValues(alpha: 0.96),
-          strokeWidth: strokeWidth,
+      packets.add(
+        _RenderPacket(
+          triangles: _buildObjectTriangles(
+            object: object,
+            projection: projection,
+            fillColor: objectColor.withValues(alpha: fillAlpha),
+            strokeColor: objectColor.withValues(alpha: 0.96),
+            strokeWidth: strokeWidth,
+          ),
+          outlines: displayStyle == RenderSceneDisplayStyle.solid &&
+                  _shouldDrawSolidOutline(
+                    kind: object.kindKey,
+                    isSelected: isSelected,
+                    isHighlighted: isHighlighted,
+                  )
+              ? _buildOutlineSegments(object, projection)
+              : const <_OutlineSegment>[],
+          outlineColor: isSelected || isHighlighted
+              ? objectColor.withValues(alpha: 0.95)
+              : const Color(0xFF475569).withValues(alpha: 0.40),
+          outlineStrokeWidth: isSelected ? 2.0 : (isHighlighted ? 1.6 : 1.0),
         ),
       );
-
-      if (displayStyle == RenderSceneDisplayStyle.solid) {
-        outlines.add(
-          _ObjectOutline(
-            segments: _buildOutlineSegments(object, projection),
-            color: isSelected || isHighlighted
-                ? objectColor.withValues(alpha: 0.95)
-                : const Color(0xFF475569).withValues(alpha: 0.40),
-            strokeWidth: isSelected ? 2.0 : (isHighlighted ? 1.6 : 1.0),
-          ),
-        );
-      }
     }
 
-    triangles.sort((a, b) => b.depth.compareTo(a.depth));
+    packets.sort((a, b) => b.depth.compareTo(a.depth));
 
-    for (final triangle in triangles) {
-      final path = Path()
-        ..moveTo(triangle.a.dx, triangle.a.dy)
-        ..lineTo(triangle.b.dx, triangle.b.dy)
-        ..lineTo(triangle.c.dx, triangle.c.dy)
-        ..close();
+    for (final packet in packets) {
+      for (final triangle in packet.triangles) {
+        final path = Path()
+          ..moveTo(triangle.a.dx, triangle.a.dy)
+          ..lineTo(triangle.b.dx, triangle.b.dy)
+          ..lineTo(triangle.c.dx, triangle.c.dy)
+          ..close();
+
+        if (displayStyle == RenderSceneDisplayStyle.solid) {
+          canvas.drawPath(
+            path,
+            Paint()
+              ..style = PaintingStyle.fill
+              ..color = triangle.fillColor,
+          );
+        }
+
+        if (displayStyle == RenderSceneDisplayStyle.wireframe) {
+          canvas.drawPath(
+            path,
+            Paint()
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = triangle.strokeWidth
+              ..color = triangle.strokeColor,
+          );
+        }
+      }
 
       if (displayStyle == RenderSceneDisplayStyle.solid) {
-        canvas.drawPath(
-          path,
-          Paint()
-            ..style = PaintingStyle.fill
-            ..color = triangle.fillColor,
-        );
-      }
-
-      if (displayStyle == RenderSceneDisplayStyle.wireframe) {
-        canvas.drawPath(
-          path,
-          Paint()
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = triangle.strokeWidth
-            ..color = triangle.strokeColor,
-        );
-      }
-    }
-
-    if (displayStyle == RenderSceneDisplayStyle.solid) {
-      for (final outline in outlines) {
-        for (final segment in outline.segments) {
+        for (final segment in packet.outlines) {
           canvas.drawLine(
             segment.a,
             segment.b,
             Paint()
               ..style = PaintingStyle.stroke
-              ..strokeWidth = outline.strokeWidth
-              ..color = outline.color,
+              ..strokeWidth = packet.outlineStrokeWidth
+              ..color = packet.outlineColor,
           );
         }
       }
@@ -175,19 +182,14 @@ class FallbackRenderScenePainter extends CustomPainter {
     required double strokeWidth,
   }) {
     final rawTriangles = <List<RenderScenePoint>>[];
-    final wallTriangles = _buildWallTrianglesWithOpenings(object);
-    if (wallTriangles != null) {
-      rawTriangles.addAll(wallTriangles);
-    } else {
-      final mesh = object.mesh;
-      if (mesh.hasGeometry) {
-        for (var i = 0; i + 2 < mesh.indices.length; i += 3) {
-          final a = safeMeshPoint(mesh.positions, mesh.indices[i]);
-          final b = safeMeshPoint(mesh.positions, mesh.indices[i + 1]);
-          final c = safeMeshPoint(mesh.positions, mesh.indices[i + 2]);
-          if (a != null && b != null && c != null) {
-            rawTriangles.add(<RenderScenePoint>[a, b, c]);
-          }
+    final mesh = object.mesh;
+    if (mesh.hasGeometry) {
+      for (var i = 0; i + 2 < mesh.indices.length; i += 3) {
+        final a = safeMeshPoint(mesh.positions, mesh.indices[i]);
+        final b = safeMeshPoint(mesh.positions, mesh.indices[i + 1]);
+        final c = safeMeshPoint(mesh.positions, mesh.indices[i + 2]);
+        if (a != null && b != null && c != null) {
+          rawTriangles.add(<RenderScenePoint>[a, b, c]);
         }
       }
     }
@@ -198,6 +200,11 @@ class FallbackRenderScenePainter extends CustomPainter {
 
     final rendered = <_TriangleRender>[];
     for (final triangle in rawTriangles) {
+      if (displayStyle == RenderSceneDisplayStyle.solid &&
+          !_isTriangleVisible(triangle, projection)) {
+        continue;
+      }
+
       final a = projection.project(triangle[0]);
       final b = projection.project(triangle[1]);
       final c = projection.project(triangle[2]);
@@ -213,112 +220,76 @@ class FallbackRenderScenePainter extends CustomPainter {
           b: b.screen,
           c: c.screen,
           depth: (a.depth + b.depth + c.depth) / 3.0,
-          fillColor: fillColor,
-          strokeColor: strokeColor,
+          fillColor: _shadeTriangleColor(
+            baseColor: fillColor,
+            triangle: triangle,
+          ),
+          strokeColor: _shadeTriangleColor(
+            baseColor: strokeColor,
+            triangle: triangle,
+            minShade: 0.82,
+            maxShade: 1.0,
+          ),
           strokeWidth: strokeWidth,
         ),
       );
     }
+    rendered.sort((a, b) => b.depth.compareTo(a.depth));
     return rendered;
   }
 
-  List<List<RenderScenePoint>>? _buildWallTrianglesWithOpenings(
-    RenderSceneObject wall,
+  Color _shadeTriangleColor({
+    required Color baseColor,
+    required List<RenderScenePoint> triangle,
+    double minShade = 0.72,
+    double maxShade = 0.98,
+  }) {
+    if (triangle.length < 3 || projectionMode == RenderSceneProjectionMode.topDown) {
+      return baseColor;
+    }
+    final normal = normalizePoint(crossPoint(triangle[1] - triangle[0], triangle[2] - triangle[0]));
+    final lightDirection = normalizePoint(
+      const RenderScenePoint(x: 0.35, y: -0.25, z: 0.9),
+    );
+    final lit = ((dotPoint(normal, lightDirection) + 1.0) * 0.5)
+        .clamp(0.0, 1.0)
+        .toDouble();
+    final shade = minShade + (maxShade - minShade) * lit;
+    return Color.fromARGB(
+      (baseColor.a * 255.0).round().clamp(0, 255),
+      (baseColor.r * shade * 255.0).round().clamp(0, 255),
+      (baseColor.g * shade * 255.0).round().clamp(0, 255),
+      (baseColor.b * shade * 255.0).round().clamp(0, 255),
+    );
+  }
+
+  bool _isTriangleVisible(
+    List<RenderScenePoint> triangle,
+    RenderSceneProjection projection,
   ) {
-    if (wall.kindKey != 'wall') {
-      return null;
+    if (projectionMode == RenderSceneProjectionMode.topDown) {
+      return true;
+    }
+    if (triangle.length < 3) {
+      return false;
     }
 
-    final wallStart = RenderSceneEditor.wallStartPoint(wall);
-    final wallEnd = RenderSceneEditor.wallEndPoint(wall);
-    final wallThickness = RenderSceneEditor.wallThickness(wall);
-    final wallHeight =
-        _toDouble(wall.metadata['height_meters'] ?? wall.bounds.height) ??
-            wall.bounds.height;
-    if (wallStart == null ||
-        wallEnd == null ||
-        wallThickness == null ||
-        wallHeight <= 1e-6) {
-      return null;
+    final a = triangle[0];
+    final b = triangle[1];
+    final c = triangle[2];
+    final normal = crossPoint(b - a, c - a);
+    if (lengthPoint(normal) <= 1e-8) {
+      return false;
     }
 
-    final axis = wallEnd - wallStart;
-    final length = wallStart.distanceTo(wallEnd);
-    if (length <= 1e-6) {
-      return null;
-    }
-
-    final openings = _openingSpecsForWall(wall.elementId);
-    if (openings.isEmpty) {
-      return null;
-    }
-
-    final axisUnit = axis.scale(1.0 / length);
-    final normal = RenderScenePoint(x: -axisUnit.y, y: axisUnit.x, z: 0);
-    final baseZ = math.min(wallStart.z, wallEnd.z);
-    final halfThickness = wallThickness * 0.5;
-
-    final xBreaks = <double>[0, length];
-    final zBreaks = <double>[0, wallHeight];
-
-    for (final opening in openings) {
-      xBreaks.add(opening.startOffset);
-      xBreaks.add(opening.endOffset);
-      zBreaks.add(opening.bottomZ);
-      zBreaks.add(opening.topZ);
-    }
-
-    final xs = _sortedUniqueBreaks(xBreaks);
-    final zs = _sortedUniqueBreaks(zBreaks);
-    final triangles = <List<RenderScenePoint>>[];
-
-    for (var xi = 0; xi + 1 < xs.length; xi += 1) {
-      final x0 = xs[xi];
-      final x1 = xs[xi + 1];
-      if (x1 - x0 <= 1e-6) {
-        continue;
-      }
-
-      for (var zi = 0; zi + 1 < zs.length; zi += 1) {
-        final z0 = zs[zi];
-        final z1 = zs[zi + 1];
-        if (z1 - z0 <= 1e-6) {
-          continue;
-        }
-
-        final cellCenterX = (x0 + x1) * 0.5;
-        final cellCenterZ = (z0 + z1) * 0.5;
-        final blocked = openings.any(
-          (opening) =>
-              cellCenterX > opening.startOffset + 1e-6 &&
-              cellCenterX < opening.endOffset - 1e-6 &&
-              cellCenterZ > opening.bottomZ + 1e-6 &&
-              cellCenterZ < opening.topZ - 1e-6,
-        );
-        if (blocked) {
-          continue;
-        }
-
-        _appendBoxTriangles(
-          triangles: triangles,
-          cornerBuilder: (double localX, double localY, double localZ) {
-            return RenderScenePoint(
-              x: wallStart.x + axisUnit.x * localX + normal.x * localY,
-              y: wallStart.y + axisUnit.y * localX + normal.y * localY,
-              z: baseZ + localZ,
-            );
-          },
-          x0: x0,
-          x1: x1,
-          y0: -halfThickness,
-          y1: halfThickness,
-          z0: z0,
-          z1: z1,
-        );
-      }
-    }
-
-    return triangles;
+    final basis = buildCameraBasis(
+      center: camera.center,
+      yawRadians: camera.yawRadians,
+      pitchRadians: camera.pitchRadians,
+      distance: camera.distance,
+    );
+    final toEye = basis.eye - a;
+    return dotPoint(normal, toEye) > 1e-8;
   }
 
   double _fillAlphaForObject({
@@ -327,17 +298,37 @@ class FallbackRenderScenePainter extends CustomPainter {
     required bool isHighlighted,
   }) {
     if (isSelected || isHighlighted) {
-      return 0.62;
+      return 0.84;
     }
 
     switch (kind) {
+      case 'wall':
+        return 1.0;
       case 'door':
       case 'window':
-        return 0.08;
+        return 0.96;
       case 'room':
         return 0.22;
       default:
-        return 0.82;
+        return 0.92;
+    }
+  }
+
+  bool _shouldDrawSolidOutline({
+    required String kind,
+    required bool isSelected,
+    required bool isHighlighted,
+  }) {
+    if (isSelected || isHighlighted) {
+      return true;
+    }
+    switch (kind) {
+      case 'wall':
+      case 'door':
+      case 'window':
+        return false;
+      default:
+        return true;
     }
   }
 
@@ -345,7 +336,80 @@ class FallbackRenderScenePainter extends CustomPainter {
     RenderSceneObject object,
     RenderSceneProjection projection,
   ) {
-    final corners = boundsCorners(object.bounds);
+    final meshSegments = _buildVisibleMeshOutlineSegments(object, projection);
+    if (meshSegments.isNotEmpty) {
+      return meshSegments;
+    }
+
+    return _buildBoundsOutlineSegments(object.bounds, projection);
+  }
+
+  List<_OutlineSegment> _buildVisibleMeshOutlineSegments(
+    RenderSceneObject object,
+    RenderSceneProjection projection,
+  ) {
+    final positions = object.mesh.positions;
+    final indices = object.mesh.indices;
+    if (positions.isEmpty || indices.length < 3) {
+      return const <_OutlineSegment>[];
+    }
+
+    final edgeMap = <String, List<_EdgeRecord>>{};
+    for (var i = 0; i + 2 < indices.length; i += 3) {
+      final ia = indices[i];
+      final ib = indices[i + 1];
+      final ic = indices[i + 2];
+      final a = safeMeshPoint(positions, ia);
+      final b = safeMeshPoint(positions, ib);
+      final c = safeMeshPoint(positions, ic);
+      if (a == null || b == null || c == null) {
+        continue;
+      }
+      final triangle = <RenderScenePoint>[a, b, c];
+      if (displayStyle == RenderSceneDisplayStyle.solid &&
+          !_isTriangleVisible(triangle, projection)) {
+        continue;
+      }
+
+      void addEdge(int startIndex, int endIndex, RenderScenePoint start,
+          RenderScenePoint end) {
+        final low = math.min(startIndex, endIndex);
+        final high = math.max(startIndex, endIndex);
+        final key = '$low:$high';
+        edgeMap.putIfAbsent(key, () => <_EdgeRecord>[]).add(
+              _EdgeRecord(start: start, end: end),
+            );
+      }
+
+      addEdge(ia, ib, a, b);
+      addEdge(ib, ic, b, c);
+      addEdge(ic, ia, c, a);
+    }
+
+    final segments = <_OutlineSegment>[];
+    for (final records in edgeMap.values) {
+      if (records.isEmpty) {
+        continue;
+      }
+      final first = records.first;
+      if (records.length != 1) {
+        continue;
+      }
+      segments.add(
+        _OutlineSegment(
+          a: projection.project(first.start).screen,
+          b: projection.project(first.end).screen,
+        ),
+      );
+    }
+    return segments;
+  }
+
+  List<_OutlineSegment> _buildBoundsOutlineSegments(
+    RenderSceneBounds bounds,
+    RenderSceneProjection projection,
+  ) {
+    final corners = boundsCorners(bounds);
     final projected = corners.map(projection.project).toList(growable: false);
     const edgePairs = <List<int>>[
       <int>[0, 1],
@@ -372,107 +436,95 @@ class FallbackRenderScenePainter extends CustomPainter {
         .toList(growable: false);
   }
 
-  List<_WallOpeningSpec> _openingSpecsForWall(int? wallElementId) {
-    if (wallElementId == null) {
-      return const <_WallOpeningSpec>[];
-    }
-
-    final specs = <_WallOpeningSpec>[];
-    for (final object in scene.objects) {
-      if (object.kindKey != 'door' && object.kindKey != 'window') {
-        continue;
-      }
-
-      final hostId = _toInt(object.metadata['host_wall_id']);
-      if (hostId != wallElementId) {
-        continue;
-      }
-
-      final offset = _toDouble(object.metadata['offset_meters']);
-      final width = _toDouble(object.metadata['width_meters']);
-      final height = _toDouble(object.metadata['height_meters']);
-      final sill = _toDouble(object.metadata['sill_height_meters']) ?? 0.0;
-      if (offset == null || width == null || height == null) {
-        continue;
-      }
-
-      specs.add(
-        _WallOpeningSpec(
-          startOffset: math.max(0, offset - width * 0.5),
-          endOffset: math.max(0, offset + width * 0.5),
-          bottomZ: math.max(0, sill),
-          topZ: math.max(0, sill + height),
-        ),
-      );
-    }
-
-    return specs;
-  }
-
-  List<double> _sortedUniqueBreaks(List<double> values) {
-    final sorted = values.where((value) => value.isFinite).toList()..sort();
-    final unique = <double>[];
-    for (final value in sorted) {
-      if (unique.isEmpty || (value - unique.last).abs() > 1e-6) {
-        unique.add(value);
-      }
-    }
-    return unique;
-  }
-
-  void _appendBoxTriangles({
-    required List<List<RenderScenePoint>> triangles,
-    required RenderScenePoint Function(double x, double y, double z)
-        cornerBuilder,
-    required double x0,
-    required double x1,
-    required double y0,
-    required double y1,
-    required double z0,
-    required double z1,
-  }) {
-    final corners = <RenderScenePoint>[
-      cornerBuilder(x0, y0, z0),
-      cornerBuilder(x1, y0, z0),
-      cornerBuilder(x1, y1, z0),
-      cornerBuilder(x0, y1, z0),
-      cornerBuilder(x0, y0, z1),
-      cornerBuilder(x1, y0, z1),
-      cornerBuilder(x1, y1, z1),
-      cornerBuilder(x0, y1, z1),
-    ];
-
-    triangles.addAll(<List<RenderScenePoint>>[
-      <RenderScenePoint>[corners[0], corners[1], corners[2]],
-      <RenderScenePoint>[corners[0], corners[2], corners[3]],
-      <RenderScenePoint>[corners[4], corners[6], corners[5]],
-      <RenderScenePoint>[corners[4], corners[7], corners[6]],
-      <RenderScenePoint>[corners[0], corners[5], corners[1]],
-      <RenderScenePoint>[corners[0], corners[4], corners[5]],
-      <RenderScenePoint>[corners[1], corners[6], corners[2]],
-      <RenderScenePoint>[corners[1], corners[5], corners[6]],
-      <RenderScenePoint>[corners[2], corners[7], corners[3]],
-      <RenderScenePoint>[corners[2], corners[6], corners[7]],
-      <RenderScenePoint>[corners[3], corners[4], corners[0]],
-      <RenderScenePoint>[corners[3], corners[7], corners[4]],
-    ]);
-  }
-
   void _drawDraftOverlay(Canvas canvas, RenderSceneProjection projection) {
     final wallStart = draftWallStart;
     final wallEnd = draftWallEnd;
     final opening = draftOpening;
+    final surface = draftSurface;
 
     if (wallStart != null && wallEnd != null) {
+      final wallLength = wallStart.distanceTo(wallEnd);
+      if (wallLength > 1e-6) {
+        final draftTriangles = _draftWallTriangles(wallStart, wallEnd);
+        for (final triangle in draftTriangles) {
+          final a = projection.project(triangle[0]).screen;
+          final b = projection.project(triangle[1]).screen;
+          final c = projection.project(triangle[2]).screen;
+          final path = Path()
+            ..moveTo(a.dx, a.dy)
+            ..lineTo(b.dx, b.dy)
+            ..lineTo(c.dx, c.dy)
+            ..close();
+          canvas.drawPath(
+            path,
+            Paint()
+              ..style = PaintingStyle.fill
+              ..color = const Color(0xFFEF4444).withValues(alpha: 0.18),
+          );
+          canvas.drawPath(
+            path,
+            Paint()
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = 1.2
+              ..color = const Color(0xFFDC2626).withValues(alpha: 0.9),
+          );
+        }
+      }
+
       final a = projection.project(wallStart).screen;
       final b = projection.project(wallEnd).screen;
-      final paint = Paint()
-        ..color = const Color(0xFFEF4444)
-        ..strokeWidth = 2.5
-        ..style = PaintingStyle.stroke;
-      canvas.drawLine(a, b, paint);
+      canvas.drawLine(
+        a,
+        b,
+        Paint()
+          ..color = const Color(0xFFB91C1C)
+          ..strokeWidth = 1.8
+          ..style = PaintingStyle.stroke,
+      );
       canvas.drawCircle(a, 5, Paint()..color = const Color(0xFFEF4444));
       canvas.drawCircle(b, 5, Paint()..color = const Color(0xFFEF4444));
+    }
+
+    if (surface != null) {
+      final minX = math.min(surface.start.x, surface.end.x);
+      final maxX = math.max(surface.start.x, surface.end.x);
+      final minY = math.min(surface.start.y, surface.end.y);
+      final maxY = math.max(surface.start.y, surface.end.y);
+      final z = math.max(surface.start.z, surface.end.z);
+      final corners = <RenderScenePoint>[
+        RenderScenePoint(x: minX, y: minY, z: z),
+        RenderScenePoint(x: maxX, y: minY, z: z),
+        RenderScenePoint(x: maxX, y: maxY, z: z),
+        RenderScenePoint(x: minX, y: maxY, z: z),
+      ];
+      final projected = corners
+          .map((point) => projection.project(point).screen)
+          .toList(growable: false);
+      final path = Path()
+        ..moveTo(projected[0].dx, projected[0].dy)
+        ..lineTo(projected[1].dx, projected[1].dy)
+        ..lineTo(projected[2].dx, projected[2].dy)
+        ..lineTo(projected[3].dx, projected[3].dy)
+        ..close();
+      final fillColor = surface.kind == 'ceiling'
+          ? const Color(0xFF60A5FA).withValues(alpha: 0.18)
+          : const Color(0xFF10B981).withValues(alpha: 0.18);
+      final strokeColor = surface.kind == 'ceiling'
+          ? const Color(0xFF2563EB)
+          : const Color(0xFF059669);
+      canvas.drawPath(
+        path,
+        Paint()
+          ..style = PaintingStyle.fill
+          ..color = fillColor,
+      );
+      canvas.drawPath(
+        path,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.0
+          ..color = strokeColor,
+      );
     }
 
     if (opening == null || opening.hostWallId == null) {
@@ -568,6 +620,50 @@ class FallbackRenderScenePainter extends CustomPainter {
       maxLines: 2,
     )..layout(maxWidth: 160);
     messagePainter.paint(canvas, rect.topLeft + const Offset(4, -18));
+  }
+
+  List<List<RenderScenePoint>> _draftWallTriangles(
+    RenderScenePoint start,
+    RenderScenePoint end,
+  ) {
+    final axis = end - start;
+    final length = start.distanceTo(end);
+    if (length <= 1e-6) {
+      return const <List<RenderScenePoint>>[];
+    }
+
+    final axisUnit = axis.scale(1.0 / length);
+    final normal =
+        RenderScenePoint(x: -axisUnit.y, y: axisUnit.x, z: 0).scale(
+      draftWallThicknessMeters * 0.5,
+    );
+    final lower0 = start + normal;
+    final lower1 = end + normal;
+    final lower2 = end - normal;
+    final lower3 = start - normal;
+    final upper0 =
+        RenderScenePoint(x: lower0.x, y: lower0.y, z: draftWallHeightMeters);
+    final upper1 =
+        RenderScenePoint(x: lower1.x, y: lower1.y, z: draftWallHeightMeters);
+    final upper2 =
+        RenderScenePoint(x: lower2.x, y: lower2.y, z: draftWallHeightMeters);
+    final upper3 =
+        RenderScenePoint(x: lower3.x, y: lower3.y, z: draftWallHeightMeters);
+
+    return <List<RenderScenePoint>>[
+      <RenderScenePoint>[lower0, lower2, lower1],
+      <RenderScenePoint>[lower0, lower3, lower2],
+      <RenderScenePoint>[upper0, upper1, upper2],
+      <RenderScenePoint>[upper0, upper2, upper3],
+      <RenderScenePoint>[lower0, lower1, upper1],
+      <RenderScenePoint>[lower0, upper1, upper0],
+      <RenderScenePoint>[lower1, lower2, upper2],
+      <RenderScenePoint>[lower1, upper2, upper1],
+      <RenderScenePoint>[lower2, lower3, upper3],
+      <RenderScenePoint>[lower2, upper3, upper2],
+      <RenderScenePoint>[lower3, lower0, upper0],
+      <RenderScenePoint>[lower3, upper0, upper3],
+    ];
   }
 
   void _drawLabels(
@@ -705,26 +801,6 @@ class FallbackRenderScenePainter extends CustomPainter {
     }
   }
 
-  double? _toDouble(Object? value) {
-    if (value is num && value.isFinite) {
-      return value.toDouble();
-    }
-    return null;
-  }
-
-  int? _toInt(Object? value) {
-    if (value is int) {
-      return value;
-    }
-    if (value is num && value.isFinite) {
-      return value.toInt();
-    }
-    if (value is String) {
-      return int.tryParse(value);
-    }
-    return null;
-  }
-
   @override
   bool shouldRepaint(covariant FallbackRenderScenePainter oldDelegate) {
     return oldDelegate.scene != scene ||
@@ -738,7 +814,35 @@ class FallbackRenderScenePainter extends CustomPainter {
         oldDelegate.planCamera != planCamera ||
         oldDelegate.draftWallStart != draftWallStart ||
         oldDelegate.draftWallEnd != draftWallEnd ||
-        oldDelegate.draftOpening != draftOpening;
+        oldDelegate.draftOpening != draftOpening ||
+        oldDelegate.draftSurface != draftSurface ||
+        oldDelegate.draftWallThicknessMeters != draftWallThicknessMeters ||
+        oldDelegate.draftWallHeightMeters != draftWallHeightMeters;
+  }
+}
+
+class _RenderPacket {
+  const _RenderPacket({
+    required this.triangles,
+    required this.outlines,
+    required this.outlineColor,
+    required this.outlineStrokeWidth,
+  });
+
+  final List<_TriangleRender> triangles;
+  final List<_OutlineSegment> outlines;
+  final Color outlineColor;
+  final double outlineStrokeWidth;
+
+  double get depth {
+    if (triangles.isEmpty) {
+      return double.negativeInfinity;
+    }
+    return triangles.fold<double>(
+          0,
+          (sum, triangle) => sum + triangle.depth,
+        ) /
+        triangles.length;
   }
 }
 
@@ -762,18 +866,6 @@ class _TriangleRender {
   final double strokeWidth;
 }
 
-class _ObjectOutline {
-  const _ObjectOutline({
-    required this.segments,
-    required this.color,
-    required this.strokeWidth,
-  });
-
-  final List<_OutlineSegment> segments;
-  final Color color;
-  final double strokeWidth;
-}
-
 class _OutlineSegment {
   const _OutlineSegment({
     required this.a,
@@ -784,16 +876,12 @@ class _OutlineSegment {
   final Offset b;
 }
 
-class _WallOpeningSpec {
-  const _WallOpeningSpec({
-    required this.startOffset,
-    required this.endOffset,
-    required this.bottomZ,
-    required this.topZ,
+class _EdgeRecord {
+  const _EdgeRecord({
+    required this.start,
+    required this.end,
   });
 
-  final double startOffset;
-  final double endOffset;
-  final double bottomZ;
-  final double topZ;
+  final RenderScenePoint start;
+  final RenderScenePoint end;
 }
