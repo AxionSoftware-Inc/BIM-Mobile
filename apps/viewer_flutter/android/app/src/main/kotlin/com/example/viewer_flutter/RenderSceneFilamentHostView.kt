@@ -43,6 +43,7 @@ import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
+import kotlin.math.tan
 
 private const val DEFAULT_RENDERER_STATUS = "Renderer initializing..."
 private const val TAG = "RenderSceneFilament"
@@ -101,10 +102,22 @@ internal class RenderSceneFilamentHostView(
   private val displayHelper = DisplayHelper(context, Handler(Looper.getMainLooper()))
   private val scaleGestureDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
     override fun onScale(detector: ScaleGestureDetector): Boolean {
-      val nextDistance = orbitDistance / detector.scaleFactor.toDouble()
-      orbitDistance = nextDistance.coerceIn(2.0, 250.0)
+      if (projectionMode == "topDown") {
+        topDownZoom = (topDownZoom / detector.scaleFactor.toDouble()).coerceIn(0.5, 200.0)
+        configureCameraProjection()
+      } else {
+        val nextDistance = orbitDistance / detector.scaleFactor.toDouble()
+        orbitDistance = nextDistance.coerceIn(2.0, 250.0)
+        configureCameraProjection()
+      }
       updateOrbitCamera()
-      updateStatus("Orbit zoom ${orbitDistance.format(2)}m")
+      updateStatus(
+        if (projectionMode == "topDown") {
+          "Plan zoom ${topDownZoom.format(2)}m"
+        } else {
+          "Orbit zoom ${orbitDistance.format(2)}m"
+        }
+      )
       invalidate()
       return true
     }
@@ -154,6 +167,10 @@ internal class RenderSceneFilamentHostView(
   private var orbitYawRadians = Math.toRadians(45.0)
   private var orbitPitchRadians = Math.toRadians(22.0)
   private var orbitDistance = 12.0
+  private var topDownZoom = 1.0
+  private var projectionMode = "topDown"
+  private var orbitProjectionStyle = "orthographic"
+  private var displayStyle = "solid"
   private var lastTouchX = 0f
   private var lastTouchY = 0f
   private var touching = false
@@ -249,9 +266,32 @@ internal class RenderSceneFilamentHostView(
     orbitDistance = max(radius * 2.0, 3.0)
     orbitYawRadians = Math.toRadians(45.0)
     orbitPitchRadians = Math.toRadians(24.0)
-    camera.setProjection(45.0, aspectRatio(), 0.1, orbitDistance * 60.0, Camera.Fov.VERTICAL)
+    topDownZoom = max(radius * 1.2, 2.0)
+    configureCameraProjection()
     updateOrbitCamera()
     updateStatus("Camera fitted to ${metrics.objectCount} objects.")
+    invalidate()
+  }
+
+  fun setProjectionMode(mode: String) {
+    projectionMode = mode
+    configureCameraProjection()
+    updateOrbitCamera()
+    updateStatus()
+    invalidate()
+  }
+
+  fun setOrbitProjectionStyle(style: String) {
+    orbitProjectionStyle = style
+    configureCameraProjection()
+    updateOrbitCamera()
+    updateStatus()
+    invalidate()
+  }
+
+  fun setDisplayStyle(style: String) {
+    displayStyle = style
+    updateStatus(if (style == "wireframe") "Filament wireframe not yet enabled. Showing solid." else null)
     invalidate()
   }
 
@@ -690,8 +730,16 @@ internal class RenderSceneFilamentHostView(
           val dy = event.y - lastTouchY
           lastTouchX = event.x
           lastTouchY = event.y
-          orbitYawRadians -= dx * 0.01
-          orbitPitchRadians = (orbitPitchRadians + dy * 0.01).coerceIn(Math.toRadians(0.1), Math.toRadians(88.0))
+          if (projectionMode == "topDown") {
+            val metersPerPixel = (topDownZoom * 2.0) / max(renderSurface.height.toDouble(), 1.0)
+            orbitCenter = orbitCenter.copy(
+              x = orbitCenter.x - dx * metersPerPixel,
+              z = orbitCenter.z + dy * metersPerPixel,
+            )
+          } else {
+            orbitYawRadians -= dx * 0.01
+            orbitPitchRadians = (orbitPitchRadians + dy * 0.01).coerceIn(Math.toRadians(0.1), Math.toRadians(88.0))
+          }
           updateOrbitCamera()
           invalidate()
         }
@@ -708,6 +756,21 @@ internal class RenderSceneFilamentHostView(
   private fun updateOrbitCamera() {
     val camera = camera ?: return
     val center = orbitCenter
+    if (projectionMode == "topDown") {
+      val eyeY = center.y + max(orbitDistance, topDownZoom * 2.5)
+      camera.lookAt(
+        center.x,
+        eyeY,
+        center.z,
+        center.x,
+        center.y,
+        center.z,
+        0.0,
+        0.0,
+        -1.0,
+      )
+      return
+    }
     val cosPitch = cos(orbitPitchRadians)
     val eyeX = center.x + orbitDistance * cosPitch * cos(orbitYawRadians)
     val eyeZ = center.z + orbitDistance * cosPitch * sin(orbitYawRadians)
@@ -723,6 +786,28 @@ internal class RenderSceneFilamentHostView(
       1.0,
       0.0,
     )
+  }
+
+  private fun configureCameraProjection() {
+    val camera = camera ?: return
+    val aspect = aspectRatio()
+    val far = max(orbitDistance * 60.0, 500.0)
+    if (projectionMode == "topDown" || orbitProjectionStyle == "orthographic") {
+      val halfHeight = if (projectionMode == "topDown") topDownZoom else max(orbitDistance * 0.6, 2.0)
+      val halfWidth = halfHeight * aspect
+      camera.setProjection(
+        Camera.Projection.ORTHO,
+        -halfWidth,
+        halfWidth,
+        -halfHeight,
+        halfHeight,
+        0.1,
+        far,
+      )
+      return
+    }
+
+    camera.setProjection(45.0, aspect, 0.1, far, Camera.Fov.VERTICAL)
   }
 
   private fun boxCorners(bounds: SceneBounds): List<ScenePoint> {

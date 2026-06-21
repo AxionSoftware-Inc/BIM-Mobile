@@ -35,8 +35,7 @@ The viewer loads `assets/render_scene.json` or a local file path, parses it in
 Dart, and then:
 
 1. shows diagnostics in Flutter,
-2. sends the scene payload to the native Android viewport skeleton when
-   available,
+2. sends the scene payload to the native Android Filament viewport by default,
 3. keeps a desktop fallback preview for macOS / Linux / Windows development.
 
 The renderer contract is intentionally neutral:
@@ -64,6 +63,7 @@ scene path:
   Z-up from the engine becoming Y-up in Filament.
 - Native logs include renderer creation, surface attach/detach, scene load
   counts, and any material-build failures.
+- Android now uses the Filament viewport as the primary renderer path.
 
 The local machine that produced this checkout does **not** have a complete
 Android SDK installed, so I could not run `flutter build apk` or launch on a

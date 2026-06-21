@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
@@ -12,9 +13,12 @@ import 'render_scene_viewport_types.dart';
 class RenderSceneViewportController extends RenderSceneViewportActions {
   RenderSceneViewportController({
     Set<String>? visibleKinds,
-    RenderSceneViewportBackend backend = RenderSceneViewportBackend.fallback,
+    RenderSceneViewportBackend? backend,
   })  : _visibleKinds = visibleKinds ?? kDefaultVisibleSceneKinds.toSet(),
-        _backend = backend;
+        _backend = backend ??
+            (defaultTargetPlatform == TargetPlatform.android
+                ? RenderSceneViewportBackend.native
+                : RenderSceneViewportBackend.fallback);
 
   static const double _planPadding = 48;
 
@@ -288,6 +292,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
 
     _backend = backend;
     notifyListeners();
+    await _syncNativeBridge();
   }
 
   @override
@@ -303,6 +308,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     }
 
     notifyListeners();
+    await _syncNativeBridge();
   }
 
   @override
@@ -527,6 +533,8 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
 
     await _invoke('setVisibleKinds', _visibleKinds.toList());
     await _invoke('setDisplayStyle', _displayStyle.name);
+    await _invoke('setProjectionMode', _projectionMode.name);
+    await _invoke('setOrbitProjectionStyle', _orbitProjectionStyle.name);
     await _invoke('selectElement', _selectedElementId);
     await _invoke('highlightElement', _highlightedElementId);
   }

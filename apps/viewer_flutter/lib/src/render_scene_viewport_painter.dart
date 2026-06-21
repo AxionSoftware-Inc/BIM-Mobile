@@ -319,6 +319,9 @@ class FallbackRenderScenePainter extends CustomPainter {
     required bool isSelected,
     required bool isHighlighted,
   }) {
+    if (projectionMode == RenderSceneProjectionMode.topDown) {
+      return true;
+    }
     if (isSelected || isHighlighted) {
       return true;
     }

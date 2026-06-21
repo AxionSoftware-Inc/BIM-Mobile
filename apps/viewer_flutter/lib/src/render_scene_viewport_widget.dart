@@ -475,13 +475,13 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
       case RenderSceneInteractionMode.addWall:
         return 'Add wall: tap start point, then tap end point.';
       case RenderSceneInteractionMode.addDoor:
-        return 'Add door: tap a wall to pick host and offset.';
+        return 'Add door: tap a wall to place immediately with current size.';
       case RenderSceneInteractionMode.addWindow:
-        return 'Add window: tap a wall to pick host and offset.';
+        return 'Add window: tap a wall to place immediately with current size.';
       case RenderSceneInteractionMode.addFloor:
-        return 'Add floor: select a room, then confirm to place floor.';
+        return 'Add floor: tap a room for instant floor, or draw/select walls.';
       case RenderSceneInteractionMode.addCeiling:
-        return 'Add ceiling: select a room, then confirm to place ceiling.';
+        return 'Add ceiling: tap a room for instant ceiling, or draw/select walls.';
     }
   }
 

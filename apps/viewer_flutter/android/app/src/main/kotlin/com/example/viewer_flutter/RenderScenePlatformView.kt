@@ -304,6 +304,21 @@ internal class RenderScenePlatformView(
         result.success(null)
       }
 
+      "setProjectionMode" -> {
+        view.setProjectionMode(call.arguments as? String ?: "topDown")
+        result.success(null)
+      }
+
+      "setOrbitProjectionStyle" -> {
+        view.setOrbitProjectionStyle(call.arguments as? String ?: "orthographic")
+        result.success(null)
+      }
+
+      "setDisplayStyle" -> {
+        view.setDisplayStyle(call.arguments as? String ?: "solid")
+        result.success(null)
+      }
+
       "selectElement" -> {
         view.selectElement(call.arguments)
         result.success(null)

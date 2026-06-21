@@ -8,6 +8,10 @@ import 'render_scene_models.dart';
 import 'render_scene_repository.dart';
 import 'render_scene_viewport.dart';
 
+class _DeleteSelectionIntent extends Intent {
+  const _DeleteSelectionIntent();
+}
+
 class ViewerApp extends StatelessWidget {
   const ViewerApp({
     super.key,
@@ -95,6 +99,9 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   double _draftOpeningWidthMeters = 0.9;
   double _draftOpeningHeightMeters = 2.1;
   double _draftOpeningSillHeightMeters = 0.9;
+  double _draftSurfaceThicknessMeters = 0.18;
+  double _draftSurfaceHeightMeters = _defaultWallHeightMeters;
+  double _draftFloorTopElevationMeters = 0.0;
   String? _editStatusMessage;
   bool _snapDraftToGrid = true;
 
@@ -156,6 +163,14 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     if (_viewportController.selectedElementId != null) {
       await _clearSelection();
     }
+  }
+
+  bool _isTextEditingFocused() {
+    final focusedContext = FocusManager.instance.primaryFocus?.context;
+    if (focusedContext == null) {
+      return false;
+    }
+    return focusedContext.widget is EditableText;
   }
 
   Future<void> _loadBundledSample() async {
@@ -365,6 +380,9 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       _draftOpeningWidthMeters = 0.9;
       _draftOpeningHeightMeters = 2.1;
       _draftOpeningSillHeightMeters = 0.9;
+      _draftSurfaceThicknessMeters = 0.18;
+      _draftSurfaceHeightMeters = _defaultWallHeightMeters;
+      _draftFloorTopElevationMeters = 0.0;
     });
 
     _viewportController.clearDraft();
@@ -573,6 +591,11 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       point: point,
       announce: true,
     );
+
+    final openingDraft = _viewportController.draftOpening;
+    if (openingDraft != null && openingDraft.valid) {
+      await _commitOpeningDraft(scene, hostWall);
+    }
   }
 
   void _updateOpeningDraftPreview({
@@ -635,6 +658,38 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     RenderSceneObject? tappedObject,
     RenderScenePoint? modelPoint,
   ) async {
+    if (tappedObject?.kindKey == 'room') {
+      final room = tappedObject!;
+      final nextScene = _interactionMode == RenderSceneInteractionMode.addFloor
+          ? RenderSceneEditor.addFloorForRoom(
+              scene: scene,
+              room: room,
+              thicknessMeters: _draftSurfaceThicknessMeters,
+              topElevationMeters: _draftFloorTopElevationMeters,
+            )
+          : RenderSceneEditor.addCeilingForRoom(
+              scene: scene,
+              room: room,
+              thicknessMeters: _draftSurfaceThicknessMeters,
+              heightMeters: _draftSurfaceHeightMeters,
+            );
+      await _applySceneChange(
+        nextScene,
+        message:
+            '${_interactionMode == RenderSceneInteractionMode.addFloor ? 'Floor' : 'Ceiling'} created for room #${room.elementId}.',
+      );
+      final created =
+          nextScene.objects.isNotEmpty ? nextScene.objects.last : null;
+      if (created != null) {
+        await _viewportController.selectElement(created.elementId?.toString());
+        await _viewportController.highlightElement(
+          created.elementId?.toString(),
+        );
+      }
+      await _clearDraft();
+      return;
+    }
+
     if (tappedObject != null && tappedObject.kindKey == 'wall') {
       final wallId = tappedObject.elementId;
       if (wallId != null) {
@@ -837,46 +892,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
           });
           return;
         }
-
-        final openingDraft = _viewportController.draftOpening;
-        if (openingDraft != null && !openingDraft.valid) {
-          setState(() {
-            _editStatusMessage = openingDraft.message;
-          });
-          return;
-        }
-
-        final offset = _draftOpeningOffsetMeters;
-        final nextScene = _interactionMode == RenderSceneInteractionMode.addDoor
-            ? RenderSceneEditor.addDoor(
-                scene: scene,
-                hostWall: hostWall,
-                offsetMeters: offset,
-                widthMeters: _draftOpeningWidthMeters,
-                heightMeters: _draftOpeningHeightMeters,
-              )
-            : RenderSceneEditor.addWindow(
-                scene: scene,
-                hostWall: hostWall,
-                offsetMeters: offset,
-                widthMeters: _draftOpeningWidthMeters,
-                heightMeters: _draftOpeningHeightMeters,
-                sillHeightMeters: _draftOpeningSillHeightMeters,
-              );
-        await _applySceneChange(
-          nextScene,
-          message:
-              '${_interactionMode == RenderSceneInteractionMode.addDoor ? 'Door' : 'Window'} created.',
-        );
-        final created =
-            nextScene.objects.isNotEmpty ? nextScene.objects.last : null;
-        if (created != null) {
-          await _viewportController
-              .selectElement(created.elementId?.toString());
-          await _viewportController
-              .highlightElement(created.elementId?.toString());
-        }
-        await _clearDraft();
+        await _commitOpeningDraft(scene, hostWall);
         return;
       case RenderSceneInteractionMode.addFloor:
       case RenderSceneInteractionMode.addCeiling:
@@ -887,8 +903,18 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
               .where((object) => object.kindKey == 'wall')
               .toList(growable: false);
           nextScene = _interactionMode == RenderSceneInteractionMode.addFloor
-              ? RenderSceneEditor.addFloorFromWalls(scene: scene, walls: walls)
-              : RenderSceneEditor.addCeilingFromWalls(scene: scene, walls: walls);
+              ? RenderSceneEditor.addFloorFromWalls(
+                  scene: scene,
+                  walls: walls,
+                  thicknessMeters: _draftSurfaceThicknessMeters,
+                  topElevationMeters: _draftFloorTopElevationMeters,
+                )
+              : RenderSceneEditor.addCeilingFromWalls(
+                  scene: scene,
+                  walls: walls,
+                  thicknessMeters: _draftSurfaceThicknessMeters,
+                  heightMeters: _draftSurfaceHeightMeters,
+                );
           if (identical(nextScene, scene)) {
             setState(() {
               _editStatusMessage =
@@ -919,8 +945,18 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
             ),
           );
           nextScene = _interactionMode == RenderSceneInteractionMode.addFloor
-              ? RenderSceneEditor.addFloorFromBounds(scene: scene, bounds: bounds)
-              : RenderSceneEditor.addCeilingFromBounds(scene: scene, bounds: bounds);
+              ? RenderSceneEditor.addFloorFromBounds(
+                  scene: scene,
+                  bounds: bounds,
+                  thicknessMeters: _draftSurfaceThicknessMeters,
+                  topElevationMeters: _draftFloorTopElevationMeters,
+                )
+              : RenderSceneEditor.addCeilingFromBounds(
+                  scene: scene,
+                  bounds: bounds,
+                  thicknessMeters: _draftSurfaceThicknessMeters,
+                  heightMeters: _draftSurfaceHeightMeters,
+                );
         }
         await _applySceneChange(
           nextScene,
@@ -945,6 +981,48 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     setState(() {
       _editStatusMessage = 'Draft canceled.';
     });
+  }
+
+  Future<void> _commitOpeningDraft(
+    RenderScene scene,
+    RenderSceneObject hostWall,
+  ) async {
+    final openingDraft = _viewportController.draftOpening;
+    if (openingDraft != null && !openingDraft.valid) {
+      setState(() {
+        _editStatusMessage = openingDraft.message;
+      });
+      return;
+    }
+
+    final offset = _draftOpeningOffsetMeters;
+    final nextScene = _interactionMode == RenderSceneInteractionMode.addDoor
+        ? RenderSceneEditor.addDoor(
+            scene: scene,
+            hostWall: hostWall,
+            offsetMeters: offset,
+            widthMeters: _draftOpeningWidthMeters,
+            heightMeters: _draftOpeningHeightMeters,
+          )
+        : RenderSceneEditor.addWindow(
+            scene: scene,
+            hostWall: hostWall,
+            offsetMeters: offset,
+            widthMeters: _draftOpeningWidthMeters,
+            heightMeters: _draftOpeningHeightMeters,
+            sillHeightMeters: _draftOpeningSillHeightMeters,
+          );
+    await _applySceneChange(
+      nextScene,
+      message:
+          '${_interactionMode == RenderSceneInteractionMode.addDoor ? 'Door' : 'Window'} created.',
+    );
+    final created = nextScene.objects.isNotEmpty ? nextScene.objects.last : null;
+    if (created != null) {
+      await _viewportController.selectElement(created.elementId?.toString());
+      await _viewportController.highlightElement(created.elementId?.toString());
+    }
+    await _clearDraft();
   }
 
   void _syncOpeningDraft() {
@@ -1127,12 +1205,23 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     return Shortcuts(
       shortcuts: const <ShortcutActivator, Intent>{
         SingleActivator(LogicalKeyboardKey.escape): DismissIntent(),
+        SingleActivator(LogicalKeyboardKey.delete): _DeleteSelectionIntent(),
+        SingleActivator(LogicalKeyboardKey.backspace): _DeleteSelectionIntent(),
       },
       child: Actions(
         actions: <Type, Action<Intent>>{
           DismissIntent: CallbackAction<DismissIntent>(
             onInvoke: (DismissIntent intent) {
               _handleEscapePressed();
+              return null;
+            },
+          ),
+          _DeleteSelectionIntent: CallbackAction<_DeleteSelectionIntent>(
+            onInvoke: (_DeleteSelectionIntent intent) {
+              if (_isTextEditingFocused()) {
+                return null;
+              }
+              _deleteSelectedObject();
               return null;
             },
           ),
@@ -1607,6 +1696,11 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
                         draftSurfaceStart: _draftSurfaceStart,
                         draftSurfaceEnd: _draftSurfaceEnd,
                         draftSurfaceWallCount: _draftSurfaceWallIds.length,
+                        draftSurfaceThicknessMeters:
+                            _draftSurfaceThicknessMeters,
+                        draftSurfaceHeightMeters: _draftSurfaceHeightMeters,
+                        draftFloorTopElevationMeters:
+                            _draftFloorTopElevationMeters,
                         draftHostWall: _draftHostWall,
                         openingOffsetMeters: _draftOpeningOffsetMeters,
                         openingWidthMeters: _draftOpeningWidthMeters,
@@ -1644,6 +1738,21 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
                             _draftOpeningSillHeightMeters = value;
                           });
                           _syncOpeningDraft();
+                        },
+                        onSurfaceThicknessChanged: (value) {
+                          setState(() {
+                            _draftSurfaceThicknessMeters = value;
+                          });
+                        },
+                        onSurfaceHeightChanged: (value) {
+                          setState(() {
+                            _draftSurfaceHeightMeters = value;
+                          });
+                        },
+                        onFloorTopElevationChanged: (value) {
+                          setState(() {
+                            _draftFloorTopElevationMeters = value;
+                          });
                         },
                         onConfirm: _confirmDraft,
                         onCancel: _cancelDraft,
@@ -1871,6 +1980,9 @@ class _DraftEditorCard extends StatefulWidget {
     required this.draftSurfaceStart,
     required this.draftSurfaceEnd,
     required this.draftSurfaceWallCount,
+    required this.draftSurfaceThicknessMeters,
+    required this.draftSurfaceHeightMeters,
+    required this.draftFloorTopElevationMeters,
     required this.draftHostWall,
     required this.openingOffsetMeters,
     required this.openingWidthMeters,
@@ -1884,6 +1996,9 @@ class _DraftEditorCard extends StatefulWidget {
     required this.onOpeningWidthChanged,
     required this.onOpeningHeightChanged,
     required this.onOpeningSillHeightChanged,
+    required this.onSurfaceThicknessChanged,
+    required this.onSurfaceHeightChanged,
+    required this.onFloorTopElevationChanged,
     required this.onConfirm,
     required this.onCancel,
     required this.onClearSelection,
@@ -1896,6 +2011,9 @@ class _DraftEditorCard extends StatefulWidget {
   final RenderScenePoint? draftSurfaceStart;
   final RenderScenePoint? draftSurfaceEnd;
   final int draftSurfaceWallCount;
+  final double draftSurfaceThicknessMeters;
+  final double draftSurfaceHeightMeters;
+  final double draftFloorTopElevationMeters;
   final RenderSceneObject? draftHostWall;
   final double openingOffsetMeters;
   final double openingWidthMeters;
@@ -1909,6 +2027,9 @@ class _DraftEditorCard extends StatefulWidget {
   final ValueChanged<double> onOpeningWidthChanged;
   final ValueChanged<double> onOpeningHeightChanged;
   final ValueChanged<double> onOpeningSillHeightChanged;
+  final ValueChanged<double> onSurfaceThicknessChanged;
+  final ValueChanged<double> onSurfaceHeightChanged;
+  final ValueChanged<double> onFloorTopElevationChanged;
   final VoidCallback onConfirm;
   final VoidCallback onCancel;
   final VoidCallback onClearSelection;
@@ -1919,22 +2040,18 @@ class _DraftEditorCard extends StatefulWidget {
 }
 
 class _DraftEditorCardState extends State<_DraftEditorCard> {
-  late final TextEditingController _offsetController;
-  late final TextEditingController _widthController;
-  late final TextEditingController _heightController;
-  late final TextEditingController _sillController;
+  TextEditingController? _offsetController;
+  TextEditingController? _widthController;
+  TextEditingController? _heightController;
+  TextEditingController? _sillController;
+  TextEditingController? _surfaceThicknessController;
+  TextEditingController? _surfaceHeightController;
+  TextEditingController? _floorTopController;
 
   @override
   void initState() {
     super.initState();
-    _offsetController =
-        TextEditingController(text: _format(widget.openingOffsetMeters));
-    _widthController =
-        TextEditingController(text: _format(widget.openingWidthMeters));
-    _heightController =
-        TextEditingController(text: _format(widget.openingHeightMeters));
-    _sillController =
-        TextEditingController(text: _format(widget.openingSillHeightMeters));
+    _ensureControllers();
   }
 
   @override
@@ -1948,26 +2065,56 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
         oldWidget.openingHeightMeters);
     _syncController(_sillController, widget.openingSillHeightMeters,
         oldWidget.openingSillHeightMeters);
+    _syncController(_surfaceThicknessController, widget.draftSurfaceThicknessMeters,
+        oldWidget.draftSurfaceThicknessMeters);
+    _syncController(_surfaceHeightController, widget.draftSurfaceHeightMeters,
+        oldWidget.draftSurfaceHeightMeters);
+    _syncController(_floorTopController, widget.draftFloorTopElevationMeters,
+        oldWidget.draftFloorTopElevationMeters);
   }
 
   @override
   void dispose() {
-    _offsetController.dispose();
-    _widthController.dispose();
-    _heightController.dispose();
-    _sillController.dispose();
+    _offsetController?.dispose();
+    _widthController?.dispose();
+    _heightController?.dispose();
+    _sillController?.dispose();
+    _surfaceThicknessController?.dispose();
+    _surfaceHeightController?.dispose();
+    _floorTopController?.dispose();
     super.dispose();
   }
 
   void _syncController(
-    TextEditingController controller,
+    TextEditingController? controller,
     double next,
     double previous,
   ) {
+    if (controller == null) {
+      return;
+    }
     if ((next - previous).abs() < 1e-9) {
       return;
     }
     controller.text = _format(next);
+  }
+
+  void _ensureControllers() {
+    _offsetController ??=
+        TextEditingController(text: _format(widget.openingOffsetMeters));
+    _widthController ??=
+        TextEditingController(text: _format(widget.openingWidthMeters));
+    _heightController ??=
+        TextEditingController(text: _format(widget.openingHeightMeters));
+    _sillController ??=
+        TextEditingController(text: _format(widget.openingSillHeightMeters));
+    _surfaceThicknessController ??= TextEditingController(
+      text: _format(widget.draftSurfaceThicknessMeters),
+    );
+    _surfaceHeightController ??=
+        TextEditingController(text: _format(widget.draftSurfaceHeightMeters));
+    _floorTopController ??=
+        TextEditingController(text: _format(widget.draftFloorTopElevationMeters));
   }
 
   String _format(double value) {
@@ -1980,6 +2127,7 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
 
   @override
   Widget build(BuildContext context) {
+    _ensureControllers();
     final theme = Theme.of(context);
     final mode = widget.interactionMode;
     final wall = widget.draftHostWall;
@@ -2014,11 +2162,49 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
           )
         else if (mode == RenderSceneInteractionMode.addFloor ||
             mode == RenderSceneInteractionMode.addCeiling)
-          _SurfaceDraftSummary(
-            mode: mode,
-            start: widget.draftSurfaceStart,
-            end: widget.draftSurfaceEnd,
-            wallCount: widget.draftSurfaceWallCount,
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              _SurfaceDraftSummary(
+                mode: mode,
+                start: widget.draftSurfaceStart,
+                end: widget.draftSurfaceEnd,
+                wallCount: widget.draftSurfaceWallCount,
+              ),
+              const SizedBox(height: 8),
+              _NumericField(
+                label: 'Thickness (m)',
+                controller: _surfaceThicknessController!,
+                onChanged: (value) {
+                  final parsed = _parse(value);
+                  if (parsed != null) {
+                    widget.onSurfaceThicknessChanged(parsed);
+                  }
+                },
+              ),
+              if (mode == RenderSceneInteractionMode.addFloor)
+                _NumericField(
+                  label: 'Top elevation (m)',
+                  controller: _floorTopController!,
+                  onChanged: (value) {
+                    final parsed = _parse(value);
+                    if (parsed != null) {
+                      widget.onFloorTopElevationChanged(parsed);
+                    }
+                  },
+                )
+              else
+                _NumericField(
+                  label: 'Height (m)',
+                  controller: _surfaceHeightController!,
+                  onChanged: (value) {
+                    final parsed = _parse(value);
+                    if (parsed != null) {
+                      widget.onSurfaceHeightChanged(parsed);
+                    }
+                  },
+                ),
+            ],
           )
         else
           Column(
@@ -2031,7 +2217,7 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
               const SizedBox(height: 8),
               _NumericField(
                 label: 'Offset (m)',
-                controller: _offsetController,
+                controller: _offsetController!,
                 onChanged: (value) {
                   final parsed = _parse(value);
                   if (parsed != null) {
@@ -2041,7 +2227,7 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
               ),
               _NumericField(
                 label: 'Width (m)',
-                controller: _widthController,
+                controller: _widthController!,
                 onChanged: (value) {
                   final parsed = _parse(value);
                   if (parsed != null) {
@@ -2051,7 +2237,7 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
               ),
               _NumericField(
                 label: 'Height (m)',
-                controller: _heightController,
+                controller: _heightController!,
                 onChanged: (value) {
                   final parsed = _parse(value);
                   if (parsed != null) {
@@ -2062,7 +2248,7 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
               if (mode == RenderSceneInteractionMode.addWindow)
                 _NumericField(
                   label: 'Sill height (m)',
-                  controller: _sillController,
+                  controller: _sillController!,
                   onChanged: (value) {
                     final parsed = _parse(value);
                     if (parsed != null) {
@@ -2182,7 +2368,7 @@ class _SurfaceDraftSummary extends StatelessWidget {
 
     if (start == null || end == null) {
       return Text(
-        'Bo‘sh joyga 2 marta bosib to‘rtburchak chizing, yoki 2+ devorni tanlab $label yarating.',
+        'Room ustiga bosing yoki bo‘sh joyga 2 marta bosib to‘rtburchak chizing, yoki 2+ devorni tanlab $label yarating.',
       );
     }
 

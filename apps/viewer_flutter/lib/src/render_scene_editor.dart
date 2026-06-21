@@ -101,6 +101,7 @@ class RenderSceneEditor {
     required RenderScene scene,
     required RenderSceneObject room,
     double thicknessMeters = 0.18,
+    double topElevationMeters = 0.0,
     int? levelId,
   }) {
     return _addHorizontalSystemForRoom(
@@ -109,7 +110,7 @@ class RenderSceneEditor {
       kind: 'Floor',
       materialCategory: 'floor',
       thicknessMeters: thicknessMeters,
-      baseZ: room.bounds.min.z,
+      baseZ: topElevationMeters - thicknessMeters,
       levelId: levelId,
     );
   }
@@ -118,16 +119,16 @@ class RenderSceneEditor {
     required RenderScene scene,
     required RenderSceneObject room,
     double thicknessMeters = 0.05,
+    double heightMeters = 3.0,
     int? levelId,
   }) {
-    final roomHeight = math.max(room.bounds.height, 2.8);
     return _addHorizontalSystemForRoom(
       scene: scene,
       room: room,
       kind: 'Ceiling',
       materialCategory: 'ceiling',
       thicknessMeters: thicknessMeters,
-      baseZ: room.bounds.min.z + roomHeight - thicknessMeters,
+      baseZ: room.bounds.min.z + math.max(heightMeters - thicknessMeters, 0.02),
       levelId: levelId,
     );
   }
@@ -136,6 +137,7 @@ class RenderSceneEditor {
     required RenderScene scene,
     required RenderSceneBounds bounds,
     double thicknessMeters = 0.18,
+    double topElevationMeters = 0.0,
     int? levelId,
   }) {
     return _addHorizontalSystemForBounds(
@@ -144,7 +146,7 @@ class RenderSceneEditor {
       kind: 'Floor',
       materialCategory: 'floor',
       thicknessMeters: thicknessMeters,
-      baseZ: bounds.min.z,
+      baseZ: topElevationMeters - thicknessMeters,
       levelId: levelId,
     );
   }
@@ -171,6 +173,7 @@ class RenderSceneEditor {
     required RenderScene scene,
     required List<RenderSceneObject> walls,
     double thicknessMeters = 0.18,
+    double topElevationMeters = 0.0,
     int? levelId,
   }) {
     final bounds = surfaceBoundsForWalls(walls);
@@ -181,6 +184,7 @@ class RenderSceneEditor {
       scene: scene,
       bounds: bounds,
       thicknessMeters: thicknessMeters,
+      topElevationMeters: topElevationMeters,
       levelId: levelId,
     );
   }
