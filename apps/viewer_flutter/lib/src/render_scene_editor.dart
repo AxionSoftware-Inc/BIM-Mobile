@@ -9,6 +9,41 @@ class RenderSceneEditor {
   static const double defaultWallThicknessMeters = 0.30;
   static const double defaultWallHeightMeters = 3.0;
 
+  static List<RenderSceneLevel> levels(RenderScene scene) => scene.levels;
+
+  static RenderSceneLevel? levelById(RenderScene scene, int? levelId) {
+    return scene.levelById(levelId);
+  }
+
+  static RenderScene createLevel({
+    required RenderScene scene,
+    required String name,
+    required double elevationMeters,
+    double defaultWallHeightMeters = defaultWallHeightMeters,
+  }) {
+    final trimmedName = name.trim();
+    if (trimmedName.isEmpty) {
+      return scene;
+    }
+    final map = _sceneMap(scene);
+    final levels = _levelsFromSceneMap(map);
+    final nextLevelId = _nextLevelId(levels);
+    levels.add(
+      <String, Object?>{
+        'level_id': nextLevelId,
+        'name': trimmedName,
+        'elevation_meters': elevationMeters,
+        'default_wall_height_meters': defaultWallHeightMeters,
+      },
+    );
+    levels.sort(
+      (a, b) => (_toDouble(a['elevation_meters']) ?? 0.0)
+          .compareTo(_toDouble(b['elevation_meters']) ?? 0.0),
+    );
+    map['levels'] = levels;
+    return _parseSceneMap(map, source: '${scene.source} + level');
+  }
+
   static RenderScene addWall({
     required RenderScene scene,
     required RenderScenePoint start,
@@ -29,16 +64,21 @@ class RenderSceneEditor {
     final map = _sceneMap(scene);
     final objects = _objectsFromSceneMap(map);
     final nextId = _nextElementId(objects);
+    final resolvedLevelId = levelId ?? _primaryLevelId(scene);
+    final resolvedHeight = heightMeters <= 1e-6
+        ? _levelDefaultWallHeightMeters(scene, resolvedLevelId)
+        : heightMeters;
     final wallObject = _buildWallObject(
       elementId: nextId,
       start: start,
       end: end,
-      heightMeters: heightMeters,
+      heightMeters: resolvedHeight,
       thicknessMeters: thicknessMeters,
-      levelId: levelId ?? _primaryLevelId(scene),
+      levelId: resolvedLevelId,
     );
     objects.add(wallObject);
     _rebuildAllWallObjects(objects);
+    _rebuildDetectedRooms(objects);
     map['objects'] = objects;
     return _parseSceneMap(map, source: '${scene.source} + wall');
   }
@@ -50,6 +90,7 @@ class RenderSceneEditor {
       return scene;
     }
     _rebuildAllWallObjects(objects);
+    _rebuildDetectedRooms(objects);
     map['objects'] = objects;
     return _parseSceneMap(map, source: scene.source);
   }
@@ -483,12 +524,244 @@ class RenderSceneEditor {
       return false;
     });
     _rebuildAllWallObjects(objects);
+    _rebuildDetectedRooms(objects);
     map['objects'] = objects;
     return _parseSceneMap(map, source: '${scene.source} - ${target.kind}');
   }
 
+  static RenderScene setWallAxis({
+    required RenderScene scene,
+    required RenderSceneObject wall,
+    required RenderScenePoint start,
+    required RenderScenePoint end,
+  }) {
+    if (wall.kindKey != 'wall') {
+      return scene;
+    }
+    if (!start.isFinite || !end.isFinite || start.distanceTo(end) < 1e-6) {
+      return scene;
+    }
+
+    final map = _sceneMap(scene);
+    final objects = _objectsFromSceneMap(map);
+    final wallId = wall.elementId;
+    if (wallId == null) {
+      return scene;
+    }
+    final originalGeometry = _wallGeometry(wall);
+    if (originalGeometry == null) {
+      return scene;
+    }
+    final startDelta = start - originalGeometry.start;
+    final endDelta = end - originalGeometry.end;
+
+    final updates = <int, _WallGeometry>{};
+    for (final object in objects) {
+      final objectId =
+          _toInt(object['element_id']) ?? _toInt(object['elementId']);
+      final kind = (object['kind']?.toString() ?? '').toLowerCase();
+      if (objectId == null || kind != 'wall') {
+        continue;
+      }
+      final geometry = _wallGeometryFromMap(object);
+      if (geometry == null) {
+        continue;
+      }
+      if (objectId == wallId) {
+        updates[objectId] = _WallGeometry(
+          start: start,
+          end: end,
+          thickness: geometry.thickness,
+        );
+        continue;
+      }
+
+      var nextStart = geometry.start;
+      var nextEnd = geometry.end;
+      var changed = false;
+      if (_samePoint2(geometry.start, originalGeometry.start)) {
+        nextStart = geometry.start + startDelta;
+        changed = true;
+      } else if (_samePoint2(geometry.start, originalGeometry.end)) {
+        nextStart = geometry.start + endDelta;
+        changed = true;
+      }
+      if (_samePoint2(geometry.end, originalGeometry.start)) {
+        nextEnd = geometry.end + startDelta;
+        changed = true;
+      } else if (_samePoint2(geometry.end, originalGeometry.end)) {
+        nextEnd = geometry.end + endDelta;
+        changed = true;
+      }
+      if (changed) {
+        updates[objectId] = _WallGeometry(
+          start: nextStart,
+          end: nextEnd,
+          thickness: geometry.thickness,
+        );
+      }
+    }
+
+    for (var index = 0; index < objects.length; index += 1) {
+      final objectId =
+          _toInt(objects[index]['element_id']) ?? _toInt(objects[index]['elementId']);
+      final kind = (objects[index]['kind']?.toString() ?? '').toLowerCase();
+      if (objectId == null || kind != 'wall') {
+        continue;
+      }
+      final geometry = _wallGeometryFromMap(objects[index]);
+      final metadataMap =
+          objects[index]['metadata'] is Map ? objects[index]['metadata'] as Map : null;
+      final boundsMap =
+          objects[index]['bounds'] is Map ? objects[index]['bounds'] as Map : null;
+      Map? boundsMax;
+      final rawBoundsMax = boundsMap == null ? null : boundsMap['max'];
+      if (rawBoundsMax is Map) {
+        boundsMax = rawBoundsMax;
+      }
+      final heightMeters =
+          _toDouble(metadataMap?['height_meters']) ?? _toDouble(boundsMax?['z']) ?? defaultWallHeightMeters;
+      final thicknessMeters = geometry?.thickness ?? defaultWallThicknessMeters;
+      final levelId =
+          _toInt(objects[index]['level_id']) ?? _toInt(objects[index]['levelId']);
+      final nextGeometry = updates[objectId];
+      if (nextGeometry == null) {
+        continue;
+      }
+      objects[index] = _buildWallObject(
+        elementId: objectId,
+        start: nextGeometry.start,
+        end: nextGeometry.end,
+        heightMeters: heightMeters,
+        thicknessMeters: thicknessMeters,
+        levelId: levelId,
+      );
+    }
+    _rebuildAllWallObjects(objects);
+    _rebuildDetectedRooms(objects);
+    map['objects'] = objects;
+    return _parseSceneMap(map, source: '${scene.source} ~ wall');
+  }
+
+  static RenderScene moveOpening({
+    required RenderScene scene,
+    required RenderSceneObject opening,
+    required double offsetMeters,
+  }) {
+    if (opening.kindKey != 'door' && opening.kindKey != 'window') {
+      return scene;
+    }
+
+    final openingId = opening.elementId;
+    if (openingId == null) {
+      return scene;
+    }
+    final map = _sceneMap(scene);
+    final objects = _objectsFromSceneMap(map);
+    for (final object in objects) {
+      final objectId = _toInt(object['element_id']) ?? _toInt(object['elementId']);
+      if (objectId != openingId) {
+        continue;
+      }
+      final metadata =
+          object['metadata'] is Map ? Map<String, Object?>.from((object['metadata'] as Map).cast<String, Object?>()) : <String, Object?>{};
+      metadata['offset_meters'] = offsetMeters;
+      object['metadata'] = metadata;
+      _rebuildAllWallObjects(objects);
+      map['objects'] = objects;
+      return _parseSceneMap(map, source: '${scene.source} ~ opening');
+    }
+    return scene;
+  }
+
+  static RenderScene synchronizeAutoRoomSurfaces({
+    required RenderScene scene,
+    bool includeFloors = true,
+    bool includeCeilings = true,
+    double floorThicknessMeters = 0.18,
+    double floorTopElevationMeters = 0.0,
+    double ceilingThicknessMeters = 0.05,
+    double ceilingHeightMeters = 3.0,
+  }) {
+    final map = _sceneMap(scene);
+    final objects = _objectsFromSceneMap(map);
+    objects.removeWhere((object) {
+      final kind = (object['kind']?.toString() ?? '').toLowerCase();
+      if (kind != 'floor' && kind != 'ceiling') {
+        return false;
+      }
+      final metadata = object['metadata'];
+      if (metadata is! Map) {
+        return false;
+      }
+      return metadata['auto_generated_from_room'] == true;
+    });
+
+    final rooms = objects
+        .where((object) => (object['kind']?.toString() ?? '').toLowerCase() == 'room')
+        .map(
+          (object) => RenderSceneObject.fromJson(
+            object,
+            <String>[],
+            <String>[],
+          ),
+        )
+        .whereType<RenderSceneObject>()
+        .toList(growable: false);
+    final baseScene = _parseSceneMap(map, source: scene.source);
+    var nextScene = baseScene;
+    for (final room in rooms) {
+      if (includeFloors) {
+        nextScene = addFloorForRoom(
+          scene: nextScene,
+          room: room,
+          thicknessMeters: floorThicknessMeters,
+          topElevationMeters: room.bounds.min.z + floorTopElevationMeters,
+        );
+      }
+      if (includeCeilings) {
+        nextScene = addCeilingForRoom(
+          scene: nextScene,
+          room: room,
+          thicknessMeters: ceilingThicknessMeters,
+          heightMeters: ceilingHeightMeters,
+        );
+      }
+    }
+
+    final nextMap = _sceneMap(nextScene);
+    final nextObjects = _objectsFromSceneMap(nextMap);
+    for (final object in nextObjects) {
+      final kind = (object['kind']?.toString() ?? '').toLowerCase();
+      if (kind != 'floor' && kind != 'ceiling') {
+        continue;
+      }
+      final metadata =
+          object['metadata'] is Map ? Map<String, Object?>.from((object['metadata'] as Map).cast<String, Object?>()) : <String, Object?>{};
+      if (metadata.containsKey('source_room_id')) {
+        metadata['auto_generated_from_room'] = true;
+        object['metadata'] = metadata;
+      }
+    }
+    nextMap['objects'] = nextObjects;
+    return _parseSceneMap(nextMap, source: '${scene.source} ~ auto surfaces');
+  }
+
   static Map<String, Object?> _sceneMap(RenderScene scene) {
     return Map<String, Object?>.from(scene.toJson());
+  }
+
+  static List<Map<String, Object?>> _levelsFromSceneMap(Map<String, Object?> map) {
+    final rawLevels = map['levels'];
+    if (rawLevels is! List) {
+      return <Map<String, Object?>>[];
+    }
+    return rawLevels
+        .whereType<Map>()
+        .map(
+          (entry) => Map<String, Object?>.from(entry.cast<String, Object?>()),
+        )
+        .toList(growable: true);
   }
 
   static List<Map<String, Object?>> _objectsFromSceneMap(
@@ -505,6 +778,17 @@ class RenderSceneEditor {
         .toList(growable: true);
   }
 
+  static int _nextLevelId(List<Map<String, Object?>> levels) {
+    var nextId = 1;
+    for (final level in levels) {
+      final id = _toInt(level['level_id']) ?? _toInt(level['levelId']);
+      if (id != null && id >= nextId) {
+        nextId = id + 1;
+      }
+    }
+    return nextId;
+  }
+
   static int _nextElementId(List<Map<String, Object?>> objects) {
     var nextId = 1;
     for (final object in objects) {
@@ -517,6 +801,9 @@ class RenderSceneEditor {
   }
 
   static int? _primaryLevelId(RenderScene scene) {
+    if (scene.levels.isNotEmpty) {
+      return scene.levels.first.levelId;
+    }
     final counts = <int, int>{};
     for (final object in scene.objects) {
       final levelId = object.levelId;
@@ -533,6 +820,11 @@ class RenderSceneEditor {
     return counts.entries.reduce((a, b) => a.value >= b.value ? a : b).key;
   }
 
+  static double _levelDefaultWallHeightMeters(RenderScene scene, int? levelId) {
+    final level = scene.levelById(levelId);
+    return level?.defaultWallHeightMeters ?? defaultWallHeightMeters;
+  }
+
   static RenderScene _parseSceneMap(Map<String, Object?> map,
       {required String source}) {
     final result = parseRenderSceneJson(jsonEncode(map), source: source);
@@ -546,6 +838,14 @@ class RenderSceneEditor {
           indexCount: 0,
           bounds: RenderSceneBounds.zero(),
           objects: const <RenderSceneObject>[],
+          levels: const <RenderSceneLevel>[
+            RenderSceneLevel(
+              levelId: 1,
+              name: 'Level 1',
+              elevationMeters: 0.0,
+              defaultWallHeightMeters: defaultWallHeightMeters,
+            ),
+          ],
           source: source,
           diagnostics: const RenderSceneDiagnostics(
             source: 'editor',
@@ -602,7 +902,8 @@ class RenderSceneEditor {
       geometry.thickness,
     );
     final halfThickness = panelThickness * 0.5;
-    final lowerZ = math.max(0.0, sillHeightMeters);
+    final wallBaseZ = geometry.start.z;
+    final lowerZ = wallBaseZ + math.max(0.0, sillHeightMeters);
     final upperZ = lowerZ + heightMeters;
 
     final bottom0 = startPoint + wallNormal.scale(halfThickness);
@@ -876,6 +1177,7 @@ class RenderSceneEditor {
   }) {
     final axis = end - start;
     final length = start.distanceTo(end);
+    final baseZ = ((start.z + end.z) * 0.5).isFinite ? (start.z + end.z) * 0.5 : 0.0;
     final axisUnit = axis.scale(1.0 / math.max(length, 1e-9));
     final normal = RenderScenePoint(x: -axisUnit.y, y: axisUnit.x, z: 0);
     final halfThickness = thicknessMeters * 0.5;
@@ -883,15 +1185,19 @@ class RenderSceneEditor {
     final lower1 = end + normal.scale(halfThickness);
     final lower2 = end - normal.scale(halfThickness);
     final lower3 = start - normal.scale(halfThickness);
-    final upper0 = RenderScenePoint(x: lower0.x, y: lower0.y, z: heightMeters);
-    final upper1 = RenderScenePoint(x: lower1.x, y: lower1.y, z: heightMeters);
-    final upper2 = RenderScenePoint(x: lower2.x, y: lower2.y, z: heightMeters);
-    final upper3 = RenderScenePoint(x: lower3.x, y: lower3.y, z: heightMeters);
+    final upper0 =
+        RenderScenePoint(x: lower0.x, y: lower0.y, z: baseZ + heightMeters);
+    final upper1 =
+        RenderScenePoint(x: lower1.x, y: lower1.y, z: baseZ + heightMeters);
+    final upper2 =
+        RenderScenePoint(x: lower2.x, y: lower2.y, z: baseZ + heightMeters);
+    final upper3 =
+        RenderScenePoint(x: lower3.x, y: lower3.y, z: baseZ + heightMeters);
     final positions = <RenderScenePoint>[
-      RenderScenePoint(x: lower0.x, y: lower0.y, z: 0),
-      RenderScenePoint(x: lower1.x, y: lower1.y, z: 0),
-      RenderScenePoint(x: lower2.x, y: lower2.y, z: 0),
-      RenderScenePoint(x: lower3.x, y: lower3.y, z: 0),
+      RenderScenePoint(x: lower0.x, y: lower0.y, z: baseZ),
+      RenderScenePoint(x: lower1.x, y: lower1.y, z: baseZ),
+      RenderScenePoint(x: lower2.x, y: lower2.y, z: baseZ),
+      RenderScenePoint(x: lower3.x, y: lower3.y, z: baseZ),
       upper0,
       upper1,
       upper2,
@@ -1080,6 +1386,351 @@ class RenderSceneEditor {
     }
   }
 
+  static void _rebuildDetectedRooms(List<Map<String, Object?>> objects) {
+    objects.removeWhere(
+      (object) => (object['kind']?.toString() ?? '').toLowerCase() == 'room',
+    );
+
+    final wallsByLevel = <int?, List<_WallEntry>>{};
+    for (final object in objects) {
+      final objectId = _toInt(object['element_id']) ?? _toInt(object['elementId']);
+      final kind = (object['kind']?.toString() ?? '').toLowerCase();
+      if (objectId == null || kind != 'wall') {
+        continue;
+      }
+      final geometry = _wallGeometryFromMap(object);
+      if (geometry == null) {
+        continue;
+      }
+      final metadataMap =
+          object['metadata'] is Map ? object['metadata'] as Map : null;
+      final boundsMap =
+          object['bounds'] is Map ? object['bounds'] as Map : null;
+      Map? boundsMax;
+      final rawBoundsMax = boundsMap == null ? null : boundsMap['max'];
+      if (rawBoundsMax is Map) {
+        boundsMax = rawBoundsMax;
+      }
+      final heightMeters = _toDouble(metadataMap?['height_meters']) ??
+          _toDouble(boundsMax?['z']) ??
+          defaultWallHeightMeters;
+      final levelId = _toInt(object['level_id']) ?? _toInt(object['levelId']);
+      wallsByLevel.putIfAbsent(levelId, () => <_WallEntry>[]).add(
+        _WallEntry(
+          objectId: objectId,
+          objectMap: object,
+          geometry: geometry,
+          heightMeters: heightMeters,
+        ),
+      );
+    }
+    var nextId = _nextElementId(objects);
+    for (final entry in wallsByLevel.entries) {
+      final walls = entry.value;
+      if (walls.length < 4) {
+        continue;
+      }
+
+      final xs = <double>{
+        for (final wall in walls) wall.geometry.start.x,
+        for (final wall in walls) wall.geometry.end.x,
+      }.toList()
+        ..sort();
+      final ys = <double>{
+        for (final wall in walls) wall.geometry.start.y,
+        for (final wall in walls) wall.geometry.end.y,
+      }.toList()
+        ..sort();
+      if (xs.length < 2 || ys.length < 2) {
+        continue;
+      }
+
+      final cellColumns = xs.length - 1;
+      final cellRows = ys.length - 1;
+      final validCell = List<List<bool>>.generate(
+        cellColumns,
+        (i) => List<bool>.generate(
+          cellRows,
+          (j) =>
+              (xs[i + 1] - xs[i]).abs() > 1e-6 &&
+              (ys[j + 1] - ys[j]).abs() > 1e-6,
+        ),
+      );
+      final outside = List<List<bool>>.generate(
+        cellColumns,
+        (_) => List<bool>.filled(cellRows, false),
+      );
+
+      final queue = <_GridCell>[];
+      for (var i = 0; i < cellColumns; i += 1) {
+        for (var j = 0; j < cellRows; j += 1) {
+          if (!validCell[i][j]) {
+            continue;
+          }
+          if (i == 0 || j == 0 || i == cellColumns - 1 || j == cellRows - 1) {
+            outside[i][j] = true;
+            queue.add(_GridCell(i, j));
+          }
+        }
+      }
+
+      while (queue.isNotEmpty) {
+        final cell = queue.removeLast();
+        final i = cell.i;
+        final j = cell.j;
+        void tryVisit(int ni, int nj, bool blocked) {
+          if (ni < 0 ||
+              nj < 0 ||
+              ni >= cellColumns ||
+              nj >= cellRows ||
+              !validCell[ni][nj] ||
+              outside[ni][nj] ||
+              blocked) {
+            return;
+          }
+          outside[ni][nj] = true;
+          queue.add(_GridCell(ni, nj));
+        }
+
+        tryVisit(
+          i - 1,
+          j,
+          _blockingWallsVertical(walls, xs[i], ys[j], ys[j + 1]).isNotEmpty,
+        );
+        tryVisit(
+          i + 1,
+          j,
+          _blockingWallsVertical(walls, xs[i + 1], ys[j], ys[j + 1]).isNotEmpty,
+        );
+        tryVisit(
+          i,
+          j - 1,
+          _blockingWallsHorizontal(walls, ys[j], xs[i], xs[i + 1]).isNotEmpty,
+        );
+        tryVisit(
+          i,
+          j + 1,
+          _blockingWallsHorizontal(walls, ys[j + 1], xs[i], xs[i + 1]).isNotEmpty,
+        );
+      }
+
+      final visited = List<List<bool>>.generate(
+        cellColumns,
+        (_) => List<bool>.filled(cellRows, false),
+      );
+      for (var startI = 0; startI < cellColumns; startI += 1) {
+        for (var startJ = 0; startJ < cellRows; startJ += 1) {
+          if (!validCell[startI][startJ] ||
+              outside[startI][startJ] ||
+              visited[startI][startJ]) {
+            continue;
+          }
+          final cluster = <_GridCell>[];
+          final roomQueue = <_GridCell>[_GridCell(startI, startJ)];
+          visited[startI][startJ] = true;
+          while (roomQueue.isNotEmpty) {
+            final cell = roomQueue.removeLast();
+            cluster.add(cell);
+            final i = cell.i;
+            final j = cell.j;
+            void tryRoom(int ni, int nj, bool blocked) {
+              if (ni < 0 ||
+                  nj < 0 ||
+                  ni >= cellColumns ||
+                  nj >= cellRows ||
+                  !validCell[ni][nj] ||
+                  outside[ni][nj] ||
+                  visited[ni][nj] ||
+                  blocked) {
+                return;
+              }
+              visited[ni][nj] = true;
+              roomQueue.add(_GridCell(ni, nj));
+            }
+
+            tryRoom(
+              i - 1,
+              j,
+              _blockingWallsVertical(walls, xs[i], ys[j], ys[j + 1]).isNotEmpty,
+            );
+            tryRoom(
+              i + 1,
+              j,
+              _blockingWallsVertical(walls, xs[i + 1], ys[j], ys[j + 1]).isNotEmpty,
+            );
+            tryRoom(
+              i,
+              j - 1,
+              _blockingWallsHorizontal(walls, ys[j], xs[i], xs[i + 1]).isNotEmpty,
+            );
+            tryRoom(
+              i,
+              j + 1,
+              _blockingWallsHorizontal(walls, ys[j + 1], xs[i], xs[i + 1]).isNotEmpty,
+            );
+          }
+
+          if (cluster.isEmpty) {
+            continue;
+          }
+
+          final roomMap = _buildRoomObjectFromCells(
+            elementId: nextId++,
+            cells: cluster,
+            xs: xs,
+            ys: ys,
+            walls: walls,
+          );
+          if (roomMap != null) {
+            objects.add(roomMap);
+          }
+        }
+      }
+    }
+  }
+
+  static Map<String, Object?>? _buildRoomObjectFromCells({
+    required int elementId,
+    required List<_GridCell> cells,
+    required List<double> xs,
+    required List<double> ys,
+    required List<_WallEntry> walls,
+  }) {
+    if (cells.isEmpty) {
+      return null;
+    }
+    final cellSet = cells.map((cell) => '${cell.i}:${cell.j}').toSet();
+    final positions = <RenderScenePoint>[];
+    final indices = <int>[];
+    final boundaryWallIds = <int>{};
+    final levelId =
+        walls.isEmpty ? null : _toInt(walls.first.objectMap['level_id']);
+    final baseZ = walls.isEmpty ? 0.0 : walls.first.geometry.start.z;
+    var area = 0.0;
+    var perimeter = 0.0;
+    var minX = double.infinity;
+    var minY = double.infinity;
+    var maxX = double.negativeInfinity;
+    var maxY = double.negativeInfinity;
+
+    for (final cell in cells) {
+      final x0 = xs[cell.i];
+      final x1 = xs[cell.i + 1];
+      final y0 = ys[cell.j];
+      final y1 = ys[cell.j + 1];
+      final width = x1 - x0;
+      final depth = y1 - y0;
+      area += width * depth;
+      minX = math.min(minX, x0);
+      minY = math.min(minY, y0);
+      maxX = math.max(maxX, x1);
+      maxY = math.max(maxY, y1);
+
+      final base = positions.length;
+      positions.addAll(<RenderScenePoint>[
+        RenderScenePoint(x: x0, y: y0, z: baseZ + 0.01),
+        RenderScenePoint(x: x1, y: y0, z: baseZ + 0.01),
+        RenderScenePoint(x: x1, y: y1, z: baseZ + 0.01),
+        RenderScenePoint(x: x0, y: y1, z: baseZ + 0.01),
+      ]);
+      indices.addAll(<int>[base, base + 2, base + 1, base, base + 3, base + 2]);
+
+      final leftKey = '${cell.i - 1}:${cell.j}';
+      if (!cellSet.contains(leftKey)) {
+        perimeter += depth;
+        boundaryWallIds.addAll(_blockingWallsVertical(walls, x0, y0, y1));
+      }
+      final rightKey = '${cell.i + 1}:${cell.j}';
+      if (!cellSet.contains(rightKey)) {
+        perimeter += depth;
+        boundaryWallIds.addAll(_blockingWallsVertical(walls, x1, y0, y1));
+      }
+      final bottomKey = '${cell.i}:${cell.j - 1}';
+      if (!cellSet.contains(bottomKey)) {
+        perimeter += width;
+        boundaryWallIds.addAll(_blockingWallsHorizontal(walls, y0, x0, x1));
+      }
+      final topKey = '${cell.i}:${cell.j + 1}';
+      if (!cellSet.contains(topKey)) {
+        perimeter += width;
+        boundaryWallIds.addAll(_blockingWallsHorizontal(walls, y1, x0, x1));
+      }
+    }
+
+    final bounds = RenderSceneBounds.normalized(
+      min: RenderScenePoint(x: minX, y: minY, z: baseZ),
+      max: RenderScenePoint(x: maxX, y: maxY, z: baseZ + 0.02),
+    );
+    return <String, Object?>{
+      'element_id': elementId,
+      'kind': 'Room',
+      'level_id': levelId,
+      'selectable': true,
+      'visible_by_default': true,
+      'revision': 1,
+      'bounds': bounds.toJson(),
+      'mesh': <String, Object?>{
+        'positions': positions.map((point) => point.toJson()).toList(),
+        'indices': indices,
+      },
+      'material_category': 'room',
+      'metadata': <String, Object?>{
+        'area_m2': area,
+        'perimeter_m': perimeter,
+        'boundary_wall_ids': boundaryWallIds.toList()..sort(),
+        'cell_count': cells.length,
+      },
+    };
+  }
+
+  static List<int> _blockingWallsVertical(
+    List<_WallEntry> walls,
+    double x,
+    double y0,
+    double y1,
+  ) {
+    final ids = <int>[];
+    for (final wall in walls) {
+      final geometry = wall.geometry;
+      if ((geometry.start.x - geometry.end.x).abs() > 1e-6) {
+        continue;
+      }
+      if ((geometry.start.x - x).abs() > 1e-6) {
+        continue;
+      }
+      final wallMinY = math.min(geometry.start.y, geometry.end.y);
+      final wallMaxY = math.max(geometry.start.y, geometry.end.y);
+      if (wallMinY <= y0 + 1e-6 && wallMaxY >= y1 - 1e-6) {
+        ids.add(wall.objectId);
+      }
+    }
+    return ids;
+  }
+
+  static List<int> _blockingWallsHorizontal(
+    List<_WallEntry> walls,
+    double y,
+    double x0,
+    double x1,
+  ) {
+    final ids = <int>[];
+    for (final wall in walls) {
+      final geometry = wall.geometry;
+      if ((geometry.start.y - geometry.end.y).abs() > 1e-6) {
+        continue;
+      }
+      if ((geometry.start.y - y).abs() > 1e-6) {
+        continue;
+      }
+      final wallMinX = math.min(geometry.start.x, geometry.end.x);
+      final wallMaxX = math.max(geometry.start.x, geometry.end.x);
+      if (wallMinX <= x0 + 1e-6 && wallMaxX >= x1 - 1e-6) {
+        ids.add(wall.objectId);
+      }
+    }
+    return ids;
+  }
+
   static _ResolvedOpeningSpec? _resolveOpeningSpec({
     required Map<String, Object?> openingObject,
     required List<_WallEntry> allWalls,
@@ -1110,8 +1761,8 @@ class RenderSceneEditor {
     final width = _toDouble(metadata?['width_meters']) ??
         _openingWidthAlongWall(hostWall.geometry, openingBounds);
     final height = _toDouble(metadata?['height_meters']) ?? openingBounds.height;
-    final sill =
-        _toDouble(metadata?['sill_height_meters']) ?? openingBounds.min.z;
+    final sill = _toDouble(metadata?['sill_height_meters']) ??
+        (openingBounds.min.z - hostWall.geometry.start.z);
     if (height <= 1e-6 || width <= 1e-6) {
       return null;
     }
@@ -1150,8 +1801,10 @@ class RenderSceneEditor {
         RenderScenePoint(x: center.x, y: center.y, z: projected.z),
       );
       final tolerance = math.max(wall.geometry.thickness, 0.25);
-      final overlapsHeight = openingBounds.min.z < wall.heightMeters &&
-          openingBounds.max.z > 0.0;
+      final wallBaseZ = wall.geometry.start.z;
+      final overlapsHeight =
+          openingBounds.min.z < wallBaseZ + wall.heightMeters &&
+              openingBounds.max.z > wallBaseZ;
       if (distance <= tolerance && overlapsHeight && distance < bestDistance) {
         bestDistance = distance;
         bestWall = wall;
@@ -1236,7 +1889,7 @@ class RenderSceneEditor {
       return RenderScenePoint(
         x: geometry.start.x + axisUnit.x * localX + normal.x * localY,
         y: geometry.start.y + axisUnit.y * localX + normal.y * localY,
-        z: localZ,
+        z: geometry.start.z + localZ,
       );
     }
 
@@ -1547,7 +2200,14 @@ class RenderSceneEditor {
       final joinPoint = sharedAtStart ? wall.geometry.start : wall.geometry.end;
       final otherDirection = _directionAwayFrom(joinPoint, other.geometry);
       final turn = _cross2(direction, otherDirection);
+      final alignment = _dot2(direction, otherDirection).abs();
       if (turn.abs() <= 1e-9) {
+        continue;
+      }
+      // Restrict miter extension to roughly orthogonal joins.
+      // Diagonal/acute joins looked visually "fatter" in top view because
+      // the simple profile extender over-expanded the footprint.
+      if (alignment > 0.35) {
         continue;
       }
 
@@ -1601,6 +2261,10 @@ class RenderSceneEditor {
 
   static double _cross2(RenderScenePoint a, RenderScenePoint b) {
     return (a.x * b.y) - (a.y * b.x);
+  }
+
+  static double _dot2(RenderScenePoint a, RenderScenePoint b) {
+    return (a.x * b.x) + (a.y * b.y);
   }
 
   static RenderScenePoint _unit2(RenderScenePoint vector) {
@@ -1846,6 +2510,13 @@ class _BuiltMeshResult {
 
   final Map<String, Object?> mesh;
   final RenderSceneBounds bounds;
+}
+
+class _GridCell {
+  const _GridCell(this.i, this.j);
+
+  final int i;
+  final int j;
 }
 
 class _ResolvedOpeningSpec {

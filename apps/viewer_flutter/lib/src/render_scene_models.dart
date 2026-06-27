@@ -257,6 +257,54 @@ class RenderSceneMesh {
 }
 
 @immutable
+class RenderSceneLevel {
+  const RenderSceneLevel({
+    required this.levelId,
+    required this.name,
+    required this.elevationMeters,
+    required this.defaultWallHeightMeters,
+  });
+
+  final int levelId;
+  final String name;
+  final double elevationMeters;
+  final double defaultWallHeightMeters;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+        'level_id': levelId,
+        'name': name,
+        'elevation_meters': elevationMeters,
+        'default_wall_height_meters': defaultWallHeightMeters,
+      };
+
+  static RenderSceneLevel? fromJson(Object? value) {
+    if (value is! Map) {
+      return null;
+    }
+    final levelId = _toNullableInt(value['level_id'] ?? value['levelId']);
+    if (levelId == null) {
+      return null;
+    }
+    return RenderSceneLevel(
+      levelId: levelId,
+      name: toSceneString(
+        value['name'],
+        fallback: 'Level $levelId',
+      ),
+      elevationMeters: _toFiniteDouble(
+            value['elevation_meters'] ?? value['elevationMeters'],
+          ) ??
+          0.0,
+      defaultWallHeightMeters: _toFiniteDouble(
+            value['default_wall_height_meters'] ??
+                value['defaultWallHeightMeters'],
+          ) ??
+          3.0,
+    );
+  }
+}
+
+@immutable
 class RenderSceneObject {
   const RenderSceneObject({
     required this.elementId,
@@ -416,6 +464,7 @@ class RenderScene {
     required this.indexCount,
     required this.bounds,
     required this.objects,
+    required this.levels,
     required this.source,
     required this.diagnostics,
   });
@@ -428,6 +477,7 @@ class RenderScene {
   final int indexCount;
   final RenderSceneBounds bounds;
   final List<RenderSceneObject> objects;
+  final List<RenderSceneLevel> levels;
   final String source;
   final RenderSceneDiagnostics diagnostics;
 
@@ -468,6 +518,51 @@ class RenderScene {
     return null;
   }
 
+  RenderSceneLevel? levelById(int? levelId) {
+    if (levelId == null) {
+      return null;
+    }
+    for (final level in levels) {
+      if (level.levelId == levelId) {
+        return level;
+      }
+    }
+    return null;
+  }
+
+  RenderScene filteredByLevel(
+    int? levelId, {
+    bool includeUnassigned = false,
+  }) {
+    if (levelId == null) {
+      return this;
+    }
+    final filteredObjects = objects
+        .where(
+          (object) =>
+              object.levelId == levelId ||
+              (includeUnassigned && object.levelId == null),
+        )
+        .toList(growable: false);
+    final vertexCount =
+        filteredObjects.fold<int>(0, (sum, object) => sum + object.mesh.positions.length);
+    final indexCount =
+        filteredObjects.fold<int>(0, (sum, object) => sum + object.mesh.indices.length);
+    final result = parseRenderSceneJson(
+      jsonEncode(
+        <String, Object?>{
+          ...toJson(),
+          'object_count': filteredObjects.length,
+          'vertex_count': vertexCount,
+          'index_count': indexCount,
+          'objects': filteredObjects.map((object) => object.toJson()).toList(),
+        },
+      ),
+      source: '$source @ level $levelId',
+    );
+    return result.scene ?? this;
+  }
+
   Map<String, Object?> toJson() => <String, Object?>{
         'scene_version': sceneVersion,
         'units': units,
@@ -476,6 +571,7 @@ class RenderScene {
         'vertex_count': vertexCount,
         'index_count': indexCount,
         'bounds': bounds.toJson(),
+        'levels': levels.map((level) => level.toJson()).toList(),
         'objects': objects.map((object) => object.toJson()).toList(),
       };
 }
@@ -529,6 +625,17 @@ RenderSceneLoadResult parseRenderSceneJson(
     }
   } else {
     warnings.add('RenderScene payload from $source had no object list.');
+  }
+
+  final levels = <RenderSceneLevel>[];
+  final rawLevels = decoded['levels'];
+  if (rawLevels is List) {
+    for (final entry in rawLevels) {
+      final level = RenderSceneLevel.fromJson(entry);
+      if (level != null) {
+        levels.add(level);
+      }
+    }
   }
 
   final derivedBounds = RenderSceneBounds.union(
@@ -627,12 +734,44 @@ RenderSceneLoadResult parseRenderSceneJson(
       indexCount: indexCount,
       bounds: derivedBounds,
       objects: objects,
+      levels: levels.isNotEmpty
+          ? (levels.toList()..sort((a, b) => a.elevationMeters.compareTo(b.elevationMeters)))
+          : _inferLevelsFromObjects(objects),
       source: source,
       diagnostics: diagnostics,
     ),
     warnings: warnings,
     errors: errors,
   );
+}
+
+List<RenderSceneLevel> _inferLevelsFromObjects(List<RenderSceneObject> objects) {
+  final levelIds = <int>{};
+  for (final object in objects) {
+    if (object.levelId != null) {
+      levelIds.add(object.levelId!);
+    }
+  }
+  final sorted = levelIds.toList()..sort();
+  if (sorted.isEmpty) {
+    return const <RenderSceneLevel>[
+      RenderSceneLevel(
+        levelId: 1,
+        name: 'Level 1',
+        elevationMeters: 0.0,
+        defaultWallHeightMeters: 3.0,
+      ),
+    ];
+  }
+  return <RenderSceneLevel>[
+    for (final levelId in sorted)
+      RenderSceneLevel(
+        levelId: levelId,
+        name: 'Level $levelId',
+        elevationMeters: 0.0,
+        defaultWallHeightMeters: 3.0,
+      ),
+  ];
 }
 
 String normalizeSceneKind(String value) {

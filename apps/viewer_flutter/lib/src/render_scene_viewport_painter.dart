@@ -163,6 +163,7 @@ class FallbackRenderScenePainter extends CustomPainter {
     }
 
     _drawLabels(canvas, projection, filteredObjects);
+    _drawSelectedWallHandles(canvas, projection);
     _drawDraftOverlay(canvas, projection);
 
     canvas.drawRect(
@@ -736,6 +737,38 @@ class FallbackRenderScenePainter extends CustomPainter {
       final b = projection.project(RenderScenePoint(x: maxX, y: y, z: 0));
       canvas.drawLine(a.screen, b.screen, paint);
     }
+  }
+
+  void _drawSelectedWallHandles(
+    Canvas canvas,
+    RenderSceneProjection projection,
+  ) {
+    if (projectionMode != RenderSceneProjectionMode.topDown ||
+        selectedElementId == null) {
+      return;
+    }
+    final object = scene.objectByStableId(selectedElementId!);
+    if (object == null || object.kindKey != 'wall') {
+      return;
+    }
+    final start = RenderSceneEditor.wallStartPoint(object);
+    final end = RenderSceneEditor.wallEndPoint(object);
+    if (start == null || end == null) {
+      return;
+    }
+    final startScreen = projection.project(start).screen;
+    final endScreen = projection.project(end).screen;
+    final fill = Paint()
+      ..style = PaintingStyle.fill
+      ..color = const Color(0xFFFFFFFF);
+    final stroke = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.0
+      ..color = const Color(0xFF2563EB);
+    canvas.drawCircle(startScreen, 6.5, fill);
+    canvas.drawCircle(startScreen, 6.5, stroke);
+    canvas.drawCircle(endScreen, 6.5, fill);
+    canvas.drawCircle(endScreen, 6.5, stroke);
   }
 
   void _drawAxes(Canvas canvas, RenderSceneProjection projection) {

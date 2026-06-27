@@ -30,6 +30,8 @@ enum RenderSceneInteractionMode {
   addWall,
   addDoor,
   addWindow,
+  moveWall,
+  moveOpening,
   addFloor,
   addCeiling,
 }

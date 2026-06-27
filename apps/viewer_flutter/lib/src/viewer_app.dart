@@ -4,12 +4,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'render_scene_editor.dart';
+import 'render_scene_estimator.dart';
 import 'render_scene_models.dart';
 import 'render_scene_repository.dart';
 import 'render_scene_viewport.dart';
 
 class _DeleteSelectionIntent extends Intent {
   const _DeleteSelectionIntent();
+}
+
+enum _WallMoveMode {
+  translate,
+  startHandle,
+  endHandle,
 }
 
 class ViewerApp extends StatelessWidget {
@@ -80,12 +87,16 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   String? _loadError;
   bool _isBusy = false;
   bool _showInspector = true;
-  bool _showObjectList = true;
+  bool _showObjectList = false;
   bool _showDiagnostics = false;
+  bool _autoRoomSurfacesEnabled = true;
+  RenderSceneEstimateCatalog _estimateCatalog =
+      const RenderSceneEstimateCatalog();
+  int? _activeLevelId;
 
   RenderSceneProjectionMode _projectionMode = RenderSceneProjectionMode.topDown;
   RenderSceneOrbitProjectionStyle _orbitProjectionStyle =
-      RenderSceneOrbitProjectionStyle.orthographic;
+      RenderSceneOrbitProjectionStyle.perspective;
   RenderSceneDisplayStyle _displayStyle = RenderSceneDisplayStyle.solid;
   RenderSceneInteractionMode _interactionMode =
       RenderSceneInteractionMode.select;
@@ -95,6 +106,11 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   RenderScenePoint? _draftSurfaceEnd;
   final Set<int> _draftSurfaceWallIds = <int>{};
   RenderSceneObject? _draftHostWall;
+  RenderSceneObject? _draftMoveTarget;
+  RenderScenePoint? _moveAnchorPoint;
+  RenderScenePoint? _moveWallOriginalStart;
+  RenderScenePoint? _moveWallOriginalEnd;
+  _WallMoveMode _wallMoveMode = _WallMoveMode.translate;
   double _draftOpeningOffsetMeters = 1.0;
   double _draftOpeningWidthMeters = 0.9;
   double _draftOpeningHeightMeters = 2.1;
@@ -220,9 +236,15 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       _isBusy = false;
 
       if (scene != null) {
+        _activeLevelId = _resolveInitialLevelId(scene, preferred: _activeLevelId);
+        final activeLevel = scene.levelById(_activeLevelId) ??
+            (scene.levels.isNotEmpty ? scene.levels.first : null);
+        _draftFloorTopElevationMeters = activeLevel?.elevationMeters ?? 0.0;
+        _draftSurfaceHeightMeters =
+            activeLevel?.defaultWallHeightMeters ?? _defaultWallHeightMeters;
         _visibleKinds = _sanitizeVisibleKinds(
           visibleKinds: _visibleKinds,
-          scene: scene,
+          scene: _sceneForViewport(scene),
         );
       }
     });
@@ -232,7 +254,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       return;
     }
 
-    await _viewportController.loadRenderScene(scene);
+    await _viewportController.loadRenderScene(_sceneForViewport(scene));
     await _viewportController.setVisibleKinds(_visibleKinds);
     await _viewportController.setProjectionMode(_projectionMode);
     await _viewportController.setOrbitProjectionStyle(_orbitProjectionStyle);
@@ -253,6 +275,65 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
 
     final available = scene.kindCounts.keys.toSet();
     return visibleKinds.intersection(available);
+  }
+
+  int? _resolveInitialLevelId(RenderScene scene, {int? preferred}) {
+    final levels = scene.levels;
+    if (levels.isEmpty) {
+      return preferred;
+    }
+    if (preferred != null && scene.levelById(preferred) != null) {
+      return preferred;
+    }
+    return levels.first.levelId;
+  }
+
+  RenderScene _sceneForViewport(RenderScene scene) {
+    return scene.filteredByLevel(_activeLevelId);
+  }
+
+  RenderSceneLevel? _activeLevel(RenderScene? scene) {
+    if (scene == null) {
+      return null;
+    }
+    return scene.levelById(_activeLevelId) ??
+        (scene.levels.isNotEmpty ? scene.levels.first : null);
+  }
+
+  double _activeLevelElevation(RenderScene? scene) {
+    return _activeLevel(scene)?.elevationMeters ?? 0.0;
+  }
+
+  double _activeLevelDefaultWallHeight(RenderScene? scene) {
+    return _activeLevel(scene)?.defaultWallHeightMeters ??
+        _defaultWallHeightMeters;
+  }
+
+  Future<void> _setActiveLevel(int? levelId) async {
+    final scene = _scene;
+    if (scene == null || levelId == null || _activeLevelId == levelId) {
+      return;
+    }
+    final level = scene.levelById(levelId);
+    setState(() {
+      _activeLevelId = levelId;
+      _draftFloorTopElevationMeters = level?.elevationMeters ?? 0.0;
+      _draftSurfaceHeightMeters =
+          level?.defaultWallHeightMeters ?? _defaultWallHeightMeters;
+      _statusMessage = 'Active level changed.';
+      _visibleKinds = _sanitizeVisibleKinds(
+        visibleKinds: _visibleKinds,
+        scene: _sceneForViewport(scene),
+      );
+    });
+    await _viewportController.loadRenderScene(_sceneForViewport(scene));
+    await _viewportController.setVisibleKinds(_visibleKinds);
+    await _viewportController.setProjectionMode(_projectionMode);
+    await _viewportController.setOrbitProjectionStyle(_orbitProjectionStyle);
+    await _viewportController.setDisplayStyle(_displayStyle);
+    await _viewportController.selectElement(null);
+    await _viewportController.highlightElement(null);
+    await _viewportController.fitCamera();
   }
 
   Future<void> _fitCamera() async {
@@ -314,6 +395,107 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     await _viewportController.setDisplayStyle(style);
   }
 
+  Future<void> _showCreateLevelDialog() async {
+    final scene = _scene;
+    if (scene == null) {
+      return;
+    }
+    final suggestedIndex = scene.levels.length + 1;
+    final currentLevel = _activeLevel(scene);
+    final defaultElevation = currentLevel == null
+        ? 0.0
+        : currentLevel.elevationMeters + currentLevel.defaultWallHeightMeters;
+    final nameController =
+        TextEditingController(text: 'Level $suggestedIndex');
+    final elevationController =
+        TextEditingController(text: defaultElevation.toStringAsFixed(2));
+    final heightController = TextEditingController(
+      text: (currentLevel?.defaultWallHeightMeters ?? _defaultWallHeightMeters)
+          .toStringAsFixed(2),
+    );
+
+    final payload = await showDialog<({String name, double elevation, double wallHeight})>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Create level'),
+          content: SizedBox(
+            width: 360,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                TextField(
+                  controller: nameController,
+                  decoration: const InputDecoration(
+                    labelText: 'Name',
+                    isDense: true,
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                _NumericField(
+                  label: 'Elevation (m)',
+                  controller: elevationController,
+                  onChanged: (_) {},
+                ),
+                _NumericField(
+                  label: 'Default wall height (m)',
+                  controller: heightController,
+                  onChanged: (_) {},
+                ),
+              ],
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final name = nameController.text.trim();
+                final elevation =
+                    double.tryParse(elevationController.text.trim());
+                final wallHeight =
+                    double.tryParse(heightController.text.trim());
+                if (name.isEmpty ||
+                    elevation == null ||
+                    wallHeight == null ||
+                    wallHeight <= 0) {
+                  return;
+                }
+                Navigator.of(context).pop((
+                  name: name,
+                  elevation: elevation,
+                  wallHeight: wallHeight,
+                ));
+              },
+              child: const Text('Create'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (!mounted || payload == null) {
+      return;
+    }
+
+    final previousLevelIds = scene.levels.map((level) => level.levelId).toSet();
+    final nextScene = RenderSceneEditor.createLevel(
+      scene: scene,
+      name: payload.name,
+      elevationMeters: payload.elevation,
+      defaultWallHeightMeters: payload.wallHeight,
+    );
+    final createdLevel = nextScene.levels.firstWhere(
+      (level) => !previousLevelIds.contains(level.levelId),
+      orElse: () => nextScene.levels.last,
+    );
+    await _applySceneChange(nextScene, message: 'Level created.');
+    await _setActiveLevel(createdLevel.levelId);
+  }
+
   Future<void> _setVisibleKinds(Set<String> kinds) async {
     setState(() {
       _visibleKinds = kinds;
@@ -351,6 +533,8 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       return;
     }
 
+    final selected = _selectedObject(_scene);
+
     setState(() {
       _interactionMode = mode;
       _editStatusMessage = mode == RenderSceneInteractionMode.select
@@ -361,6 +545,16 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
 
     await _viewportController.setInteractionMode(mode);
     await _clearDraft();
+
+    if ((mode == RenderSceneInteractionMode.moveOpening ||
+            mode == RenderSceneInteractionMode.addDoor ||
+            mode == RenderSceneInteractionMode.addWindow) &&
+        selected != null &&
+        (selected.kindKey == 'door' || selected.kindKey == 'window')) {
+      setState(() {
+        _primeOpeningDraftFromObject(selected);
+      });
+    }
 
     if (mode != RenderSceneInteractionMode.select &&
         _projectionMode != RenderSceneProjectionMode.topDown) {
@@ -376,6 +570,11 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       _draftSurfaceEnd = null;
       _draftSurfaceWallIds.clear();
       _draftHostWall = null;
+      _draftMoveTarget = null;
+      _moveAnchorPoint = null;
+      _moveWallOriginalStart = null;
+      _moveWallOriginalEnd = null;
+      _wallMoveMode = _WallMoveMode.translate;
       _draftOpeningOffsetMeters = 1.0;
       _draftOpeningWidthMeters = 0.9;
       _draftOpeningHeightMeters = 2.1;
@@ -406,6 +605,12 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       case RenderSceneInteractionMode.addDoor:
       case RenderSceneInteractionMode.addWindow:
         await _handleOpeningTap(scene, tappedObject, modelPoint);
+        return;
+      case RenderSceneInteractionMode.moveWall:
+        await _handleMoveWallTap(scene, tappedObject, modelPoint);
+        return;
+      case RenderSceneInteractionMode.moveOpening:
+        await _handleMoveOpeningTap(scene, tappedObject, modelPoint);
         return;
       case RenderSceneInteractionMode.addFloor:
       case RenderSceneInteractionMode.addCeiling:
@@ -457,6 +662,38 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
           hostWall: hostWall,
           point: modelPoint,
           announce: false,
+        );
+        return;
+      case RenderSceneInteractionMode.moveWall:
+        final scene = _scene;
+        final target = _draftMoveTarget ?? _selectedObject(scene);
+        if (scene == null ||
+            target == null ||
+            target.kindKey != 'wall' ||
+            _moveAnchorPoint == null ||
+            _moveWallOriginalStart == null ||
+            _moveWallOriginalEnd == null) {
+          return;
+        }
+        _updateMoveWallPreview(
+          scene: scene,
+          wall: target,
+          point: modelPoint,
+        );
+        return;
+      case RenderSceneInteractionMode.moveOpening:
+        final scene = _scene;
+        final target = _draftMoveTarget ?? _selectedObject(scene);
+        if (scene == null ||
+            target == null ||
+            (target.kindKey != 'door' && target.kindKey != 'window') ||
+            _moveAnchorPoint == null) {
+          return;
+        }
+        _updateMoveOpeningPreview(
+          scene: scene,
+          opening: target,
+          point: modelPoint,
         );
         return;
       case RenderSceneInteractionMode.addFloor:
@@ -534,12 +771,16 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       return;
     }
 
+    final activeLevelId = _activeLevel(scene)?.levelId;
+    final baseElevation = _activeLevelElevation(scene);
+    final wallHeight = _activeLevelDefaultWallHeight(scene);
     final nextScene = RenderSceneEditor.addWall(
       scene: scene,
-      start: start,
-      end: end,
-      heightMeters: _defaultWallHeightMeters,
+      start: RenderScenePoint(x: start.x, y: start.y, z: baseElevation),
+      end: RenderScenePoint(x: end.x, y: end.y, z: baseElevation),
+      heightMeters: wallHeight,
       thicknessMeters: _defaultWallThicknessMeters,
+      levelId: activeLevelId,
     );
     await _applySceneChange(nextScene, message: 'Wall created.');
     final created = nextScene.objects.isNotEmpty ? nextScene.objects.last : null;
@@ -596,6 +837,186 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     if (openingDraft != null && openingDraft.valid) {
       await _commitOpeningDraft(scene, hostWall);
     }
+  }
+
+  Future<void> _handleMoveWallTap(
+    RenderScene scene,
+    RenderSceneObject? tappedObject,
+    RenderScenePoint? modelPoint,
+  ) async {
+    final selected = _selectedObject(scene);
+    final wall = tappedObject?.kindKey == 'wall'
+        ? tappedObject
+        : (selected?.kindKey == 'wall' ? selected : null);
+    if (wall == null) {
+      setState(() {
+        _editStatusMessage = 'Move wall uchun avval devorni tanlang.';
+      });
+      return;
+    }
+    if (_draftMoveTarget?.elementId != wall.elementId) {
+      await _selectObject(wall);
+    }
+    if (_moveAnchorPoint == null) {
+      final start = RenderSceneEditor.wallStartPoint(wall);
+      final end = RenderSceneEditor.wallEndPoint(wall);
+      final anchor = modelPoint ?? RenderSceneEditor.wallCenterPoint(wall);
+      if (start == null || end == null || anchor == null) {
+        return;
+      }
+      final startDistance = anchor.distanceTo(start);
+      final endDistance = anchor.distanceTo(end);
+      var moveMode = _WallMoveMode.translate;
+      if (startDistance <= 0.45 && startDistance <= endDistance) {
+        moveMode = _WallMoveMode.startHandle;
+      } else if (endDistance <= 0.45 && endDistance < startDistance) {
+        moveMode = _WallMoveMode.endHandle;
+      }
+      setState(() {
+        _draftMoveTarget = wall;
+        _moveAnchorPoint = moveMode == _WallMoveMode.translate
+            ? anchor
+            : (moveMode == _WallMoveMode.startHandle ? start : end);
+        _moveWallOriginalStart = start;
+        _moveWallOriginalEnd = end;
+        _wallMoveMode = moveMode;
+        _draftWallStart = start;
+        _draftWallEnd = end;
+        _editStatusMessage = moveMode == _WallMoveMode.translate
+            ? 'Wall move preview boshlandi. Devorni torting.'
+            : 'Wall endpoint preview boshlandi. Uchini torting.';
+      });
+      _viewportController.setWallDraft(start, end);
+      return;
+    }
+
+    if (_draftCanConfirm) {
+      await _confirmDraft();
+    }
+  }
+
+  Future<void> _handleMoveOpeningTap(
+    RenderScene scene,
+    RenderSceneObject? tappedObject,
+    RenderScenePoint? modelPoint,
+  ) async {
+    final selected = _selectedObject(scene);
+    final opening = (tappedObject != null &&
+            (tappedObject.kindKey == 'door' || tappedObject.kindKey == 'window'))
+        ? tappedObject
+        : ((selected != null &&
+                (selected.kindKey == 'door' || selected.kindKey == 'window'))
+            ? selected
+            : null);
+    if (opening == null) {
+      setState(() {
+        _editStatusMessage = 'Move opening uchun door yoki window tanlang.';
+      });
+      return;
+    }
+    if (_draftMoveTarget?.elementId != opening.elementId) {
+      await _selectObject(opening);
+    }
+    final hostWallId =
+        (opening.metadata['host_wall_id'] as num?)?.toInt();
+    final hostWall = hostWallId == null ? null : scene.objectById(hostWallId);
+    if (hostWall == null || hostWall.kindKey != 'wall') {
+      setState(() {
+        _editStatusMessage = 'Opening host wall topilmadi.';
+      });
+      return;
+    }
+
+    if (_moveAnchorPoint == null) {
+      _primeOpeningDraftFromObject(opening);
+      final anchor = modelPoint ??
+          RenderSceneEditor.openingCenterPoint(
+            hostWall: hostWall,
+            offsetMeters: _draftOpeningOffsetMeters,
+          );
+      if (anchor == null) {
+        return;
+      }
+      setState(() {
+        _draftMoveTarget = opening;
+        _draftHostWall = hostWall;
+        _moveAnchorPoint = anchor;
+        _editStatusMessage =
+            'Opening move preview boshlandi. Kursorni devor bo‘ylab suring va Confirm bosing.';
+      });
+      _syncOpeningDraft();
+      return;
+    }
+
+    if (_draftCanConfirm) {
+      await _confirmDraft();
+    }
+  }
+
+  void _updateMoveWallPreview({
+    required RenderScene scene,
+    required RenderSceneObject wall,
+    required RenderScenePoint point,
+  }) {
+    final anchor = _moveAnchorPoint;
+    final originalStart = _moveWallOriginalStart;
+    final originalEnd = _moveWallOriginalEnd;
+    if (anchor == null || originalStart == null || originalEnd == null) {
+      return;
+    }
+    RenderScenePoint nextStart;
+    RenderScenePoint nextEnd;
+    if (_wallMoveMode == _WallMoveMode.translate) {
+      final delta = point - anchor;
+      nextStart = RenderScenePoint(
+        x: originalStart.x + delta.x,
+        y: originalStart.y + delta.y,
+        z: originalStart.z,
+      );
+      nextEnd = RenderScenePoint(
+        x: originalEnd.x + delta.x,
+        y: originalEnd.y + delta.y,
+        z: originalEnd.z,
+      );
+      nextStart = _snapMovedWallPoint(scene, wall, nextStart, originalStart);
+      nextEnd = _snapMovedWallPoint(scene, wall, nextEnd, originalEnd);
+    } else if (_wallMoveMode == _WallMoveMode.startHandle) {
+      nextStart = _wallDraftPoint(rawPoint: point, referenceStart: originalEnd);
+      nextStart = _snapMovedWallPoint(scene, wall, nextStart, originalStart);
+      nextEnd = originalEnd;
+    } else {
+      nextStart = originalStart;
+      nextEnd = _wallDraftPoint(rawPoint: point, referenceStart: originalStart);
+      nextEnd = _snapMovedWallPoint(scene, wall, nextEnd, originalEnd);
+    }
+    setState(() {
+      _draftWallStart = nextStart;
+      _draftWallEnd = nextEnd;
+      _editStatusMessage = _wallMoveMode == _WallMoveMode.translate
+          ? 'Wall move preview: ${(nextEnd - nextStart).distanceTo(const RenderScenePoint(x: 0, y: 0, z: 0)).toStringAsFixed(2)} m'
+          : 'Wall reshape preview: ${(nextEnd - nextStart).distanceTo(const RenderScenePoint(x: 0, y: 0, z: 0)).toStringAsFixed(2)} m';
+    });
+    _viewportController.setWallDraft(nextStart, nextEnd);
+  }
+
+  void _updateMoveOpeningPreview({
+    required RenderScene scene,
+    required RenderSceneObject opening,
+    required RenderScenePoint point,
+  }) {
+    final hostWall = _draftHostWall;
+    if (hostWall == null) {
+      return;
+    }
+    _updateOpeningDraftPreview(
+      scene: scene,
+      hostWall: hostWall,
+      point: point,
+      announce: false,
+    );
+    setState(() {
+      _editStatusMessage = 'Opening move preview tayyor.';
+    });
   }
 
   void _updateOpeningDraftPreview({
@@ -666,12 +1087,14 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
               room: room,
               thicknessMeters: _draftSurfaceThicknessMeters,
               topElevationMeters: _draftFloorTopElevationMeters,
+              levelId: room.levelId ?? _activeLevelId,
             )
           : RenderSceneEditor.addCeilingForRoom(
               scene: scene,
               room: room,
               thicknessMeters: _draftSurfaceThicknessMeters,
               heightMeters: _draftSurfaceHeightMeters,
+              levelId: room.levelId ?? _activeLevelId,
             );
       await _applySceneChange(
         nextScene,
@@ -830,6 +1253,39 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     return bestPoint;
   }
 
+  RenderScenePoint _snapMovedWallPoint(
+    RenderScene scene,
+    RenderSceneObject wall,
+    RenderScenePoint point,
+    RenderScenePoint originalPoint, {
+    double toleranceMeters = 0.45,
+  }) {
+    if (!_snapDraftToGrid) {
+      return point;
+    }
+    RenderScenePoint bestPoint = _snapPoint(point);
+    var bestDistance = toleranceMeters;
+    for (final object in scene.objects) {
+      if (object.kindKey != 'wall' || object.elementId == wall.elementId) {
+        continue;
+      }
+      for (final candidate in <RenderScenePoint?>[
+        RenderSceneEditor.wallStartPoint(object),
+        RenderSceneEditor.wallEndPoint(object),
+      ]) {
+        if (candidate == null) {
+          continue;
+        }
+        final distance = candidate.distanceTo(point);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestPoint = candidate;
+        }
+      }
+    }
+    return RenderScenePoint(x: bestPoint.x, y: bestPoint.y, z: originalPoint.z);
+  }
+
   double _snapDouble(double value, double step) {
     if (!_snapDraftToGrid || step <= 0) {
       return value;
@@ -850,11 +1306,19 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         return start.distanceTo(end) >= 0.1;
       case RenderSceneInteractionMode.addDoor:
       case RenderSceneInteractionMode.addWindow:
+      case RenderSceneInteractionMode.moveOpening:
         final openingDraft = _viewportController.draftOpening;
         final selectedWall = _selectedObject(_scene)?.kindKey == 'wall';
+        final selectedOpening = _selectedObject(_scene)?.kindKey == 'door' ||
+            _selectedObject(_scene)?.kindKey == 'window';
         return openingDraft != null &&
             openingDraft.valid &&
-            (_draftHostWall != null || selectedWall);
+            (_draftHostWall != null || selectedWall || selectedOpening);
+      case RenderSceneInteractionMode.moveWall:
+        final start = _draftWallStart;
+        final end = _draftWallEnd;
+        final target = _draftMoveTarget ?? _selectedObject(_scene);
+        return target?.kindKey == 'wall' && start != null && end != null;
       case RenderSceneInteractionMode.addFloor:
       case RenderSceneInteractionMode.addCeiling:
         if (_draftSurfaceWallIds.length >= 2) {
@@ -894,6 +1358,42 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         }
         await _commitOpeningDraft(scene, hostWall);
         return;
+      case RenderSceneInteractionMode.moveWall:
+        final wall = _draftMoveTarget ?? _selectedObject(scene);
+        final start = _draftWallStart;
+        final end = _draftWallEnd;
+        if (wall == null || wall.kindKey != 'wall' || start == null || end == null) {
+          setState(() {
+            _editStatusMessage = 'Move wall preview tayyor emas.';
+          });
+          return;
+        }
+        final nextScene = RenderSceneEditor.setWallAxis(
+          scene: scene,
+          wall: wall,
+          start: start,
+          end: end,
+        );
+        await _applySceneChange(nextScene, message: 'Wall moved.');
+        await _clearDraft();
+        return;
+      case RenderSceneInteractionMode.moveOpening:
+        final opening = _draftMoveTarget ?? _selectedObject(scene);
+        if (opening == null ||
+            (opening.kindKey != 'door' && opening.kindKey != 'window')) {
+          setState(() {
+            _editStatusMessage = 'Move opening preview tayyor emas.';
+          });
+          return;
+        }
+        final nextScene = RenderSceneEditor.moveOpening(
+          scene: scene,
+          opening: opening,
+          offsetMeters: _draftOpeningOffsetMeters,
+        );
+        await _applySceneChange(nextScene, message: '${prettySceneKind(opening.kind)} moved.');
+        await _clearDraft();
+        return;
       case RenderSceneInteractionMode.addFloor:
       case RenderSceneInteractionMode.addCeiling:
         RenderScene nextScene;
@@ -908,12 +1408,14 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
                   walls: walls,
                   thicknessMeters: _draftSurfaceThicknessMeters,
                   topElevationMeters: _draftFloorTopElevationMeters,
+                  levelId: _activeLevelId,
                 )
               : RenderSceneEditor.addCeilingFromWalls(
                   scene: scene,
                   walls: walls,
                   thicknessMeters: _draftSurfaceThicknessMeters,
                   heightMeters: _draftSurfaceHeightMeters,
+                  levelId: _activeLevelId,
                 );
           if (identical(nextScene, scene)) {
             setState(() {
@@ -950,12 +1452,14 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
                   bounds: bounds,
                   thicknessMeters: _draftSurfaceThicknessMeters,
                   topElevationMeters: _draftFloorTopElevationMeters,
+                  levelId: _activeLevelId,
                 )
               : RenderSceneEditor.addCeilingFromBounds(
                   scene: scene,
                   bounds: bounds,
                   thicknessMeters: _draftSurfaceThicknessMeters,
                   heightMeters: _draftSurfaceHeightMeters,
+                  levelId: _activeLevelId,
                 );
         }
         await _applySceneChange(
@@ -1003,6 +1507,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
             offsetMeters: offset,
             widthMeters: _draftOpeningWidthMeters,
             heightMeters: _draftOpeningHeightMeters,
+            levelId: hostWall.levelId ?? _activeLevelId,
           )
         : RenderSceneEditor.addWindow(
             scene: scene,
@@ -1011,6 +1516,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
             widthMeters: _draftOpeningWidthMeters,
             heightMeters: _draftOpeningHeightMeters,
             sillHeightMeters: _draftOpeningSillHeightMeters,
+            levelId: hostWall.levelId ?? _activeLevelId,
           );
     await _applySceneChange(
       nextScene,
@@ -1111,25 +1617,40 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     RenderScene nextScene, {
     required String message,
   }) async {
+    if (_autoRoomSurfacesEnabled) {
+      nextScene = RenderSceneEditor.synchronizeAutoRoomSurfaces(
+        scene: nextScene,
+        includeFloors: true,
+        includeCeilings: true,
+        floorThicknessMeters: _draftSurfaceThicknessMeters,
+        floorTopElevationMeters: 0.0,
+        ceilingThicknessMeters: _draftSurfaceThicknessMeters.clamp(0.02, 1.0),
+        ceilingHeightMeters: _draftSurfaceHeightMeters,
+      );
+    }
     final previousSelectedId = _viewportController.selectedElementId;
     final previousHighlightedId = _viewportController.highlightedElementId;
     final selectedBefore = _selectedObject(nextScene);
     final nextSelected = previousSelectedId != null
         ? nextScene.objectByStableId(previousSelectedId)
         : null;
+    final resolvedLevelId =
+        _resolveInitialLevelId(nextScene, preferred: _activeLevelId);
+    final nextViewportScene = nextScene.filteredByLevel(resolvedLevelId);
 
     setState(() {
       _scene = nextScene;
+      _activeLevelId = resolvedLevelId;
       _statusMessage = message;
       _editStatusMessage = message;
       _loadError = null;
       _visibleKinds = _sanitizeVisibleKinds(
         visibleKinds: _visibleKinds,
-        scene: nextScene,
+        scene: nextViewportScene,
       );
     });
 
-    await _viewportController.updateRenderScene(nextScene);
+    await _viewportController.updateRenderScene(nextViewportScene);
     await _viewportController.setVisibleKinds(_visibleKinds);
 
     if (nextSelected != null) {
@@ -1159,7 +1680,12 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     final doorCount = scene.kindCounts['door'] ?? 0;
     final windowCount = scene.kindCounts['window'] ?? 0;
 
-    return '${scene.objectCount} objects · '
+    final activeLevel = _activeLevel(_scene);
+    final levelLabel = activeLevel == null
+        ? 'No level'
+        : '${activeLevel.name} @ ${activeLevel.elevationMeters.toStringAsFixed(2)}m';
+
+    return '$levelLabel · ${scene.objectCount} objects · '
         '$wallCount walls · '
         '$doorCount doors · '
         '$windowCount windows · '
@@ -1181,6 +1707,18 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     return scene.objectById(parsedId);
   }
 
+  void _primeOpeningDraftFromObject(RenderSceneObject object) {
+    final metadata = object.metadata;
+    _draftOpeningOffsetMeters =
+        (metadata['offset_meters'] as num?)?.toDouble() ?? _draftOpeningOffsetMeters;
+    _draftOpeningWidthMeters =
+        (metadata['width_meters'] as num?)?.toDouble() ?? _draftOpeningWidthMeters;
+    _draftOpeningHeightMeters =
+        (metadata['height_meters'] as num?)?.toDouble() ?? _draftOpeningHeightMeters;
+    _draftOpeningSillHeightMeters =
+        (metadata['sill_height_meters'] as num?)?.toDouble() ?? _draftOpeningSillHeightMeters;
+  }
+
   List<String> _availableKinds(RenderScene? scene) {
     if (scene == null) {
       return <String>[];
@@ -1199,8 +1737,9 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
 
   @override
   Widget build(BuildContext context) {
-    final scene = _scene;
-    final selectedObject = _selectedObject(scene);
+    final fullScene = _scene;
+    final scene = fullScene == null ? null : _sceneForViewport(fullScene);
+    final selectedObject = _selectedObject(fullScene);
 
     return Shortcuts(
       shortcuts: const <ShortcutActivator, Intent>{
@@ -1229,7 +1768,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         child: Focus(
           autofocus: true,
           child: Scaffold(
-            appBar: _buildAppBar(context, scene),
+            appBar: _buildAppBar(context, fullScene, scene),
             body: Column(
               children: <Widget>[
                 Expanded(
@@ -1242,7 +1781,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
                       if (_showInspector)
                         _buildRightPanel(
                           context: context,
-                          scene: scene,
+                          scene: fullScene,
                           selectedObject: selectedObject,
                         ),
                     ],
@@ -1258,7 +1797,11 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     );
   }
 
-  PreferredSizeWidget _buildAppBar(BuildContext context, RenderScene? scene) {
+  PreferredSizeWidget _buildAppBar(
+    BuildContext context,
+    RenderScene? fullScene,
+    RenderScene? viewportScene,
+  ) {
     final theme = Theme.of(context);
 
     return AppBar(
@@ -1268,7 +1811,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         children: <Widget>[
           const Text('Tablet BIM'),
           Text(
-            _topBarText(scene),
+            _topBarText(viewportScene),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: theme.textTheme.bodySmall?.copyWith(
@@ -1285,7 +1828,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         ),
         IconButton(
           tooltip: 'Fit view',
-          onPressed: scene == null || _isBusy ? null : _fitCamera,
+          onPressed: viewportScene == null || _isBusy ? null : _fitCamera,
           icon: const Icon(Icons.center_focus_strong),
         ),
         IconButton(
@@ -1322,8 +1865,8 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         const SizedBox(width: 8),
       ],
       bottom: PreferredSize(
-        preferredSize: const Size.fromHeight(64),
-        child: _buildToolbar(context, scene),
+        preferredSize: const Size.fromHeight(108),
+        child: _buildToolbar(context, fullScene),
       ),
     );
   }
@@ -1332,159 +1875,233 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     final is3D = _projectionMode == RenderSceneProjectionMode.isometric;
 
     return Container(
-      height: 64,
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      height: 108,
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
       alignment: Alignment.centerLeft,
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children: <Widget>[
-            SegmentedButton<RenderSceneProjectionMode>(
-              segments: const <ButtonSegment<RenderSceneProjectionMode>>[
-                ButtonSegment<RenderSceneProjectionMode>(
-                  value: RenderSceneProjectionMode.topDown,
-                  icon: Icon(Icons.map_outlined),
-                  label: Text('2D'),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: <Widget>[
+                _toolbarChoiceButton(
+                  label: '2D',
+                  selected: _projectionMode == RenderSceneProjectionMode.topDown,
+                  onPressed: scene == null
+                      ? null
+                      : () => _setProjectionMode(RenderSceneProjectionMode.topDown),
                 ),
-                ButtonSegment<RenderSceneProjectionMode>(
-                  value: RenderSceneProjectionMode.isometric,
-                  icon: Icon(Icons.view_in_ar_outlined),
-                  label: Text('3D'),
+                const SizedBox(width: 6),
+                _toolbarChoiceButton(
+                  label: '3D',
+                  selected: _projectionMode == RenderSceneProjectionMode.isometric,
+                  onPressed: scene == null
+                      ? null
+                      : () => _setProjectionMode(RenderSceneProjectionMode.isometric),
                 ),
-              ],
-              selected: <RenderSceneProjectionMode>{_projectionMode},
-              onSelectionChanged: scene == null
-                  ? null
-                  : (Set<RenderSceneProjectionMode> selection) {
-                      if (selection.isNotEmpty) {
-                        _setProjectionMode(selection.first);
-                      }
-                    },
-            ),
-            const SizedBox(width: 12),
-            SegmentedButton<RenderSceneDisplayStyle>(
-              segments: const <ButtonSegment<RenderSceneDisplayStyle>>[
-                ButtonSegment<RenderSceneDisplayStyle>(
-                  value: RenderSceneDisplayStyle.solid,
-                  icon: Icon(Icons.crop_square),
-                  label: Text('Solid'),
+                const SizedBox(width: 10),
+                _toolbarChoiceButton(
+                  label: 'Solid',
+                  selected: _displayStyle == RenderSceneDisplayStyle.solid,
+                  onPressed: scene == null
+                      ? null
+                      : () => _setDisplayStyle(RenderSceneDisplayStyle.solid),
                 ),
-                ButtonSegment<RenderSceneDisplayStyle>(
-                  value: RenderSceneDisplayStyle.wireframe,
-                  icon: Icon(Icons.grid_3x3),
-                  label: Text('Wire'),
+                const SizedBox(width: 6),
+                _toolbarChoiceButton(
+                  label: 'Wire',
+                  selected: _displayStyle == RenderSceneDisplayStyle.wireframe,
+                  onPressed: scene == null
+                      ? null
+                      : () => _setDisplayStyle(RenderSceneDisplayStyle.wireframe),
                 ),
-              ],
-              selected: <RenderSceneDisplayStyle>{_displayStyle},
-              onSelectionChanged: scene == null
-                  ? null
-                  : (Set<RenderSceneDisplayStyle> selection) {
-                      if (selection.isNotEmpty) {
-                        _setDisplayStyle(selection.first);
-                      }
-                    },
-            ),
-            const SizedBox(width: 12),
-            SegmentedButton<RenderSceneInteractionMode>(
-              segments: const <ButtonSegment<RenderSceneInteractionMode>>[
-                ButtonSegment<RenderSceneInteractionMode>(
-                  value: RenderSceneInteractionMode.select,
-                  icon: Icon(Icons.ads_click),
-                  label: Text('Select'),
-                ),
-                ButtonSegment<RenderSceneInteractionMode>(
-                  value: RenderSceneInteractionMode.addWall,
-                  icon: Icon(Icons.linear_scale),
-                  label: Text('Wall'),
-                ),
-                ButtonSegment<RenderSceneInteractionMode>(
-                  value: RenderSceneInteractionMode.addDoor,
-                  icon: Icon(Icons.meeting_room_outlined),
-                  label: Text('Door'),
-                ),
-                ButtonSegment<RenderSceneInteractionMode>(
-                  value: RenderSceneInteractionMode.addWindow,
-                  icon: Icon(Icons.window_outlined),
-                  label: Text('Window'),
-                ),
-                ButtonSegment<RenderSceneInteractionMode>(
-                  value: RenderSceneInteractionMode.addFloor,
-                  icon: Icon(Icons.layers_outlined),
-                  label: Text('Floor'),
-                ),
-                ButtonSegment<RenderSceneInteractionMode>(
-                  value: RenderSceneInteractionMode.addCeiling,
-                  icon: Icon(Icons.flip_to_front_outlined),
-                  label: Text('Ceiling'),
-                ),
-              ],
-              selected: <RenderSceneInteractionMode>{_interactionMode},
-              onSelectionChanged: scene == null
-                  ? null
-                  : (Set<RenderSceneInteractionMode> selection) {
-                      if (selection.isNotEmpty) {
-                        _setInteractionMode(selection.first);
-                      }
-                    },
-            ),
-            if (is3D) ...<Widget>[
-              const SizedBox(width: 12),
-              SegmentedButton<RenderSceneOrbitProjectionStyle>(
-                segments: const <ButtonSegment<
-                    RenderSceneOrbitProjectionStyle>>[
-                  ButtonSegment<RenderSceneOrbitProjectionStyle>(
-                    value: RenderSceneOrbitProjectionStyle.orthographic,
-                    icon: Icon(Icons.crop_free),
-                    label: Text('Ortho'),
+                if (is3D) ...<Widget>[
+                  const SizedBox(width: 10),
+                  _toolbarChoiceButton(
+                    label: 'Ortho',
+                    selected: _orbitProjectionStyle ==
+                        RenderSceneOrbitProjectionStyle.orthographic,
+                    onPressed: scene == null
+                        ? null
+                        : () => _setOrbitProjectionStyle(
+                            RenderSceneOrbitProjectionStyle.orthographic,
+                          ),
                   ),
-                  ButtonSegment<RenderSceneOrbitProjectionStyle>(
-                    value: RenderSceneOrbitProjectionStyle.perspective,
-                    icon: Icon(Icons.remove_red_eye_outlined),
-                    label: Text('Persp'),
+                  const SizedBox(width: 6),
+                  _toolbarChoiceButton(
+                    label: 'Persp',
+                    selected: _orbitProjectionStyle ==
+                        RenderSceneOrbitProjectionStyle.perspective,
+                    onPressed: scene == null
+                        ? null
+                        : () => _setOrbitProjectionStyle(
+                            RenderSceneOrbitProjectionStyle.perspective,
+                          ),
                   ),
                 ],
-                selected: <RenderSceneOrbitProjectionStyle>{
-                  _orbitProjectionStyle,
-                },
-                onSelectionChanged: scene == null
-                    ? null
-                    : (Set<RenderSceneOrbitProjectionStyle> selection) {
-                        if (selection.isNotEmpty) {
-                          _setOrbitProjectionStyle(selection.first);
-                        }
-                      },
-              ),
-            ],
-            const SizedBox(width: 12),
-            FilledButton.tonalIcon(
-              onPressed: scene == null || _isBusy ? null : _fitCamera,
-              icon: const Icon(Icons.fit_screen),
-              label: const Text('Fit'),
+                const SizedBox(width: 10),
+                FilledButton.tonalIcon(
+                  onPressed: scene == null || _isBusy ? null : _fitCamera,
+                  icon: const Icon(Icons.fit_screen, size: 18),
+                  label: const Text('Fit'),
+                ),
+                if (scene != null) ...<Widget>[
+                  const SizedBox(width: 10),
+                  _LevelToolbarControl(
+                    levels: scene.levels,
+                    activeLevelId: _activeLevelId,
+                    onChanged: (levelId) => _setActiveLevel(levelId),
+                    onAddLevel: _showCreateLevelDialog,
+                  ),
+                ],
+                const SizedBox(width: 8),
+                _toolbarChoiceButton(
+                  label: _autoRoomSurfacesEnabled
+                      ? 'Auto surfaces'
+                      : 'Manual surfaces',
+                  selected: _autoRoomSurfacesEnabled,
+                  onPressed: scene == null
+                      ? null
+                      : () async {
+                          final nextEnabled = !_autoRoomSurfacesEnabled;
+                          setState(() {
+                            _autoRoomSurfacesEnabled = nextEnabled;
+                          });
+                          if (nextEnabled && _scene != null) {
+                            final synced =
+                                RenderSceneEditor.synchronizeAutoRoomSurfaces(
+                              scene: _scene!,
+                              includeFloors: true,
+                              includeCeilings: true,
+                              floorThicknessMeters: _draftSurfaceThicknessMeters,
+                              floorTopElevationMeters: 0.0,
+                              ceilingThicknessMeters: _draftSurfaceThicknessMeters
+                                  .clamp(0.02, 1.0)
+                                  .toDouble(),
+                              ceilingHeightMeters: _draftSurfaceHeightMeters,
+                            );
+                            await _applySceneChange(
+                              synced,
+                              message: 'Auto room surfaces synced.',
+                            );
+                          }
+                        },
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  tooltip: _showDiagnostics ? 'Hide diagnostics' : 'Diagnostics',
+                  onPressed: scene == null
+                      ? null
+                      : () {
+                          setState(() {
+                            _showDiagnostics = !_showDiagnostics;
+                          });
+                        },
+                  icon: const Icon(Icons.analytics_outlined),
+                ),
+              ],
             ),
-            const SizedBox(width: 8),
-            OutlinedButton.icon(
-              onPressed: scene == null
-                  ? null
-                  : () {
-                      setState(() {
-                        _showDiagnostics = !_showDiagnostics;
-                      });
-                    },
-              icon: const Icon(Icons.analytics_outlined),
-              label:
-                  Text(_showDiagnostics ? 'Hide diagnostics' : 'Diagnostics'),
+          ),
+          const SizedBox(height: 6),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: <Widget>[
+                _toolbarChoiceButton(
+                  label: 'Select',
+                  selected: _interactionMode == RenderSceneInteractionMode.select,
+                  onPressed: scene == null
+                      ? null
+                      : () => _setInteractionMode(RenderSceneInteractionMode.select),
+                ),
+                const SizedBox(width: 6),
+                _toolbarChoiceButton(
+                  label: 'Wall',
+                  selected: _interactionMode == RenderSceneInteractionMode.addWall,
+                  onPressed: scene == null
+                      ? null
+                      : () => _setInteractionMode(RenderSceneInteractionMode.addWall),
+                ),
+                const SizedBox(width: 6),
+                _toolbarChoiceButton(
+                  label: 'Move wall',
+                  selected: _interactionMode == RenderSceneInteractionMode.moveWall,
+                  onPressed: scene == null
+                      ? null
+                      : () => _setInteractionMode(RenderSceneInteractionMode.moveWall),
+                ),
+                const SizedBox(width: 6),
+                _toolbarChoiceButton(
+                  label: 'Door',
+                  selected: _interactionMode == RenderSceneInteractionMode.addDoor,
+                  onPressed: scene == null
+                      ? null
+                      : () => _setInteractionMode(RenderSceneInteractionMode.addDoor),
+                ),
+                const SizedBox(width: 6),
+                _toolbarChoiceButton(
+                  label: 'Window',
+                  selected: _interactionMode == RenderSceneInteractionMode.addWindow,
+                  onPressed: scene == null
+                      ? null
+                      : () => _setInteractionMode(RenderSceneInteractionMode.addWindow),
+                ),
+                const SizedBox(width: 6),
+                _toolbarChoiceButton(
+                  label: 'Move opening',
+                  selected:
+                      _interactionMode == RenderSceneInteractionMode.moveOpening,
+                  onPressed: scene == null
+                      ? null
+                      : () => _setInteractionMode(
+                          RenderSceneInteractionMode.moveOpening,
+                        ),
+                ),
+                const SizedBox(width: 6),
+                _toolbarChoiceButton(
+                  label: 'Floor',
+                  selected: _interactionMode == RenderSceneInteractionMode.addFloor,
+                  onPressed: scene == null
+                      ? null
+                      : () => _setInteractionMode(RenderSceneInteractionMode.addFloor),
+                ),
+                const SizedBox(width: 6),
+                _toolbarChoiceButton(
+                  label: 'Ceiling',
+                  selected:
+                      _interactionMode == RenderSceneInteractionMode.addCeiling,
+                  onPressed: scene == null
+                      ? null
+                      : () => _setInteractionMode(
+                          RenderSceneInteractionMode.addCeiling,
+                        ),
+                ),
+              ],
             ),
-          ],
-        ),
+          ),
+        ],
       ),
+    );
+  }
+
+  Widget _toolbarChoiceButton({
+    required String label,
+    required bool selected,
+    required VoidCallback? onPressed,
+  }) {
+    return ChoiceChip(
+      label: Text(label),
+      selected: selected,
+      onSelected: onPressed == null ? null : (_) => onPressed(),
+      visualDensity: VisualDensity.compact,
     );
   }
 
   Widget _buildLeftRail(BuildContext context, RenderScene? scene) {
     final theme = Theme.of(context);
 
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 180),
+    return Container(
       width: _showObjectList ? 280 : 72,
       decoration: BoxDecoration(
         color: Colors.white,
@@ -1610,6 +2227,9 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
             controller: _viewportController,
             interactionMode: _interactionMode,
             onSceneTap: _handleSceneTap,
+            onSceneDragStart: _handleSceneDragStart,
+            onSceneDragUpdate: _handleSceneDragUpdate,
+            onSceneDragEnd: _handleSceneDragEnd,
             onSceneSecondaryTap: _handleSceneSecondaryTap,
             onSceneHover: _handleSceneHover,
             draftWallThicknessMeters: _defaultWallThicknessMeters,
@@ -1772,7 +2392,23 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
                       else
                         _SelectedObjectCard(object: selectedObject),
                       const SizedBox(height: 16),
-                      _SceneSummaryCard(scene: scene),
+                      _SceneSummaryCard(
+                        scene: scene,
+                        activeLevel: _activeLevel(scene),
+                      ),
+                      const SizedBox(height: 16),
+                      _EstimateSummaryCard(
+                        summary: RenderSceneEstimator.summarize(
+                          scene,
+                          catalog: _estimateCatalog,
+                        ),
+                        catalog: _estimateCatalog,
+                        onCatalogChanged: (catalog) {
+                          setState(() {
+                            _estimateCatalog = catalog;
+                          });
+                        },
+                      ),
                       if (_showDiagnostics) ...<Widget>[
                         const SizedBox(height: 16),
                         _DiagnosticsCard(scene: scene),
@@ -1830,6 +2466,61 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     }
     if (action == 'delete') {
       await _deleteSelectedObject();
+    }
+  }
+
+  void _handleSceneDragStart(RenderSceneTapDetails details) {
+    final scene = _scene;
+    if (scene == null) {
+      return;
+    }
+    switch (_interactionMode) {
+      case RenderSceneInteractionMode.moveWall:
+        _handleMoveWallTap(scene, details.pickedObject, details.modelPoint);
+        return;
+      case RenderSceneInteractionMode.moveOpening:
+        _handleMoveOpeningTap(scene, details.pickedObject, details.modelPoint);
+        return;
+      default:
+        return;
+    }
+  }
+
+  void _handleSceneDragUpdate(RenderSceneTapDetails details) {
+    final scene = _scene;
+    final point = details.modelPoint;
+    if (scene == null || point == null) {
+      return;
+    }
+    switch (_interactionMode) {
+      case RenderSceneInteractionMode.moveWall:
+        final target = _draftMoveTarget ?? _selectedObject(scene);
+        if (target != null && target.kindKey == 'wall') {
+          _updateMoveWallPreview(scene: scene, wall: target, point: point);
+        }
+        return;
+      case RenderSceneInteractionMode.moveOpening:
+        final target = _draftMoveTarget ?? _selectedObject(scene);
+        if (target != null &&
+            (target.kindKey == 'door' || target.kindKey == 'window')) {
+          _updateMoveOpeningPreview(scene: scene, opening: target, point: point);
+        }
+        return;
+      default:
+        return;
+    }
+  }
+
+  Future<void> _handleSceneDragEnd(RenderSceneTapDetails details) async {
+    switch (_interactionMode) {
+      case RenderSceneInteractionMode.moveWall:
+      case RenderSceneInteractionMode.moveOpening:
+        if (_draftCanConfirm) {
+          await _confirmDraft();
+        }
+        return;
+      default:
+        return;
     }
   }
 
@@ -1968,6 +2659,73 @@ class _KindFilterWrap extends StatelessWidget {
             },
           ),
       ],
+    );
+  }
+}
+
+class _LevelToolbarControl extends StatelessWidget {
+  const _LevelToolbarControl({
+    required this.levels,
+    required this.activeLevelId,
+    required this.onChanged,
+    required this.onAddLevel,
+  });
+
+  final List<RenderSceneLevel> levels;
+  final int? activeLevelId;
+  final ValueChanged<int?> onChanged;
+  final VoidCallback onAddLevel;
+
+  @override
+  Widget build(BuildContext context) {
+    if (levels.isEmpty) {
+      return FilledButton.tonalIcon(
+        onPressed: onAddLevel,
+        icon: const Icon(Icons.add, size: 18),
+        label: const Text('Level'),
+      );
+    }
+
+    final selectedLevelId = levels.any((level) => level.levelId == activeLevelId)
+        ? activeLevelId
+        : levels.first.levelId;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          const Icon(Icons.layers_outlined, size: 18),
+          const SizedBox(width: 8),
+          DropdownButtonHideUnderline(
+            child: DropdownButton<int>(
+              value: selectedLevelId,
+              isDense: true,
+              items: <DropdownMenuItem<int>>[
+                for (final level in levels)
+                  DropdownMenuItem<int>(
+                    value: level.levelId,
+                    child: Text(
+                      '${level.name} (${level.elevationMeters.toStringAsFixed(2)}m)',
+                    ),
+                  ),
+              ],
+              onChanged: onChanged,
+            ),
+          ),
+          const SizedBox(width: 6),
+          IconButton(
+            tooltip: 'Add level',
+            onPressed: onAddLevel,
+            icon: const Icon(Icons.add),
+            visualDensity: VisualDensity.compact,
+          ),
+        ],
+      ),
     );
   }
 }
@@ -2156,6 +2914,11 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
         if (mode == RenderSceneInteractionMode.select)
           const Text('Select mode: tap objects to inspect them.')
         else if (mode == RenderSceneInteractionMode.addWall)
+          _WallDraftSummary(
+            start: widget.draftWallStart,
+            end: widget.draftWallEnd,
+          )
+        else if (mode == RenderSceneInteractionMode.moveWall)
           _WallDraftSummary(
             start: widget.draftWallStart,
             end: widget.draftWallEnd,
@@ -2485,6 +3248,13 @@ class _SelectedObjectCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final kind = prettySceneKind(object.kind);
     final bounds = object.bounds;
+    final area = (object.metadata['area_m2'] as num?)?.toDouble();
+    final perimeter = (object.metadata['perimeter_m'] as num?)?.toDouble();
+    final wallThickness =
+        (object.metadata['thickness_meters'] as num?)?.toDouble();
+    final wallHeight = (object.metadata['height_meters'] as num?)?.toDouble();
+    final wallStart = object.metadata['axis_start'];
+    final wallEnd = object.metadata['axis_end'];
 
     return _InfoCard(
       title: 'Selected object',
@@ -2510,6 +3280,30 @@ class _SelectedObjectCard extends StatelessWidget {
           value:
               '${bounds.width.toStringAsFixed(2)} × ${bounds.depth.toStringAsFixed(2)} × ${bounds.height.toStringAsFixed(2)} m',
         ),
+        if (wallThickness != null)
+          _InfoRow(
+            label: 'Thickness',
+            value: '${wallThickness.toStringAsFixed(2)} m',
+          ),
+        if (wallHeight != null)
+          _InfoRow(
+            label: 'Height',
+            value: '${wallHeight.toStringAsFixed(2)} m',
+          ),
+        if (wallStart is Map && wallEnd is Map) ...<Widget>[
+          _InfoRow(label: 'Axis start', value: '${wallStart['x']}, ${wallStart['y']}'),
+          _InfoRow(label: 'Axis end', value: '${wallEnd['x']}, ${wallEnd['y']}'),
+        ],
+        if (area != null)
+          _InfoRow(
+            label: 'Area',
+            value: '${area.toStringAsFixed(2)} m²',
+          ),
+        if (perimeter != null)
+          _InfoRow(
+            label: 'Perimeter',
+            value: '${perimeter.toStringAsFixed(2)} m',
+          ),
         _InfoRow(label: 'Material', value: object.materialCategory),
       ],
     );
@@ -2519,9 +3313,11 @@ class _SelectedObjectCard extends StatelessWidget {
 class _SceneSummaryCard extends StatelessWidget {
   const _SceneSummaryCard({
     required this.scene,
+    required this.activeLevel,
   });
 
   final RenderScene scene;
+  final RenderSceneLevel? activeLevel;
 
   @override
   Widget build(BuildContext context) {
@@ -2535,6 +3331,13 @@ class _SceneSummaryCard extends StatelessWidget {
         _InfoRow(label: 'Version', value: scene.sceneVersion.toString()),
         _InfoRow(label: 'Units', value: scene.units),
         _InfoRow(label: 'Coordinates', value: scene.coordinateSystem),
+        _InfoRow(label: 'Levels', value: scene.levels.length.toString()),
+        if (activeLevel != null)
+          _InfoRow(
+            label: 'Active level',
+            value:
+                '${activeLevel!.name} @ ${activeLevel!.elevationMeters.toStringAsFixed(2)} m',
+          ),
         _InfoRow(label: 'Objects', value: scene.objectCount.toString()),
         _InfoRow(label: 'Vertices', value: scene.vertexCount.toString()),
         _InfoRow(label: 'Indices', value: scene.indexCount.toString()),
@@ -2543,6 +3346,284 @@ class _SceneSummaryCard extends StatelessWidget {
           label: 'Bounds',
           value:
               '${bounds.width.toStringAsFixed(2)} × ${bounds.depth.toStringAsFixed(2)} × ${bounds.height.toStringAsFixed(2)} m',
+        ),
+      ],
+    );
+  }
+}
+
+class _EstimateSummaryCard extends StatelessWidget {
+  const _EstimateSummaryCard({
+    required this.summary,
+    required this.catalog,
+    required this.onCatalogChanged,
+  });
+
+  final RenderSceneEstimateSummary summary;
+  final RenderSceneEstimateCatalog catalog;
+  final ValueChanged<RenderSceneEstimateCatalog> onCatalogChanged;
+
+  String _money(double value) => '\$${value.toStringAsFixed(2)}';
+
+  @override
+  Widget build(BuildContext context) {
+    return _InfoCard(
+      title: 'Estimate',
+      icon: Icons.request_quote_outlined,
+      children: <Widget>[
+        _InfoRow(label: 'Rooms', value: summary.roomCount.toString()),
+        _InfoRow(
+          label: 'Room area',
+          value: '${summary.totalRoomArea.toStringAsFixed(2)} m²',
+        ),
+        _InfoRow(
+          label: 'Room perimeter',
+          value: '${summary.totalRoomPerimeter.toStringAsFixed(2)} m',
+        ),
+        _InfoRow(label: 'Walls', value: summary.wallCount.toString()),
+        _InfoRow(
+          label: 'Wall gross volume',
+          value: '${summary.wallGrossVolume.toStringAsFixed(2)} m³',
+        ),
+        _InfoRow(
+          label: 'Wall net volume',
+          value: '${summary.wallNetVolume.toStringAsFixed(2)} m³',
+        ),
+        _InfoRow(
+          label: 'Wall net area',
+          value: '${summary.wallNetArea.toStringAsFixed(2)} m²',
+        ),
+        _InfoRow(
+          label: 'Brick count',
+          value: summary.brickCount.toString(),
+        ),
+        _InfoRow(
+          label: 'Floors',
+          value:
+              '${summary.floorCount} · ${summary.floorArea.toStringAsFixed(2)} m²',
+        ),
+        _InfoRow(
+          label: 'Concrete',
+          value: '${summary.floorConcreteVolume.toStringAsFixed(2)} m³',
+        ),
+        _InfoRow(
+          label: 'Floor finish',
+          value: '${summary.floorArea.toStringAsFixed(2)} m²',
+        ),
+        _InfoRow(
+          label: 'Ceilings',
+          value:
+              '${summary.ceilingCount} · ${summary.ceilingArea.toStringAsFixed(2)} m²',
+        ),
+        _InfoRow(
+          label: 'Doors / Windows',
+          value: '${summary.doorCount} / ${summary.windowCount}',
+        ),
+        _InfoRow(
+          label: 'Opening area',
+          value: '${summary.openingArea.toStringAsFixed(2)} m²',
+        ),
+        const SizedBox(height: 10),
+        Text(
+          'Cost lines',
+          style: Theme.of(context).textTheme.labelLarge,
+        ),
+        const SizedBox(height: 6),
+        for (final item in summary.lineItems)
+          _InfoRow(
+            label:
+                '${item.label} (${item.quantity.toStringAsFixed(item.unit == 'pcs' ? 0 : 2)} ${item.unit})',
+            value: '${_money(item.unitCost)} → ${_money(item.totalCost)}',
+          ),
+        const SizedBox(height: 8),
+        _InfoRow(
+          label: 'Estimated total',
+          value: _money(summary.totalCost),
+        ),
+        const SizedBox(height: 12),
+        _EstimateCatalogEditor(
+          catalog: catalog,
+          onChanged: onCatalogChanged,
+        ),
+      ],
+    );
+  }
+}
+
+class _EstimateCatalogEditor extends StatefulWidget {
+  const _EstimateCatalogEditor({
+    required this.catalog,
+    required this.onChanged,
+  });
+
+  final RenderSceneEstimateCatalog catalog;
+  final ValueChanged<RenderSceneEstimateCatalog> onChanged;
+
+  @override
+  State<_EstimateCatalogEditor> createState() => _EstimateCatalogEditorState();
+}
+
+class _EstimateCatalogEditorState extends State<_EstimateCatalogEditor> {
+  late final TextEditingController _brickDensityController;
+  late final TextEditingController _brickUnitCostController;
+  late final TextEditingController _concreteController;
+  late final TextEditingController _floorFinishController;
+  late final TextEditingController _ceilingController;
+  late final TextEditingController _doorController;
+  late final TextEditingController _windowController;
+
+  @override
+  void initState() {
+    super.initState();
+    _brickDensityController = TextEditingController();
+    _brickUnitCostController = TextEditingController();
+    _concreteController = TextEditingController();
+    _floorFinishController = TextEditingController();
+    _ceilingController = TextEditingController();
+    _doorController = TextEditingController();
+    _windowController = TextEditingController();
+    _syncFromCatalog(widget.catalog);
+  }
+
+  @override
+  void didUpdateWidget(covariant _EstimateCatalogEditor oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.catalog != widget.catalog) {
+      _syncFromCatalog(widget.catalog);
+    }
+  }
+
+  @override
+  void dispose() {
+    _brickDensityController.dispose();
+    _brickUnitCostController.dispose();
+    _concreteController.dispose();
+    _floorFinishController.dispose();
+    _ceilingController.dispose();
+    _doorController.dispose();
+    _windowController.dispose();
+    super.dispose();
+  }
+
+  void _syncFromCatalog(RenderSceneEstimateCatalog catalog) {
+    _brickDensityController.text = _format(catalog.bricksPerCubicMeter);
+    _brickUnitCostController.text = _format(catalog.brickUnitCost);
+    _concreteController.text = _format(catalog.concreteCostPerCubicMeter);
+    _floorFinishController.text =
+        _format(catalog.floorFinishCostPerSquareMeter);
+    _ceilingController.text = _format(catalog.ceilingCostPerSquareMeter);
+    _doorController.text = _format(catalog.doorUnitCost);
+    _windowController.text = _format(catalog.windowUnitCost);
+  }
+
+  String _format(double value) => value.toStringAsFixed(2);
+
+  void _updateCatalog({
+    double? bricksPerCubicMeter,
+    double? brickUnitCost,
+    double? concreteCostPerCubicMeter,
+    double? floorFinishCostPerSquareMeter,
+    double? ceilingCostPerSquareMeter,
+    double? doorUnitCost,
+    double? windowUnitCost,
+  }) {
+    widget.onChanged(
+      widget.catalog.copyWith(
+        bricksPerCubicMeter: bricksPerCubicMeter,
+        brickUnitCost: brickUnitCost,
+        concreteCostPerCubicMeter: concreteCostPerCubicMeter,
+        floorFinishCostPerSquareMeter: floorFinishCostPerSquareMeter,
+        ceilingCostPerSquareMeter: ceilingCostPerSquareMeter,
+        doorUnitCost: doorUnitCost,
+        windowUnitCost: windowUnitCost,
+      ),
+    );
+  }
+
+  Widget _buildField({
+    required String label,
+    required TextEditingController controller,
+    required ValueChanged<double> onValue,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: TextField(
+        controller: controller,
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        decoration: InputDecoration(
+          labelText: label,
+          isDense: true,
+          border: const OutlineInputBorder(),
+        ),
+        onChanged: (value) {
+          final parsed = double.tryParse(value.trim());
+          if (parsed != null && parsed >= 0) {
+            onValue(parsed);
+          }
+        },
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ExpansionTile(
+      tilePadding: EdgeInsets.zero,
+      childrenPadding: EdgeInsets.zero,
+      title: Text(
+        'Unit prices',
+        style: Theme.of(context).textTheme.labelLarge,
+      ),
+      subtitle: const Text('Live estimate shu qiymatlar bilan yangilanadi'),
+      children: <Widget>[
+        _buildField(
+          label: 'Bricks per m³',
+          controller: _brickDensityController,
+          onValue: (value) => _updateCatalog(bricksPerCubicMeter: value),
+        ),
+        _buildField(
+          label: 'Brick unit cost',
+          controller: _brickUnitCostController,
+          onValue: (value) => _updateCatalog(brickUnitCost: value),
+        ),
+        _buildField(
+          label: 'Concrete cost per m³',
+          controller: _concreteController,
+          onValue: (value) =>
+              _updateCatalog(concreteCostPerCubicMeter: value),
+        ),
+        _buildField(
+          label: 'Floor finish cost per m²',
+          controller: _floorFinishController,
+          onValue: (value) =>
+              _updateCatalog(floorFinishCostPerSquareMeter: value),
+        ),
+        _buildField(
+          label: 'Ceiling cost per m²',
+          controller: _ceilingController,
+          onValue: (value) =>
+              _updateCatalog(ceilingCostPerSquareMeter: value),
+        ),
+        _buildField(
+          label: 'Door unit cost',
+          controller: _doorController,
+          onValue: (value) => _updateCatalog(doorUnitCost: value),
+        ),
+        _buildField(
+          label: 'Window unit cost',
+          controller: _windowController,
+          onValue: (value) => _updateCatalog(windowUnitCost: value),
+        ),
+        Align(
+          alignment: Alignment.centerRight,
+          child: TextButton(
+            onPressed: () {
+              const defaults = RenderSceneEstimateCatalog();
+              _syncFromCatalog(defaults);
+              widget.onChanged(defaults);
+            },
+            child: const Text('Reset defaults'),
+          ),
         ),
       ],
     );

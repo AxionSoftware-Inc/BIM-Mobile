@@ -18,6 +18,9 @@ class RenderSceneViewport extends StatefulWidget {
     required this.controller,
     this.interactionMode = RenderSceneInteractionMode.select,
     this.onSceneTap,
+    this.onSceneDragStart,
+    this.onSceneDragUpdate,
+    this.onSceneDragEnd,
     this.onSceneSecondaryTap,
     this.onSceneHover,
     this.draftWallThicknessMeters = RenderSceneEditor.defaultWallThicknessMeters,
@@ -27,6 +30,9 @@ class RenderSceneViewport extends StatefulWidget {
   final RenderSceneViewportController controller;
   final RenderSceneInteractionMode interactionMode;
   final ValueChanged<RenderSceneTapDetails>? onSceneTap;
+  final ValueChanged<RenderSceneTapDetails>? onSceneDragStart;
+  final ValueChanged<RenderSceneTapDetails>? onSceneDragUpdate;
+  final ValueChanged<RenderSceneTapDetails>? onSceneDragEnd;
   final ValueChanged<RenderSceneTapDetails>? onSceneSecondaryTap;
   final ValueChanged<RenderSceneTapDetails>? onSceneHover;
   final double draftWallThicknessMeters;
@@ -105,6 +111,9 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
       controller: widget.controller,
       interactionMode: widget.interactionMode,
       onSceneTap: widget.onSceneTap,
+      onSceneDragStart: widget.onSceneDragStart,
+      onSceneDragUpdate: widget.onSceneDragUpdate,
+      onSceneDragEnd: widget.onSceneDragEnd,
       onSceneSecondaryTap: widget.onSceneSecondaryTap,
       onSceneHover: widget.onSceneHover,
       draftWallThicknessMeters: widget.draftWallThicknessMeters,
@@ -148,6 +157,9 @@ class _FallbackRenderSceneView extends StatefulWidget {
     required this.controller,
     required this.interactionMode,
     required this.onSceneTap,
+    required this.onSceneDragStart,
+    required this.onSceneDragUpdate,
+    required this.onSceneDragEnd,
     required this.onSceneSecondaryTap,
     required this.onSceneHover,
     required this.draftWallThicknessMeters,
@@ -157,6 +169,9 @@ class _FallbackRenderSceneView extends StatefulWidget {
   final RenderSceneViewportController controller;
   final RenderSceneInteractionMode interactionMode;
   final ValueChanged<RenderSceneTapDetails>? onSceneTap;
+  final ValueChanged<RenderSceneTapDetails>? onSceneDragStart;
+  final ValueChanged<RenderSceneTapDetails>? onSceneDragUpdate;
+  final ValueChanged<RenderSceneTapDetails>? onSceneDragEnd;
   final ValueChanged<RenderSceneTapDetails>? onSceneSecondaryTap;
   final ValueChanged<RenderSceneTapDetails>? onSceneHover;
   final double draftWallThicknessMeters;
@@ -176,6 +191,7 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
   double _gesturePreviousScale = 1.0;
   Offset? _gesturePreviousFocalPoint;
   double _trackpadPreviousScale = 1.0;
+  bool _sceneDragStarted = false;
 
   RenderSceneViewportController get controller => widget.controller;
 
@@ -260,6 +276,36 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
               _lastPointerPosition = event.localPosition;
               _isSecondaryDrag = event.buttons == kSecondaryMouseButton ||
                   event.buttons == kMiddleMouseButton;
+              _sceneDragStarted = false;
+              if (!_isSecondaryDrag &&
+                  controller.projectionMode ==
+                      RenderSceneProjectionMode.topDown &&
+                  (widget.interactionMode ==
+                          RenderSceneInteractionMode.moveWall ||
+                      widget.interactionMode ==
+                          RenderSceneInteractionMode.moveOpening)) {
+                final picked = pickObjectAt(
+                  scene: scene,
+                  size: size,
+                  localPosition: event.localPosition,
+                  projectionMode: controller.projectionMode,
+                  orbitProjectionStyle: controller.orbitProjectionStyle,
+                  planCamera: controller.planCamera,
+                  camera: controller.camera,
+                  visibleKinds: controller.visibleKinds,
+                  padding: FallbackRenderScenePainter.padding,
+                );
+                final modelPoint =
+                    controller.screenToModelPlan(event.localPosition, size);
+                final details = RenderSceneTapDetails(
+                  screenPosition: event.localPosition,
+                  globalPosition: event.position,
+                  modelPoint: modelPoint,
+                  pickedObject: picked,
+                );
+                widget.onSceneDragStart?.call(details);
+                _sceneDragStarted = true;
+              }
             },
             onPointerPanZoomStart: (_) {
               _trackpadPreviousScale = 1.0;
@@ -316,6 +362,32 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
               final delta = event.localPosition - last;
               if (controller.projectionMode ==
                       RenderSceneProjectionMode.topDown &&
+                  (widget.interactionMode ==
+                          RenderSceneInteractionMode.moveWall ||
+                      widget.interactionMode ==
+                          RenderSceneInteractionMode.moveOpening)) {
+                final picked = pickObjectAt(
+                  scene: scene,
+                  size: size,
+                  localPosition: event.localPosition,
+                  projectionMode: controller.projectionMode,
+                  orbitProjectionStyle: controller.orbitProjectionStyle,
+                  planCamera: controller.planCamera,
+                  camera: controller.camera,
+                  visibleKinds: controller.visibleKinds,
+                  padding: FallbackRenderScenePainter.padding,
+                );
+                final modelPoint =
+                    controller.screenToModelPlan(event.localPosition, size);
+                final details = RenderSceneTapDetails(
+                  screenPosition: event.localPosition,
+                  globalPosition: event.position,
+                  modelPoint: modelPoint,
+                  pickedObject: picked,
+                );
+                widget.onSceneDragUpdate?.call(details);
+              } else if (controller.projectionMode ==
+                      RenderSceneProjectionMode.topDown &&
                   widget.interactionMode != RenderSceneInteractionMode.select) {
                 _emitHover(scene, size, event.localPosition, event.position);
               } else if (controller.projectionMode ==
@@ -348,6 +420,37 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
               final moved = down == null
                   ? double.infinity
                   : (event.localPosition - down).distance;
+              if (_sceneDragStarted &&
+                  controller.projectionMode ==
+                      RenderSceneProjectionMode.topDown &&
+                  (widget.interactionMode ==
+                          RenderSceneInteractionMode.moveWall ||
+                      widget.interactionMode ==
+                          RenderSceneInteractionMode.moveOpening)) {
+                final picked = pickObjectAt(
+                  scene: scene,
+                  size: size,
+                  localPosition: event.localPosition,
+                  projectionMode: controller.projectionMode,
+                  orbitProjectionStyle: controller.orbitProjectionStyle,
+                  planCamera: controller.planCamera,
+                  camera: controller.camera,
+                  visibleKinds: controller.visibleKinds,
+                  padding: FallbackRenderScenePainter.padding,
+                );
+                final modelPoint =
+                    controller.screenToModelPlan(event.localPosition, size);
+                final details = RenderSceneTapDetails(
+                  screenPosition: event.localPosition,
+                  globalPosition: event.position,
+                  modelPoint: modelPoint,
+                  pickedObject: picked,
+                );
+                widget.onSceneDragEnd?.call(details);
+                _sceneDragStarted = false;
+                _clearPointerState();
+                return;
+              }
               if (moved < 8.0) {
                 final picked = pickObjectAt(
                   scene: scene,
@@ -478,6 +581,10 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
         return 'Add door: tap a wall to place immediately with current size.';
       case RenderSceneInteractionMode.addWindow:
         return 'Add window: tap a wall to place immediately with current size.';
+      case RenderSceneInteractionMode.moveWall:
+        return 'Move wall: select a wall, tap to start preview, move cursor, then confirm.';
+      case RenderSceneInteractionMode.moveOpening:
+        return 'Move opening: select a door/window, tap to start preview, move cursor, then confirm.';
       case RenderSceneInteractionMode.addFloor:
         return 'Add floor: tap a room for instant floor, or draw/select walls.';
       case RenderSceneInteractionMode.addCeiling:
@@ -493,6 +600,7 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
     _activePointerCount = 0;
     _gesturePreviousScale = 1.0;
     _gesturePreviousFocalPoint = null;
+    _sceneDragStarted = false;
   }
 }
 
