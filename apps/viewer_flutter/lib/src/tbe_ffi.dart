@@ -4,6 +4,8 @@ import 'dart:io';
 
 import 'package:ffi/ffi.dart';
 
+import 'render_scene_models.dart';
+
 final class TbeScheduleSummary extends ffi.Struct {
   @ffi.Size()
   external int wallRows;
@@ -184,6 +186,172 @@ typedef _ProjectLoadJsonDart = int Function(
   ffi.Pointer<ffi.Void>,
   ffi.Pointer<Utf8>,
 );
+typedef _CreateLevelNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Pointer<Utf8>,
+  ffi.Double,
+  ffi.Double,
+  ffi.Pointer<ffi.Uint64>,
+);
+typedef _CreateLevelDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Pointer<Utf8>,
+  double,
+  double,
+  ffi.Pointer<ffi.Uint64>,
+);
+typedef _UpdateLevelNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Uint64,
+  ffi.Pointer<Utf8>,
+  ffi.Double,
+  ffi.Double,
+  ffi.Int32,
+  ffi.Int32,
+);
+typedef _UpdateLevelDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  int,
+  ffi.Pointer<Utf8>,
+  double,
+  double,
+  int,
+  int,
+);
+typedef _MoveLevelElevationNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Uint64,
+  ffi.Double,
+);
+typedef _MoveLevelElevationDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  int,
+  double,
+);
+typedef _SetWallLevelConstraintsNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Uint64,
+  ffi.Uint64,
+  ffi.Uint64,
+  ffi.Double,
+  ffi.Double,
+  ffi.Int32,
+);
+typedef _SetWallLevelConstraintsDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  int,
+  int,
+  int,
+  double,
+  double,
+  int,
+);
+typedef _CreateWallNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Pointer<Utf8>,
+  ffi.Uint64,
+  TbeVec2,
+  TbeVec2,
+  ffi.Double,
+  ffi.Double,
+  ffi.Pointer<ffi.Uint64>,
+);
+typedef _CreateWallDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Pointer<Utf8>,
+  int,
+  TbeVec2,
+  TbeVec2,
+  double,
+  double,
+  ffi.Pointer<ffi.Uint64>,
+);
+typedef _CreateDoorNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Pointer<Utf8>,
+  ffi.Uint64,
+  ffi.Double,
+  ffi.Double,
+  ffi.Double,
+  ffi.Pointer<ffi.Uint64>,
+);
+typedef _CreateDoorDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Pointer<Utf8>,
+  int,
+  double,
+  double,
+  double,
+  ffi.Pointer<ffi.Uint64>,
+);
+typedef _CreateWindowNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Pointer<Utf8>,
+  ffi.Uint64,
+  ffi.Double,
+  ffi.Double,
+  ffi.Double,
+  ffi.Double,
+  ffi.Pointer<ffi.Uint64>,
+);
+typedef _CreateWindowDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Pointer<Utf8>,
+  int,
+  double,
+  double,
+  double,
+  double,
+  ffi.Pointer<ffi.Uint64>,
+);
+typedef _SetOpeningLevelLockNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Uint64,
+  ffi.Int32,
+);
+typedef _SetOpeningLevelLockDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  int,
+  int,
+);
+typedef _CreateProfileNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Int32,
+  ffi.Int32,
+  ffi.Uint64,
+  ffi.Pointer<TbeVec2>,
+  ffi.Size,
+  ffi.Pointer<ffi.Uint64>,
+  ffi.Size,
+  ffi.Int32,
+  ffi.Double,
+  ffi.Double,
+  ffi.Double,
+  ffi.Uint64,
+  ffi.Uint64,
+  ffi.Int32,
+  ffi.Pointer<ffi.Uint64>,
+  ffi.Pointer<ffi.Uint64>,
+);
+typedef _CreateProfileDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  int,
+  int,
+  int,
+  ffi.Pointer<TbeVec2>,
+  int,
+  ffi.Pointer<ffi.Uint64>,
+  int,
+  int,
+  double,
+  double,
+  double,
+  int,
+  int,
+  int,
+  ffi.Pointer<ffi.Uint64>,
+  ffi.Pointer<ffi.Uint64>,
+);
 typedef _ProjectExportPathNative = ffi.Int32 Function(
   ffi.Pointer<ffi.Void>,
   ffi.Pointer<Utf8>,
@@ -266,6 +434,34 @@ class TbeViewerApi {
                 'tbe_get_schema_version'),
         _projectLoadJson = library.lookupFunction<_ProjectLoadJsonNative,
             _ProjectLoadJsonDart>('tbe_project_load_json'),
+        _createLevel =
+            library.lookupFunction<_CreateLevelNative, _CreateLevelDart>(
+                'tbe_create_level'),
+        _updateLevel =
+            library.lookupFunction<_UpdateLevelNative, _UpdateLevelDart>(
+                'tbe_update_level'),
+        _moveLevelElevation = library.lookupFunction<
+            _MoveLevelElevationNative,
+            _MoveLevelElevationDart>('tbe_move_level_elevation'),
+        _setWallLevelConstraints = library.lookupFunction<
+                _SetWallLevelConstraintsNative,
+                _SetWallLevelConstraintsDart>(
+            'tbe_set_wall_level_constraints'),
+        _createWall =
+            library.lookupFunction<_CreateWallNative, _CreateWallDart>(
+                'tbe_create_wall'),
+        _createDoor =
+            library.lookupFunction<_CreateDoorNative, _CreateDoorDart>(
+                'tbe_create_door'),
+        _createWindow =
+            library.lookupFunction<_CreateWindowNative, _CreateWindowDart>(
+                'tbe_create_window'),
+        _setOpeningLevelLock = library.lookupFunction<
+                _SetOpeningLevelLockNative,
+                _SetOpeningLevelLockDart>('tbe_set_opening_level_lock'),
+        _createProfile =
+            library.lookupFunction<_CreateProfileNative, _CreateProfileDart>(
+                'tbe_create_profile'),
         _importProjectPackage = library.lookupFunction<
             _ProjectImportPackageNative,
             _ProjectImportPackageDart>('tbe_import_project_package'),
@@ -335,6 +531,15 @@ class TbeViewerApi {
   final _StringGetterDart _getApiVersion;
   final _SchemaVersionDart _getSchemaVersion;
   final _ProjectLoadJsonDart _projectLoadJson;
+  final _CreateLevelDart _createLevel;
+  final _UpdateLevelDart _updateLevel;
+  final _MoveLevelElevationDart _moveLevelElevation;
+  final _SetWallLevelConstraintsDart _setWallLevelConstraints;
+  final _CreateWallDart _createWall;
+  final _CreateDoorDart _createDoor;
+  final _CreateWindowDart _createWindow;
+  final _SetOpeningLevelLockDart _setOpeningLevelLock;
+  final _CreateProfileDart _createProfile;
   final _ProjectImportPackageDart _importProjectPackage;
   final _ValidateDart _validate;
   final _ScheduleDart _generateSchedules;
@@ -391,6 +596,265 @@ class TbeViewerApi {
       _check(handle, _projectLoadJson(handle, jsonPtr));
     } finally {
       calloc.free(jsonPtr);
+    }
+  }
+
+  int createLevel(
+    ffi.Pointer<ffi.Void> handle,
+    String name,
+    double elevationMeters,
+    double defaultWallHeightMeters,
+  ) {
+    final namePtr = name.toNativeUtf8();
+    final out = calloc<ffi.Uint64>();
+    try {
+      _check(
+        handle,
+        _createLevel(
+          handle,
+          namePtr,
+          elevationMeters,
+          defaultWallHeightMeters,
+          out,
+        ),
+      );
+      return out.value;
+    } finally {
+      calloc.free(namePtr);
+      calloc.free(out);
+    }
+  }
+
+  void updateLevel(
+    ffi.Pointer<ffi.Void> handle,
+    int levelId, {
+    String? name,
+    double? elevationMeters,
+    double? defaultWallHeightMeters,
+  }) {
+    final namePtr = (name ?? '').toNativeUtf8();
+    try {
+      _check(
+        handle,
+        _updateLevel(
+          handle,
+          levelId,
+          namePtr,
+          elevationMeters ?? 0.0,
+          defaultWallHeightMeters ?? 0.0,
+          elevationMeters == null ? 0 : 1,
+          defaultWallHeightMeters == null ? 0 : 1,
+        ),
+      );
+    } finally {
+      calloc.free(namePtr);
+    }
+  }
+
+  void moveLevelElevation(
+    ffi.Pointer<ffi.Void> handle,
+    int levelId,
+    double elevationMeters,
+  ) {
+    _check(handle, _moveLevelElevation(handle, levelId, elevationMeters));
+  }
+
+  void setWallLevelConstraints(
+    ffi.Pointer<ffi.Void> handle, {
+    required int wallId,
+    required int baseLevelId,
+    required int topLevelId,
+    required double baseOffsetMeters,
+    required double topOffsetMeters,
+    required int heightMode,
+  }) {
+    _check(
+      handle,
+      _setWallLevelConstraints(
+        handle,
+        wallId,
+        baseLevelId,
+        topLevelId,
+        baseOffsetMeters,
+        topOffsetMeters,
+        heightMode,
+      ),
+    );
+  }
+
+  int createWall(
+    ffi.Pointer<ffi.Void> handle,
+    String name,
+    int levelId,
+    double startX,
+    double startY,
+    double endX,
+    double endY,
+    double thicknessMeters,
+    double heightMeters,
+  ) {
+    final namePtr = name.toNativeUtf8();
+    final out = calloc<ffi.Uint64>();
+    final start = calloc<TbeVec2>();
+    final end = calloc<TbeVec2>();
+    start.ref
+      ..x = startX
+      ..y = startY;
+    end.ref
+      ..x = endX
+      ..y = endY;
+    try {
+      _check(
+        handle,
+        _createWall(
+          handle,
+          namePtr,
+          levelId,
+          start.ref,
+          end.ref,
+          thicknessMeters,
+          heightMeters,
+          out,
+        ),
+      );
+      return out.value;
+    } finally {
+      calloc.free(namePtr);
+      calloc.free(start);
+      calloc.free(end);
+      calloc.free(out);
+    }
+  }
+
+  int createDoor(
+    ffi.Pointer<ffi.Void> handle,
+    String name,
+    int hostWallId,
+    double offsetMeters,
+    double widthMeters,
+    double heightMeters,
+  ) {
+    final namePtr = name.toNativeUtf8();
+    final out = calloc<ffi.Uint64>();
+    try {
+      _check(
+        handle,
+        _createDoor(
+          handle,
+          namePtr,
+          hostWallId,
+          offsetMeters,
+          widthMeters,
+          heightMeters,
+          out,
+        ),
+      );
+      return out.value;
+    } finally {
+      calloc.free(namePtr);
+      calloc.free(out);
+    }
+  }
+
+  int createWindow(
+    ffi.Pointer<ffi.Void> handle,
+    String name,
+    int hostWallId,
+    double offsetMeters,
+    double widthMeters,
+    double heightMeters,
+    double sillHeightMeters,
+  ) {
+    final namePtr = name.toNativeUtf8();
+    final out = calloc<ffi.Uint64>();
+    try {
+      _check(
+        handle,
+        _createWindow(
+          handle,
+          namePtr,
+          hostWallId,
+          offsetMeters,
+          widthMeters,
+          heightMeters,
+          sillHeightMeters,
+          out,
+        ),
+      );
+      return out.value;
+    } finally {
+      calloc.free(namePtr);
+      calloc.free(out);
+    }
+  }
+
+  void setOpeningLevelLock(
+    ffi.Pointer<ffi.Void> handle,
+    int openingId,
+    bool locked,
+  ) {
+    _check(handle, _setOpeningLevelLock(handle, openingId, locked ? 1 : 0));
+  }
+
+  List<int> createProfile(
+    ffi.Pointer<ffi.Void> handle, {
+    required int targetKind,
+    required int draftMode,
+    required int levelId,
+    required List<RenderScenePoint> points,
+    required List<int> wallIds,
+    required bool closed,
+    required double thicknessMeters,
+    required double heightMeters,
+    required double verticalOffsetMeters,
+    required int materialId,
+    required int assemblyId,
+    required int roofType,
+  }) {
+    final pointBuffer = calloc<TbeVec2>(points.length);
+    for (var i = 0; i < points.length; i += 1) {
+      pointBuffer[i]
+        ..x = points[i].x
+        ..y = points[i].y;
+    }
+    final wallBuffer = calloc<ffi.Uint64>(wallIds.length);
+    for (var i = 0; i < wallIds.length; i += 1) {
+      wallBuffer[i] = wallIds[i];
+    }
+    final firstId = calloc<ffi.Uint64>();
+    final count = calloc<ffi.Uint64>();
+    try {
+      _check(
+        handle,
+        _createProfile(
+          handle,
+          targetKind,
+          draftMode,
+          levelId,
+          pointBuffer,
+          points.length,
+          wallBuffer,
+          wallIds.length,
+          closed ? 1 : 0,
+          thicknessMeters,
+          heightMeters,
+          verticalOffsetMeters,
+          materialId,
+          assemblyId,
+          roofType,
+          firstId,
+          count,
+        ),
+      );
+      if (count.value == 0) {
+        return const <int>[];
+      }
+      return <int>[firstId.value];
+    } finally {
+      calloc.free(pointBuffer);
+      calloc.free(wallBuffer);
+      calloc.free(firstId);
+      calloc.free(count);
     }
   }
 
@@ -518,6 +982,7 @@ class ViewerRepository {
   String? _currentJson;
   String? _currentJsonPath;
   String? _currentPackagePath;
+  String? _lastExportedPackagePath;
 
   Future<ViewerLoadResult> loadFromJson({
     required String projectName,
@@ -590,6 +1055,7 @@ class ViewerRepository {
     final packagePath = '${tempDir.path}/package';
     _api.exportSvg(handle, svgPath);
     _api.exportPackage(handle, packagePath);
+    _lastExportedPackagePath = packagePath;
     return ViewerSnapshot(
       projectName: _projectName ?? projectName,
       engineVersion: _api.getEngineVersion(handle),
@@ -602,6 +1068,203 @@ class ViewerRepository {
       packagePath: packagePath,
       validationMessages: _extractValidationMessages(packagePath),
     );
+  }
+
+  Future<RenderSceneLoadResult> currentRenderScene() async {
+    final packagePath = _lastExportedPackagePath;
+    if (packagePath == null) {
+      return const RenderSceneLoadResult(
+        scene: null,
+        warnings: <String>[],
+        errors: <String>['Engine render scene package has not been exported yet.'],
+      );
+    }
+    final renderScenePath = '$packagePath/exports/render_scene.json';
+    final json = await File(renderScenePath).readAsString();
+    return parseRenderSceneJson(json, source: renderScenePath);
+  }
+
+  Future<RenderSceneLoadResult> createLevel({
+    required String name,
+    required double elevationMeters,
+    required double defaultWallHeightMeters,
+  }) async {
+    final handle = _handle;
+    if (handle == null) {
+      throw TbeApiException('No loaded project');
+    }
+    _api.createLevel(handle, name, elevationMeters, defaultWallHeightMeters);
+    await _buildSnapshot(handle, _projectName ?? 'Project');
+    return currentRenderScene();
+  }
+
+  Future<RenderSceneLoadResult> moveLevelElevation({
+    required int levelId,
+    required double elevationMeters,
+  }) async {
+    final handle = _handle;
+    if (handle == null) {
+      throw TbeApiException('No loaded project');
+    }
+    _api.moveLevelElevation(handle, levelId, elevationMeters);
+    await _buildSnapshot(handle, _projectName ?? 'Project');
+    return currentRenderScene();
+  }
+
+  Future<RenderSceneLoadResult> updateLevel({
+    required int levelId,
+    String? name,
+    double? elevationMeters,
+    double? defaultWallHeightMeters,
+  }) async {
+    final handle = _handle;
+    if (handle == null) {
+      throw TbeApiException('No loaded project');
+    }
+    _api.updateLevel(
+      handle,
+      levelId,
+      name: name,
+      elevationMeters: elevationMeters,
+      defaultWallHeightMeters: defaultWallHeightMeters,
+    );
+    await _buildSnapshot(handle, _projectName ?? 'Project');
+    return currentRenderScene();
+  }
+
+  Future<RenderSceneLoadResult> createWall({
+    required String name,
+    required int levelId,
+    required RenderScenePoint start,
+    required RenderScenePoint end,
+    required double thicknessMeters,
+    required double heightMeters,
+  }) async {
+    final handle = _handle;
+    if (handle == null) {
+      throw TbeApiException('No loaded project');
+    }
+    _api.createWall(
+      handle,
+      name,
+      levelId,
+      start.x,
+      start.y,
+      end.x,
+      end.y,
+      thicknessMeters,
+      heightMeters,
+    );
+    await _buildSnapshot(handle, _projectName ?? 'Project');
+    return currentRenderScene();
+  }
+
+  Future<RenderSceneLoadResult> setWallLevelConstraints({
+    required int wallId,
+    required int baseLevelId,
+    int topLevelId = 0,
+    double baseOffsetMeters = 0.0,
+    double topOffsetMeters = 0.0,
+    int heightMode = 0,
+  }) async {
+    final handle = _handle;
+    if (handle == null) {
+      throw TbeApiException('No loaded project');
+    }
+    _api.setWallLevelConstraints(
+      handle,
+      wallId: wallId,
+      baseLevelId: baseLevelId,
+      topLevelId: topLevelId,
+      baseOffsetMeters: baseOffsetMeters,
+      topOffsetMeters: topOffsetMeters,
+      heightMode: heightMode,
+    );
+    await _buildSnapshot(handle, _projectName ?? 'Project');
+    return currentRenderScene();
+  }
+
+  Future<RenderSceneLoadResult> createDoor({
+    required String name,
+    required int hostWallId,
+    required double offsetMeters,
+    required double widthMeters,
+    required double heightMeters,
+  }) async {
+    final handle = _handle;
+    if (handle == null) {
+      throw TbeApiException('No loaded project');
+    }
+    _api.createDoor(handle, name, hostWallId, offsetMeters, widthMeters, heightMeters);
+    await _buildSnapshot(handle, _projectName ?? 'Project');
+    return currentRenderScene();
+  }
+
+  Future<RenderSceneLoadResult> createWindow({
+    required String name,
+    required int hostWallId,
+    required double offsetMeters,
+    required double widthMeters,
+    required double heightMeters,
+    required double sillHeightMeters,
+  }) async {
+    final handle = _handle;
+    if (handle == null) {
+      throw TbeApiException('No loaded project');
+    }
+    _api.createWindow(handle, name, hostWallId, offsetMeters, widthMeters, heightMeters, sillHeightMeters);
+    await _buildSnapshot(handle, _projectName ?? 'Project');
+    return currentRenderScene();
+  }
+
+  Future<RenderSceneLoadResult> setOpeningLevelLock({
+    required int openingId,
+    required bool locked,
+  }) async {
+    final handle = _handle;
+    if (handle == null) {
+      throw TbeApiException('No loaded project');
+    }
+    _api.setOpeningLevelLock(handle, openingId, locked);
+    await _buildSnapshot(handle, _projectName ?? 'Project');
+    return currentRenderScene();
+  }
+
+  Future<RenderSceneLoadResult> createProfile({
+    required int targetKind,
+    required int draftMode,
+    required int levelId,
+    required List<RenderScenePoint> points,
+    List<int> wallIds = const <int>[],
+    required bool closed,
+    required double thicknessMeters,
+    required double heightMeters,
+    required double verticalOffsetMeters,
+    int materialId = 0,
+    int assemblyId = 0,
+    int roofType = 0,
+  }) async {
+    final handle = _handle;
+    if (handle == null) {
+      throw TbeApiException('No loaded project');
+    }
+    _api.createProfile(
+      handle,
+      targetKind: targetKind,
+      draftMode: draftMode,
+      levelId: levelId,
+      points: points,
+      wallIds: wallIds,
+      closed: closed,
+      thicknessMeters: thicknessMeters,
+      heightMeters: heightMeters,
+      verticalOffsetMeters: verticalOffsetMeters,
+      materialId: materialId,
+      assemblyId: assemblyId,
+      roofType: roofType,
+    );
+    await _buildSnapshot(handle, _projectName ?? 'Project');
+    return currentRenderScene();
   }
 
   List<HitCandidateView> hitTest(double modelX, double modelY) {
@@ -676,6 +1339,41 @@ class ViewerRepository {
       return const <String>['Unable to parse debug validation messages.'];
     }
     return const <String>['No validation issues reported.'];
+  }
+
+  int? defaultAssemblyId(String kind) {
+    final packagePath = _lastExportedPackagePath ?? _currentPackagePath;
+    if (packagePath == null) {
+      return null;
+    }
+    final projectJson = File('$packagePath/project.json');
+    if (!projectJson.existsSync()) {
+      return null;
+    }
+    try {
+      final decoded = jsonDecode(projectJson.readAsStringSync());
+      final document =
+          decoded is Map<String, dynamic> ? decoded['document'] : null;
+      final assemblies =
+          document is Map<String, dynamic> ? document['assemblies'] : null;
+      if (assemblies is List) {
+        for (final entry in assemblies) {
+          if (entry is Map<String, dynamic> &&
+              entry['kind']?.toString().toLowerCase() == kind.toLowerCase()) {
+            final id = entry['assembly_id'];
+            if (id is int) {
+              return id;
+            }
+            if (id is num) {
+              return id.toInt();
+            }
+          }
+        }
+      }
+    } catch (_) {
+      return null;
+    }
+    return null;
   }
 
   void dispose() {

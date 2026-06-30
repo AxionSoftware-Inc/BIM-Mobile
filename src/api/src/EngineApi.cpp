@@ -320,9 +320,14 @@ std::vector<Vec3> mesh_positions(const tbe::core::MeshBuffer& mesh) {
     return positions;
 }
 
-RenderSceneMeshDTO mesh_dto_from_mesh_buffer(const tbe::core::MeshBuffer& mesh) {
+RenderSceneMeshDTO mesh_dto_from_mesh_buffer(const tbe::core::MeshBuffer& mesh, double z_offset = 0.0) {
     RenderSceneMeshDTO dto;
     dto.positions = mesh_positions(mesh);
+    if (z_offset != 0.0) {
+        for (auto& point : dto.positions) {
+            point.z += z_offset;
+        }
+    }
     dto.indices = mesh.indices;
     return dto;
 }
@@ -350,7 +355,7 @@ RenderSceneMeshDTO make_flat_polygon_mesh(const std::vector<tbe::core::Point2>& 
     return dto;
 }
 
-RenderSceneMeshDTO make_opening_mesh(const tbe::core::Line2& axis, const tbe::core::HostedOpening& opening, double wall_thickness) {
+RenderSceneMeshDTO make_opening_mesh(const tbe::core::Line2& axis, const tbe::core::HostedOpening& opening, double wall_thickness, double z_offset = 0.0) {
     RenderSceneMeshDTO dto;
     const auto dx = axis.end.x - axis.start.x;
     const auto dy = axis.end.y - axis.start.y;
@@ -383,6 +388,11 @@ RenderSceneMeshDTO make_opening_mesh(const tbe::core::Line2& axis, const tbe::co
         Vec3{.x = center_x - (ux * half_width) + (nx * half_thickness), .y = center_y - (uy * half_width) + (ny * half_thickness), .z = top},
     };
     dto.positions.assign(corners.begin(), corners.end());
+    if (z_offset != 0.0) {
+        for (auto& point : dto.positions) {
+            point.z += z_offset;
+        }
+    }
     dto.indices = {
         0, 1, 2, 0, 2, 3,
         4, 6, 5, 4, 7, 6,
@@ -409,6 +419,19 @@ double level_elevation(const std::map<ElementId, double>& levels, ElementId leve
     return found == levels.end() ? fallback : found->second;
 }
 
+double resolved_wall_base_elevation(const tbe::core::WallData& wall, const std::map<ElementId, double>& levels) {
+    const auto level_id = wall.base_level_id != 0 ? wall.base_level_id : wall.level_id;
+    return level_elevation(levels, level_id, 0.0) + wall.base_offset_meters;
+}
+
+double resolved_wall_height(const tbe::core::WallData& wall, const std::map<ElementId, double>& levels) {
+    if (wall.height_mode == tbe::core::WallHeightMode::TopLevel && wall.top_level_id != 0) {
+        const auto top = level_elevation(levels, wall.top_level_id, 0.0) + wall.top_offset_meters;
+        return std::max(0.01, top - resolved_wall_base_elevation(wall, levels));
+    }
+    return std::max(0.01, wall.height_meters);
+}
+
 RenderSceneObjectDTO make_object_dto(
     ElementId element_id,
     ApiElementKind kind,
@@ -416,6 +439,7 @@ RenderSceneObjectDTO make_object_dto(
     std::uint64_t revision,
     RenderSceneMeshDTO mesh,
     std::string material_category,
+    std::map<std::string, std::string> metadata = {},
     bool selectable = true,
     bool visible_by_default = true
 ) {
@@ -428,6 +452,7 @@ RenderSceneObjectDTO make_object_dto(
     object.revision = revision;
     object.mesh = std::move(mesh);
     object.material_category = std::move(material_category);
+    object.metadata = std::move(metadata);
     object.bounds = make_bounds3d(object.mesh.positions);
     return object;
 }
@@ -455,24 +480,62 @@ RenderSceneDTO build_render_scene(const Document& document) {
     };
 
     for (const auto& element : document.elements()) {
+        if (const auto* level = element.level(); level != nullptr) {
+            scene.levels.push_back(RenderSceneLevelDTO{
+                .level_id = to_id(element.id()),
+                .name = level->name,
+                .elevation_meters = level->elevation_meters,
+                .default_wall_height_meters = level->default_wall_height_meters,
+            });
+        }
+    }
+
+    for (const auto& element : document.elements()) {
         if (const auto* wall = element.wall(); wall != nullptr) {
+            const auto base_elevation = resolved_wall_base_elevation(*wall, elevations);
             append_object(make_object_dto(
                 element.id(),
                 ApiElementKind::Wall,
                 wall->level_id,
                 element.revision(),
-                mesh_dto_from_mesh_buffer(wall->geometry.mesh),
-                material_category_name(ApiElementKind::Wall)
+                mesh_dto_from_mesh_buffer(wall->geometry.mesh, base_elevation),
+                material_category_name(ApiElementKind::Wall),
+                {
+                    {"start_x", std::to_string(wall->axis.start.x)},
+                    {"start_y", std::to_string(wall->axis.start.y)},
+                    {"end_x", std::to_string(wall->axis.end.x)},
+                    {"end_y", std::to_string(wall->axis.end.y)},
+                    {"thickness_meters", std::to_string(wall->thickness_meters)},
+                    {"height_meters", std::to_string(resolved_wall_height(*wall, elevations))},
+                    {"base_level_id", std::to_string(wall->base_level_id)},
+                    {"top_level_id", std::to_string(wall->top_level_id)},
+                    {"base_offset_meters", std::to_string(wall->base_offset_meters)},
+                    {"top_offset_meters", std::to_string(wall->top_offset_meters)},
+                    {"height_mode", wall->height_mode == tbe::core::WallHeightMode::TopLevel ? "TopLevel" : "Unconnected"},
+                    {"level_locked", "true"},
+                }
             ));
             for (const auto& opening : wall->openings) {
                 const auto opening_kind = opening.kind == tbe::core::OpeningKind::Door ? ApiElementKind::Door : ApiElementKind::Window;
+                const auto* opening_element = document.find_ptr(opening.element_id);
+                const auto opening_locked = opening_element != nullptr && opening_element->door() != nullptr
+                    ? opening_element->door()->level_locked
+                    : (opening_element != nullptr && opening_element->window() != nullptr ? opening_element->window()->level_locked : true);
                 append_object(make_object_dto(
                     opening.element_id,
                     opening_kind,
                     wall->level_id,
                     element.revision(),
-                    make_opening_mesh(wall->axis, opening, wall->thickness_meters),
-                    material_category_name(opening_kind)
+                    make_opening_mesh(wall->axis, opening, wall->thickness_meters, base_elevation),
+                    material_category_name(opening_kind),
+                    {
+                        {"host_wall_id", std::to_string(element.id())},
+                        {"offset_meters", std::to_string(opening.offset_meters)},
+                        {"width_meters", std::to_string(opening.width_meters)},
+                        {"height_meters", std::to_string(opening.height_meters)},
+                        {"sill_height_meters", std::to_string(opening.sill_height_meters)},
+                        {"level_locked", opening_locked ? "true" : "false"},
+                    }
                 ));
             }
             continue;
@@ -484,8 +547,11 @@ RenderSceneDTO build_render_scene(const Document& document) {
                 ApiElementKind::Slab,
                 slab->level_id,
                 element.revision(),
-                mesh_dto_from_mesh_buffer(slab->mesh),
-                material_category_name(ApiElementKind::Slab)
+                mesh_dto_from_mesh_buffer(slab->mesh, level_elevation(elevations, slab->level_id, 0.0)),
+                material_category_name(ApiElementKind::Slab),
+                {
+                    {"elevation_offset_meters", std::to_string(slab->elevation_offset_meters)},
+                }
             ));
             (void)elevation;
             continue;
@@ -496,7 +562,7 @@ RenderSceneDTO build_render_scene(const Document& document) {
                 ApiElementKind::Roof,
                 roof->level_id,
                 element.revision(),
-                mesh_dto_from_mesh_buffer(roof->mesh),
+                mesh_dto_from_mesh_buffer(roof->mesh, level_elevation(elevations, roof->level_id, 0.0)),
                 material_category_name(ApiElementKind::Roof)
             ));
             continue;
@@ -507,7 +573,7 @@ RenderSceneDTO build_render_scene(const Document& document) {
                 ApiElementKind::Column,
                 column->level_id,
                 element.revision(),
-                mesh_dto_from_mesh_buffer(column->mesh),
+                mesh_dto_from_mesh_buffer(column->mesh, level_elevation(elevations, column->level_id, 0.0)),
                 material_category_name(ApiElementKind::Column)
             ));
             continue;
@@ -518,7 +584,7 @@ RenderSceneDTO build_render_scene(const Document& document) {
                 ApiElementKind::Beam,
                 beam->level_id,
                 element.revision(),
-                mesh_dto_from_mesh_buffer(beam->mesh),
+                mesh_dto_from_mesh_buffer(beam->mesh, level_elevation(elevations, beam->level_id, 0.0)),
                 material_category_name(ApiElementKind::Beam)
             ));
             continue;
@@ -529,7 +595,7 @@ RenderSceneDTO build_render_scene(const Document& document) {
                 ApiElementKind::Stair,
                 stair->base_level_id,
                 element.revision(),
-                mesh_dto_from_mesh_buffer(stair->mesh),
+                mesh_dto_from_mesh_buffer(stair->mesh, level_elevation(elevations, stair->base_level_id, 0.0)),
                 material_category_name(ApiElementKind::Stair)
             ));
         }
@@ -578,6 +644,19 @@ std::string render_scene_to_json(const RenderSceneDTO& scene) {
     out << "\"object_count\":" << scene.object_count << ',';
     out << "\"vertex_count\":" << scene.vertex_count << ',';
     out << "\"index_count\":" << scene.index_count << ',';
+    out << "\"levels\":[";
+    for (std::size_t index = 0; index < scene.levels.size(); ++index) {
+        if (index != 0) {
+            out << ',';
+        }
+        const auto& level = scene.levels[index];
+        out << "{\"level_id\":" << level.level_id.value
+            << ",\"name\":\"" << escape_json(level.name) << "\""
+            << ",\"elevation_meters\":" << safe_value(level.elevation_meters)
+            << ",\"default_wall_height_meters\":" << safe_value(level.default_wall_height_meters)
+            << "}";
+    }
+    out << "],";
     out << "\"objects\":[";
     for (std::size_t object_index = 0; object_index < scene.objects.size(); ++object_index) {
         const auto& object = scene.objects[object_index];
@@ -592,6 +671,18 @@ std::string render_scene_to_json(const RenderSceneDTO& scene) {
         out << "\"visible_by_default\":" << (object.visible_by_default ? "true" : "false") << ',';
         out << "\"revision\":" << object.revision << ',';
         out << "\"material_category\":\"" << escape_json(object.material_category) << "\",";
+        if (!object.metadata.empty()) {
+            out << "\"metadata\":{";
+            auto first_metadata = true;
+            for (const auto& [key, value] : object.metadata) {
+                if (!first_metadata) {
+                    out << ',';
+                }
+                first_metadata = false;
+                out << "\"" << escape_json(key) << "\":\"" << escape_json(value) << "\"";
+            }
+            out << "},";
+        }
         out << "\"bounds\":{\"min\":{\"x\":" << safe_value(object.bounds.min.x) << ",\"y\":" << safe_value(object.bounds.min.y) << ",\"z\":" << safe_value(object.bounds.min.z)
             << "},\"max\":{\"x\":" << safe_value(object.bounds.max.x) << ",\"y\":" << safe_value(object.bounds.max.y) << ",\"z\":" << safe_value(object.bounds.max.z) << "}},";
         out << "\"mesh\":{\"positions\":[";
@@ -660,6 +751,32 @@ ApiQuantityType to_api_quantity_type(tbe::core::QuantityType type) {
 
 tbe::core::RoofType to_core_roof_type(ApiRoofType type) {
     return type == ApiRoofType::SimpleGable ? tbe::core::RoofType::SimpleGable : tbe::core::RoofType::Flat;
+}
+
+tbe::core::WallHeightMode to_core_wall_height_mode(ApiWallHeightMode mode) {
+    return mode == ApiWallHeightMode::TopLevel ? tbe::core::WallHeightMode::TopLevel : tbe::core::WallHeightMode::Unconnected;
+}
+
+tbe::core::ProfileDraftMode to_core_profile_mode(ApiProfileDraftMode mode) {
+    switch (mode) {
+    case ApiProfileDraftMode::Rectangle: return tbe::core::ProfileDraftMode::Rectangle;
+    case ApiProfileDraftMode::PickWalls: return tbe::core::ProfileDraftMode::PickWalls;
+    case ApiProfileDraftMode::AutoRoom: return tbe::core::ProfileDraftMode::AutoRoom;
+    case ApiProfileDraftMode::Polyline:
+    default:
+        return tbe::core::ProfileDraftMode::Polyline;
+    }
+}
+
+tbe::core::ProfileTargetKind to_core_profile_target(ApiProfileTargetKind kind) {
+    switch (kind) {
+    case ApiProfileTargetKind::FloorBoundary: return tbe::core::ProfileTargetKind::FloorBoundary;
+    case ApiProfileTargetKind::CeilingBoundary: return tbe::core::ProfileTargetKind::CeilingBoundary;
+    case ApiProfileTargetKind::RoofBoundary: return tbe::core::ProfileTargetKind::RoofBoundary;
+    case ApiProfileTargetKind::WallPath:
+    default:
+        return tbe::core::ProfileTargetKind::WallPath;
+    }
 }
 
 ValidationIssueDTO to_validation_issue(const tbe::core::ValidationIssue& issue) {
@@ -1957,10 +2074,47 @@ ApiResult<ElementIdDTO> EngineSession::create_level(std::string name, double ele
     });
 }
 
+ApiVoidResult EngineSession::update_level(
+    std::uint64_t level_id,
+    std::optional<std::string> name,
+    std::optional<double> elevation_meters,
+    std::optional<double> default_wall_height_meters
+) {
+    return apply_mutation(*impl_, "update_level", [&](Document& document) {
+        document.update_level(level_id, std::move(name), elevation_meters, default_wall_height_meters);
+    });
+}
+
+ApiVoidResult EngineSession::move_level_elevation(std::uint64_t level_id, double elevation_meters) {
+    return apply_mutation(*impl_, "move_level_elevation", [&](Document& document) {
+        document.move_level_elevation(level_id, elevation_meters);
+    });
+}
+
 ApiResult<ElementIdDTO> EngineSession::create_wall(std::string name, Vec2 start, Vec2 end, double thickness_meters, double height_meters, std::uint64_t level_id) {
     ElementIdDTO created{};
     return apply_mutation_with_value(*impl_, "create_wall", created, [&](Document& document, ElementIdDTO& out) {
         out = to_id(document.create_wall(std::move(name), Line2{.start = to_point(start), .end = to_point(end)}, thickness_meters, height_meters, level_id));
+    });
+}
+
+ApiVoidResult EngineSession::set_wall_level_constraints(
+    std::uint64_t wall_id,
+    std::uint64_t base_level_id,
+    std::uint64_t top_level_id,
+    double base_offset_meters,
+    double top_offset_meters,
+    ApiWallHeightMode height_mode
+) {
+    return apply_mutation(*impl_, "set_wall_level_constraints", [&](Document& document) {
+        document.set_wall_level_constraints(
+            wall_id,
+            base_level_id,
+            top_level_id,
+            base_offset_meters,
+            top_offset_meters,
+            to_core_wall_height_mode(height_mode)
+        );
     });
 }
 
@@ -1982,6 +2136,41 @@ ApiResult<ElementIdDTO> EngineSession::create_window(
     ElementIdDTO created{};
     return apply_mutation_with_value(*impl_, "create_window", created, [&](Document& document, ElementIdDTO& out) {
         out = to_id(document.create_window(std::move(name), host_wall_id, offset_meters, width_meters, height_meters, sill_height_meters));
+    });
+}
+
+ApiVoidResult EngineSession::set_opening_level_lock(std::uint64_t opening_id, bool locked) {
+    return apply_mutation(*impl_, "set_opening_level_lock", [&](Document& document) {
+        document.set_opening_level_lock(opening_id, locked);
+    });
+}
+
+ApiResult<std::vector<ElementIdDTO>> EngineSession::create_elements_from_profile(ProfileDraftDTO draft) {
+    std::vector<ElementIdDTO> created;
+    return apply_mutation_with_value(*impl_, "create_elements_from_profile", created, [&](Document& document, std::vector<ElementIdDTO>& out) {
+        tbe::core::ProfileDraft core_draft{
+            .mode = to_core_profile_mode(draft.mode),
+            .target_kind = to_core_profile_target(draft.target_kind),
+            .level_id = draft.level_id.value,
+            .closed = draft.closed,
+            .thickness_meters = draft.thickness_meters,
+            .height_meters = draft.height_meters,
+            .vertical_offset_meters = draft.vertical_offset_meters,
+            .material_id = draft.material_id.value,
+            .assembly_id = draft.assembly_id.value,
+            .roof_type = to_core_roof_type(draft.roof_type),
+        };
+        core_draft.points.reserve(draft.points.size());
+        for (const auto& point : draft.points) {
+            core_draft.points.push_back(to_point(point));
+        }
+        core_draft.picked_wall_ids.reserve(draft.picked_wall_ids.size());
+        for (const auto& wall_id : draft.picked_wall_ids) {
+            core_draft.picked_wall_ids.push_back(wall_id.value);
+        }
+        for (const auto id : document.create_elements_from_profile(core_draft)) {
+            out.push_back(to_id(id));
+        }
     });
 }
 

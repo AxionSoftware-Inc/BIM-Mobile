@@ -1688,5 +1688,126 @@ int main() {
         return issue.code == tbe::core::ValidationIssueCode::WallTooShort;
     }));
 
+    {
+        tbe::core::Document level_kernel_document{"Level Kernel"};
+        const auto finish_material = level_kernel_document.create_material("Finish", tbe::core::MaterialCategory::Finish);
+        const auto floor_assembly = level_kernel_document.create_layered_assembly(
+            tbe::core::LayeredAssemblyKind::Floor,
+            "Floor Build-Up",
+            {tbe::core::WallAssemblyLayer{
+                .material_id = finish_material,
+                .thickness_meters = 0.18,
+                .function = tbe::core::WallLayerFunction::Core,
+            }}
+        );
+        const auto ceiling_assembly = level_kernel_document.create_layered_assembly(
+            tbe::core::LayeredAssemblyKind::Ceiling,
+            "Ceiling Build-Up",
+            {tbe::core::WallAssemblyLayer{
+                .material_id = finish_material,
+                .thickness_meters = 0.03,
+                .function = tbe::core::WallLayerFunction::InteriorFinish,
+            }}
+        );
+
+        const auto level_1 = level_kernel_document.create_level("Level 1", 0.0, 3.0);
+        const auto level_2 = level_kernel_document.create_level("Level 2", 3.2, 3.0);
+        const auto constrained_wall = level_kernel_document.create_wall(
+            "Constrained Wall",
+            {{0.0, 0.0}, {4.0, 0.0}},
+            0.2,
+            3.0,
+            level_1
+        );
+        const auto constrained_door = level_kernel_document.create_door("Door", constrained_wall, 1.2, 0.9, 2.1);
+        level_kernel_document.set_wall_level_constraints(
+            constrained_wall,
+            level_1,
+            level_2,
+            0.0,
+            0.2,
+            tbe::core::WallHeightMode::TopLevel
+        );
+        level_kernel_document.regenerate_dirty_geometry();
+        auto constrained_schedule = level_kernel_document.generate_wall_schedule();
+        const auto constrained_row = std::find_if(constrained_schedule.begin(), constrained_schedule.end(), [constrained_wall](const auto& row) {
+            return row.wall_id == constrained_wall;
+        });
+        assert(constrained_row != constrained_schedule.end());
+        assert(near(constrained_row->height_meters, 3.4));
+
+        const auto wall_ids = level_kernel_document.create_elements_from_profile(tbe::core::ProfileDraft{
+            .mode = tbe::core::ProfileDraftMode::Polyline,
+            .target_kind = tbe::core::ProfileTargetKind::WallPath,
+            .level_id = level_1,
+            .points = {{10.0, 0.0}, {14.0, 0.0}, {14.0, 3.0}, {10.0, 3.0}, {10.0, 0.0}},
+            .closed = true,
+            .thickness_meters = 0.2,
+            .height_meters = 3.0,
+        });
+        assert(wall_ids.size() == 4);
+        level_kernel_document.auto_join_walls();
+        const auto level_kernel_rooms = level_kernel_document.detect_rooms();
+        assert(!level_kernel_rooms.empty());
+
+        const auto floor_ids = level_kernel_document.create_elements_from_profile(tbe::core::ProfileDraft{
+            .mode = tbe::core::ProfileDraftMode::Rectangle,
+            .target_kind = tbe::core::ProfileTargetKind::FloorBoundary,
+            .level_id = level_1,
+            .points = {{10.0, 0.0}, {14.0, 3.0}},
+            .closed = true,
+            .thickness_meters = 0.18,
+            .assembly_id = floor_assembly,
+        });
+        const auto ceiling_ids = level_kernel_document.create_elements_from_profile(tbe::core::ProfileDraft{
+            .mode = tbe::core::ProfileDraftMode::PickWalls,
+            .target_kind = tbe::core::ProfileTargetKind::CeilingBoundary,
+            .level_id = level_1,
+            .picked_wall_ids = wall_ids,
+            .closed = true,
+            .vertical_offset_meters = 2.7,
+            .assembly_id = ceiling_assembly,
+        });
+        assert(floor_ids.size() == 1);
+        assert(ceiling_ids.size() == 1);
+
+        const auto& floor_system = level_kernel_document.floor_systems().at(floor_ids.front());
+        const auto& ceiling_system = level_kernel_document.ceiling_systems().at(ceiling_ids.front());
+        assert(floor_system.boundary_polygon.size() == 4);
+        assert(ceiling_system.boundary_polygon.size() == 4);
+        assert(near(min_x(floor_system.boundary_polygon), min_x(ceiling_system.boundary_polygon)));
+        assert(near(max_x(floor_system.boundary_polygon), max_x(ceiling_system.boundary_polygon)));
+        assert(near(min_y(floor_system.boundary_polygon), min_y(ceiling_system.boundary_polygon)));
+        assert(near(max_y(floor_system.boundary_polygon), max_y(ceiling_system.boundary_polygon)));
+
+        level_kernel_document.move_level_elevation(level_2, 4.0);
+        constrained_schedule = level_kernel_document.generate_wall_schedule();
+        const auto moved_top_row = std::find_if(constrained_schedule.begin(), constrained_schedule.end(), [constrained_wall](const auto& row) {
+            return row.wall_id == constrained_wall;
+        });
+        assert(moved_top_row != constrained_schedule.end());
+        assert(near(moved_top_row->height_meters, 4.2));
+
+        level_kernel_document.move_level_elevation(level_1, 0.5);
+        const auto* moved_wall = level_kernel_document.find_ptr(constrained_wall)->wall();
+        const auto* moved_door = level_kernel_document.find_ptr(constrained_door)->door();
+        assert(moved_wall != nullptr && moved_wall->geometry.dirty);
+        assert(moved_door != nullptr && moved_door->level_locked);
+        assert(moved_door->level_id == level_1);
+        assert(level_kernel_document.floor_systems().at(floor_ids.front()).dirty);
+        assert(level_kernel_document.ceiling_systems().at(ceiling_ids.front()).dirty);
+        assert(!level_kernel_document.dirty_room_ids().empty());
+
+        const auto reloaded_level_kernel = tbe::core::Document::from_json(level_kernel_document.to_json());
+        const auto* reloaded_wall = reloaded_level_kernel.find_ptr(constrained_wall)->wall();
+        const auto* reloaded_door = reloaded_level_kernel.find_ptr(constrained_door)->door();
+        assert(reloaded_wall != nullptr);
+        assert(reloaded_wall->base_level_id == level_1);
+        assert(reloaded_wall->top_level_id == level_2);
+        assert(reloaded_wall->height_mode == tbe::core::WallHeightMode::TopLevel);
+        assert(reloaded_door != nullptr);
+        assert(reloaded_door->level_locked);
+    }
+
     return 0;
 }

@@ -784,6 +784,7 @@ std::string Document::to_json() const {
                 << ",\"level_id\":" << system.level_id
                 << ",\"assembly_id\":" << system.assembly_id
                 << ",\"area\":" << system.area_square_meters
+                << ",\"manual_profile\":" << (system.manual_profile ? "true" : "false")
                 << ",\"dirty\":" << (system.dirty ? "true" : "false")
                 << ",\"boundary_polygon\":";
             write_points(out, system.boundary_polygon);
@@ -805,6 +806,7 @@ std::string Document::to_json() const {
                 << ",\"assembly_id\":" << system.assembly_id
                 << ",\"area\":" << system.area_square_meters
                 << ",\"height_offset\":" << system.height_offset_meters
+                << ",\"manual_profile\":" << (system.manual_profile ? "true" : "false")
                 << ",\"dirty\":" << (system.dirty ? "true" : "false")
                 << ",\"boundary_polygon\":";
             write_points(out, system.boundary_polygon);
@@ -828,12 +830,18 @@ std::string Document::to_json() const {
         if (const auto* level = element.level()) {
             out << ",\"level\":{\"name\":\"" << escape_json(level->name) << "\",";
             out << "\"elevation\":" << level->elevation_meters << ',';
-            out << "\"default_wall_height\":" << level->default_wall_height_meters << '}';
+            out << "\"default_wall_height\":" << level->default_wall_height_meters << ',';
+            out << "\"is_story\":" << (level->is_story ? "true" : "false") << '}';
         } else if (const auto* wall = element.wall()) {
             out << ",\"wall\":{\"level_id\":" << wall->level_id << ",\"wall_type_id\":" << wall->wall_type_id << ",\"axis\":";
             write_line(out, wall->axis);
             out << ",\"thickness\":" << wall->thickness_meters;
             out << ",\"height\":" << wall->height_meters;
+            out << ",\"base_level_id\":" << wall->base_level_id;
+            out << ",\"top_level_id\":" << wall->top_level_id;
+            out << ",\"base_offset\":" << wall->base_offset_meters;
+            out << ",\"top_offset\":" << wall->top_offset_meters;
+            out << ",\"height_mode\":\"" << (wall->height_mode == WallHeightMode::TopLevel ? "TopLevel" : "Unconnected") << "\"";
             out << ",\"joins\":[";
             for (std::size_t join_index = 0; join_index < wall->joins.size(); ++join_index) {
                 if (join_index != 0) {
@@ -865,14 +873,16 @@ std::string Document::to_json() const {
             out << ",\"host_wall_id\":" << door->host_wall_id;
             out << ",\"offset\":" << door->offset_meters;
             out << ",\"width\":" << door->width_meters;
-            out << ",\"height\":" << door->height_meters << '}';
+            out << ",\"height\":" << door->height_meters;
+            out << ",\"level_locked\":" << (door->level_locked ? "true" : "false") << '}';
         } else if (const auto* window = element.window()) {
             out << ",\"window\":{\"level_id\":" << window->level_id;
             out << ",\"host_wall_id\":" << window->host_wall_id;
             out << ",\"offset\":" << window->offset_meters;
             out << ",\"width\":" << window->width_meters;
             out << ",\"height\":" << window->height_meters;
-            out << ",\"sill_height\":" << window->sill_height_meters << '}';
+            out << ",\"sill_height\":" << window->sill_height_meters;
+            out << ",\"level_locked\":" << (window->level_locked ? "true" : "false") << '}';
         } else if (const auto* room = element.room()) {
             out << ",\"room\":{\"boundary_wall_ids\":";
             write_ids(out, room->boundary_wall_ids);
@@ -1046,6 +1056,7 @@ Document Document::from_json(std::string_view json) {
                 .level_id = as_id(field(object, "level_id")),
                 .assembly_id = as_id(field(object, "assembly_id")),
                 .area_square_meters = as_number(field(object, "area")),
+                .manual_profile = object.find("manual_profile") != object.end() && as_bool(field(object, "manual_profile")),
                 .dirty = object.find("dirty") != object.end() && as_bool(field(object, "dirty")),
             };
             for (const auto& point_value : as_array(field(object, "boundary_polygon"))) {
@@ -1065,6 +1076,7 @@ Document Document::from_json(std::string_view json) {
                 .assembly_id = as_id(field(object, "assembly_id")),
                 .area_square_meters = as_number(field(object, "area")),
                 .height_offset_meters = object.find("height_offset") != object.end() ? as_number(field(object, "height_offset")) : 0.0,
+                .manual_profile = object.find("manual_profile") != object.end() && as_bool(field(object, "manual_profile")),
                 .dirty = object.find("dirty") != object.end() && as_bool(field(object, "dirty")),
             };
             for (const auto& point_value : as_array(field(object, "boundary_polygon"))) {
@@ -1087,15 +1099,23 @@ Document Document::from_json(std::string_view json) {
                 .name = as_string(field(level, "name")),
                 .elevation_meters = as_number(field(level, "elevation")),
                 .default_wall_height_meters = as_number(field(level, "default_wall_height")),
+                .is_story = level.find("is_story") == level.end() ? true : as_bool(field(level, "is_story")),
             }, revision);
         } else if (kind == ElementKind::Wall) {
             const auto& wall = as_object(field(object, "wall"));
             WallData data{
                 .level_id = as_id(field(wall, "level_id")),
+                .base_level_id = wall.find("base_level_id") != wall.end() ? as_id(field(wall, "base_level_id")) : as_id(field(wall, "level_id")),
+                .top_level_id = wall.find("top_level_id") != wall.end() ? as_id(field(wall, "top_level_id")) : 0,
                 .wall_type_id = wall.find("wall_type_id") != wall.end() ? as_id(field(wall, "wall_type_id")) : 0,
                 .axis = parse_line(field(wall, "axis")),
                 .thickness_meters = as_number(field(wall, "thickness")),
                 .height_meters = as_number(field(wall, "height")),
+                .base_offset_meters = wall.find("base_offset") != wall.end() ? as_number(field(wall, "base_offset")) : 0.0,
+                .top_offset_meters = wall.find("top_offset") != wall.end() ? as_number(field(wall, "top_offset")) : 0.0,
+                .height_mode = wall.find("height_mode") != wall.end() && as_string(field(wall, "height_mode")) == "TopLevel"
+                    ? WallHeightMode::TopLevel
+                    : WallHeightMode::Unconnected,
             };
 
             for (const auto& join_value : as_array(field(wall, "joins"))) {
@@ -1128,6 +1148,7 @@ Document Document::from_json(std::string_view json) {
                 .offset_meters = as_number(field(door, "offset")),
                 .width_meters = as_number(field(door, "width")),
                 .height_meters = as_number(field(door, "height")),
+                .level_locked = door.find("level_locked") == door.end() ? true : as_bool(field(door, "level_locked")),
             }, revision);
         } else if (kind == ElementKind::Window) {
             const auto& window = as_object(field(object, "window"));
@@ -1138,6 +1159,7 @@ Document Document::from_json(std::string_view json) {
                 .width_meters = as_number(field(window, "width")),
                 .height_meters = as_number(field(window, "height")),
                 .sill_height_meters = as_number(field(window, "sill_height")),
+                .level_locked = window.find("level_locked") == window.end() ? true : as_bool(field(window, "level_locked")),
             }, revision);
         } else if (kind == ElementKind::Room) {
             const auto& room = as_object(field(object, "room"));

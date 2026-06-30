@@ -138,6 +138,23 @@ TbeApiStatusCode tbe_repair_current_project(TbeEngineHandle* handle, TbeRepairSu
 TbeApiStatusCode tbe_export_project_package(TbeEngineHandle* handle, const char* path);
 TbeApiStatusCode tbe_import_project_package(TbeEngineHandle* handle, const char* path, int load_mode);
 TbeApiStatusCode tbe_export_render_scene_json(TbeEngineHandle* handle, const char* path);
+TbeApiStatusCode tbe_create_level(
+    TbeEngineHandle* handle,
+    const char* name,
+    double elevation_meters,
+    double default_wall_height_meters,
+    uint64_t* out_level_id
+);
+TbeApiStatusCode tbe_update_level(
+    TbeEngineHandle* handle,
+    uint64_t level_id,
+    const char* name,
+    double elevation_meters,
+    double default_wall_height_meters,
+    int update_elevation,
+    int update_default_wall_height
+);
+TbeApiStatusCode tbe_move_level_elevation(TbeEngineHandle* handle, uint64_t level_id, double elevation_meters);
 
 TbeApiStatusCode tbe_create_wall(
     TbeEngineHandle* handle,
@@ -148,6 +165,15 @@ TbeApiStatusCode tbe_create_wall(
     double thickness_meters,
     double height_meters,
     uint64_t* out_wall_id
+);
+TbeApiStatusCode tbe_set_wall_level_constraints(
+    TbeEngineHandle* handle,
+    uint64_t wall_id,
+    uint64_t base_level_id,
+    uint64_t top_level_id,
+    double base_offset_meters,
+    double top_offset_meters,
+    int height_mode
 );
 TbeApiStatusCode tbe_move_wall(TbeEngineHandle* handle, uint64_t wall_id, double dx_meters, double dy_meters);
 TbeApiStatusCode tbe_create_door(
@@ -168,6 +194,26 @@ TbeApiStatusCode tbe_create_window(
     double height_meters,
     double sill_height_meters,
     uint64_t* out_window_id
+);
+TbeApiStatusCode tbe_set_opening_level_lock(TbeEngineHandle* handle, uint64_t opening_id, int locked);
+TbeApiStatusCode tbe_create_profile(
+    TbeEngineHandle* handle,
+    int target_kind,
+    int draft_mode,
+    uint64_t level_id,
+    const TbeVec2* points,
+    size_t point_count,
+    const uint64_t* wall_ids,
+    size_t wall_id_count,
+    int closed,
+    double thickness_meters,
+    double height_meters,
+    double vertical_offset_meters,
+    uint64_t material_id,
+    uint64_t assembly_id,
+    int roof_type,
+    uint64_t* out_first_id,
+    uint64_t* out_created_count
 );
 TbeApiStatusCode tbe_detect_rooms(TbeEngineHandle* handle, uint64_t* out_room_count);
 TbeApiStatusCode tbe_generate_schedules(TbeEngineHandle* handle, TbeScheduleSummary* out_summary);

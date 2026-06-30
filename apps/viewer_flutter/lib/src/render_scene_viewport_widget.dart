@@ -9,6 +9,7 @@ import 'render_scene_editor.dart';
 import 'render_scene_models.dart';
 import 'render_scene_viewport_controller.dart';
 import 'render_scene_viewport_painter.dart';
+import 'render_scene_viewport_planar.dart';
 import 'render_scene_viewport_projection.dart';
 import 'render_scene_viewport_types.dart';
 
@@ -226,8 +227,7 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
             final scaleDelta =
                 (details.scale / _gesturePreviousScale).clamp(0.5, 1.5);
 
-            if (controller.projectionMode ==
-                RenderSceneProjectionMode.topDown) {
+            if (controller.projectionMode.isPlanar) {
               if (focalDelta.distanceSquared > 0.0) {
                 controller.panPlanBy(focalDelta);
               }
@@ -258,8 +258,7 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
               }
 
               final scaleDelta = event.scrollDelta.dy > 0 ? 0.90 : 1.10;
-              if (controller.projectionMode ==
-                  RenderSceneProjectionMode.topDown) {
+              if (controller.projectionMode.isPlanar) {
                 controller.zoomPlanBy(
                   scaleDelta,
                   focalPoint: event.localPosition,
@@ -278,10 +277,12 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                   event.buttons == kMiddleMouseButton;
               _sceneDragStarted = false;
               if (!_isSecondaryDrag &&
-                  controller.projectionMode ==
-                      RenderSceneProjectionMode.topDown &&
+                  controller.projectionMode !=
+                      RenderSceneProjectionMode.isometric &&
                   (widget.interactionMode ==
                           RenderSceneInteractionMode.moveWall ||
+                      widget.interactionMode ==
+                          RenderSceneInteractionMode.moveLevel ||
                       widget.interactionMode ==
                           RenderSceneInteractionMode.moveOpening)) {
                 final picked = pickObjectAt(
@@ -311,8 +312,7 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
               _trackpadPreviousScale = 1.0;
             },
             onPointerPanZoomUpdate: (PointerPanZoomUpdateEvent event) {
-              if (controller.projectionMode ==
-                  RenderSceneProjectionMode.topDown) {
+              if (controller.projectionMode.isPlanar) {
                 if (event.panDelta.distanceSquared > 0.0) {
                   controller.panPlanBy(event.panDelta);
                 }
@@ -360,10 +360,12 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
               }
 
               final delta = event.localPosition - last;
-              if (controller.projectionMode ==
-                      RenderSceneProjectionMode.topDown &&
+              if (controller.projectionMode !=
+                      RenderSceneProjectionMode.isometric &&
                   (widget.interactionMode ==
                           RenderSceneInteractionMode.moveWall ||
+                      widget.interactionMode ==
+                          RenderSceneInteractionMode.moveLevel ||
                       widget.interactionMode ==
                           RenderSceneInteractionMode.moveOpening)) {
                 final picked = pickObjectAt(
@@ -386,12 +388,12 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                   pickedObject: picked,
                 );
                 widget.onSceneDragUpdate?.call(details);
-              } else if (controller.projectionMode ==
-                      RenderSceneProjectionMode.topDown &&
+              } else if (controller.projectionMode !=
+                      RenderSceneProjectionMode.isometric &&
                   widget.interactionMode != RenderSceneInteractionMode.select) {
                 _emitHover(scene, size, event.localPosition, event.position);
-              } else if (controller.projectionMode ==
-                  RenderSceneProjectionMode.topDown) {
+              } else if (controller.projectionMode !=
+                  RenderSceneProjectionMode.isometric) {
                 controller.panPlanBy(delta);
               } else if (_isSecondaryDrag) {
                 controller.panOrbitBy(delta, size);
@@ -421,10 +423,12 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                   ? double.infinity
                   : (event.localPosition - down).distance;
               if (_sceneDragStarted &&
-                  controller.projectionMode ==
-                      RenderSceneProjectionMode.topDown &&
+                  controller.projectionMode !=
+                      RenderSceneProjectionMode.isometric &&
                   (widget.interactionMode ==
                           RenderSceneInteractionMode.moveWall ||
+                      widget.interactionMode ==
+                          RenderSceneInteractionMode.moveLevel ||
                       widget.interactionMode ==
                           RenderSceneInteractionMode.moveOpening)) {
                 final picked = pickObjectAt(
@@ -572,11 +576,15 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
   String _viewportHintText() {
     switch (widget.interactionMode) {
       case RenderSceneInteractionMode.select:
-        return controller.projectionMode == RenderSceneProjectionMode.topDown
-            ? '2D: drag to pan, pinch/scroll to zoom, tap to select.'
+        return controller.projectionMode.isPlanar
+            ? '2D/Elevation: drag to pan, pinch/scroll to zoom, tap to select.'
             : '3D: drag to orbit, pinch to zoom, right drag to pan, touchpad 2-finger orbit.';
       case RenderSceneInteractionMode.addWall:
         return 'Add wall: tap start point, then tap end point.';
+      case RenderSceneInteractionMode.addLevel:
+        return 'Add level: elevation view’da ikki marta bosib level line yarating.';
+      case RenderSceneInteractionMode.moveLevel:
+        return 'Move level: elevation line yaqinidan ushlab vertikal suring.';
       case RenderSceneInteractionMode.addDoor:
         return 'Add door: tap a wall to place immediately with current size.';
       case RenderSceneInteractionMode.addWindow:

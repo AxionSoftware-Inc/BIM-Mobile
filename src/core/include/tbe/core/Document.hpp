@@ -93,8 +93,32 @@ public:
     ElementId create_ceiling_system_for_room(ElementId room_id, ElementId assembly_id, double height_offset_meters = 0.0);
     std::vector<ElementId> generate_floor_systems_for_all_rooms(ElementId default_assembly_id);
     std::vector<ElementId> generate_ceiling_systems_for_all_rooms(ElementId default_assembly_id, double height_offset_meters = 0.0);
+    ElementId create_floor_system_from_profile(
+        ElementId level_id,
+        std::vector<Point2> boundary_polygon,
+        ElementId assembly_id,
+        double thickness_meters = 0.18
+    );
+    ElementId create_ceiling_system_from_profile(
+        ElementId level_id,
+        std::vector<Point2> boundary_polygon,
+        ElementId assembly_id,
+        double height_offset_meters = 0.0
+    );
     void update_floor_system_from_room(ElementId room_id);
     void update_ceiling_system_from_room(ElementId room_id);
+    void update_level(ElementId level_id, std::optional<std::string> name, std::optional<double> elevation_meters, std::optional<double> default_wall_height_meters);
+    void move_level_elevation(ElementId level_id, double elevation_meters);
+    void set_wall_level_constraints(
+        ElementId wall_id,
+        ElementId base_level_id,
+        ElementId top_level_id,
+        double base_offset_meters,
+        double top_offset_meters,
+        WallHeightMode height_mode
+    );
+    void set_opening_level_lock(ElementId opening_id, bool locked);
+    std::vector<ElementId> create_elements_from_profile(const ProfileDraft& draft);
     void set_wall_type(ElementId wall_id, ElementId wall_type_id);
     void set_wall_properties(ElementId wall_id, double thickness_meters, double height_meters, ElementId wall_type_id = 0);
     void set_wall_axis(ElementId wall_id, Line2 axis);
@@ -160,6 +184,10 @@ private:
     [[nodiscard]] std::string wall_type_name(ElementId wall_type_id) const;
     [[nodiscard]] double total_wall_type_thickness(const WallTypeData& wall_type) const;
     [[nodiscard]] std::string layered_assembly_name(ElementId assembly_id) const;
+    [[nodiscard]] double level_elevation(ElementId level_id) const;
+    [[nodiscard]] double resolved_wall_base_elevation(const WallData& wall) const;
+    [[nodiscard]] double resolved_wall_height(const WallData& wall) const;
+    [[nodiscard]] std::vector<Point2> normalized_profile_polygon(const ProfileDraft& draft) const;
     void add_opening_to_wall(ElementId host_wall_id, HostedOpening opening);
     void validate_opening(const WallData& wall, double offset_meters, double width_meters, double height_meters) const;
     void validate_wall_axis(Line2 axis, double thickness_meters, double height_meters) const;

@@ -239,6 +239,50 @@ TbeApiStatusCode tbe_export_render_scene_json(TbeEngineHandle* handle, const cha
     return apply_result(handle, handle->session->export_render_scene_json(path));
 }
 
+TbeApiStatusCode tbe_create_level(
+    TbeEngineHandle* handle,
+    const char* name,
+    double elevation_meters,
+    double default_wall_height_meters,
+    uint64_t* out_level_id
+) {
+    if (handle == nullptr || handle->session == nullptr || name == nullptr || out_level_id == nullptr) {
+        return null_handle_error(handle);
+    }
+    const auto result = handle->session->create_level(name, elevation_meters, default_wall_height_meters);
+    if (result.ok() && result.value.has_value()) {
+        *out_level_id = result.value->value;
+    }
+    return apply_result(handle, result);
+}
+
+TbeApiStatusCode tbe_update_level(
+    TbeEngineHandle* handle,
+    uint64_t level_id,
+    const char* name,
+    double elevation_meters,
+    double default_wall_height_meters,
+    int update_elevation,
+    int update_default_wall_height
+) {
+    if (handle == nullptr || handle->session == nullptr) {
+        return null_handle_error(handle);
+    }
+    return apply_result(handle, handle->session->update_level(
+        level_id,
+        name == nullptr ? std::nullopt : std::optional<std::string>(name),
+        update_elevation != 0 ? std::optional<double>(elevation_meters) : std::nullopt,
+        update_default_wall_height != 0 ? std::optional<double>(default_wall_height_meters) : std::nullopt
+    ));
+}
+
+TbeApiStatusCode tbe_move_level_elevation(TbeEngineHandle* handle, uint64_t level_id, double elevation_meters) {
+    if (handle == nullptr || handle->session == nullptr) {
+        return null_handle_error(handle);
+    }
+    return apply_result(handle, handle->session->move_level_elevation(level_id, elevation_meters));
+}
+
 TbeApiStatusCode tbe_create_wall(
     TbeEngineHandle* handle,
     const char* name,
@@ -264,6 +308,28 @@ TbeApiStatusCode tbe_create_wall(
         *out_wall_id = result.value->value;
     }
     return apply_result(handle, result);
+}
+
+TbeApiStatusCode tbe_set_wall_level_constraints(
+    TbeEngineHandle* handle,
+    uint64_t wall_id,
+    uint64_t base_level_id,
+    uint64_t top_level_id,
+    double base_offset_meters,
+    double top_offset_meters,
+    int height_mode
+) {
+    if (handle == nullptr || handle->session == nullptr) {
+        return null_handle_error(handle);
+    }
+    return apply_result(handle, handle->session->set_wall_level_constraints(
+        wall_id,
+        base_level_id,
+        top_level_id,
+        base_offset_meters,
+        top_offset_meters,
+        static_cast<tbe::api::ApiWallHeightMode>(height_mode)
+    ));
 }
 
 TbeApiStatusCode tbe_move_wall(TbeEngineHandle* handle, uint64_t wall_id, double dx_meters, double dy_meters) {
@@ -317,6 +383,66 @@ TbeApiStatusCode tbe_create_window(
     const auto result = handle->session->create_window(name, host_wall_id, offset_meters, width_meters, height_meters, sill_height_meters);
     if (result.ok() && result.value.has_value()) {
         *out_window_id = result.value->value;
+    }
+    return apply_result(handle, result);
+}
+
+TbeApiStatusCode tbe_set_opening_level_lock(TbeEngineHandle* handle, uint64_t opening_id, int locked) {
+    if (handle == nullptr || handle->session == nullptr) {
+        return null_handle_error(handle);
+    }
+    return apply_result(handle, handle->session->set_opening_level_lock(opening_id, locked != 0));
+}
+
+TbeApiStatusCode tbe_create_profile(
+    TbeEngineHandle* handle,
+    int target_kind,
+    int draft_mode,
+    uint64_t level_id,
+    const TbeVec2* points,
+    size_t point_count,
+    const uint64_t* wall_ids,
+    size_t wall_id_count,
+    int closed,
+    double thickness_meters,
+    double height_meters,
+    double vertical_offset_meters,
+    uint64_t material_id,
+    uint64_t assembly_id,
+    int roof_type,
+    uint64_t* out_first_id,
+    uint64_t* out_created_count
+) {
+    if (handle == nullptr || handle->session == nullptr) {
+        return null_handle_error(handle);
+    }
+    tbe::api::ProfileDraftDTO draft{
+        .mode = static_cast<tbe::api::ApiProfileDraftMode>(draft_mode),
+        .target_kind = static_cast<tbe::api::ApiProfileTargetKind>(target_kind),
+        .level_id = {.value = level_id},
+        .closed = closed != 0,
+        .thickness_meters = thickness_meters,
+        .height_meters = height_meters,
+        .vertical_offset_meters = vertical_offset_meters,
+        .material_id = {.value = material_id},
+        .assembly_id = {.value = assembly_id},
+        .roof_type = static_cast<tbe::api::ApiRoofType>(roof_type),
+    };
+    for (size_t index = 0; index < point_count; ++index) {
+        draft.points.push_back(tbe::api::Vec2{.x = points[index].x, .y = points[index].y});
+    }
+    for (size_t index = 0; index < wall_id_count; ++index) {
+        draft.picked_wall_ids.push_back({.value = wall_ids[index]});
+    }
+    const auto result = handle->session->create_elements_from_profile(std::move(draft));
+    if (result.ok() && result.value.has_value()) {
+        const auto& ids = *result.value;
+        if (out_created_count != nullptr) {
+            *out_created_count = static_cast<uint64_t>(ids.size());
+        }
+        if (out_first_id != nullptr && !ids.empty()) {
+            *out_first_id = ids.front().value;
+        }
     }
     return apply_result(handle, result);
 }

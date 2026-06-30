@@ -7,6 +7,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
 import 'render_scene_models.dart';
+import 'render_scene_viewport_planar.dart';
 import 'render_scene_viewport_projection.dart';
 import 'render_scene_viewport_types.dart';
 
@@ -30,7 +31,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
   int _fitRevision = 0;
   int _sceneRevision = 0;
 
-  RenderSceneProjectionMode _projectionMode = RenderSceneProjectionMode.topDown;
+  RenderSceneProjectionMode _projectionMode = kDefaultPlanProjectionMode;
   RenderSceneOrbitProjectionStyle _orbitProjectionStyle =
       RenderSceneOrbitProjectionStyle.orthographic;
   RenderSceneDisplayStyle _displayStyle = RenderSceneDisplayStyle.solid;
@@ -234,10 +235,15 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
 
     final usableWidth = math.max(viewportSize.width - _planPadding * 2, 1.0);
     final usableHeight = math.max(viewportSize.height - _planPadding * 2, 1.0);
-    final width = math.max(bounds.width, 1.0);
-    final depth = math.max(bounds.depth, 1.0);
+    final descriptor = _projectionMode.planarDescriptor;
+    final width = descriptor != null
+        ? math.max(descriptor.boundsWidth(bounds), 1.0)
+        : math.max(bounds.width, 1.0);
+    final height = descriptor != null
+        ? math.max(descriptor.boundsHeight(bounds), 1.0)
+        : math.max(bounds.depth, 1.0);
     return math
-        .min(usableWidth / width, usableHeight / depth)
+        .min(usableWidth / width, usableHeight / height)
         .clamp(0.1, 480.0);
   }
 
@@ -254,7 +260,17 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
       return;
     }
 
+    final previousMode = _projectionMode;
     _projectionMode = mode;
+    if (mode.is3D && previousMode.isElevation) {
+      final sourceSpec = previousMode.spec;
+      if (sourceSpec.orbitYawRadians != null) {
+        _orbitYawRadians = sourceSpec.orbitYawRadians!;
+      }
+      if (sourceSpec.orbitPitchRadians != null) {
+        _orbitPitchRadians = sourceSpec.orbitPitchRadians!;
+      }
+    }
 
     notifyListeners();
     await _syncNativeBridge();
@@ -302,9 +318,9 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     }
 
     _interactionMode = mode;
-    if (mode != RenderSceneInteractionMode.select &&
-        _projectionMode != RenderSceneProjectionMode.topDown) {
-      _projectionMode = RenderSceneProjectionMode.topDown;
+    if (mode.requiresPlanProjection &&
+        _projectionMode != kDefaultPlanProjectionMode) {
+      _projectionMode = kDefaultPlanProjectionMode;
     }
 
     notifyListeners();
@@ -372,17 +388,14 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
 
   @override
   void panPlanBy(Offset delta) {
-    if (_projectionMode != RenderSceneProjectionMode.topDown) {
+    final descriptor = _projectionMode.planarDescriptor;
+    if (descriptor == null) {
       return;
     }
 
     final zoom = math.max(_planCamera.zoom, 1e-6);
     _planCamera = _planCamera.copyWith(
-      center: RenderScenePoint(
-        x: _planCamera.center.x - delta.dx / zoom,
-        y: _planCamera.center.y + delta.dy / zoom,
-        z: _planCamera.center.z,
-      ),
+      center: descriptor.planarPan(_planCamera.center, delta, zoom),
     );
     notifyListeners();
   }
@@ -393,7 +406,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     Offset? focalPoint,
     Size? viewportSize,
   }) {
-    if (_projectionMode != RenderSceneProjectionMode.topDown) {
+    if (!_projectionMode.isPlanar) {
       return;
     }
 
@@ -423,10 +436,9 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
         viewportCenter: viewportCenter,
         cameraState: zoomedCamera,
       );
-      nextCenter = RenderScenePoint(
-        x: zoomedCamera.center.x + (before.x - after.x),
-        y: zoomedCamera.center.y + (before.y - after.y),
-        z: zoomedCamera.center.z,
+      nextCenter = addPoint(
+        zoomedCamera.center,
+        subtractPoint(before, after),
       );
     }
 
@@ -439,7 +451,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
 
   @override
   void orbitBy(Offset delta, Size viewportSize) {
-    if (_projectionMode != RenderSceneProjectionMode.isometric) {
+    if (!_projectionMode.is3D) {
       return;
     }
 
@@ -454,7 +466,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
 
   @override
   void panOrbitBy(Offset delta, Size viewportSize) {
-    if (_projectionMode != RenderSceneProjectionMode.isometric) {
+    if (!_projectionMode.is3D) {
       return;
     }
 
@@ -472,7 +484,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
 
   @override
   void zoomOrbit(double scaleDelta) {
-    if (_projectionMode != RenderSceneProjectionMode.isometric) {
+    if (!_projectionMode.is3D) {
       return;
     }
 
@@ -482,7 +494,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
 
   @override
   RenderScenePoint? screenToModelPlan(Offset localPosition, Size viewportSize) {
-    if (_projectionMode != RenderSceneProjectionMode.topDown) {
+    if (!_projectionMode.isPlanar) {
       return null;
     }
 
@@ -559,12 +571,14 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     required Offset viewportCenter,
     required RenderScenePlanCameraState cameraState,
   }) {
-    return RenderScenePoint(
-      x: cameraState.center.x +
-          (localPosition.dx - viewportCenter.dx) / cameraState.zoom,
-      y: cameraState.center.y -
-          (localPosition.dy - viewportCenter.dy) / cameraState.zoom,
-      z: cameraState.center.z,
+    final descriptor = _projectionMode.planarDescriptor;
+    if (descriptor == null) {
+      return cameraState.center;
+    }
+    return descriptor.screenToModel(
+      localPosition: localPosition,
+      viewportCenter: viewportCenter,
+      cameraState: cameraState,
     );
   }
 

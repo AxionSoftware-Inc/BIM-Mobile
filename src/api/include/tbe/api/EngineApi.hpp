@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -56,6 +57,25 @@ enum class ApiQuantityType {
 enum class ApiRoofType {
     Flat,
     SimpleGable
+};
+
+enum class ApiWallHeightMode {
+    Unconnected,
+    TopLevel
+};
+
+enum class ApiProfileDraftMode {
+    Polyline,
+    Rectangle,
+    PickWalls,
+    AutoRoom
+};
+
+enum class ApiProfileTargetKind {
+    WallPath,
+    FloorBoundary,
+    CeilingBoundary,
+    RoofBoundary
 };
 
 enum class FreshnessState {
@@ -121,6 +141,7 @@ struct Vec3 {
     double z{};
 };
 
+
 struct AABB3D {
     Vec3 min{};
     Vec3 max{};
@@ -135,6 +156,21 @@ struct AABB2D {
 
 struct ElementIdDTO {
     std::uint64_t value{};
+};
+
+struct ProfileDraftDTO {
+    ApiProfileDraftMode mode{ApiProfileDraftMode::Polyline};
+    ApiProfileTargetKind target_kind{ApiProfileTargetKind::WallPath};
+    ElementIdDTO level_id{};
+    std::vector<Vec2> points{};
+    std::vector<ElementIdDTO> picked_wall_ids{};
+    bool closed{};
+    double thickness_meters{};
+    double height_meters{};
+    double vertical_offset_meters{};
+    ElementIdDTO material_id{};
+    ElementIdDTO assembly_id{};
+    ApiRoofType roof_type{ApiRoofType::Flat};
 };
 
 struct HitTestPoint {
@@ -196,12 +232,21 @@ struct RenderSceneObjectDTO {
     AABB3D bounds{};
     RenderSceneMeshDTO mesh{};
     std::string material_category{};
+    std::map<std::string, std::string> metadata{};
+};
+
+struct RenderSceneLevelDTO {
+    ElementIdDTO level_id{};
+    std::string name{};
+    double elevation_meters{};
+    double default_wall_height_meters{};
 };
 
 struct RenderSceneDTO {
     int scene_version{1};
     std::string units{"meters"};
     std::string coordinate_system{"X/Y plan, Z up"};
+    std::vector<RenderSceneLevelDTO> levels{};
     std::vector<RenderSceneObjectDTO> objects{};
     std::size_t object_count{};
     std::size_t vertex_count{};
@@ -486,7 +531,22 @@ public:
     ApiResult<std::vector<ElementSummaryDTO>> query_rect(ElementIdDTO level_id, AABB2D bounds) const;
 
     ApiResult<ElementIdDTO> create_level(std::string name, double elevation_meters, double default_wall_height_meters);
+    ApiVoidResult update_level(
+        std::uint64_t level_id,
+        std::optional<std::string> name = std::nullopt,
+        std::optional<double> elevation_meters = std::nullopt,
+        std::optional<double> default_wall_height_meters = std::nullopt
+    );
+    ApiVoidResult move_level_elevation(std::uint64_t level_id, double elevation_meters);
     ApiResult<ElementIdDTO> create_wall(std::string name, Vec2 start, Vec2 end, double thickness_meters, double height_meters, std::uint64_t level_id = 0);
+    ApiVoidResult set_wall_level_constraints(
+        std::uint64_t wall_id,
+        std::uint64_t base_level_id,
+        std::uint64_t top_level_id,
+        double base_offset_meters,
+        double top_offset_meters,
+        ApiWallHeightMode height_mode
+    );
     ApiResult<ElementIdDTO> create_door(std::string name, std::uint64_t host_wall_id, double offset_meters, double width_meters, double height_meters);
     ApiResult<ElementIdDTO> create_window(
         std::string name,
@@ -496,6 +556,8 @@ public:
         double height_meters,
         double sill_height_meters
     );
+    ApiVoidResult set_opening_level_lock(std::uint64_t opening_id, bool locked);
+    ApiResult<std::vector<ElementIdDTO>> create_elements_from_profile(ProfileDraftDTO draft);
     ApiResult<std::vector<RoomDTO>> detect_rooms();
     ApiVoidResult auto_join_walls();
     ApiVoidResult set_wall_axis(std::uint64_t wall_id, Vec2 start, Vec2 end);

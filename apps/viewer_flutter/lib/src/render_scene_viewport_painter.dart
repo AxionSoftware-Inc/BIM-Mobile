@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'render_scene_editor.dart';
 import 'render_scene_models.dart';
+import 'render_scene_viewport_planar.dart';
 import 'render_scene_viewport_projection.dart';
 import 'render_scene_viewport_types.dart';
 
@@ -67,9 +68,13 @@ class FallbackRenderScenePainter extends CustomPainter {
 
     _drawGrid(canvas, projection);
     _drawAxes(canvas, projection);
+    _drawLevels(canvas, projection);
 
     final packets = <_RenderPacket>[];
     final filteredObjects = scene.objectsForKinds(visibleKinds);
+    final depthRange = projectionMode.isElevation
+        ? _projectedObjectDepthRange(filteredObjects, projection)
+        : null;
 
     for (final object in filteredObjects) {
       final elementId = object.elementId?.toString();
@@ -83,8 +88,19 @@ class FallbackRenderScenePainter extends CustomPainter {
           : isHighlighted
               ? const Color(0xFFDC2626)
               : baseColor;
+      final depthWeight = projectionMode.isElevation
+          ? _depthVisualWeight(
+              depth: projectObjectDepth(object.bounds, projection),
+              minDepth: depthRange!.$1,
+              maxDepth: depthRange.$2,
+            )
+          : 1.0;
 
-      final strokeWidth = isSelected || isHighlighted ? 2.2 : 1.0;
+      final strokeWidth = _triangleStrokeWidth(
+        kind: object.kindKey,
+        isSelected: isSelected,
+        isHighlighted: isHighlighted,
+      );
       final fillAlpha = displayStyle == RenderSceneDisplayStyle.wireframe
           ? 0.0
           : _fillAlphaForObject(
@@ -98,8 +114,14 @@ class FallbackRenderScenePainter extends CustomPainter {
           triangles: _buildObjectTriangles(
             object: object,
             projection: projection,
-            fillColor: objectColor.withValues(alpha: fillAlpha),
-            strokeColor: objectColor.withValues(alpha: 0.96),
+            fillColor: _withScaledAlpha(
+              objectColor.withValues(alpha: fillAlpha),
+              depthWeight,
+            ),
+            strokeColor: _withScaledAlpha(
+              objectColor.withValues(alpha: 0.96),
+              depthWeight,
+            ),
             strokeWidth: strokeWidth,
           ),
           outlines: displayStyle == RenderSceneDisplayStyle.solid &&
@@ -110,10 +132,18 @@ class FallbackRenderScenePainter extends CustomPainter {
                   )
               ? _buildOutlineSegments(object, projection)
               : const <_OutlineSegment>[],
-          outlineColor: isSelected || isHighlighted
-              ? objectColor.withValues(alpha: 0.95)
-              : const Color(0xFF475569).withValues(alpha: 0.40),
-          outlineStrokeWidth: isSelected ? 2.0 : (isHighlighted ? 1.6 : 1.0),
+          outlineColor: _outlineColor(
+            kind: object.kindKey,
+            objectColor: objectColor,
+            isSelected: isSelected,
+            isHighlighted: isHighlighted,
+            depthWeight: depthWeight,
+          ),
+          outlineStrokeWidth: _outlineStrokeWidth(
+            kind: object.kindKey,
+            isSelected: isSelected,
+            isHighlighted: isHighlighted,
+          ),
         ),
       );
     }
@@ -245,7 +275,7 @@ class FallbackRenderScenePainter extends CustomPainter {
     double minShade = 0.72,
     double maxShade = 0.98,
   }) {
-    if (triangle.length < 3 || projectionMode == RenderSceneProjectionMode.topDown) {
+    if (triangle.length < 3 || projectionMode != RenderSceneProjectionMode.isometric) {
       return baseColor;
     }
     final normal = normalizePoint(crossPoint(triangle[1] - triangle[0], triangle[2] - triangle[0]));
@@ -268,7 +298,7 @@ class FallbackRenderScenePainter extends CustomPainter {
     List<RenderScenePoint> triangle,
     RenderSceneProjection projection,
   ) {
-    if (projectionMode == RenderSceneProjectionMode.topDown) {
+    if (projectionMode != RenderSceneProjectionMode.isometric) {
       return true;
     }
     if (triangle.length < 3) {
@@ -302,6 +332,20 @@ class FallbackRenderScenePainter extends CustomPainter {
       return 0.84;
     }
 
+    if (projectionMode.isElevation) {
+      switch (kind) {
+        case 'wall':
+          return 0.12;
+        case 'door':
+        case 'window':
+          return 0.18;
+        case 'room':
+          return 0.0;
+        default:
+          return 0.10;
+      }
+    }
+
     switch (kind) {
       case 'wall':
         return 1.0;
@@ -315,12 +359,126 @@ class FallbackRenderScenePainter extends CustomPainter {
     }
   }
 
+  double _triangleStrokeWidth({
+    required String kind,
+    required bool isSelected,
+    required bool isHighlighted,
+  }) {
+    if (isSelected || isHighlighted) {
+      return 2.2;
+    }
+    if (projectionMode.isElevation) {
+      switch (kind) {
+        case 'wall':
+          return 0.8;
+        case 'door':
+        case 'window':
+          return 0.9;
+        default:
+          return 0.7;
+      }
+    }
+    return 1.0;
+  }
+
+  Color _outlineColor({
+    required String kind,
+    required Color objectColor,
+    required bool isSelected,
+    required bool isHighlighted,
+    required double depthWeight,
+  }) {
+    if (isSelected || isHighlighted) {
+      return objectColor.withValues(alpha: 0.95);
+    }
+    if (projectionMode.isElevation) {
+      final base = switch (kind) {
+        'wall' => const Color(0xFF334155),
+        'door' || 'window' => const Color(0xFF475569),
+        'room' => const Color(0xFF64748B),
+        _ => const Color(0xFF64748B),
+      };
+      final baseAlpha = switch (kind) {
+        'wall' => 0.44 + depthWeight * 0.32,
+        'door' || 'window' => 0.52 + depthWeight * 0.26,
+        'room' => 0.08 + depthWeight * 0.08,
+        _ => 0.22 + depthWeight * 0.22,
+      };
+      return base.withValues(alpha: baseAlpha.clamp(0.0, 1.0));
+    }
+    return const Color(0xFF475569).withValues(alpha: 0.40);
+  }
+
+  double _outlineStrokeWidth({
+    required String kind,
+    required bool isSelected,
+    required bool isHighlighted,
+  }) {
+    if (isSelected) {
+      return 2.0;
+    }
+    if (isHighlighted) {
+      return 1.6;
+    }
+    if (projectionMode.isElevation) {
+      switch (kind) {
+        case 'wall':
+          return 1.25;
+        case 'door':
+        case 'window':
+          return 1.05;
+        case 'room':
+          return 0.6;
+        default:
+          return 0.85;
+      }
+    }
+    return 1.0;
+  }
+
+  (double, double) _projectedObjectDepthRange(
+    List<RenderSceneObject> objects,
+    RenderSceneProjection projection,
+  ) {
+    if (objects.isEmpty) {
+      return (0.0, 1.0);
+    }
+    var minDepth = double.infinity;
+    var maxDepth = double.negativeInfinity;
+    for (final object in objects) {
+      final depth = projectObjectDepth(object.bounds, projection);
+      minDepth = math.min(minDepth, depth);
+      maxDepth = math.max(maxDepth, depth);
+    }
+    if (!minDepth.isFinite || !maxDepth.isFinite) {
+      return (0.0, 1.0);
+    }
+    return (minDepth, maxDepth);
+  }
+
+  double _depthVisualWeight({
+    required double depth,
+    required double minDepth,
+    required double maxDepth,
+  }) {
+    final span = maxDepth - minDepth;
+    if (span.abs() <= 1e-9) {
+      return 1.0;
+    }
+    final normalized = ((depth - minDepth) / span).clamp(0.0, 1.0);
+    return 0.45 + normalized * 0.55;
+  }
+
+  Color _withScaledAlpha(Color color, double scale) {
+    return color.withValues(alpha: (color.a * scale).clamp(0.0, 1.0));
+  }
+
   bool _shouldDrawSolidOutline({
     required String kind,
     required bool isSelected,
     required bool isHighlighted,
   }) {
-    if (projectionMode == RenderSceneProjectionMode.topDown) {
+    if (projectionMode.isPlanar) {
       return true;
     }
     if (isSelected || isHighlighted) {
@@ -340,6 +498,10 @@ class FallbackRenderScenePainter extends CustomPainter {
     RenderSceneObject object,
     RenderSceneProjection projection,
   ) {
+    if (projectionMode.useProjectedBoundsOutline) {
+      return _buildProjectedBoundsRectOutlineSegments(object.bounds, projection);
+    }
+
     final meshSegments = _buildVisibleMeshOutlineSegments(object, projection);
     if (meshSegments.isNotEmpty) {
       return meshSegments;
@@ -440,6 +602,28 @@ class FallbackRenderScenePainter extends CustomPainter {
         .toList(growable: false);
   }
 
+  List<_OutlineSegment> _buildProjectedBoundsRectOutlineSegments(
+    RenderSceneBounds bounds,
+    RenderSceneProjection projection,
+  ) {
+    final rect = projectBoundsRect(bounds, projection);
+    if (rect.width <= 0.01 || rect.height <= 0.01) {
+      return const <_OutlineSegment>[];
+    }
+
+    final topLeft = rect.topLeft;
+    final topRight = rect.topRight;
+    final bottomRight = rect.bottomRight;
+    final bottomLeft = rect.bottomLeft;
+
+    return <_OutlineSegment>[
+      _OutlineSegment(a: topLeft, b: topRight),
+      _OutlineSegment(a: topRight, b: bottomRight),
+      _OutlineSegment(a: bottomRight, b: bottomLeft),
+      _OutlineSegment(a: bottomLeft, b: topLeft),
+    ];
+  }
+
   void _drawDraftOverlay(Canvas canvas, RenderSceneProjection projection) {
     final wallStart = draftWallStart;
     final wallEnd = draftWallEnd;
@@ -448,7 +632,11 @@ class FallbackRenderScenePainter extends CustomPainter {
 
     if (wallStart != null && wallEnd != null) {
       final wallLength = wallStart.distanceTo(wallEnd);
-      if (wallLength > 1e-6) {
+      if (wallLength > 1e-6 &&
+          projectionMode.supportsPlanFootprintEditing) {
+        // Filled wall draft is intentionally plan-only. Elevation views reuse the
+        // same planar projection pipeline, but wall creation preview there is a
+        // line/elevation workflow rather than a thick footprint preview.
         final draftTriangles = _draftWallTriangles(wallStart, wallEnd);
         for (final triangle in draftTriangles) {
           final a = projection.project(triangle[0]).screen;
@@ -689,8 +877,14 @@ class FallbackRenderScenePainter extends CustomPainter {
         continue;
       }
 
-      final projected = projection.project(object.bounds.max);
+      final anchor = projectionMode.useBoundsCenterLabelAnchor
+          ? object.bounds.center
+          : object.bounds.max;
+      final projected = projection.project(anchor);
       final label = '${prettySceneKind(object.kind)} ${object.elementId ?? ''}';
+      if (projectionMode.isElevation && !isSelected && !isHighlighted) {
+        continue;
+      }
       final painter = TextPainter(
         text: TextSpan(
           text: label,
@@ -711,30 +905,75 @@ class FallbackRenderScenePainter extends CustomPainter {
   }
 
   void _drawGrid(Canvas canvas, RenderSceneProjection projection) {
+    if (!projectionMode.showGrid) {
+      return;
+    }
     final bounds = scene.bounds;
-    final width = math.max(bounds.width, 0.001);
-    final depth = math.max(bounds.depth, 0.001);
-    final maxExtent = math.max(width, depth);
+    final descriptor = projectionMode.planarDescriptor;
+    final primaryExtent = descriptor != null
+        ? math.max(descriptor.boundsWidth(bounds), 0.001)
+        : math.max(bounds.width, 0.001);
+    final secondaryExtent = descriptor != null
+        ? math.max(descriptor.boundsHeight(bounds), 0.001)
+        : math.max(bounds.depth, 0.001);
+    final maxExtent = math.max(primaryExtent, secondaryExtent);
 
     final spacing = _niceGridSpacing(maxExtent);
-    final minX = (bounds.min.x / spacing).floor() * spacing;
-    final maxX = (bounds.max.x / spacing).ceil() * spacing;
-    final minY = (bounds.min.y / spacing).floor() * spacing;
-    final maxY = (bounds.max.y / spacing).ceil() * spacing;
 
     final paint = Paint()
-      ..color = const Color(0xFFD1D5DB).withValues(alpha: 0.75)
+      ..color = const Color(0xFFD1D5DB)
+          .withValues(alpha: projectionMode.isElevation ? 0.42 : 0.75)
       ..strokeWidth = 0.7;
 
-    for (var x = minX; x <= maxX; x += spacing) {
-      final a = projection.project(RenderScenePoint(x: x, y: minY, z: 0));
-      final b = projection.project(RenderScenePoint(x: x, y: maxY, z: 0));
-      canvas.drawLine(a.screen, b.screen, paint);
+    if (descriptor == null) {
+      return;
     }
 
-    for (var y = minY; y <= maxY; y += spacing) {
-      final a = projection.project(RenderScenePoint(x: minX, y: y, z: 0));
-      final b = projection.project(RenderScenePoint(x: maxX, y: y, z: 0));
+    final minHorizontal =
+        (descriptor.minAxis(bounds, descriptor.horizontalAxis) / spacing).floor() *
+            spacing;
+    final maxHorizontal =
+        (descriptor.maxAxis(bounds, descriptor.horizontalAxis) / spacing).ceil() *
+            spacing;
+    final minVertical =
+        (descriptor.minAxis(bounds, descriptor.verticalAxis) / spacing).floor() *
+            spacing;
+    final maxVertical =
+        (descriptor.maxAxis(bounds, descriptor.verticalAxis) / spacing).ceil() *
+            spacing;
+
+    for (var h = minHorizontal; h <= maxHorizontal; h += spacing) {
+      final a = projection.project(
+        descriptor.pointOnPlane(
+          bounds: bounds,
+          horizontalValue: h,
+          verticalValue: minVertical,
+        ),
+      );
+      final b = projection.project(
+        descriptor.pointOnPlane(
+          bounds: bounds,
+          horizontalValue: h,
+          verticalValue: maxVertical,
+        ),
+      );
+      canvas.drawLine(a.screen, b.screen, paint);
+    }
+    for (var v = minVertical; v <= maxVertical; v += spacing) {
+      final a = projection.project(
+        descriptor.pointOnPlane(
+          bounds: bounds,
+          horizontalValue: minHorizontal,
+          verticalValue: v,
+        ),
+      );
+      final b = projection.project(
+        descriptor.pointOnPlane(
+          bounds: bounds,
+          horizontalValue: maxHorizontal,
+          verticalValue: v,
+        ),
+      );
       canvas.drawLine(a.screen, b.screen, paint);
     }
   }
@@ -743,10 +982,13 @@ class FallbackRenderScenePainter extends CustomPainter {
     Canvas canvas,
     RenderSceneProjection projection,
   ) {
-    if (projectionMode != RenderSceneProjectionMode.topDown ||
+    if (!projectionMode.supportsPlanFootprintEditing ||
         selectedElementId == null) {
       return;
     }
+    // Endpoint handles remain plan-only on purpose. The projection/navigation
+    // math is unified across planar views, but handle editing here still targets
+    // footprint wall endpoints rather than elevation grips.
     final object = scene.objectByStableId(selectedElementId!);
     if (object == null || object.kindKey != 'wall') {
       return;
@@ -772,6 +1014,9 @@ class FallbackRenderScenePainter extends CustomPainter {
   }
 
   void _drawAxes(Canvas canvas, RenderSceneProjection projection) {
+    if (!projectionMode.showAxes) {
+      return;
+    }
     final origin = projection.project(const RenderScenePoint(x: 0, y: 0, z: 0));
     final xAxis = projection.project(const RenderScenePoint(x: 1, y: 0, z: 0));
     final yAxis = projection.project(const RenderScenePoint(x: 0, y: 1, z: 0));
@@ -800,6 +1045,63 @@ class FallbackRenderScenePainter extends CustomPainter {
     );
   }
 
+  void _drawLevels(Canvas canvas, RenderSceneProjection projection) {
+    final descriptor = projectionMode.planarDescriptor;
+    if (!projectionMode.showLevelsOverlay ||
+        descriptor == null ||
+        !descriptor.isElevation) {
+      return;
+    }
+
+    final bounds = scene.bounds;
+    const textStyle = TextStyle(
+      color: Color(0xFF334155),
+      fontSize: 11,
+      fontWeight: FontWeight.w600,
+    );
+    final horizontalMin =
+        descriptor.minAxis(bounds, descriptor.horizontalAxis) - 1.0;
+    final horizontalMax =
+        descriptor.maxAxis(bounds, descriptor.horizontalAxis) + 1.0;
+
+    for (final level in scene.levels) {
+      final z = level.elevationMeters;
+      final a = projection.project(
+        descriptor.pointOnPlane(
+          bounds: bounds,
+          horizontalValue: horizontalMin,
+          verticalValue: z,
+        ),
+      );
+      final b = projection.project(
+        descriptor.pointOnPlane(
+          bounds: bounds,
+          horizontalValue: horizontalMax,
+          verticalValue: z,
+        ),
+      );
+      _drawDashedLine(
+        canvas,
+        a.screen,
+        b.screen,
+        Paint()
+          ..color = const Color(0xFF0F766E).withValues(alpha: 0.88)
+          ..strokeWidth = 1.6,
+        dashLength: 12,
+        gapLength: 6,
+      );
+      final painter = TextPainter(
+        text: TextSpan(
+          text: '${level.name} ${level.elevationMeters.toStringAsFixed(2)}m',
+          style: textStyle,
+        ),
+        textDirection: TextDirection.ltr,
+        maxLines: 1,
+      )..layout(maxWidth: 220);
+      painter.paint(canvas, a.screen + const Offset(6, -18));
+    }
+  }
+
   double _niceGridSpacing(double maxExtent) {
     if (maxExtent <= 10) return 1;
     if (maxExtent <= 30) return 2;
@@ -807,6 +1109,29 @@ class FallbackRenderScenePainter extends CustomPainter {
     if (maxExtent <= 180) return 10;
     if (maxExtent <= 400) return 20;
     return 50;
+  }
+
+  void _drawDashedLine(
+    Canvas canvas,
+    Offset start,
+    Offset end,
+    Paint paint, {
+    required double dashLength,
+    required double gapLength,
+  }) {
+    final vector = end - start;
+    final length = vector.distance;
+    if (length <= 1e-6) {
+      return;
+    }
+    final direction = vector / length;
+    var offset = 0.0;
+    while (offset < length) {
+      final dashStart = start + direction * offset;
+      final dashEnd = start + direction * math.min(offset + dashLength, length);
+      canvas.drawLine(dashStart, dashEnd, paint);
+      offset += dashLength + gapLength;
+    }
   }
 
   Color _kindColor(String kind) {

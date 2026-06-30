@@ -147,6 +147,141 @@ int main() {
     }
 
     {
+        auto session_result = tbe::api::create_session("API Level Kernel");
+        assert(session_result.ok());
+        auto session = std::move(*session_result.value);
+
+        const auto level_1 = session->create_level("Level 1", 0.0, 3.0);
+        const auto level_2 = session->create_level("Level 2", 3.2, 3.0);
+        assert(level_1.ok() && level_2.ok());
+
+        tbe::api::ProfileDraftDTO wall_draft;
+        wall_draft.mode = tbe::api::ApiProfileDraftMode::Polyline;
+        wall_draft.target_kind = tbe::api::ApiProfileTargetKind::WallPath;
+        wall_draft.level_id = tbe::api::ElementIdDTO{level_1.value->value};
+        wall_draft.points = {{0.0, 0.0}, {4.0, 0.0}, {4.0, 3.0}, {0.0, 3.0}, {0.0, 0.0}};
+        wall_draft.closed = true;
+        wall_draft.thickness_meters = 0.2;
+        wall_draft.height_meters = 3.0;
+
+        const auto created_walls = session->create_elements_from_profile(wall_draft);
+        assert(created_walls.ok());
+        assert(created_walls.value.has_value());
+        assert(created_walls.value->size() == 4);
+        assert(session->auto_join_walls().ok());
+        const auto rooms = session->detect_rooms();
+        assert(rooms.ok());
+        assert(rooms.value.has_value());
+        assert(rooms.value->size() == 1);
+
+        const auto wall_id = created_walls.value->front().value;
+        assert(session->set_wall_level_constraints(
+            wall_id,
+            level_1.value->value,
+            level_2.value->value,
+            0.0,
+            0.2,
+            tbe::api::ApiWallHeightMode::TopLevel
+        ).ok());
+        assert(session->move_level_elevation(level_2.value->value, 4.0).ok());
+
+        const auto door = session->create_door("Door", wall_id, 1.2, 0.9, 2.1);
+        assert(door.ok());
+        assert(session->set_opening_level_lock(door.value->value, false).ok());
+        assert(session->set_opening_level_lock(door.value->value, true).ok());
+
+        const auto render_scene = session->get_render_scene();
+        assert(render_scene.ok());
+        assert(render_scene.value.has_value());
+        assert(render_scene.value->levels.size() == 2);
+        const auto level_2_scene = std::find_if(render_scene.value->levels.begin(), render_scene.value->levels.end(), [&](const auto& level) {
+            return level.level_id.value == level_2.value->value;
+        });
+        assert(level_2_scene != render_scene.value->levels.end());
+        assert(nearly_equal(level_2_scene->elevation_meters, 4.0));
+
+        const auto wall_object = std::find_if(render_scene.value->objects.begin(), render_scene.value->objects.end(), [&](const auto& object) {
+            return object.element_id.value == wall_id;
+        });
+        assert(wall_object != render_scene.value->objects.end());
+        assert(wall_object->metadata.at("height_mode") == "TopLevel");
+        assert(nearly_equal(wall_object->bounds.max.z - wall_object->bounds.min.z, 4.2, 1.0e-3));
+
+        const auto door_object = std::find_if(render_scene.value->objects.begin(), render_scene.value->objects.end(), [&](const auto& object) {
+            return object.element_id.value == door.value->value;
+        });
+        assert(door_object != render_scene.value->objects.end());
+        assert(door_object->metadata.at("level_locked") == "true");
+    }
+
+    {
+        tbe::core::Project profile_project{"API Profile Kernel"};
+        auto& document = profile_project.active_document();
+        const auto finish_material = document.create_material("Finish", tbe::core::MaterialCategory::Finish);
+        const auto floor_assembly = document.create_layered_assembly(
+            tbe::core::LayeredAssemblyKind::Floor,
+            "Floor Build-Up",
+            {tbe::core::WallAssemblyLayer{
+                .material_id = finish_material,
+                .thickness_meters = 0.18,
+                .function = tbe::core::WallLayerFunction::Core,
+            }}
+        );
+        const auto ceiling_assembly = document.create_layered_assembly(
+            tbe::core::LayeredAssemblyKind::Ceiling,
+            "Ceiling Build-Up",
+            {tbe::core::WallAssemblyLayer{
+                .material_id = finish_material,
+                .thickness_meters = 0.03,
+                .function = tbe::core::WallLayerFunction::InteriorFinish,
+            }}
+        );
+        const auto level_id = document.create_level("Level 1", 0.0, 3.0);
+        const auto project_json = profile_project.to_json();
+
+        auto session_result = tbe::api::create_session("API Profile Draft");
+        assert(session_result.ok());
+        auto session = std::move(*session_result.value);
+        assert(session->load_project_json(project_json).ok());
+
+        tbe::api::ProfileDraftDTO floor_draft;
+        floor_draft.mode = tbe::api::ApiProfileDraftMode::Rectangle;
+        floor_draft.target_kind = tbe::api::ApiProfileTargetKind::FloorBoundary;
+        floor_draft.level_id = tbe::api::ElementIdDTO{level_id};
+        floor_draft.points = {{0.0, 0.0}, {4.0, 3.0}};
+        floor_draft.closed = true;
+        floor_draft.thickness_meters = 0.18;
+        floor_draft.assembly_id = tbe::api::ElementIdDTO{floor_assembly};
+        const auto floor_created = session->create_elements_from_profile(floor_draft);
+        assert(floor_created.ok());
+        assert(floor_created.value.has_value());
+        assert(floor_created.value->size() == 1);
+
+        tbe::api::ProfileDraftDTO ceiling_draft;
+        ceiling_draft.mode = tbe::api::ApiProfileDraftMode::Rectangle;
+        ceiling_draft.target_kind = tbe::api::ApiProfileTargetKind::CeilingBoundary;
+        ceiling_draft.level_id = tbe::api::ElementIdDTO{level_id};
+        ceiling_draft.points = {{0.0, 0.0}, {4.0, 3.0}};
+        ceiling_draft.closed = true;
+        ceiling_draft.vertical_offset_meters = 2.7;
+        ceiling_draft.assembly_id = tbe::api::ElementIdDTO{ceiling_assembly};
+        const auto ceiling_created = session->create_elements_from_profile(ceiling_draft);
+        assert(ceiling_created.ok());
+        assert(ceiling_created.value.has_value());
+        assert(ceiling_created.value->size() == 1);
+
+        const auto render_scene = session->get_render_scene();
+        assert(render_scene.ok());
+        assert(render_scene.value.has_value());
+        assert(std::any_of(render_scene.value->objects.begin(), render_scene.value->objects.end(), [](const auto& object) {
+            return object.kind == tbe::api::ApiElementKind::FloorSystem;
+        }));
+        assert(std::any_of(render_scene.value->objects.begin(), render_scene.value->objects.end(), [](const auto& object) {
+            return object.kind == tbe::api::ApiElementKind::CeilingSystem;
+        }));
+    }
+
+    {
         tbe::core::Document document{"Edit Core Test"};
         const auto level_id = document.create_level("Level 1", 0.0, 3.0);
 

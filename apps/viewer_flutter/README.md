@@ -29,6 +29,10 @@ is the future app UI path, and Filament is the native renderer planned for the
 mobile/desktop viewport. The current app proves the integration shape without
 making the UI depend on debug JSON, OBJ fallback files, or engine internals.
 
+Projection/view architecture notes:
+
+- `../../docs/projection_view_architecture.md`
+
 ## RenderScene flow
 
 The viewer loads `assets/render_scene.json` or a local file path, parses it in

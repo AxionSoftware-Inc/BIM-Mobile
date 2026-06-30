@@ -7,7 +7,9 @@ import 'render_scene_editor.dart';
 import 'render_scene_estimator.dart';
 import 'render_scene_models.dart';
 import 'render_scene_repository.dart';
+import 'tbe_ffi.dart';
 import 'render_scene_viewport.dart';
+import 'render_scene_viewport_planar.dart';
 
 class _DeleteSelectionIntent extends Intent {
   const _DeleteSelectionIntent();
@@ -23,9 +25,11 @@ class ViewerApp extends StatelessWidget {
   const ViewerApp({
     super.key,
     this.source,
+    this.preferEngineBackedBundledSample = true,
   });
 
   final RenderSceneSource? source;
+  final bool preferEngineBackedBundledSample;
 
   @override
   Widget build(BuildContext context) {
@@ -43,6 +47,7 @@ class ViewerApp extends StatelessWidget {
       ),
       home: ViewerHomePage(
         source: source ?? const AssetRenderSceneSource(),
+        preferEngineBackedBundledSample: preferEngineBackedBundledSample,
       ),
     );
   }
@@ -52,9 +57,11 @@ class ViewerHomePage extends StatefulWidget {
   const ViewerHomePage({
     super.key,
     required this.source,
+    this.preferEngineBackedBundledSample = true,
   });
 
   final RenderSceneSource source;
+  final bool preferEngineBackedBundledSample;
 
   @override
   State<ViewerHomePage> createState() => _ViewerHomePageState();
@@ -81,6 +88,8 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
 
   final RenderSceneViewportController _viewportController =
       RenderSceneViewportController();
+  ViewerRepository? _engineRepository;
+  bool _engineBackedMode = false;
 
   RenderScene? _scene;
   String? _statusMessage;
@@ -94,7 +103,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       const RenderSceneEstimateCatalog();
   int? _activeLevelId;
 
-  RenderSceneProjectionMode _projectionMode = RenderSceneProjectionMode.topDown;
+  RenderSceneProjectionMode _projectionMode = kDefaultPlanProjectionMode;
   RenderSceneOrbitProjectionStyle _orbitProjectionStyle =
       RenderSceneOrbitProjectionStyle.perspective;
   RenderSceneDisplayStyle _displayStyle = RenderSceneDisplayStyle.solid;
@@ -110,6 +119,8 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   RenderScenePoint? _moveAnchorPoint;
   RenderScenePoint? _moveWallOriginalStart;
   RenderScenePoint? _moveWallOriginalEnd;
+  int? _draftMoveLevelId;
+  double? _moveLevelOriginalElevation;
   _WallMoveMode _wallMoveMode = _WallMoveMode.translate;
   double _draftOpeningOffsetMeters = 1.0;
   double _draftOpeningWidthMeters = 0.9;
@@ -135,6 +146,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   void dispose() {
     _viewportController.removeListener(_onViewportChanged);
     _viewportController.dispose();
+    _engineRepository?.dispose();
     super.dispose();
   }
 
@@ -201,6 +213,12 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     });
 
     try {
+      final engineLoaded = widget.preferEngineBackedBundledSample &&
+          widget.source is AssetRenderSceneSource &&
+          await _tryLoadBundledEngineSample();
+      if (engineLoaded) {
+        return;
+      }
       final result = await widget.source.loadBundledSample();
       await _applyLoadResult(
         result,
@@ -215,7 +233,58 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     }
   }
 
+  Future<bool> _tryLoadBundledEngineSample() async {
+    try {
+      final api = TbeViewerApi.load();
+      final repository = ViewerRepository(api);
+      final projectJson =
+          await rootBundle.loadString('assets/sample_project.json');
+      await repository.loadFromJson(
+        projectName: 'Bundled Sample Project',
+        json: projectJson,
+        sourcePath: 'assets/sample_project.json',
+      );
+      final result = await repository.currentRenderScene();
+      if (result.scene == null) {
+        repository.dispose();
+        return false;
+      }
+      _engineRepository?.dispose();
+      _engineRepository = repository;
+      _engineBackedMode = true;
+      await _applyLoadResult(
+        result,
+        sourceLabel: 'engine:assets/sample_project.json',
+      );
+      return true;
+    } catch (_) {
+      _engineBackedMode = false;
+      return false;
+    }
+  }
+
   Future<void> _reloadCurrentScene() async {
+    if (_engineBackedMode && _engineRepository != null) {
+      setState(() {
+        _isBusy = true;
+        _loadError = null;
+        _statusMessage = 'Refreshing engine-backed scene...';
+      });
+      try {
+        final result = await _engineRepository!.currentRenderScene();
+        await _applyLoadResult(
+          result,
+          sourceLabel: 'engine:current',
+        );
+      } catch (error) {
+        setState(() {
+          _loadError = error.toString();
+          _statusMessage = 'Failed to refresh engine-backed scene.';
+          _isBusy = false;
+        });
+      }
+      return;
+    }
     await _loadBundledSample();
   }
 
@@ -289,6 +358,9 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   }
 
   RenderScene _sceneForViewport(RenderScene scene) {
+    if (_projectionMode.is3D || _projectionMode.isElevation) {
+      return scene;
+    }
     return scene.filteredByLevel(_activeLevelId);
   }
 
@@ -338,9 +410,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
 
   Future<void> _fitCamera() async {
     setState(() {
-      _statusMessage = _projectionMode == RenderSceneProjectionMode.topDown
-          ? 'Fitting 2D plan...'
-          : 'Fitting 3D scene...';
+      _statusMessage = _projectionMode.fitLabel;
     });
 
     await _viewportController.fitCamera();
@@ -351,13 +421,22 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       return;
     }
 
+    final scene = _scene;
     setState(() {
       _projectionMode = mode;
-      _statusMessage = mode == RenderSceneProjectionMode.topDown
-          ? '2D plan view'
-          : '3D isometric view';
+      _statusMessage = mode.statusLabel;
+      if (scene != null) {
+        _visibleKinds = _sanitizeVisibleKinds(
+          visibleKinds: _visibleKinds,
+          scene: _sceneForViewport(scene),
+        );
+      }
     });
 
+    if (scene != null) {
+      await _viewportController.updateRenderScene(_sceneForViewport(scene));
+      await _viewportController.setVisibleKinds(_visibleKinds);
+    }
     await _viewportController.setProjectionMode(mode);
     await _viewportController.fitCamera();
   }
@@ -481,19 +560,69 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       return;
     }
 
-    final previousLevelIds = scene.levels.map((level) => level.levelId).toSet();
+    final repository = _engineRepository;
+    if (_engineBackedMode && repository != null) {
+      final result = await repository.createLevel(
+        name: payload.name,
+        elevationMeters: payload.elevation,
+        defaultWallHeightMeters: payload.wallHeight,
+      );
+      await _applyEngineSceneResult(result, message: 'Level created.');
+      return;
+    }
     final nextScene = RenderSceneEditor.createLevel(
       scene: scene,
       name: payload.name,
       elevationMeters: payload.elevation,
       defaultWallHeightMeters: payload.wallHeight,
     );
-    final createdLevel = nextScene.levels.firstWhere(
-      (level) => !previousLevelIds.contains(level.levelId),
-      orElse: () => nextScene.levels.last,
-    );
     await _applySceneChange(nextScene, message: 'Level created.');
-    await _setActiveLevel(createdLevel.levelId);
+  }
+
+  Future<void> _setSelectedObjectLevelLock(
+    RenderSceneObject object,
+    bool locked,
+  ) async {
+    final scene = _scene;
+    if (scene == null) {
+      return;
+    }
+    final repository = _engineRepository;
+    final elementId = object.elementId;
+    if (_engineBackedMode &&
+        repository != null &&
+        elementId != null &&
+        (object.kindKey == 'door' || object.kindKey == 'window')) {
+      final result = await repository.setOpeningLevelLock(
+        openingId: elementId,
+        locked: locked,
+      );
+      await _applyEngineSceneResult(
+        result,
+        message: locked
+            ? '${prettySceneKind(object.kind)} levelga lock qilindi.'
+            : '${prettySceneKind(object.kind)} leveldan unlock qilindi.',
+      );
+      return;
+    }
+    if (_engineBackedMode && repository != null && object.kindKey == 'wall') {
+      setState(() {
+        _editStatusMessage =
+            'Wall level lock engine mode uchun constraint inspector keyingi bosqichda ulanadi.';
+      });
+      return;
+    }
+    final nextScene = RenderSceneEditor.setElementLevelLock(
+      scene: scene,
+      object: object,
+      locked: locked,
+    );
+    await _applySceneChange(
+      nextScene,
+      message: locked
+          ? '${prettySceneKind(object.kind)} levelga lock qilindi.'
+          : '${prettySceneKind(object.kind)} leveldan unlock qilindi.',
+    );
   }
 
   Future<void> _setVisibleKinds(Set<String> kinds) async {
@@ -556,9 +685,14 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       });
     }
 
-    if (mode != RenderSceneInteractionMode.select &&
-        _projectionMode != RenderSceneProjectionMode.topDown) {
-      await _setProjectionMode(RenderSceneProjectionMode.topDown);
+    if (mode.requiresPlanProjection &&
+        _projectionMode != kDefaultPlanProjectionMode) {
+      await _setProjectionMode(kDefaultPlanProjectionMode);
+    }
+
+    if (mode.prefersElevationProjection &&
+        _projectionMode == RenderSceneProjectionMode.isometric) {
+      await _setProjectionMode(kDefaultElevationProjectionMode);
     }
   }
 
@@ -574,6 +708,8 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       _moveAnchorPoint = null;
       _moveWallOriginalStart = null;
       _moveWallOriginalEnd = null;
+      _draftMoveLevelId = null;
+      _moveLevelOriginalElevation = null;
       _wallMoveMode = _WallMoveMode.translate;
       _draftOpeningOffsetMeters = 1.0;
       _draftOpeningWidthMeters = 0.9;
@@ -602,6 +738,11 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       case RenderSceneInteractionMode.addWall:
         await _handleAddWallTap(modelPoint);
         return;
+      case RenderSceneInteractionMode.addLevel:
+        await _handleAddLevelTap(modelPoint);
+        return;
+      case RenderSceneInteractionMode.moveLevel:
+        return;
       case RenderSceneInteractionMode.addDoor:
       case RenderSceneInteractionMode.addWindow:
         await _handleOpeningTap(scene, tappedObject, modelPoint);
@@ -629,11 +770,12 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       case RenderSceneInteractionMode.select:
         return;
       case RenderSceneInteractionMode.addWall:
+      case RenderSceneInteractionMode.addLevel:
         final start = _draftWallStart;
         if (start == null) {
           return;
         }
-        final snappedPoint = _wallDraftPoint(
+        final snappedPoint = _draftLinePoint(
           rawPoint: modelPoint,
           referenceStart: start,
         );
@@ -642,10 +784,13 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         }
         setState(() {
           _draftWallEnd = snappedPoint;
-          _editStatusMessage =
-              'Wall draft: ${start.distanceTo(snappedPoint).toStringAsFixed(2)} m';
+          _editStatusMessage = _interactionMode == RenderSceneInteractionMode.addLevel
+              ? 'Level draft: ${snappedPoint.z.toStringAsFixed(2)} m'
+              : 'Wall draft: ${start.distanceTo(snappedPoint).toStringAsFixed(2)} m';
         });
         _viewportController.setWallDraft(start, snappedPoint);
+        return;
+      case RenderSceneInteractionMode.moveLevel:
         return;
       case RenderSceneInteractionMode.addDoor:
       case RenderSceneInteractionMode.addWindow:
@@ -730,7 +875,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       return;
     }
 
-    final snappedPoint = _wallDraftPoint(
+    final snappedPoint = _draftLinePoint(
       rawPoint: modelPoint,
       referenceStart: _draftWallStart,
     );
@@ -755,6 +900,38 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     await _commitWallDraft(autoContinue: true);
   }
 
+  Future<void> _handleAddLevelTap(RenderScenePoint? modelPoint) async {
+    if (modelPoint == null) {
+      setState(() {
+        _editStatusMessage = 'Tap the elevation view to place a level line.';
+      });
+      return;
+    }
+
+    final snappedPoint = _draftLinePoint(
+      rawPoint: modelPoint,
+      referenceStart: _draftWallStart,
+    );
+
+    if (_draftWallStart == null) {
+      setState(() {
+        _draftWallStart = snappedPoint;
+        _draftWallEnd = snappedPoint;
+        _editStatusMessage =
+            'Level elevation set. Tap again to define the line length.';
+      });
+      _viewportController.setWallDraft(snappedPoint, snappedPoint);
+      return;
+    }
+
+    setState(() {
+      _draftWallEnd = snappedPoint;
+      _editStatusMessage =
+          'Level line ready at ${snappedPoint.z.toStringAsFixed(2)} m.';
+    });
+    _viewportController.setWallDraft(_draftWallStart, snappedPoint);
+  }
+
   Future<void> _commitWallDraft({required bool autoContinue}) async {
     final scene = _scene;
     final start = _draftWallStart;
@@ -774,6 +951,54 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     final activeLevelId = _activeLevel(scene)?.levelId;
     final baseElevation = _activeLevelElevation(scene);
     final wallHeight = _activeLevelDefaultWallHeight(scene);
+    final repository = _engineRepository;
+    if (_engineBackedMode && repository != null && activeLevelId != null) {
+      final result = await repository.createProfile(
+        targetKind: 0,
+        draftMode: 0,
+        levelId: activeLevelId,
+        points: <RenderScenePoint>[
+          RenderScenePoint(x: start.x, y: start.y, z: baseElevation),
+          RenderScenePoint(x: end.x, y: end.y, z: baseElevation),
+        ],
+        wallIds: const <int>[],
+        closed: false,
+        thicknessMeters: _defaultWallThicknessMeters,
+        heightMeters: wallHeight,
+        verticalOffsetMeters: 0.0,
+      );
+      await _applyEngineSceneResult(result, message: 'Wall created.');
+      if (result.scene == null) {
+        return;
+      }
+      final createdWall = result.scene!.objects
+          .where((object) => object.kindKey == 'wall' && object.levelId == activeLevelId)
+          .fold<RenderSceneObject?>(null, (latest, object) {
+        if (latest == null) {
+          return object;
+        }
+        return (object.revision >= latest.revision) ? object : latest;
+      });
+      if (createdWall?.elementId != null) {
+        await _viewportController.selectElement(createdWall!.elementId!.toString());
+        await _viewportController.highlightElement(createdWall.elementId!.toString());
+      }
+      if (autoContinue) {
+        setState(() {
+          _draftWallStart = end;
+          _draftWallEnd = end;
+          _editStatusMessage =
+              'Wall created. Tap next point to continue, or Cancel to stop.';
+        });
+        _viewportController.setWallDraft(end, end);
+      } else {
+        await _clearDraft();
+        setState(() {
+          _editStatusMessage = 'Wall created.';
+        });
+      }
+      return;
+    }
     final nextScene = RenderSceneEditor.addWall(
       scene: scene,
       start: RenderScenePoint(x: start.x, y: start.y, z: baseElevation),
@@ -803,6 +1028,43 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         _editStatusMessage = 'Wall created.';
       });
     }
+  }
+
+  Future<void> _commitLevelDraft() async {
+    final scene = _scene;
+    final start = _draftWallStart;
+    final end = _draftWallEnd;
+    if (scene == null || start == null || end == null) {
+      return;
+    }
+
+    final elevation = end.z;
+    final repository = _engineRepository;
+    if (_engineBackedMode && repository != null) {
+      final result = await repository.createLevel(
+        name: 'Level ${scene.levels.length + 1}',
+        elevationMeters: elevation,
+        defaultWallHeightMeters: _activeLevelDefaultWallHeight(scene),
+      );
+      await _applyEngineSceneResult(
+        result,
+        message: 'Level created at ${elevation.toStringAsFixed(2)} m.',
+      );
+      await _clearDraft();
+      return;
+    }
+    final nextIndex = scene.levels.length + 1;
+    final nextScene = RenderSceneEditor.createLevel(
+      scene: scene,
+      name: 'Level $nextIndex',
+      elevationMeters: elevation,
+      defaultWallHeightMeters: _activeLevelDefaultWallHeight(scene),
+    );
+    await _applySceneChange(
+      nextScene,
+      message: 'Level created at ${elevation.toStringAsFixed(2)} m.',
+    );
+    await _clearDraft();
   }
 
   Future<void> _handleOpeningTap(
@@ -895,6 +1157,87 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     }
   }
 
+  void _handleMoveLevelStart(RenderScene scene, RenderScenePoint? modelPoint) {
+    if (!_projectionMode.isElevation) {
+      setState(() {
+        _editStatusMessage = 'Move level faqat elevation view’da ishlaydi.';
+      });
+      return;
+    }
+    final level = _activeLevel(scene);
+    if (level == null || modelPoint == null) {
+      return;
+    }
+    if ((modelPoint.z - level.elevationMeters).abs() > 0.8) {
+      setState(() {
+        _editStatusMessage =
+            'Level line yaqinidan ushlab suring. Active level: ${level.name}.';
+      });
+      return;
+    }
+    final preview = _levelDraftEndpointsForElevation(scene, level.elevationMeters);
+    setState(() {
+      _draftMoveLevelId = level.levelId;
+      _moveLevelOriginalElevation = level.elevationMeters;
+      _moveAnchorPoint = modelPoint;
+      _draftWallStart = preview.$1;
+      _draftWallEnd = preview.$2;
+      _editStatusMessage =
+          '${level.name} move preview boshlandi (${level.elevationMeters.toStringAsFixed(2)} m).';
+    });
+    _viewportController.setWallDraft(preview.$1, preview.$2);
+  }
+
+  (RenderScenePoint, RenderScenePoint) _levelDraftEndpointsForElevation(
+    RenderScene scene,
+    double elevation,
+  ) {
+    final bounds = scene.bounds;
+    final descriptor = _projectionMode.planarDescriptor;
+    if (descriptor == null || !descriptor.isElevation) {
+      return (
+        RenderScenePoint(x: bounds.min.x - 1.0, y: bounds.center.y, z: elevation),
+        RenderScenePoint(x: bounds.max.x + 1.0, y: bounds.center.y, z: elevation),
+      );
+    }
+    final horizontalMin =
+        descriptor.minAxis(bounds, descriptor.horizontalAxis) - 1.0;
+    final horizontalMax =
+        descriptor.maxAxis(bounds, descriptor.horizontalAxis) + 1.0;
+    return (
+      descriptor.pointOnPlane(
+        bounds: bounds,
+        horizontalValue: horizontalMin,
+        verticalValue: elevation,
+      ),
+      descriptor.pointOnPlane(
+        bounds: bounds,
+        horizontalValue: horizontalMax,
+        verticalValue: elevation,
+      ),
+    );
+  }
+
+  void _updateMoveLevelPreview({
+    required RenderScene scene,
+    required RenderScenePoint point,
+  }) {
+    final levelId = _draftMoveLevelId;
+    final originalElevation = _moveLevelOriginalElevation;
+    if (levelId == null || originalElevation == null) {
+      return;
+    }
+    final nextElevation = _snapDouble(point.z, 0.1);
+    final preview = _levelDraftEndpointsForElevation(scene, nextElevation);
+    setState(() {
+      _draftWallStart = preview.$1;
+      _draftWallEnd = preview.$2;
+      _editStatusMessage =
+          'Level move preview: ${nextElevation.toStringAsFixed(2)} m';
+    });
+    _viewportController.setWallDraft(preview.$1, preview.$2);
+  }
+
   Future<void> _handleMoveOpeningTap(
     RenderScene scene,
     RenderSceneObject? tappedObject,
@@ -981,12 +1324,12 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       nextStart = _snapMovedWallPoint(scene, wall, nextStart, originalStart);
       nextEnd = _snapMovedWallPoint(scene, wall, nextEnd, originalEnd);
     } else if (_wallMoveMode == _WallMoveMode.startHandle) {
-      nextStart = _wallDraftPoint(rawPoint: point, referenceStart: originalEnd);
+      nextStart = _draftLinePoint(rawPoint: point, referenceStart: originalEnd);
       nextStart = _snapMovedWallPoint(scene, wall, nextStart, originalStart);
       nextEnd = originalEnd;
     } else {
       nextStart = originalStart;
-      nextEnd = _wallDraftPoint(rawPoint: point, referenceStart: originalStart);
+      nextEnd = _draftLinePoint(rawPoint: point, referenceStart: originalStart);
       nextEnd = _snapMovedWallPoint(scene, wall, nextEnd, originalEnd);
     }
     setState(() {
@@ -1207,7 +1550,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     );
   }
 
-  RenderScenePoint _wallDraftPoint({
+  RenderScenePoint _draftLinePoint({
     required RenderScenePoint rawPoint,
     required RenderScenePoint? referenceStart,
   }) {
@@ -1221,6 +1564,15 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     final dx = point.x - start.x;
     final dy = point.y - start.y;
     if (dx.abs() < 1e-6 && dy.abs() < 1e-6) {
+      return point;
+    }
+
+    if (_projectionMode.isElevation) {
+      point = RenderScenePoint(
+        x: point.x,
+        y: point.y,
+        z: start.z,
+      );
       return point;
     }
 
@@ -1304,6 +1656,12 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
           return false;
         }
         return start.distanceTo(end) >= 0.1;
+      case RenderSceneInteractionMode.addLevel:
+        return _draftWallStart != null && _draftWallEnd != null;
+      case RenderSceneInteractionMode.moveLevel:
+        return _draftMoveLevelId != null &&
+            _draftWallStart != null &&
+            _draftWallEnd != null;
       case RenderSceneInteractionMode.addDoor:
       case RenderSceneInteractionMode.addWindow:
       case RenderSceneInteractionMode.moveOpening:
@@ -1346,6 +1704,42 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         return;
       case RenderSceneInteractionMode.addWall:
         await _commitWallDraft(autoContinue: true);
+        return;
+      case RenderSceneInteractionMode.addLevel:
+        await _commitLevelDraft();
+        return;
+      case RenderSceneInteractionMode.moveLevel:
+        final sceneLevel = _scene;
+        final levelId = _draftMoveLevelId;
+        final end = _draftWallEnd;
+        if (sceneLevel == null || levelId == null || end == null) {
+          setState(() {
+            _editStatusMessage = 'Move level preview tayyor emas.';
+          });
+          return;
+        }
+        final repository = _engineRepository;
+        if (_engineBackedMode && repository != null) {
+          final result = await repository.moveLevelElevation(
+            levelId: levelId,
+            elevationMeters: end.z,
+          );
+          await _applyEngineSceneResult(
+            result,
+            message: 'Level elevation updated to ${end.z.toStringAsFixed(2)} m.',
+          );
+        } else {
+          final nextScene = RenderSceneEditor.setLevelElevation(
+            scene: sceneLevel,
+            levelId: levelId,
+            elevationMeters: end.z,
+          );
+          await _applySceneChange(
+            nextScene,
+            message: 'Level elevation updated to ${end.z.toStringAsFixed(2)} m.',
+          );
+        }
+        await _clearDraft();
         return;
       case RenderSceneInteractionMode.addDoor:
       case RenderSceneInteractionMode.addWindow:
@@ -1396,6 +1790,67 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         return;
       case RenderSceneInteractionMode.addFloor:
       case RenderSceneInteractionMode.addCeiling:
+        final repository = _engineRepository;
+        if (_engineBackedMode && repository != null && _activeLevelId != null) {
+          final assemblyId = repository.defaultAssemblyId(
+            _interactionMode == RenderSceneInteractionMode.addFloor
+                ? 'Floor'
+                : 'Ceiling',
+          );
+          if (assemblyId == null) {
+            setState(() {
+              _editStatusMessage =
+                  'Engine project assembly topilmadi for ${_interactionMode == RenderSceneInteractionMode.addFloor ? 'floor' : 'ceiling'}.';
+            });
+            return;
+          }
+          final result = _draftSurfaceWallIds.length >= 2
+              ? await repository.createProfile(
+                  targetKind: _interactionMode ==
+                          RenderSceneInteractionMode.addFloor
+                      ? 1
+                      : 2,
+                  draftMode: 2,
+                  levelId: _activeLevelId!,
+                  points: const <RenderScenePoint>[],
+                  wallIds: _draftSurfaceWallIds.toList(growable: false),
+                  closed: true,
+                  thicknessMeters: _draftSurfaceThicknessMeters,
+                  heightMeters: _draftSurfaceHeightMeters,
+                  verticalOffsetMeters:
+                      _interactionMode == RenderSceneInteractionMode.addFloor
+                          ? _draftFloorTopElevationMeters
+                          : _draftSurfaceHeightMeters,
+                  assemblyId: assemblyId,
+                )
+              : await repository.createProfile(
+                  targetKind: _interactionMode ==
+                          RenderSceneInteractionMode.addFloor
+                      ? 1
+                      : 2,
+                  draftMode: 1,
+                  levelId: _activeLevelId!,
+                  points: <RenderScenePoint>[
+                    _draftSurfaceStart!,
+                    _draftSurfaceEnd!,
+                  ],
+                  closed: true,
+                  thicknessMeters: _draftSurfaceThicknessMeters,
+                  heightMeters: _draftSurfaceHeightMeters,
+                  verticalOffsetMeters:
+                      _interactionMode == RenderSceneInteractionMode.addFloor
+                          ? _draftFloorTopElevationMeters
+                          : _draftSurfaceHeightMeters,
+                  assemblyId: assemblyId,
+                );
+          await _applyEngineSceneResult(
+            result,
+            message:
+                '${_interactionMode == RenderSceneInteractionMode.addFloor ? 'Floor' : 'Ceiling'} created.',
+          );
+          await _clearDraft();
+          return;
+        }
         RenderScene nextScene;
         if (_draftSurfaceWallIds.length >= 2) {
           final walls = scene.objects
@@ -1500,6 +1955,34 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     }
 
     final offset = _draftOpeningOffsetMeters;
+    final repository = _engineRepository;
+    if (_engineBackedMode &&
+        repository != null &&
+        hostWall.elementId != null) {
+      final result = _interactionMode == RenderSceneInteractionMode.addDoor
+          ? await repository.createDoor(
+              name: 'Door',
+              hostWallId: hostWall.elementId!,
+              offsetMeters: offset,
+              widthMeters: _draftOpeningWidthMeters,
+              heightMeters: _draftOpeningHeightMeters,
+            )
+          : await repository.createWindow(
+              name: 'Window',
+              hostWallId: hostWall.elementId!,
+              offsetMeters: offset,
+              widthMeters: _draftOpeningWidthMeters,
+              heightMeters: _draftOpeningHeightMeters,
+              sillHeightMeters: _draftOpeningSillHeightMeters,
+            );
+      await _applyEngineSceneResult(
+        result,
+        message:
+            '${_interactionMode == RenderSceneInteractionMode.addDoor ? 'Door' : 'Window'} created.',
+      );
+      await _clearDraft();
+      return;
+    }
     final nextScene = _interactionMode == RenderSceneInteractionMode.addDoor
         ? RenderSceneEditor.addDoor(
             scene: scene,
@@ -1636,7 +2119,6 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         : null;
     final resolvedLevelId =
         _resolveInitialLevelId(nextScene, preferred: _activeLevelId);
-    final nextViewportScene = nextScene.filteredByLevel(resolvedLevelId);
 
     setState(() {
       _scene = nextScene;
@@ -1644,6 +2126,11 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       _statusMessage = message;
       _editStatusMessage = message;
       _loadError = null;
+    });
+
+    final nextViewportScene = _sceneForViewport(nextScene);
+
+    setState(() {
       _visibleKinds = _sanitizeVisibleKinds(
         visibleKinds: _visibleKinds,
         scene: nextViewportScene,
@@ -1669,6 +2156,21 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     } else {
       await _viewportController.highlightElement(previousHighlightedId);
     }
+  }
+
+  Future<void> _applyEngineSceneResult(
+    RenderSceneLoadResult result, {
+    required String message,
+  }) async {
+    if (result.scene == null) {
+      setState(() {
+        _editStatusMessage = result.errors.isNotEmpty
+            ? result.errors.join('\n')
+            : 'Engine update failed.';
+      });
+      return;
+    }
+    await _applySceneChange(result.scene!, message: message);
   }
 
   String _topBarText(RenderScene? scene) {
@@ -1872,7 +2374,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   }
 
   Widget _buildToolbar(BuildContext context, RenderScene? scene) {
-    final is3D = _projectionMode == RenderSceneProjectionMode.isometric;
+    final is3D = _projectionMode.is3D;
 
     return Container(
       height: 108,
@@ -1885,14 +2387,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
             scrollDirection: Axis.horizontal,
             child: Row(
               children: <Widget>[
-                _toolbarChoiceButton(
-                  label: '2D',
-                  selected: _projectionMode == RenderSceneProjectionMode.topDown,
-                  onPressed: scene == null
-                      ? null
-                      : () => _setProjectionMode(RenderSceneProjectionMode.topDown),
-                ),
-                const SizedBox(width: 6),
+                ..._buildProjectionModeButtons(scene),
                 _toolbarChoiceButton(
                   label: '3D',
                   selected: _projectionMode == RenderSceneProjectionMode.isometric,
@@ -2025,6 +2520,26 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
                 ),
                 const SizedBox(width: 6),
                 _toolbarChoiceButton(
+                  label: 'Level',
+                  selected: _interactionMode == RenderSceneInteractionMode.addLevel,
+                  onPressed: scene == null
+                      ? null
+                      : () => _setInteractionMode(
+                          RenderSceneInteractionMode.addLevel,
+                        ),
+                ),
+                const SizedBox(width: 6),
+                _toolbarChoiceButton(
+                  label: 'Move level',
+                  selected: _interactionMode == RenderSceneInteractionMode.moveLevel,
+                  onPressed: scene == null
+                      ? null
+                      : () => _setInteractionMode(
+                          RenderSceneInteractionMode.moveLevel,
+                        ),
+                ),
+                const SizedBox(width: 6),
+                _toolbarChoiceButton(
                   label: 'Move wall',
                   selected: _interactionMode == RenderSceneInteractionMode.moveWall,
                   onPressed: scene == null
@@ -2083,6 +2598,21 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         ],
       ),
     );
+  }
+
+  List<Widget> _buildProjectionModeButtons(RenderScene? scene) {
+    return <Widget>[
+      for (var index = 0; index < kOrthographicProjectionModes.length; index++) ...[
+        _toolbarChoiceButton(
+          label: kOrthographicProjectionModes[index].shortLabel,
+          selected: _projectionMode == kOrthographicProjectionModes[index],
+          onPressed: scene == null
+              ? null
+              : () => _setProjectionMode(kOrthographicProjectionModes[index]),
+        ),
+        const SizedBox(width: 6),
+      ],
+    ];
   }
 
   Widget _toolbarChoiceButton({
@@ -2390,7 +2920,14 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
                               'Tap an object in the model or choose one from the list.',
                         )
                       else
-                        _SelectedObjectCard(object: selectedObject),
+                        _SelectedObjectCard(
+                          object: selectedObject,
+                          onLevelLockChanged: (locked) =>
+                              _setSelectedObjectLevelLock(
+                            selectedObject,
+                            locked,
+                          ),
+                        ),
                       const SizedBox(height: 16),
                       _SceneSummaryCard(
                         scene: scene,
@@ -2478,6 +3015,9 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       case RenderSceneInteractionMode.moveWall:
         _handleMoveWallTap(scene, details.pickedObject, details.modelPoint);
         return;
+      case RenderSceneInteractionMode.moveLevel:
+        _handleMoveLevelStart(scene, details.modelPoint);
+        return;
       case RenderSceneInteractionMode.moveOpening:
         _handleMoveOpeningTap(scene, details.pickedObject, details.modelPoint);
         return;
@@ -2499,6 +3039,9 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
           _updateMoveWallPreview(scene: scene, wall: target, point: point);
         }
         return;
+      case RenderSceneInteractionMode.moveLevel:
+        _updateMoveLevelPreview(scene: scene, point: point);
+        return;
       case RenderSceneInteractionMode.moveOpening:
         final target = _draftMoveTarget ?? _selectedObject(scene);
         if (target != null &&
@@ -2515,6 +3058,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     switch (_interactionMode) {
       case RenderSceneInteractionMode.moveWall:
       case RenderSceneInteractionMode.moveOpening:
+      case RenderSceneInteractionMode.moveLevel:
         if (_draftCanConfirm) {
           await _confirmDraft();
         }
@@ -2560,7 +3104,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
               Text('Triangles: ${scene?.triangleCount ?? 0}'),
               const SizedBox(width: 12),
               Text(
-                'Mode: ${_projectionMode == RenderSceneProjectionMode.topDown ? '2D' : '3D'}',
+                'Mode: ${_projectionMode.modeLabel}',
               ),
               const SizedBox(width: 12),
               Text(
@@ -2913,6 +3457,16 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
         const SizedBox(height: 8),
         if (mode == RenderSceneInteractionMode.select)
           const Text('Select mode: tap objects to inspect them.')
+        else if (mode == RenderSceneInteractionMode.addLevel)
+          _LevelDraftSummary(
+            start: widget.draftWallStart,
+            end: widget.draftWallEnd,
+          )
+        else if (mode == RenderSceneInteractionMode.moveLevel)
+          _LevelDraftSummary(
+            start: widget.draftWallStart,
+            end: widget.draftWallEnd,
+          )
         else if (mode == RenderSceneInteractionMode.addWall)
           _WallDraftSummary(
             start: widget.draftWallStart,
@@ -3093,6 +3647,40 @@ class _WallDraftSummary extends StatelessWidget {
   }
 }
 
+class _LevelDraftSummary extends StatelessWidget {
+  const _LevelDraftSummary({
+    required this.start,
+    required this.end,
+  });
+
+  final RenderScenePoint? start;
+  final RenderScenePoint? end;
+
+  @override
+  Widget build(BuildContext context) {
+    if (start == null || end == null) {
+      return const Text(
+        'Elevation view’da 2 marta bosing: birinchi bosish balandlikni, ikkinchisi level line uzunligini beradi.',
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        _InfoRow(
+          label: 'Elevation',
+          value: '${end!.z.toStringAsFixed(2)} m',
+        ),
+        _InfoRow(
+          label: 'Line',
+          value:
+              '(${start!.x.toStringAsFixed(2)}, ${start!.z.toStringAsFixed(2)}) → (${end!.x.toStringAsFixed(2)}, ${end!.z.toStringAsFixed(2)})',
+        ),
+      ],
+    );
+  }
+}
+
 class _SurfaceDraftSummary extends StatelessWidget {
   const _SurfaceDraftSummary({
     required this.mode,
@@ -3240,9 +3828,11 @@ class _ObjectListTile extends StatelessWidget {
 class _SelectedObjectCard extends StatelessWidget {
   const _SelectedObjectCard({
     required this.object,
+    required this.onLevelLockChanged,
   });
 
   final RenderSceneObject object;
+  final ValueChanged<bool> onLevelLockChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -3255,6 +3845,12 @@ class _SelectedObjectCard extends StatelessWidget {
     final wallHeight = (object.metadata['height_meters'] as num?)?.toDouble();
     final wallStart = object.metadata['axis_start'];
     final wallEnd = object.metadata['axis_end'];
+    final levelLocked = RenderSceneEditor.isElementLevelLocked(object);
+    final canToggleLevelLock = object.kindKey == 'wall' ||
+        object.kindKey == 'floor' ||
+        object.kindKey == 'ceiling' ||
+        object.kindKey == 'door' ||
+        object.kindKey == 'window';
 
     return _InfoCard(
       title: 'Selected object',
@@ -3269,6 +3865,15 @@ class _SelectedObjectCard extends StatelessWidget {
           label: 'Visible',
           value: object.visibleByDefault ? 'Default' : 'Hidden',
         ),
+        if (canToggleLevelLock)
+          _InfoRow(
+            label: 'Level lock',
+            value: levelLocked ? 'On' : 'Off',
+            trailing: Switch.adaptive(
+              value: levelLocked,
+              onChanged: onLevelLockChanged,
+            ),
+          ),
         _InfoRow(label: 'Revision', value: object.revision.toString()),
         _InfoRow(
           label: 'Mesh',

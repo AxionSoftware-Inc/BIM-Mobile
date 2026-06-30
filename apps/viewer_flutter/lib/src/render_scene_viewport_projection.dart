@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import 'render_scene_models.dart';
+import 'render_scene_viewport_planar.dart';
 import 'render_scene_viewport_types.dart';
 
 @immutable
@@ -41,7 +42,7 @@ class RenderSceneProjection {
     required this.camera,
     required this.padding,
   }) {
-    if (projectionMode == RenderSceneProjectionMode.topDown) {
+    if (!projectionMode.is3D) {
       projectedBounds = Rect.fromLTWH(
         padding,
         padding,
@@ -77,7 +78,7 @@ class RenderSceneProjection {
   RenderSceneProjectedPoint project(RenderScenePoint point) {
     final raw = _projectRawPoint(point);
     return RenderSceneProjectedPoint(
-      screen: projectionMode == RenderSceneProjectionMode.topDown
+      screen: projectionMode.isPlanar
           ? raw.screen
           : Offset(
               screenOffset.dx + raw.screen.dx * screenScale,
@@ -88,31 +89,31 @@ class RenderSceneProjection {
   }
 
   RenderScenePoint? unprojectPlan(Offset localPosition) {
-    if (projectionMode != RenderSceneProjectionMode.topDown) {
+    final descriptor = projectionMode.planarDescriptor;
+    if (descriptor == null) {
       return null;
     }
-
-    return RenderScenePoint(
-      x: planCamera.center.x +
-          (localPosition.dx - viewportCenter.dx) / planCamera.zoom,
-      y: planCamera.center.y -
-          (localPosition.dy - viewportCenter.dy) / planCamera.zoom,
-      z: sceneBounds.center.z,
+    return descriptor.screenToModel(
+      localPosition: localPosition,
+      viewportCenter: viewportCenter,
+      cameraState: planCamera,
     );
   }
 
   RenderSceneProjectedPoint _projectRawPoint(RenderScenePoint point) {
+    final descriptor = projectionMode.planarDescriptor;
+    if (descriptor != null) {
+      return RenderSceneProjectedPoint(
+        screen: descriptor.modelToScreen(
+          point: point,
+          viewportCenter: viewportCenter,
+          cameraState: planCamera,
+        ),
+        depth: descriptor.projectDepth(point),
+      );
+    }
+
     switch (projectionMode) {
-      case RenderSceneProjectionMode.topDown:
-        return RenderSceneProjectedPoint(
-          screen: Offset(
-            viewportCenter.dx +
-                (point.x - planCamera.center.x) * planCamera.zoom,
-            viewportCenter.dy -
-                (point.y - planCamera.center.y) * planCamera.zoom,
-          ),
-          depth: point.z,
-        );
       case RenderSceneProjectionMode.isometric:
         final basis = buildCameraBasis(
           center: camera.center,
@@ -139,6 +140,12 @@ class RenderSceneProjection {
           screen: Offset(x * perspectiveScale, -y * perspectiveScale),
           depth: depth,
         );
+      case RenderSceneProjectionMode.topDown:
+      case RenderSceneProjectionMode.northElevation:
+      case RenderSceneProjectionMode.southElevation:
+      case RenderSceneProjectionMode.eastElevation:
+      case RenderSceneProjectionMode.westElevation:
+        throw StateError('Planar projection modes must resolve via descriptor.');
     }
   }
 }

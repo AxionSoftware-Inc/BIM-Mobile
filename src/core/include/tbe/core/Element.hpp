@@ -98,6 +98,25 @@ enum class RoofType {
     SimpleGable
 };
 
+enum class WallHeightMode {
+    Unconnected,
+    TopLevel
+};
+
+enum class ProfileDraftMode {
+    Polyline,
+    Rectangle,
+    PickWalls,
+    AutoRoom
+};
+
+enum class ProfileTargetKind {
+    WallPath,
+    FloorBoundary,
+    CeilingBoundary,
+    RoofBoundary
+};
+
 struct WallJoin {
     ElementId other_wall_id{};
     Point2 point{};
@@ -150,10 +169,15 @@ struct GeneratedGeometry {
 
 struct WallData {
     ElementId level_id{};
+    ElementId base_level_id{};
+    ElementId top_level_id{};
     ElementId wall_type_id{};
     Line2 axis{};
     double thickness_meters{};
     double height_meters{};
+    double base_offset_meters{};
+    double top_offset_meters{};
+    WallHeightMode height_mode{WallHeightMode::Unconnected};
     std::vector<WallJoin> joins{};
     std::vector<HostedOpening> openings{};
     GeneratedGeometry geometry{};
@@ -165,6 +189,7 @@ struct DoorData {
     double offset_meters{};
     double width_meters{};
     double height_meters{};
+    bool level_locked{true};
 };
 
 struct WindowData {
@@ -174,12 +199,14 @@ struct WindowData {
     double width_meters{};
     double height_meters{};
     double sill_height_meters{};
+    bool level_locked{true};
 };
 
 struct LevelData {
     std::string name{};
     double elevation_meters{};
     double default_wall_height_meters{};
+    bool is_story{true};
 };
 
 struct RoomData {
@@ -275,6 +302,7 @@ struct FloorSystemData {
     ElementId assembly_id{};
     std::vector<Point2> boundary_polygon{};
     double area_square_meters{};
+    bool manual_profile{};
     bool dirty{true};
 };
 
@@ -286,7 +314,23 @@ struct CeilingSystemData {
     std::vector<Point2> boundary_polygon{};
     double area_square_meters{};
     double height_offset_meters{};
+    bool manual_profile{};
     bool dirty{true};
+};
+
+struct ProfileDraft {
+    ProfileDraftMode mode{ProfileDraftMode::Polyline};
+    ProfileTargetKind target_kind{ProfileTargetKind::WallPath};
+    ElementId level_id{};
+    std::vector<Point2> points{};
+    std::vector<ElementId> picked_wall_ids{};
+    bool closed{};
+    double thickness_meters{};
+    double height_meters{};
+    double vertical_offset_meters{};
+    ElementId material_id{};
+    ElementId assembly_id{};
+    RoofType roof_type{RoofType::Flat};
 };
 
 struct MaterialDefinition {

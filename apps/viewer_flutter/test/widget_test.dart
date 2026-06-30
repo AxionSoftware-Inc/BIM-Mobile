@@ -7,6 +7,10 @@ import 'package:viewer_flutter/src/render_scene_editor.dart';
 import 'package:viewer_flutter/src/render_scene_estimator.dart';
 import 'package:viewer_flutter/src/render_scene_models.dart';
 import 'package:viewer_flutter/src/render_scene_repository.dart';
+import 'package:viewer_flutter/src/render_scene_viewport_controller.dart';
+import 'package:viewer_flutter/src/render_scene_viewport_planar.dart';
+import 'package:viewer_flutter/src/render_scene_viewport_projection.dart';
+import 'package:viewer_flutter/src/render_scene_viewport_types.dart';
 import 'package:viewer_flutter/src/viewer_app.dart';
 
 void main() {
@@ -113,6 +117,43 @@ void main() {
     expect(filtered.kindCounts['wall'], greaterThan(0));
   });
 
+  test('Level elevation moves locked wall and leaves unlocked wall in place', () {
+    final json =
+        File('test/fixtures/render_scene_sample.json').readAsStringSync();
+    final result = parseRenderSceneJson(
+      json,
+      source: 'test/fixtures/render_scene_sample.json',
+    );
+    expect(result.scene, isNotNull);
+
+    final baseScene = result.scene!;
+    final wall = baseScene.objects.firstWhere((object) => object.kindKey == 'wall');
+    final startBefore = RenderSceneEditor.wallStartPoint(wall)!;
+
+    final movedScene = RenderSceneEditor.setLevelElevation(
+      scene: baseScene,
+      levelId: wall.levelId ?? 1,
+      elevationMeters: 1.5,
+    );
+    final movedWall = movedScene.objectById(wall.elementId)!;
+    final startAfter = RenderSceneEditor.wallStartPoint(movedWall)!;
+    expect(startAfter.z, closeTo(startBefore.z + 1.5, 1e-6));
+
+    final unlockedScene = RenderSceneEditor.setElementLevelLock(
+      scene: movedScene,
+      object: movedWall,
+      locked: false,
+    );
+    final unchangedScene = RenderSceneEditor.setLevelElevation(
+      scene: unlockedScene,
+      levelId: wall.levelId ?? 1,
+      elevationMeters: 3.0,
+    );
+    final unchangedWall = unchangedScene.objectById(wall.elementId)!;
+    final startUnlocked = RenderSceneEditor.wallStartPoint(unchangedWall)!;
+    expect(startUnlocked.z, closeTo(startAfter.z, 1e-6));
+  });
+
   test('RenderScene estimator responds to custom unit prices', () {
     final json =
         File('test/fixtures/render_scene_sample.json').readAsStringSync();
@@ -139,6 +180,155 @@ void main() {
     expect(summaryCustom.lineItems.length, 6);
   });
 
+  test('Cardinal elevation specs are driven by one projection registry', () {
+    expect(kRenderSceneProjectionSpecs.length, 6);
+
+    final north = RenderSceneProjectionMode.northElevation.spec;
+    final south = RenderSceneProjectionMode.southElevation.spec;
+    final east = RenderSceneProjectionMode.eastElevation.spec;
+    final west = RenderSceneProjectionMode.westElevation.spec;
+    final plan = RenderSceneProjectionMode.topDown.spec;
+
+    expect(plan.isPlanar, isTrue);
+    expect(plan.isElevation, isFalse);
+    expect(plan.showGrid, isTrue);
+    expect(plan.showAxes, isTrue);
+    expect(plan.showLevelsOverlay, isFalse);
+    expect(plan.useProjectedBoundsOutline, isFalse);
+    expect(north.isElevation, isTrue);
+    expect(south.isElevation, isTrue);
+    expect(east.isElevation, isTrue);
+    expect(west.isElevation, isTrue);
+    expect(north.showLevelsOverlay, isTrue);
+    expect(east.useBoundsCenterLabelAnchor, isTrue);
+    expect(north.useProjectedBoundsOutline, isTrue);
+
+    expect(north.planarDescriptor!.horizontalAxis, RenderSceneAxis.x);
+    expect(north.planarDescriptor!.verticalAxis, RenderSceneAxis.z);
+    expect(north.planarDescriptor!.depthAxis, RenderSceneAxis.y);
+
+    expect(south.planarDescriptor!.horizontalAxis, RenderSceneAxis.x);
+    expect(south.planarDescriptor!.verticalAxis, RenderSceneAxis.z);
+    expect(south.planarDescriptor!.depthAxis, RenderSceneAxis.y);
+    expect(south.planarDescriptor!.horizontalSign, -1.0);
+
+    expect(east.planarDescriptor!.horizontalAxis, RenderSceneAxis.y);
+    expect(east.planarDescriptor!.verticalAxis, RenderSceneAxis.z);
+    expect(east.planarDescriptor!.depthAxis, RenderSceneAxis.x);
+
+    expect(west.planarDescriptor!.horizontalAxis, RenderSceneAxis.y);
+    expect(west.planarDescriptor!.verticalAxis, RenderSceneAxis.z);
+    expect(west.planarDescriptor!.depthAxis, RenderSceneAxis.x);
+    expect(west.planarDescriptor!.horizontalSign, -1.0);
+
+    expect(north.orbitYawRadians, closeTo(-3.141592653589793 / 2, 1e-9));
+    expect(south.orbitYawRadians, closeTo(3.141592653589793 / 2, 1e-9));
+    expect(east.orbitYawRadians, closeTo(3.141592653589793, 1e-9));
+    expect(west.orbitYawRadians, closeTo(0, 1e-9));
+
+    expect(north.viewDirection, const RenderScenePoint(x: 0, y: -1, z: 0));
+    expect(south.viewDirection, const RenderScenePoint(x: 0, y: 1, z: 0));
+    expect(east.viewDirection, const RenderScenePoint(x: -1, y: 0, z: 0));
+    expect(west.viewDirection, const RenderScenePoint(x: 1, y: 0, z: 0));
+  });
+
+  test('North/South/East/West are true planar re-projections of the same model', () {
+    const bounds = RenderSceneBounds(
+      min: RenderScenePoint(x: 0, y: 0, z: 0),
+      max: RenderScenePoint(x: 10, y: 20, z: 6),
+    );
+    const planCamera = RenderScenePlanCameraState(
+      center: RenderScenePoint(x: 5, y: 10, z: 3),
+      zoom: 10,
+    );
+    const orbitCamera = RenderSceneCameraState(
+      center: RenderScenePoint(x: 5, y: 10, z: 3),
+      distance: 20,
+      yawRadians: 0.7,
+      pitchRadians: 0.5,
+      zoomScale: 1.0,
+    );
+    const point = RenderScenePoint(x: 7, y: 14, z: 5);
+    const size = Size(800, 600);
+
+    RenderSceneProjection projectionFor(RenderSceneProjectionMode mode) {
+      return RenderSceneProjection(
+        sceneBounds: bounds,
+        canvasSize: size,
+        projectionMode: mode,
+        orbitProjectionStyle: RenderSceneOrbitProjectionStyle.orthographic,
+        planCamera: planCamera,
+        camera: orbitCamera,
+        padding: 48,
+      );
+    }
+
+    final north = projectionFor(RenderSceneProjectionMode.northElevation)
+        .project(point)
+        .screen;
+    final south = projectionFor(RenderSceneProjectionMode.southElevation)
+        .project(point)
+        .screen;
+    final east =
+        projectionFor(RenderSceneProjectionMode.eastElevation).project(point).screen;
+    final west =
+        projectionFor(RenderSceneProjectionMode.westElevation).project(point).screen;
+
+    // Same vertical axis for all elevation views: higher Z must move up equally.
+    expect(north.dy, closeTo(south.dy, 1e-6));
+    expect(east.dy, closeTo(west.dy, 1e-6));
+
+    // Opposite cardinal views mirror horizontally around the same center.
+    expect((north.dx + south.dx) * 0.5, closeTo(size.width * 0.5, 1e-6));
+    expect((east.dx + west.dx) * 0.5, closeTo(size.width * 0.5, 1e-6));
+
+    // North/South are driven by X/Z, East/West by Y/Z.
+    expect(north.dx, closeTo(size.width * 0.5 + 20, 1e-6));
+    expect(south.dx, closeTo(size.width * 0.5 - 20, 1e-6));
+    expect(east.dx, closeTo(size.width * 0.5 + 40, 1e-6));
+    expect(west.dx, closeTo(size.width * 0.5 - 40, 1e-6));
+  });
+
+  test('Interaction mode fallback uses shared projection defaults', () async {
+    final controller = RenderSceneViewportController(
+      backend: RenderSceneViewportBackend.fallback,
+    );
+
+    await controller.setProjectionMode(RenderSceneProjectionMode.westElevation);
+    await controller.setInteractionMode(RenderSceneInteractionMode.moveWall);
+    expect(controller.projectionMode, kDefaultPlanProjectionMode);
+
+    await controller.setProjectionMode(RenderSceneProjectionMode.isometric);
+    await controller.setInteractionMode(RenderSceneInteractionMode.addLevel);
+    expect(controller.projectionMode, RenderSceneProjectionMode.isometric);
+
+    await controller.setProjectionMode(RenderSceneProjectionMode.eastElevation);
+    controller.panPlanBy(const Offset(30, -20));
+    expect(controller.planCamera.center.x, 0);
+    expect(controller.planCamera.center.y, closeTo(-30, 1e-6));
+    expect(controller.planCamera.center.z, closeTo(-20, 1e-6));
+  });
+
+  test('Switching from elevation to 3D preserves directional meaning', () async {
+    final controller = RenderSceneViewportController(
+      backend: RenderSceneViewportBackend.fallback,
+    );
+
+    await controller.setProjectionMode(RenderSceneProjectionMode.northElevation);
+    await controller.setProjectionMode(RenderSceneProjectionMode.isometric);
+    expect(
+      controller.camera.yawRadians,
+      closeTo(RenderSceneProjectionMode.northElevation.spec.orbitYawRadians!, 1e-9),
+    );
+
+    await controller.setProjectionMode(RenderSceneProjectionMode.westElevation);
+    await controller.setProjectionMode(RenderSceneProjectionMode.isometric);
+    expect(
+      controller.camera.yawRadians,
+      closeTo(RenderSceneProjectionMode.westElevation.spec.orbitYawRadians!, 1e-9),
+    );
+  });
+
   testWidgets('Viewer loads the bundled scene and shows diagnostics',
       (WidgetTester tester) async {
     final json =
@@ -150,6 +340,7 @@ void main() {
           json,
           source: 'test/fixtures/render_scene_sample.json',
         ),
+        preferEngineBackedBundledSample: false,
       ),
     );
     await tester.pumpAndSettle();

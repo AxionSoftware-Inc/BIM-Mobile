@@ -6,8 +6,25 @@ const List<String> kDefaultVisibleSceneKinds = <String>[];
 
 enum RenderSceneProjectionMode {
   topDown,
+  northElevation,
+  southElevation,
+  eastElevation,
+  westElevation,
   isometric,
 }
+
+const RenderSceneProjectionMode kDefaultPlanProjectionMode =
+    RenderSceneProjectionMode.topDown;
+const RenderSceneProjectionMode kDefaultElevationProjectionMode =
+    RenderSceneProjectionMode.northElevation;
+const List<RenderSceneProjectionMode> kOrthographicProjectionModes =
+    <RenderSceneProjectionMode>[
+  RenderSceneProjectionMode.topDown,
+  RenderSceneProjectionMode.northElevation,
+  RenderSceneProjectionMode.southElevation,
+  RenderSceneProjectionMode.eastElevation,
+  RenderSceneProjectionMode.westElevation,
+];
 
 enum RenderSceneDisplayStyle {
   solid,
@@ -28,12 +45,39 @@ enum RenderSceneViewportBackend {
 enum RenderSceneInteractionMode {
   select,
   addWall,
+  addLevel,
+  moveLevel,
   addDoor,
   addWindow,
   moveWall,
   moveOpening,
   addFloor,
   addCeiling,
+}
+
+extension RenderSceneInteractionModeX on RenderSceneInteractionMode {
+  bool get requiresPlanProjection => switch (this) {
+        RenderSceneInteractionMode.addWall => true,
+        RenderSceneInteractionMode.addDoor => true,
+        RenderSceneInteractionMode.addWindow => true,
+        RenderSceneInteractionMode.moveWall => true,
+        RenderSceneInteractionMode.moveOpening => true,
+        RenderSceneInteractionMode.addFloor => true,
+        RenderSceneInteractionMode.addCeiling => true,
+        RenderSceneInteractionMode.select => false,
+        RenderSceneInteractionMode.addLevel => false,
+        RenderSceneInteractionMode.moveLevel => false,
+      };
+
+  bool get prefersElevationProjection => switch (this) {
+        RenderSceneInteractionMode.addLevel => true,
+        RenderSceneInteractionMode.moveLevel => true,
+        _ => false,
+      };
+}
+
+extension RenderSceneProjectionEditingModeX on RenderSceneProjectionMode {
+  bool get supportsPlanFootprintEditing => this == kDefaultPlanProjectionMode;
 }
 
 @immutable

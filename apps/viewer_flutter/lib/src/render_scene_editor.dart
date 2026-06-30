@@ -15,6 +15,138 @@ class RenderSceneEditor {
     return scene.levelById(levelId);
   }
 
+  static bool isElementLevelLocked(RenderSceneObject object) {
+    final value = object.metadata['level_locked'];
+    if (value is bool) {
+      return value;
+    }
+    return object.kindKey == 'wall' ||
+        object.kindKey == 'door' ||
+        object.kindKey == 'window' ||
+        object.kindKey == 'floor' ||
+        object.kindKey == 'ceiling';
+  }
+
+  static RenderScene setElementLevelLock({
+    required RenderScene scene,
+    required RenderSceneObject object,
+    required bool locked,
+  }) {
+    final elementId = object.elementId;
+    if (elementId == null) {
+      return scene;
+    }
+    final map = _sceneMap(scene);
+    final objects = _objectsFromSceneMap(map);
+    for (final entry in objects) {
+      final objectId = _toInt(entry['element_id']) ?? _toInt(entry['elementId']);
+      if (objectId != elementId) {
+        continue;
+      }
+      final metadata = entry['metadata'] is Map
+          ? Map<String, Object?>.from((entry['metadata'] as Map).cast<String, Object?>())
+          : <String, Object?>{};
+      metadata['level_locked'] = locked;
+      entry['metadata'] = metadata;
+      break;
+    }
+    map['objects'] = objects;
+    return _parseSceneMap(map, source: '${scene.source} ~ level lock');
+  }
+
+  static RenderScene setLevelElevation({
+    required RenderScene scene,
+    required int levelId,
+    required double elevationMeters,
+  }) {
+    final level = scene.levelById(levelId);
+    if (level == null) {
+      return scene;
+    }
+    final delta = elevationMeters - level.elevationMeters;
+    if (!delta.isFinite || delta.abs() <= 1e-9) {
+      return scene;
+    }
+
+    final map = _sceneMap(scene);
+    final levels = _levelsFromSceneMap(map);
+    for (final entry in levels) {
+      final entryLevelId = _toInt(entry['level_id']) ?? _toInt(entry['levelId']);
+      if (entryLevelId == levelId) {
+        entry['elevation_meters'] = elevationMeters;
+        break;
+      }
+    }
+    map['levels'] = levels;
+
+    final objects = _objectsFromSceneMap(map);
+    for (var index = 0; index < objects.length; index += 1) {
+      final object = objects[index];
+      final objectLevelId =
+          _toInt(object['level_id']) ?? _toInt(object['levelId']);
+      if (objectLevelId != levelId) {
+        continue;
+      }
+      final parsedObject = RenderSceneObject.fromJson(
+        object,
+        <String>[],
+        <String>[],
+      );
+      if (!isElementLevelLocked(parsedObject)) {
+        continue;
+      }
+
+      final kind = (object['kind']?.toString() ?? '').toLowerCase();
+      if (kind == 'wall') {
+        final geometry = _wallGeometryFromMap(object);
+        if (geometry == null) {
+          continue;
+        }
+        final metadataMap =
+            object['metadata'] is Map ? object['metadata'] as Map : null;
+        final heightMeters =
+            _toDouble(metadataMap?['height_meters']) ?? defaultWallHeightMeters;
+        final thicknessMeters =
+            geometry.thickness.isFinite ? geometry.thickness : defaultWallThicknessMeters;
+        final shiftedStart = RenderScenePoint(
+          x: geometry.start.x,
+          y: geometry.start.y,
+          z: geometry.start.z + delta,
+        );
+        final shiftedEnd = RenderScenePoint(
+          x: geometry.end.x,
+          y: geometry.end.y,
+          z: geometry.end.z + delta,
+        );
+        final rebuilt = _buildWallObject(
+          elementId: parsedObject.elementId ?? 0,
+          start: shiftedStart,
+          end: shiftedEnd,
+          heightMeters: heightMeters,
+          thicknessMeters: thicknessMeters,
+          levelId: levelId,
+        );
+        final rebuiltMetadata =
+            Map<String, Object?>.from((rebuilt['metadata'] as Map).cast<String, Object?>());
+        rebuiltMetadata['level_locked'] = true;
+        rebuilt['metadata'] = rebuiltMetadata;
+        objects[index] = rebuilt;
+        continue;
+      }
+
+      if (kind == 'door' || kind == 'window' || kind == 'room') {
+        continue;
+      }
+
+      _shiftObjectZInPlace(object, delta);
+    }
+
+    _rebuildAllWallObjects(objects);
+    _rebuildDetectedRooms(objects);
+    map['objects'] = objects;
+    return _parseSceneMap(map, source: '${scene.source} ~ level');
+  }
+
   static RenderScene createLevel({
     required RenderScene scene,
     required String name,
@@ -992,6 +1124,7 @@ class RenderSceneEditor {
         'panel_thickness_meters': panelThickness,
         'axis_start': geometry.start.toJson(),
         'axis_end': geometry.end.toJson(),
+        'level_locked': true,
         'kind': kind.toLowerCase(),
       },
     };
@@ -1090,6 +1223,7 @@ class RenderSceneEditor {
       'metadata': <String, Object?>{
         'source_room_id': room.elementId,
         'thickness_meters': thicknessMeters,
+        'level_locked': true,
         'kind': kind.toLowerCase(),
       },
     };
@@ -1155,6 +1289,7 @@ class RenderSceneEditor {
       'material_category': materialCategory,
       'metadata': <String, Object?>{
         'thickness_meters': thicknessMeters,
+        'level_locked': true,
         'kind': kind.toLowerCase(),
         'footprint_mode': 'draft_bounds',
       },
@@ -1266,6 +1401,7 @@ class RenderSceneEditor {
         'axis_end': end.toJson(),
         'height_meters': heightMeters,
         'thickness_meters': thicknessMeters,
+        'level_locked': true,
         'kind': 'wall',
       },
     };
@@ -1679,8 +1815,50 @@ class RenderSceneEditor {
         'perimeter_m': perimeter,
         'boundary_wall_ids': boundaryWallIds.toList()..sort(),
         'cell_count': cells.length,
+        'level_locked': true,
       },
     };
+  }
+
+  static void _shiftObjectZInPlace(Map<String, Object?> object, double delta) {
+    if (delta.abs() <= 1e-9) {
+      return;
+    }
+    final bounds = _boundsFromMap(object);
+    if (bounds != null && bounds.isFinite) {
+      object['bounds'] = RenderSceneBounds.normalized(
+        min: RenderScenePoint(
+          x: bounds.min.x,
+          y: bounds.min.y,
+          z: bounds.min.z + delta,
+        ),
+        max: RenderScenePoint(
+          x: bounds.max.x,
+          y: bounds.max.y,
+          z: bounds.max.z + delta,
+        ),
+      ).toJson();
+    }
+
+    final mesh = object['mesh'];
+    if (mesh is Map) {
+      final rawPositions = mesh['positions'];
+      if (rawPositions is List) {
+        mesh['positions'] = rawPositions
+            .map(
+              (entry) => RenderScenePoint.fromJson(entry),
+            )
+            .whereType<RenderScenePoint>()
+            .map(
+              (point) => RenderScenePoint(
+                x: point.x,
+                y: point.y,
+                z: point.z + delta,
+              ).toJson(),
+            )
+            .toList(growable: false);
+      }
+    }
   }
 
   static List<int> _blockingWallsVertical(
