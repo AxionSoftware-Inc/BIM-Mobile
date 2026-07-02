@@ -109,6 +109,31 @@ class RenderSceneEstimateCatalog {
 class RenderSceneEstimator {
   const RenderSceneEstimator._();
 
+  static double? _metadataDouble(RenderSceneObject object, String key) {
+    final value = object.metadata[key];
+    if (value is num) {
+      return value.toDouble();
+    }
+    if (value is String) {
+      return double.tryParse(value);
+    }
+    return null;
+  }
+
+  static int? _metadataInt(RenderSceneObject object, String key) {
+    final value = object.metadata[key];
+    if (value is int) {
+      return value;
+    }
+    if (value is num) {
+      return value.toInt();
+    }
+    if (value is String) {
+      return int.tryParse(value);
+    }
+    return null;
+  }
+
   static RenderSceneEstimateSummary summarize(
     RenderScene scene, {
     RenderSceneEstimateCatalog catalog = const RenderSceneEstimateCatalog(),
@@ -135,7 +160,7 @@ class RenderSceneEstimator {
       if (object.kindKey != 'door' && object.kindKey != 'window') {
         continue;
       }
-      final hostWallId = (object.metadata['host_wall_id'] as num?)?.toInt();
+      final hostWallId = _metadataInt(object, 'host_wall_id');
       if (hostWallId == null) {
         continue;
       }
@@ -147,10 +172,10 @@ class RenderSceneEstimator {
         case 'room':
           roomCount += 1;
           totalRoomArea +=
-              (object.metadata['area_m2'] as num?)?.toDouble() ??
+              _metadataDouble(object, 'area_m2') ??
                   (object.bounds.width * object.bounds.depth);
           totalRoomPerimeter +=
-              (object.metadata['perimeter_m'] as num?)?.toDouble() ??
+              _metadataDouble(object, 'perimeter_m') ??
                   ((object.bounds.width + object.bounds.depth) * 2.0);
           break;
         case 'wall':
@@ -161,7 +186,7 @@ class RenderSceneEstimator {
               RenderSceneEditor.wallThickness(object) ??
                   math.min(object.bounds.width, object.bounds.depth);
           final height =
-              (object.metadata['height_meters'] as num?)?.toDouble() ??
+              _metadataDouble(object, 'height_meters') ??
                   object.bounds.height;
           final grossVolume = length * thickness * height;
           final grossArea = length * height;
@@ -170,10 +195,10 @@ class RenderSceneEstimator {
           var wallOpeningArea = 0.0;
           for (final opening in attachedOpenings) {
             final width =
-                (opening.metadata['width_meters'] as num?)?.toDouble() ??
+                _metadataDouble(opening, 'width_meters') ??
                     opening.bounds.width;
             final openingHeight =
-                (opening.metadata['height_meters'] as num?)?.toDouble() ??
+                _metadataDouble(opening, 'height_meters') ??
                     opening.bounds.height;
             wallOpeningArea += width * openingHeight;
             wallOpeningVolume += width * openingHeight * thickness;
@@ -187,7 +212,7 @@ class RenderSceneEstimator {
           floorCount += 1;
           final area = object.bounds.width * object.bounds.depth;
           final thickness =
-              (object.metadata['thickness_meters'] as num?)?.toDouble() ??
+              _metadataDouble(object, 'thickness_meters') ??
                   object.bounds.height;
           floorArea += area;
           floorConcreteVolume += area * thickness;
@@ -199,17 +224,17 @@ class RenderSceneEstimator {
         case 'door':
           doorCount += 1;
           openingArea +=
-              ((object.metadata['width_meters'] as num?)?.toDouble() ??
+              (_metadataDouble(object, 'width_meters') ??
                       object.bounds.width) *
-                  ((object.metadata['height_meters'] as num?)?.toDouble() ??
+                  (_metadataDouble(object, 'height_meters') ??
                       object.bounds.height);
           break;
         case 'window':
           windowCount += 1;
           openingArea +=
-              ((object.metadata['width_meters'] as num?)?.toDouble() ??
+              (_metadataDouble(object, 'width_meters') ??
                       object.bounds.width) *
-                  ((object.metadata['height_meters'] as num?)?.toDouble() ??
+                  (_metadataDouble(object, 'height_meters') ??
                       object.bounds.height);
           break;
       }

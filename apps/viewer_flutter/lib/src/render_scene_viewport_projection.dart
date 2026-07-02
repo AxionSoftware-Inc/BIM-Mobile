@@ -179,18 +179,28 @@ RenderSceneObject? pickObjectAt({
   RenderSceneObject? bestObject;
   var bestScore = double.infinity;
   var bestDepth = -double.infinity;
+  var bestPriority = 1 << 30;
 
   for (final object in objects) {
-    final rect = projectBoundsRect(object.bounds, projection).inflate(14);
-    if (!rect.contains(localPosition)) {
+    final hit = _pickScoreForObject(
+      object: object,
+      localPosition: localPosition,
+      projection: projection,
+    );
+    if (hit == null) {
       continue;
     }
 
-    final centerDistance = (rect.center - localPosition).distance;
+    final centerDistance = hit;
     final objectDepth = projectObjectDepth(object.bounds, projection);
     final score = centerDistance - objectDepth * 0.0001;
+    final priority = _selectionPriorityForKind(object.kindKey);
 
-    if (score < bestScore || (score == bestScore && objectDepth > bestDepth)) {
+    if (priority < bestPriority ||
+        (priority == bestPriority &&
+            (score < bestScore ||
+                (score == bestScore && objectDepth > bestDepth)))) {
+      bestPriority = priority;
       bestScore = score;
       bestDepth = objectDepth;
       bestObject = object;
@@ -198,6 +208,95 @@ RenderSceneObject? pickObjectAt({
   }
 
   return bestObject;
+}
+
+double? _pickScoreForObject({
+  required RenderSceneObject object,
+  required Offset localPosition,
+  required RenderSceneProjection projection,
+}) {
+  final mesh = object.mesh;
+  double? bestTriangleDistance;
+  if (mesh.hasGeometry) {
+    for (var i = 0; i + 2 < mesh.indices.length; i += 3) {
+      final a = safeMeshPoint(mesh.positions, mesh.indices[i]);
+      final b = safeMeshPoint(mesh.positions, mesh.indices[i + 1]);
+      final c = safeMeshPoint(mesh.positions, mesh.indices[i + 2]);
+      if (a == null || b == null || c == null) {
+        continue;
+      }
+      final pa = projection.project(a).screen;
+      final pb = projection.project(b).screen;
+      final pc = projection.project(c).screen;
+      final triangleBounds = Rect.fromPoints(pa, pb).expandToInclude(Rect.fromPoints(pa, pc));
+      if (!triangleBounds.inflate(6).contains(localPosition)) {
+        continue;
+      }
+      if (_pointInTriangle(localPosition, pa, pb, pc)) {
+        final centroid = Offset(
+          (pa.dx + pb.dx + pc.dx) / 3.0,
+          (pa.dy + pb.dy + pc.dy) / 3.0,
+        );
+        final distance = (centroid - localPosition).distance;
+        if (bestTriangleDistance == null || distance < bestTriangleDistance) {
+          bestTriangleDistance = distance;
+        }
+      }
+    }
+  }
+  if (bestTriangleDistance != null) {
+    return bestTriangleDistance;
+  }
+
+  final rect = projectBoundsRect(object.bounds, projection).inflate(14);
+  if (!rect.contains(localPosition)) {
+    return null;
+  }
+  return (rect.center - localPosition).distance + 1000.0;
+}
+
+int _selectionPriorityForKind(String kind) {
+  switch (normalizePointLikeKind(kind)) {
+    case 'door':
+    case 'window':
+      return 0;
+    case 'wall':
+      return 1;
+    case 'column':
+    case 'beam':
+    case 'stair':
+      return 2;
+    case 'roof':
+    case 'slab':
+    case 'floor':
+    case 'ceiling':
+      return 3;
+    case 'room':
+      return 4;
+    default:
+      return 5;
+  }
+}
+
+String normalizePointLikeKind(String value) {
+  return value.trim().toLowerCase().replaceAll(' ', '_');
+}
+
+bool _pointInTriangle(Offset p, Offset a, Offset b, Offset c) {
+  final denominator =
+      ((b.dy - c.dy) * (a.dx - c.dx)) + ((c.dx - b.dx) * (a.dy - c.dy));
+  if (denominator.abs() <= 1e-9) {
+    return false;
+  }
+  final alpha =
+      (((b.dy - c.dy) * (p.dx - c.dx)) + ((c.dx - b.dx) * (p.dy - c.dy))) /
+          denominator;
+  final beta =
+      (((c.dy - a.dy) * (p.dx - c.dx)) + ((a.dx - c.dx) * (p.dy - c.dy))) /
+          denominator;
+  final gamma = 1.0 - alpha - beta;
+  const epsilon = -1e-6;
+  return alpha >= epsilon && beta >= epsilon && gamma >= epsilon;
 }
 
 Rect projectBoundsRect(

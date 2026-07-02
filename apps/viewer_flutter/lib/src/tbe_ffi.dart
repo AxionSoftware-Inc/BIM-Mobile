@@ -246,6 +246,18 @@ typedef _SetWallLevelConstraintsDart = int Function(
   double,
   int,
 );
+typedef _SetWallAxisNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Uint64,
+  TbeVec2,
+  TbeVec2,
+);
+typedef _SetWallAxisDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  int,
+  TbeVec2,
+  TbeVec2,
+);
 typedef _CreateWallNative = ffi.Int32 Function(
   ffi.Pointer<ffi.Void>,
   ffi.Pointer<Utf8>,
@@ -314,6 +326,26 @@ typedef _SetOpeningLevelLockDart = int Function(
   int,
   int,
 );
+typedef _SetOpeningLevelNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Uint64,
+  ffi.Uint64,
+);
+typedef _SetOpeningLevelDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  int,
+  int,
+);
+typedef _MoveHostedOpeningNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Uint64,
+  ffi.Double,
+);
+typedef _MoveHostedOpeningDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  int,
+  double,
+);
 typedef _CreateProfileNative = ffi.Int32 Function(
   ffi.Pointer<ffi.Void>,
   ffi.Int32,
@@ -332,6 +364,40 @@ typedef _CreateProfileNative = ffi.Int32 Function(
   ffi.Int32,
   ffi.Pointer<ffi.Uint64>,
   ffi.Pointer<ffi.Uint64>,
+);
+typedef _CreateFloorSystemForRoomNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Uint64,
+  ffi.Uint64,
+  ffi.Pointer<ffi.Uint64>,
+);
+typedef _CreateFloorSystemForRoomDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  int,
+  int,
+  ffi.Pointer<ffi.Uint64>,
+);
+typedef _CreateCeilingSystemForRoomNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Uint64,
+  ffi.Uint64,
+  ffi.Double,
+  ffi.Pointer<ffi.Uint64>,
+);
+typedef _CreateCeilingSystemForRoomDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  int,
+  int,
+  double,
+  ffi.Pointer<ffi.Uint64>,
+);
+typedef _DeleteElementNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Uint64,
+);
+typedef _DeleteElementDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  int,
 );
 typedef _CreateProfileDart = int Function(
   ffi.Pointer<ffi.Void>,
@@ -447,6 +513,9 @@ class TbeViewerApi {
                 _SetWallLevelConstraintsNative,
                 _SetWallLevelConstraintsDart>(
             'tbe_set_wall_level_constraints'),
+        _setWallAxis =
+            library.lookupFunction<_SetWallAxisNative, _SetWallAxisDart>(
+                'tbe_set_wall_axis'),
         _createWall =
             library.lookupFunction<_CreateWallNative, _CreateWallDart>(
                 'tbe_create_wall'),
@@ -459,9 +528,26 @@ class TbeViewerApi {
         _setOpeningLevelLock = library.lookupFunction<
                 _SetOpeningLevelLockNative,
                 _SetOpeningLevelLockDart>('tbe_set_opening_level_lock'),
+        _setOpeningLevel =
+            library.lookupFunction<_SetOpeningLevelNative, _SetOpeningLevelDart>(
+                'tbe_set_opening_level'),
+        _moveHostedOpening = library.lookupFunction<
+                _MoveHostedOpeningNative,
+                _MoveHostedOpeningDart>('tbe_move_hosted_opening'),
         _createProfile =
             library.lookupFunction<_CreateProfileNative, _CreateProfileDart>(
                 'tbe_create_profile'),
+        _createFloorSystemForRoom = library.lookupFunction<
+                _CreateFloorSystemForRoomNative,
+                _CreateFloorSystemForRoomDart>(
+            'tbe_create_floor_system_for_room'),
+        _createCeilingSystemForRoom = library.lookupFunction<
+                _CreateCeilingSystemForRoomNative,
+                _CreateCeilingSystemForRoomDart>(
+            'tbe_create_ceiling_system_for_room'),
+        _deleteElement =
+            library.lookupFunction<_DeleteElementNative, _DeleteElementDart>(
+                'tbe_delete_element'),
         _importProjectPackage = library.lookupFunction<
             _ProjectImportPackageNative,
             _ProjectImportPackageDart>('tbe_import_project_package'),
@@ -492,14 +578,30 @@ class TbeViewerApi {
   static ffi.DynamicLibrary _openLibrary() {
     final overridePath = Platform.environment['TBE_CAPI_PATH'];
     final current = Directory.current.absolute;
+    final executableDir = File(Platform.resolvedExecutable).parent.absolute;
+
+    Iterable<Directory> climbRoots(Directory start, int depth) sync* {
+      var cursor = start;
+      for (var index = 0; index < depth; index += 1) {
+        yield cursor;
+        final parent = cursor.parent;
+        if (parent.path == cursor.path) {
+          break;
+        }
+        cursor = parent;
+      }
+    }
+
     final repoLikeRoots = <Directory>{
-      current,
-      current.parent,
-      current.parent.parent,
-      current.parent.parent.parent,
+      ...climbRoots(current, 8),
+      ...climbRoots(executableDir, 12),
     };
     final candidates = <String>[
       if (overridePath != null && overridePath.isNotEmpty) overridePath,
+      if (Platform.isMacOS) ...<String>[
+        '${executableDir.path}/../Frameworks/libtbe_capi.dylib',
+        '${executableDir.path}/../Resources/libtbe_capi.dylib',
+      ],
       for (final root in repoLikeRoots) ...<String>[
         '${root.path}/build/dev/src/api/libtbe_capi.dylib',
         '${root.path}/build/dev/src/api/Debug/libtbe_capi.dylib',
@@ -535,11 +637,17 @@ class TbeViewerApi {
   final _UpdateLevelDart _updateLevel;
   final _MoveLevelElevationDart _moveLevelElevation;
   final _SetWallLevelConstraintsDart _setWallLevelConstraints;
+  final _SetWallAxisDart _setWallAxis;
   final _CreateWallDart _createWall;
   final _CreateDoorDart _createDoor;
   final _CreateWindowDart _createWindow;
   final _SetOpeningLevelLockDart _setOpeningLevelLock;
+  final _SetOpeningLevelDart _setOpeningLevel;
+  final _MoveHostedOpeningDart _moveHostedOpening;
   final _CreateProfileDart _createProfile;
+  final _CreateFloorSystemForRoomDart _createFloorSystemForRoom;
+  final _CreateCeilingSystemForRoomDart _createCeilingSystemForRoom;
+  final _DeleteElementDart _deleteElement;
   final _ProjectImportPackageDart _importProjectPackage;
   final _ValidateDart _validate;
   final _ScheduleDart _generateSchedules;
@@ -682,6 +790,30 @@ class TbeViewerApi {
     );
   }
 
+  void setWallAxis(
+    ffi.Pointer<ffi.Void> handle, {
+    required int wallId,
+    required double startX,
+    required double startY,
+    required double endX,
+    required double endY,
+  }) {
+    final start = calloc<TbeVec2>();
+    final end = calloc<TbeVec2>();
+    start.ref
+      ..x = startX
+      ..y = startY;
+    end.ref
+      ..x = endX
+      ..y = endY;
+    try {
+      _check(handle, _setWallAxis(handle, wallId, start.ref, end.ref));
+    } finally {
+      calloc.free(start);
+      calloc.free(end);
+    }
+  }
+
   int createWall(
     ffi.Pointer<ffi.Void> handle,
     String name,
@@ -796,6 +928,22 @@ class TbeViewerApi {
     _check(handle, _setOpeningLevelLock(handle, openingId, locked ? 1 : 0));
   }
 
+  void setOpeningLevel(
+    ffi.Pointer<ffi.Void> handle,
+    int openingId,
+    int levelId,
+  ) {
+    _check(handle, _setOpeningLevel(handle, openingId, levelId));
+  }
+
+  void moveHostedOpening(
+    ffi.Pointer<ffi.Void> handle,
+    int openingId,
+    double offsetMeters,
+  ) {
+    _check(handle, _moveHostedOpening(handle, openingId, offsetMeters));
+  }
+
   List<int> createProfile(
     ffi.Pointer<ffi.Void> handle, {
     required int targetKind,
@@ -856,6 +1004,48 @@ class TbeViewerApi {
       calloc.free(firstId);
       calloc.free(count);
     }
+  }
+
+  int createFloorSystemForRoom(
+    ffi.Pointer<ffi.Void> handle,
+    int roomId,
+    int assemblyId,
+  ) {
+    final out = calloc<ffi.Uint64>();
+    try {
+      _check(handle, _createFloorSystemForRoom(handle, roomId, assemblyId, out));
+      return out.value;
+    } finally {
+      calloc.free(out);
+    }
+  }
+
+  int createCeilingSystemForRoom(
+    ffi.Pointer<ffi.Void> handle,
+    int roomId,
+    int assemblyId,
+    double heightOffsetMeters,
+  ) {
+    final out = calloc<ffi.Uint64>();
+    try {
+      _check(
+        handle,
+        _createCeilingSystemForRoom(
+          handle,
+          roomId,
+          assemblyId,
+          heightOffsetMeters,
+          out,
+        ),
+      );
+      return out.value;
+    } finally {
+      calloc.free(out);
+    }
+  }
+
+  void deleteElement(ffi.Pointer<ffi.Void> handle, int elementId) {
+    _check(handle, _deleteElement(handle, elementId));
   }
 
   void importProjectPackage(ffi.Pointer<ffi.Void> handle, String path) {
@@ -1184,6 +1374,27 @@ class ViewerRepository {
     return currentRenderScene();
   }
 
+  Future<RenderSceneLoadResult> setWallAxis({
+    required int wallId,
+    required RenderScenePoint start,
+    required RenderScenePoint end,
+  }) async {
+    final handle = _handle;
+    if (handle == null) {
+      throw TbeApiException('No loaded project');
+    }
+    _api.setWallAxis(
+      handle,
+      wallId: wallId,
+      startX: start.x,
+      startY: start.y,
+      endX: end.x,
+      endY: end.y,
+    );
+    await _buildSnapshot(handle, _projectName ?? 'Project');
+    return currentRenderScene();
+  }
+
   Future<RenderSceneLoadResult> createDoor({
     required String name,
     required int hostWallId,
@@ -1230,6 +1441,32 @@ class ViewerRepository {
     return currentRenderScene();
   }
 
+  Future<RenderSceneLoadResult> setOpeningLevel({
+    required int openingId,
+    required int levelId,
+  }) async {
+    final handle = _handle;
+    if (handle == null) {
+      throw TbeApiException('No loaded project');
+    }
+    _api.setOpeningLevel(handle, openingId, levelId);
+    await _buildSnapshot(handle, _projectName ?? 'Project');
+    return currentRenderScene();
+  }
+
+  Future<RenderSceneLoadResult> moveHostedOpening({
+    required int openingId,
+    required double offsetMeters,
+  }) async {
+    final handle = _handle;
+    if (handle == null) {
+      throw TbeApiException('No loaded project');
+    }
+    _api.moveHostedOpening(handle, openingId, offsetMeters);
+    await _buildSnapshot(handle, _projectName ?? 'Project');
+    return currentRenderScene();
+  }
+
   Future<RenderSceneLoadResult> createProfile({
     required int targetKind,
     required int draftMode,
@@ -1263,6 +1500,50 @@ class ViewerRepository {
       assemblyId: assemblyId,
       roofType: roofType,
     );
+    await _buildSnapshot(handle, _projectName ?? 'Project');
+    return currentRenderScene();
+  }
+
+  Future<RenderSceneLoadResult> createFloorSystemForRoom({
+    required int roomId,
+    required int assemblyId,
+  }) async {
+    final handle = _handle;
+    if (handle == null) {
+      throw TbeApiException('No loaded project');
+    }
+    _api.createFloorSystemForRoom(handle, roomId, assemblyId);
+    await _buildSnapshot(handle, _projectName ?? 'Project');
+    return currentRenderScene();
+  }
+
+  Future<RenderSceneLoadResult> createCeilingSystemForRoom({
+    required int roomId,
+    required int assemblyId,
+    required double heightOffsetMeters,
+  }) async {
+    final handle = _handle;
+    if (handle == null) {
+      throw TbeApiException('No loaded project');
+    }
+    _api.createCeilingSystemForRoom(
+      handle,
+      roomId,
+      assemblyId,
+      heightOffsetMeters,
+    );
+    await _buildSnapshot(handle, _projectName ?? 'Project');
+    return currentRenderScene();
+  }
+
+  Future<RenderSceneLoadResult> deleteElement({
+    required int elementId,
+  }) async {
+    final handle = _handle;
+    if (handle == null) {
+      throw TbeApiException('No loaded project');
+    }
+    _api.deleteElement(handle, elementId);
     await _buildSnapshot(handle, _projectName ?? 'Project');
     return currentRenderScene();
   }

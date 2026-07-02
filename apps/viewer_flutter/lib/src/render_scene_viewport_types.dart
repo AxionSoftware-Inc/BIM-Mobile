@@ -53,6 +53,14 @@ enum RenderSceneInteractionMode {
   moveOpening,
   addFloor,
   addCeiling,
+  addRoof,
+}
+
+enum RenderSceneSurfaceDrawMode {
+  rectangle,
+  polyline,
+  pickWalls,
+  autoRoom,
 }
 
 extension RenderSceneInteractionModeX on RenderSceneInteractionMode {
@@ -64,6 +72,7 @@ extension RenderSceneInteractionModeX on RenderSceneInteractionMode {
         RenderSceneInteractionMode.moveOpening => true,
         RenderSceneInteractionMode.addFloor => true,
         RenderSceneInteractionMode.addCeiling => true,
+        RenderSceneInteractionMode.addRoof => true,
         RenderSceneInteractionMode.select => false,
         RenderSceneInteractionMode.addLevel => false,
         RenderSceneInteractionMode.moveLevel => false,
@@ -87,12 +96,14 @@ class RenderSceneTapDetails {
     required this.globalPosition,
     required this.modelPoint,
     required this.pickedObject,
+    this.pickedLevel,
   });
 
   final Offset screenPosition;
   final Offset globalPosition;
   final RenderScenePoint? modelPoint;
   final RenderSceneObject? pickedObject;
+  final RenderSceneLevel? pickedLevel;
 }
 
 @immutable
@@ -133,13 +144,13 @@ class RenderSceneOpeningDraft {
 class RenderSceneSurfaceDraft {
   const RenderSceneSurfaceDraft({
     required this.kind,
-    required this.start,
-    required this.end,
+    required this.points,
+    this.closed = true,
   });
 
   final String kind;
-  final RenderScenePoint start;
-  final RenderScenePoint end;
+  final List<RenderScenePoint> points;
+  final bool closed;
 }
 
 @immutable

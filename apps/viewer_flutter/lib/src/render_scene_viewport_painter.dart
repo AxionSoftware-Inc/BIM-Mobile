@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import 'render_scene_editor.dart';
+import 'render_scene_level_overlay.dart';
 import 'render_scene_models.dart';
 import 'render_scene_viewport_planar.dart';
 import 'render_scene_viewport_projection.dart';
@@ -346,6 +347,25 @@ class FallbackRenderScenePainter extends CustomPainter {
       }
     }
 
+    if (projectionMode == RenderSceneProjectionMode.topDown) {
+      switch (kind) {
+        case 'wall':
+          return 0.18;
+        case 'door':
+        case 'window':
+          return 0.32;
+        case 'room':
+          return 0.05;
+        case 'floor':
+        case 'ceiling':
+        case 'roof':
+        case 'slab':
+          return 0.03;
+        default:
+          return 0.10;
+      }
+    }
+
     switch (kind) {
       case 'wall':
         return 1.0;
@@ -405,6 +425,22 @@ class FallbackRenderScenePainter extends CustomPainter {
         _ => 0.22 + depthWeight * 0.22,
       };
       return base.withValues(alpha: baseAlpha.clamp(0.0, 1.0));
+    }
+    if (projectionMode == RenderSceneProjectionMode.topDown) {
+      final base = switch (kind) {
+        'wall' => const Color(0xFF0F172A),
+        'door' => const Color(0xFF7C2D12),
+        'window' => const Color(0xFF075985),
+        'floor' || 'ceiling' || 'roof' || 'slab' => const Color(0xFF64748B),
+        _ => const Color(0xFF475569),
+      };
+      final alpha = switch (kind) {
+        'wall' => 0.92,
+        'door' || 'window' => 0.84,
+        'floor' || 'ceiling' || 'roof' || 'slab' => 0.32,
+        _ => 0.48,
+      };
+      return base.withValues(alpha: alpha);
     }
     return const Color(0xFF475569).withValues(alpha: 0.40);
   }
@@ -678,45 +714,46 @@ class FallbackRenderScenePainter extends CustomPainter {
     }
 
     if (surface != null) {
-      final minX = math.min(surface.start.x, surface.end.x);
-      final maxX = math.max(surface.start.x, surface.end.x);
-      final minY = math.min(surface.start.y, surface.end.y);
-      final maxY = math.max(surface.start.y, surface.end.y);
-      final z = math.max(surface.start.z, surface.end.z);
-      final corners = <RenderScenePoint>[
-        RenderScenePoint(x: minX, y: minY, z: z),
-        RenderScenePoint(x: maxX, y: minY, z: z),
-        RenderScenePoint(x: maxX, y: maxY, z: z),
-        RenderScenePoint(x: minX, y: maxY, z: z),
-      ];
-      final projected = corners
+      final projected = surface.points
           .map((point) => projection.project(point).screen)
           .toList(growable: false);
-      final path = Path()
-        ..moveTo(projected[0].dx, projected[0].dy)
-        ..lineTo(projected[1].dx, projected[1].dy)
-        ..lineTo(projected[2].dx, projected[2].dy)
-        ..lineTo(projected[3].dx, projected[3].dy)
-        ..close();
-      final fillColor = surface.kind == 'ceiling'
-          ? const Color(0xFF60A5FA).withValues(alpha: 0.18)
-          : const Color(0xFF10B981).withValues(alpha: 0.18);
-      final strokeColor = surface.kind == 'ceiling'
-          ? const Color(0xFF2563EB)
-          : const Color(0xFF059669);
-      canvas.drawPath(
-        path,
-        Paint()
-          ..style = PaintingStyle.fill
-          ..color = fillColor,
-      );
-      canvas.drawPath(
-        path,
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 2.0
-          ..color = strokeColor,
-      );
+      if (projected.length >= 2) {
+        final path = Path()..moveTo(projected[0].dx, projected[0].dy);
+        for (var index = 1; index < projected.length; index += 1) {
+          path.lineTo(projected[index].dx, projected[index].dy);
+        }
+        if (surface.closed && projected.length >= 3) {
+          path.close();
+        }
+        final fillColor = switch (surface.kind) {
+          'ceiling' => const Color(0xFF60A5FA).withValues(alpha: 0.18),
+          'roof' => const Color(0xFFF59E0B).withValues(alpha: 0.18),
+          _ => const Color(0xFF10B981).withValues(alpha: 0.18),
+        };
+        final strokeColor = switch (surface.kind) {
+          'ceiling' => const Color(0xFF2563EB),
+          'roof' => const Color(0xFFD97706),
+          _ => const Color(0xFF059669),
+        };
+        if (surface.closed && projected.length >= 3) {
+          canvas.drawPath(
+            path,
+            Paint()
+              ..style = PaintingStyle.fill
+              ..color = fillColor,
+          );
+        }
+        canvas.drawPath(
+          path,
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 2.0
+            ..color = strokeColor,
+        );
+        for (final point in projected) {
+          canvas.drawCircle(point, 4.5, Paint()..color = strokeColor);
+        }
+      }
     }
 
     if (opening == null || opening.hostWallId == null) {
@@ -1046,44 +1083,21 @@ class FallbackRenderScenePainter extends CustomPainter {
   }
 
   void _drawLevels(Canvas canvas, RenderSceneProjection projection) {
-    final descriptor = projectionMode.planarDescriptor;
-    if (!projectionMode.showLevelsOverlay ||
-        descriptor == null ||
-        !descriptor.isElevation) {
-      return;
-    }
-
-    final bounds = scene.bounds;
     const textStyle = TextStyle(
       color: Color(0xFF334155),
       fontSize: 11,
       fontWeight: FontWeight.w600,
     );
-    final horizontalMin =
-        descriptor.minAxis(bounds, descriptor.horizontalAxis) - 1.0;
-    final horizontalMax =
-        descriptor.maxAxis(bounds, descriptor.horizontalAxis) + 1.0;
-
-    for (final level in scene.levels) {
-      final z = level.elevationMeters;
-      final a = projection.project(
-        descriptor.pointOnPlane(
-          bounds: bounds,
-          horizontalValue: horizontalMin,
-          verticalValue: z,
-        ),
-      );
-      final b = projection.project(
-        descriptor.pointOnPlane(
-          bounds: bounds,
-          horizontalValue: horizontalMax,
-          verticalValue: z,
-        ),
-      );
+    final overlays = buildLevelOverlayEntries(
+      scene: scene,
+      projectionMode: projectionMode,
+      projection: projection,
+    );
+    for (final overlay in overlays) {
       _drawDashedLine(
         canvas,
-        a.screen,
-        b.screen,
+        overlay.lineStart,
+        overlay.lineEnd,
         Paint()
           ..color = const Color(0xFF0F766E).withValues(alpha: 0.88)
           ..strokeWidth = 1.6,
@@ -1092,13 +1106,14 @@ class FallbackRenderScenePainter extends CustomPainter {
       );
       final painter = TextPainter(
         text: TextSpan(
-          text: '${level.name} ${level.elevationMeters.toStringAsFixed(2)}m',
+          text:
+              '${overlay.level.name} ${overlay.level.elevationMeters.toStringAsFixed(2)}m',
           style: textStyle,
         ),
         textDirection: TextDirection.ltr,
         maxLines: 1,
       )..layout(maxWidth: 220);
-      painter.paint(canvas, a.screen + const Offset(6, -18));
+      painter.paint(canvas, overlay.labelOrigin);
     }
   }
 
@@ -1137,16 +1152,16 @@ class FallbackRenderScenePainter extends CustomPainter {
   Color _kindColor(String kind) {
     switch (kind) {
       case 'wall':
-        return const Color(0xFFF7F7F2);
+        return const Color(0xFFF3F1EA);
       case 'door':
         return const Color(0xFFB08968);
       case 'window':
         return const Color(0xFF96C6FF);
       case 'slab':
       case 'floor':
-        return const Color(0xFFE5E7EB);
+        return const Color(0xFFE2D6B5);
       case 'ceiling':
-        return const Color(0xFFF8FAFC);
+        return const Color(0xFFE7EEF6);
       case 'roof':
         return const Color(0xFFD6C1A3);
       case 'column':

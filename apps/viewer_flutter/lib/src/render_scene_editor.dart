@@ -125,11 +125,15 @@ class RenderSceneEditor {
           heightMeters: heightMeters,
           thicknessMeters: thicknessMeters,
           levelId: levelId,
+          metadata: metadataMap == null
+              ? const <String, Object?>{}
+              : Map<String, Object?>.from(
+                  metadataMap.cast<String, Object?>(),
+                ),
+          revision: _toInt(object['revision']) ?? parsedObject.revision,
+          materialCategory:
+              object['material_category']?.toString() ?? parsedObject.materialCategory,
         );
-        final rebuiltMetadata =
-            Map<String, Object?>.from((rebuilt['metadata'] as Map).cast<String, Object?>());
-        rebuiltMetadata['level_locked'] = true;
-        rebuilt['metadata'] = rebuiltMetadata;
         objects[index] = rebuilt;
         continue;
       }
@@ -619,6 +623,95 @@ class RenderSceneEditor {
     );
   }
 
+  static List<RenderScenePoint>? surfacePolygonForWalls(
+    List<RenderSceneObject> walls, {
+    double toleranceMeters = 0.05,
+  }) {
+    final segments = <({RenderScenePoint start, RenderScenePoint end})>[];
+    for (final wall in walls) {
+      if (wall.kindKey != 'wall') {
+        continue;
+      }
+      final start = wallStartPoint(wall);
+      final end = wallEndPoint(wall);
+      if (start == null || end == null || start.distanceTo(end) <= 1e-6) {
+        continue;
+      }
+      segments.add((start: start, end: end));
+    }
+    if (segments.length < 3) {
+      return null;
+    }
+
+    List<RenderScenePoint>? traceFrom(
+      RenderScenePoint firstStart,
+      RenderScenePoint firstEnd,
+      List<bool> used,
+    ) {
+      final points = <RenderScenePoint>[firstStart, firstEnd];
+      used[0] = true;
+      var current = firstEnd;
+      while (points.length <= segments.length + 1) {
+        if (_samePlanPoint(current, firstStart, toleranceMeters)) {
+          break;
+        }
+        var matched = false;
+        for (var index = 1; index < segments.length; index += 1) {
+          if (used[index]) {
+            continue;
+          }
+          final segment = segments[index];
+          if (_samePlanPoint(segment.start, current, toleranceMeters)) {
+            points.add(segment.end);
+            current = segment.end;
+            used[index] = true;
+            matched = true;
+            break;
+          }
+          if (_samePlanPoint(segment.end, current, toleranceMeters)) {
+            points.add(segment.start);
+            current = segment.start;
+            used[index] = true;
+            matched = true;
+            break;
+          }
+        }
+        if (!matched) {
+          return null;
+        }
+      }
+      if (!_samePlanPoint(points.first, points.last, toleranceMeters)) {
+        return null;
+      }
+      points.removeLast();
+      final simplified = <RenderScenePoint>[];
+      for (final point in points) {
+        if (simplified.isEmpty ||
+            !_samePlanPoint(simplified.last, point, toleranceMeters)) {
+          simplified.add(point);
+        }
+      }
+      if (simplified.length < 3) {
+        return null;
+      }
+      if (_polygonArea2d(simplified).abs() <= 1e-6) {
+        return null;
+      }
+      return simplified;
+    }
+
+    return traceFrom(
+          segments.first.start,
+          segments.first.end,
+          List<bool>.filled(segments.length, false),
+        ) ??
+        traceFrom(
+          segments.first.end,
+          segments.first.start,
+          List<bool>.filled(segments.length, false),
+        );
+  }
+
   static RenderScene deleteObject({
     required RenderScene scene,
     required RenderSceneObject target,
@@ -767,6 +860,12 @@ class RenderSceneEditor {
         heightMeters: heightMeters,
         thicknessMeters: thicknessMeters,
         levelId: levelId,
+        metadata: metadataMap == null
+            ? const <String, Object?>{}
+            : Map<String, Object?>.from(metadataMap.cast<String, Object?>()),
+        revision: _toInt(objects[index]['revision']) ?? 1,
+        materialCategory:
+            objects[index]['material_category']?.toString() ?? 'structural',
       );
     }
     _rebuildAllWallObjects(objects);
@@ -950,6 +1049,28 @@ class RenderSceneEditor {
     }
 
     return counts.entries.reduce((a, b) => a.value >= b.value ? a : b).key;
+  }
+
+  static bool _samePlanPoint(
+    RenderScenePoint a,
+    RenderScenePoint b,
+    double toleranceMeters,
+  ) {
+    return (a.x - b.x).abs() <= toleranceMeters &&
+        (a.y - b.y).abs() <= toleranceMeters;
+  }
+
+  static double _polygonArea2d(List<RenderScenePoint> polygon) {
+    if (polygon.length < 3) {
+      return 0.0;
+    }
+    var twiceArea = 0.0;
+    for (var i = 0; i < polygon.length; i += 1) {
+      final a = polygon[i];
+      final b = polygon[(i + 1) % polygon.length];
+      twiceArea += a.x * b.y - b.x * a.y;
+    }
+    return twiceArea * 0.5;
   }
 
   static double _levelDefaultWallHeightMeters(RenderScene scene, int? levelId) {
@@ -1309,6 +1430,9 @@ class RenderSceneEditor {
     required double heightMeters,
     required double thicknessMeters,
     required int? levelId,
+    Map<String, Object?> metadata = const <String, Object?>{},
+    int revision = 1,
+    String materialCategory = 'structural',
   }) {
     final axis = end - start;
     final length = start.distanceTo(end);
@@ -1346,13 +1470,27 @@ class RenderSceneEditor {
       ],
     );
 
+    final mergedMetadata = <String, Object?>{
+      ...metadata,
+      'axis_start': start.toJson(),
+      'axis_end': end.toJson(),
+      'start_x': start.x,
+      'start_y': start.y,
+      'end_x': end.x,
+      'end_y': end.y,
+      'height_meters': heightMeters,
+      'thickness_meters': thicknessMeters,
+      'level_locked': metadata['level_locked'] ?? true,
+      'kind': 'wall',
+    };
+
     return <String, Object?>{
       'element_id': elementId,
       'kind': 'Wall',
       'level_id': levelId,
       'selectable': true,
       'visible_by_default': true,
-      'revision': 1,
+      'revision': revision,
       'bounds': bounds.toJson(),
       'mesh': <String, Object?>{
         'positions': positions.map((point) => point.toJson()).toList(),
@@ -1395,15 +1533,8 @@ class RenderSceneEditor {
           7,
         ],
       },
-      'material_category': 'structural',
-      'metadata': <String, Object?>{
-        'axis_start': start.toJson(),
-        'axis_end': end.toJson(),
-        'height_meters': heightMeters,
-        'thickness_meters': thicknessMeters,
-        'level_locked': true,
-        'kind': 'wall',
-      },
+      'material_category': materialCategory,
+      'metadata': mergedMetadata,
     };
   }
 

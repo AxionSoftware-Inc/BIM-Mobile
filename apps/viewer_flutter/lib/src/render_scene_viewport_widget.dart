@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'render_scene_editor.dart';
+import 'render_scene_level_overlay.dart';
 import 'render_scene_models.dart';
 import 'render_scene_viewport_controller.dart';
 import 'render_scene_viewport_painter.dart';
@@ -194,6 +195,41 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
   double _trackpadPreviousScale = 1.0;
   bool _sceneDragStarted = false;
 
+  double _tapDistanceThreshold(PointerEvent event) {
+    if (event.kind == PointerDeviceKind.touch) {
+      return controller.projectionMode == RenderSceneProjectionMode.isometric
+          ? 22.0
+          : 18.0;
+    }
+    if (event.kind == PointerDeviceKind.stylus ||
+        event.kind == PointerDeviceKind.invertedStylus) {
+      return 12.0;
+    }
+    return 8.0;
+  }
+
+  RenderSceneLevel? _pickLevelAtPosition(
+    RenderScene scene,
+    Size size,
+    Offset localPosition,
+  ) {
+    final projection = RenderSceneProjection(
+      sceneBounds: scene.bounds,
+      canvasSize: size,
+      projectionMode: controller.projectionMode,
+      orbitProjectionStyle: controller.orbitProjectionStyle,
+      planCamera: controller.planCamera,
+      camera: controller.camera,
+      padding: FallbackRenderScenePainter.padding,
+    );
+    return pickLevelOverlayAt(
+      scene: scene,
+      projectionMode: controller.projectionMode,
+      projection: projection,
+      localPosition: localPosition,
+    );
+  }
+
   RenderSceneViewportController get controller => widget.controller;
 
   @override
@@ -298,11 +334,14 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                 );
                 final modelPoint =
                     controller.screenToModelPlan(event.localPosition, size);
+                final pickedLevel =
+                    _pickLevelAtPosition(scene, size, event.localPosition);
                 final details = RenderSceneTapDetails(
                   screenPosition: event.localPosition,
                   globalPosition: event.position,
                   modelPoint: modelPoint,
-                  pickedObject: picked,
+                  pickedObject: pickedLevel != null ? null : picked,
+                  pickedLevel: pickedLevel,
                 );
                 widget.onSceneDragStart?.call(details);
                 _sceneDragStarted = true;
@@ -444,18 +483,21 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                 );
                 final modelPoint =
                     controller.screenToModelPlan(event.localPosition, size);
+                final pickedLevel =
+                    _pickLevelAtPosition(scene, size, event.localPosition);
                 final details = RenderSceneTapDetails(
                   screenPosition: event.localPosition,
                   globalPosition: event.position,
                   modelPoint: modelPoint,
-                  pickedObject: picked,
+                  pickedObject: pickedLevel != null ? null : picked,
+                  pickedLevel: pickedLevel,
                 );
                 widget.onSceneDragEnd?.call(details);
                 _sceneDragStarted = false;
                 _clearPointerState();
                 return;
               }
-              if (moved < 8.0) {
+              if (moved < _tapDistanceThreshold(event)) {
                 final picked = pickObjectAt(
                   scene: scene,
                   size: size,
@@ -470,11 +512,14 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
 
                 final modelPoint =
                     controller.screenToModelPlan(event.localPosition, size);
+                final pickedLevel =
+                    _pickLevelAtPosition(scene, size, event.localPosition);
                 final details = RenderSceneTapDetails(
                   screenPosition: event.localPosition,
                   globalPosition: event.position,
                   modelPoint: modelPoint,
-                  pickedObject: picked,
+                  pickedObject: pickedLevel != null ? null : picked,
+                  pickedLevel: pickedLevel,
                 );
 
                 if (_isSecondaryDrag) {
@@ -493,6 +538,7 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                     await controller.selectElement(null);
                     await controller.highlightElement(null);
                   }
+                  widget.onSceneTap?.call(details);
                 } else {
                   widget.onSceneTap?.call(details);
                 }
@@ -597,6 +643,8 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
         return 'Add floor: tap a room for instant floor, or draw/select walls.';
       case RenderSceneInteractionMode.addCeiling:
         return 'Add ceiling: tap a room for instant ceiling, or draw/select walls.';
+      case RenderSceneInteractionMode.addRoof:
+        return 'Add roof: draw rectangle/polyline or pick wall loop, then confirm.';
     }
   }
 

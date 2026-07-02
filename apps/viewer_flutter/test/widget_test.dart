@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:viewer_flutter/src/render_scene_editor.dart';
 import 'package:viewer_flutter/src/render_scene_estimator.dart';
+import 'package:viewer_flutter/src/render_scene_level_overlay.dart';
 import 'package:viewer_flutter/src/render_scene_models.dart';
 import 'package:viewer_flutter/src/render_scene_repository.dart';
 import 'package:viewer_flutter/src/render_scene_viewport_controller.dart';
@@ -45,6 +46,38 @@ void main() {
     );
     expect(result.scene, isNull);
     expect(result.errors, isNotEmpty);
+  });
+
+  test('Bundled render scene retains wall level metadata', () {
+    final json =
+        File('assets/render_scene.json').readAsStringSync();
+    final result = parseRenderSceneJson(
+      json,
+      source: 'assets/render_scene.json',
+    );
+    expect(result.scene, isNotNull);
+    final wall = result.scene!.objects.firstWhere((object) => object.kindKey == 'wall');
+    expect(wall.metadata['base_level_id'], isNotNull);
+    expect(wall.metadata['top_level_id'], isNotNull);
+    expect(wall.metadata['height_mode'], isNotNull);
+  });
+
+  test('normalizeSceneGeometry preserves wall level constraint metadata', () {
+    final json = File('assets/render_scene.json').readAsStringSync();
+    final result = parseRenderSceneJson(
+      json,
+      source: 'assets/render_scene.json',
+    );
+    expect(result.scene, isNotNull);
+    final scene = result.scene!;
+    final wallBefore = scene.objects.firstWhere((object) => object.kindKey == 'wall');
+    expect(wallBefore.metadata['base_level_id'], isNotNull);
+
+    final normalized = RenderSceneEditor.normalizeSceneGeometry(scene);
+    final wallAfter = normalized.objectById(wallBefore.elementId)!;
+    expect(wallAfter.metadata['base_level_id'], equals(wallBefore.metadata['base_level_id']));
+    expect(wallAfter.metadata['top_level_id'], equals(wallBefore.metadata['top_level_id']));
+    expect(wallAfter.metadata['height_mode'], equals(wallBefore.metadata['height_mode']));
   });
 
   test('RenderScene editor can add wall, door, and window locally', () {
@@ -180,6 +213,20 @@ void main() {
     expect(summaryCustom.lineItems.length, 6);
   });
 
+  test('RenderScene estimator accepts numeric metadata stored as strings', () {
+    final json = File('assets/render_scene.json').readAsStringSync();
+    final result = parseRenderSceneJson(
+      json,
+      source: 'assets/render_scene.json',
+    );
+    expect(result.scene, isNotNull);
+
+    final summary = RenderSceneEstimator.summarize(result.scene!);
+    expect(summary.wallCount, greaterThan(0));
+    expect(summary.totalCost.isFinite, isTrue);
+    expect(summary.wallGrossVolume, greaterThan(0));
+  });
+
   test('Cardinal elevation specs are driven by one projection registry', () {
     expect(kRenderSceneProjectionSpecs.length, 6);
 
@@ -230,6 +277,111 @@ void main() {
     expect(south.viewDirection, const RenderScenePoint(x: 0, y: 1, z: 0));
     expect(east.viewDirection, const RenderScenePoint(x: -1, y: 0, z: 0));
     expect(west.viewDirection, const RenderScenePoint(x: 1, y: 0, z: 0));
+  });
+
+  test('Level overlays use the same geometry for draw and hit-test', () {
+    final json =
+        File('test/fixtures/render_scene_sample.json').readAsStringSync();
+    final result = parseRenderSceneJson(
+      json,
+      source: 'test/fixtures/render_scene_sample.json',
+    );
+    expect(result.scene, isNotNull);
+
+    final scene = result.scene!;
+    final projection = RenderSceneProjection(
+      sceneBounds: scene.bounds,
+      canvasSize: const Size(1280, 720),
+      projectionMode: RenderSceneProjectionMode.northElevation,
+      orbitProjectionStyle: RenderSceneOrbitProjectionStyle.orthographic,
+      planCamera: const RenderScenePlanCameraState(
+        center: RenderScenePoint(x: 0, y: 0, z: 0),
+        zoom: 80,
+      ),
+      camera: const RenderSceneCameraState(
+        center: RenderScenePoint(x: 0, y: 0, z: 0),
+        distance: 20,
+        yawRadians: 0.0,
+        pitchRadians: 0.0,
+        zoomScale: 1.0,
+      ),
+      padding: 48,
+    );
+
+    final overlays = buildLevelOverlayEntries(
+      scene: scene,
+      projectionMode: RenderSceneProjectionMode.northElevation,
+      projection: projection,
+    );
+    expect(overlays, isNotEmpty);
+
+    final first = overlays.first;
+    final probe = Offset(
+      (first.lineStart.dx + first.lineEnd.dx) * 0.5,
+      first.lineStart.dy + 2,
+    );
+    final picked = pickLevelOverlayAt(
+      scene: scene,
+      projectionMode: RenderSceneProjectionMode.northElevation,
+      projection: projection,
+      localPosition: probe,
+    );
+    expect(picked, isNotNull);
+    expect(picked!.levelId, first.level.levelId);
+  });
+
+  test('Top-down picking prefers wall over slab-style area objects', () {
+    final json = File('assets/render_scene.json').readAsStringSync();
+    final result = parseRenderSceneJson(
+      json,
+      source: 'assets/render_scene.json',
+    );
+    expect(result.scene, isNotNull);
+    final scene = result.scene!;
+
+    final projection = RenderSceneProjection(
+      sceneBounds: scene.bounds,
+      canvasSize: const Size(1280, 720),
+      projectionMode: RenderSceneProjectionMode.topDown,
+      orbitProjectionStyle: RenderSceneOrbitProjectionStyle.orthographic,
+      planCamera: const RenderScenePlanCameraState(
+        center: RenderScenePoint(x: 4, y: 5, z: 0),
+        zoom: 60,
+      ),
+      camera: const RenderSceneCameraState(
+        center: RenderScenePoint(x: 0, y: 0, z: 0),
+        distance: 20,
+        yawRadians: 0.0,
+        pitchRadians: 0.0,
+        zoomScale: 1.0,
+      ),
+      padding: 48,
+    );
+
+    final tapPoint =
+        projection.project(const RenderScenePoint(x: 0.0, y: 0.05, z: 1.5)).screen;
+    final picked = pickObjectAt(
+      scene: scene,
+      size: const Size(1280, 720),
+      localPosition: tapPoint,
+      projectionMode: RenderSceneProjectionMode.topDown,
+      orbitProjectionStyle: RenderSceneOrbitProjectionStyle.orthographic,
+      planCamera: const RenderScenePlanCameraState(
+        center: RenderScenePoint(x: 4, y: 5, z: 0),
+        zoom: 60,
+      ),
+      camera: const RenderSceneCameraState(
+        center: RenderScenePoint(x: 0, y: 0, z: 0),
+        distance: 20,
+        yawRadians: 0.0,
+        pitchRadians: 0.0,
+        zoomScale: 1.0,
+      ),
+      visibleKinds: <String>{},
+      padding: 48,
+    );
+    expect(picked, isNotNull);
+    expect(picked!.kindKey, 'wall');
   });
 
   test('North/South/East/West are true planar re-projections of the same model', () {
@@ -348,5 +500,33 @@ void main() {
     expect(find.text('Tablet BIM'), findsOneWidget);
     expect(find.text('2D'), findsOneWidget);
     expect(find.text('3D'), findsOneWidget);
+  });
+
+  testWidgets('Selecting a wall shows inline wall level controls',
+      (WidgetTester tester) async {
+    final json =
+        File('assets/render_scene.json').readAsStringSync();
+    await tester.binding.setSurfaceSize(const Size(1600, 1000));
+    await tester.pumpWidget(
+      ViewerApp(
+        source: MemoryRenderSceneSource(
+          json,
+          source: 'assets/render_scene.json',
+        ),
+        preferEngineBackedBundledSample: false,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Show object list').first);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Wall #11'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Wall levels'), findsWidgets);
+    expect(find.text('Apply wall levels'), findsOneWidget);
+    expect(find.text('Base level'), findsWidgets);
+    expect(find.text('Top level'), findsWidgets);
   });
 }
