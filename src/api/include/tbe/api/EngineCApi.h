@@ -96,6 +96,18 @@ typedef struct TbeSpatialIndexStats {
     int dirty;
 } TbeSpatialIndexStats;
 
+typedef struct TbeRect2 {
+    double min_x;
+    double min_y;
+    double max_x;
+    double max_y;
+} TbeRect2;
+
+typedef struct TbeElementIdListResult {
+    uint64_t count;
+    uint64_t* element_ids;
+} TbeElementIdListResult;
+
 typedef struct TbeWallInterval {
     double start_offset_meters;
     double end_offset_meters;
@@ -138,6 +150,9 @@ TbeApiStatusCode tbe_repair_current_project(TbeEngineHandle* handle, TbeRepairSu
 TbeApiStatusCode tbe_export_project_package(TbeEngineHandle* handle, const char* path);
 TbeApiStatusCode tbe_import_project_package(TbeEngineHandle* handle, const char* path, int load_mode);
 TbeApiStatusCode tbe_export_render_scene_json(TbeEngineHandle* handle, const char* path);
+TbeApiStatusCode tbe_get_render_scene_json(TbeEngineHandle* handle, char** out_json);
+TbeApiStatusCode tbe_set_performance_profile(TbeEngineHandle* handle, int profile);
+TbeApiStatusCode tbe_set_compute_mode(TbeEngineHandle* handle, int mode);
 TbeApiStatusCode tbe_create_level(
     TbeEngineHandle* handle,
     const char* name,
@@ -175,6 +190,12 @@ TbeApiStatusCode tbe_set_wall_level_constraints(
     double top_offset_meters,
     int height_mode
 );
+TbeApiStatusCode tbe_set_wall_axis(
+    TbeEngineHandle* handle,
+    uint64_t wall_id,
+    TbeVec2 start,
+    TbeVec2 end
+);
 TbeApiStatusCode tbe_move_wall(TbeEngineHandle* handle, uint64_t wall_id, double dx_meters, double dy_meters);
 TbeApiStatusCode tbe_create_door(
     TbeEngineHandle* handle,
@@ -196,6 +217,8 @@ TbeApiStatusCode tbe_create_window(
     uint64_t* out_window_id
 );
 TbeApiStatusCode tbe_set_opening_level_lock(TbeEngineHandle* handle, uint64_t opening_id, int locked);
+TbeApiStatusCode tbe_set_opening_level(TbeEngineHandle* handle, uint64_t opening_id, uint64_t level_id);
+TbeApiStatusCode tbe_move_hosted_opening(TbeEngineHandle* handle, uint64_t opening_id, double offset_meters);
 TbeApiStatusCode tbe_create_profile(
     TbeEngineHandle* handle,
     int target_kind,
@@ -215,11 +238,26 @@ TbeApiStatusCode tbe_create_profile(
     uint64_t* out_first_id,
     uint64_t* out_created_count
 );
+TbeApiStatusCode tbe_create_floor_system_for_room(
+    TbeEngineHandle* handle,
+    uint64_t room_id,
+    uint64_t assembly_id,
+    uint64_t* out_floor_id
+);
+TbeApiStatusCode tbe_create_ceiling_system_for_room(
+    TbeEngineHandle* handle,
+    uint64_t room_id,
+    uint64_t assembly_id,
+    double height_offset_meters,
+    uint64_t* out_ceiling_id
+);
+TbeApiStatusCode tbe_delete_element(TbeEngineHandle* handle, uint64_t element_id);
 TbeApiStatusCode tbe_detect_rooms(TbeEngineHandle* handle, uint64_t* out_room_count);
 TbeApiStatusCode tbe_generate_schedules(TbeEngineHandle* handle, TbeScheduleSummary* out_summary);
 TbeApiStatusCode tbe_validate(TbeEngineHandle* handle, TbeValidationSummary* out_summary);
 TbeApiStatusCode tbe_rebuild_spatial_index(TbeEngineHandle* handle);
 TbeApiStatusCode tbe_spatial_index_stats(TbeEngineHandle* handle, TbeSpatialIndexStats* out_stats);
+TbeApiStatusCode tbe_query_rect(TbeEngineHandle* handle, uint64_t level_id, TbeRect2 bounds, TbeElementIdListResult* out_result);
 TbeApiStatusCode tbe_hit_test_point(TbeEngineHandle* handle, uint64_t level_id, TbeVec2 point, double tolerance_meters, TbeHitTestResult* out_result);
 TbeApiStatusCode tbe_hit_test_candidates(TbeEngineHandle* handle, uint64_t level_id, TbeVec2 point, double tolerance_meters, TbeHitTestCandidatesResult* out_result);
 TbeApiStatusCode tbe_best_snap(TbeEngineHandle* handle, uint64_t level_id, TbeVec2 point, double tolerance_meters, TbeSnapResult* out_result);

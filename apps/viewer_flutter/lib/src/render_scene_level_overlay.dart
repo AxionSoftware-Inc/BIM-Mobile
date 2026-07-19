@@ -28,13 +28,35 @@ List<RenderSceneLevelOverlayEntry> buildLevelOverlayEntries({
   required RenderSceneProjection projection,
 }) {
   final descriptor = projectionMode.planarDescriptor;
-  if (!projectionMode.showLevelsOverlay ||
-      descriptor == null ||
-      !descriptor.isElevation) {
+  if (!projectionMode.showLevelsOverlay && !projectionMode.is3D) {
     return const <RenderSceneLevelOverlayEntry>[];
   }
 
   final bounds = scene.bounds;
+  if (projectionMode.is3D) {
+    return scene.levels.map((level) {
+      final a = projection.project(RenderScenePoint(
+        x: bounds.min.x - 1.0,
+        y: bounds.min.y - 1.0,
+        z: level.elevationMeters,
+      ));
+      final b = projection.project(RenderScenePoint(
+        x: bounds.max.x + 1.0,
+        y: bounds.min.y - 1.0,
+        z: level.elevationMeters,
+      ));
+      return RenderSceneLevelOverlayEntry(
+        level: level,
+        lineStart: a.screen,
+        lineEnd: b.screen,
+        labelOrigin: a.screen + const Offset(6, -18),
+        hitBounds: Rect.fromPoints(a.screen, b.screen).inflate(12),
+      );
+    }).toList(growable: false);
+  }
+  if (descriptor == null || !descriptor.isElevation) {
+    return const <RenderSceneLevelOverlayEntry>[];
+  }
   final horizontalMin =
       descriptor.minAxis(bounds, descriptor.horizontalAxis) - 1.0;
   final horizontalMax =

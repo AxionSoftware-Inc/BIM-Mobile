@@ -194,6 +194,9 @@ class RenderScenePlanCameraState {
 abstract class RenderSceneViewportActions extends ChangeNotifier {
   RenderScene? get scene;
   Set<String> get visibleKinds;
+  Set<String> get selectedElementIds;
+  String? get activeElementId;
+  int? get selectedLevelId;
   String? get selectedElementId;
   String? get highlightedElementId;
   int get fitRevision;
@@ -235,5 +238,7 @@ abstract class RenderSceneViewportActions extends ChangeNotifier {
   void zoomOrbit(double scaleDelta);
   RenderScenePoint? screenToModelPlan(Offset localPosition, Size viewportSize);
   Future<void> selectElement(String? elementId);
+  Future<void> selectElements(Set<String> elementIds, {String? activeElementId});
+  Future<void> selectLevel(int? levelId);
   Future<void> highlightElement(String? elementId);
 }

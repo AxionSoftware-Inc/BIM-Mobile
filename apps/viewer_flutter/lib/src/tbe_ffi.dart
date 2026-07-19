@@ -47,6 +47,23 @@ final class TbeVec2 extends ffi.Struct {
   external double y;
 }
 
+final class TbeRect2 extends ffi.Struct {
+  @ffi.Double()
+  external double minX;
+  @ffi.Double()
+  external double minY;
+  @ffi.Double()
+  external double maxX;
+  @ffi.Double()
+  external double maxY;
+}
+
+final class TbeElementIdListResult extends ffi.Struct {
+  @ffi.Uint64()
+  external int count;
+  external ffi.Pointer<ffi.Uint64> elementIds;
+}
+
 final class TbeHitTestCandidate extends ffi.Struct {
   @ffi.Uint64()
   external int elementId;
@@ -178,6 +195,11 @@ typedef _StringGetterDart = int Function(
   ffi.Pointer<ffi.Void>,
   ffi.Pointer<ffi.Pointer<Utf8>>,
 );
+typedef _SetIntOptionNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Int32,
+);
+typedef _SetIntOptionDart = int Function(ffi.Pointer<ffi.Void>, int);
 typedef _ProjectLoadJsonNative = ffi.Int32 Function(
   ffi.Pointer<ffi.Void>,
   ffi.Pointer<Utf8>,
@@ -466,6 +488,18 @@ typedef _HitTestCandidatesDart = int Function(
   double,
   ffi.Pointer<TbeHitTestCandidatesResult>,
 );
+typedef _QueryRectNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Uint64,
+  TbeRect2,
+  ffi.Pointer<TbeElementIdListResult>,
+);
+typedef _QueryRectDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  int,
+  TbeRect2,
+  ffi.Pointer<TbeElementIdListResult>,
+);
 typedef _SchemaVersionNative = ffi.Int32 Function(
   ffi.Pointer<ffi.Void>,
   ffi.Pointer<ffi.Int32>,
@@ -495,6 +529,15 @@ class TbeViewerApi {
         _getApiVersion =
             library.lookupFunction<_StringGetterNative, _StringGetterDart>(
                 'tbe_get_api_version'),
+        _getRenderSceneJson =
+            library.lookupFunction<_StringGetterNative, _StringGetterDart>(
+                'tbe_get_render_scene_json'),
+        _setPerformanceProfile = library.lookupFunction<
+                _SetIntOptionNative,
+                _SetIntOptionDart>('tbe_set_performance_profile'),
+        _setComputeMode = library.lookupFunction<
+                _SetIntOptionNative,
+                _SetIntOptionDart>('tbe_set_compute_mode'),
         _getSchemaVersion =
             library.lookupFunction<_SchemaVersionNative, _SchemaVersionDart>(
                 'tbe_get_schema_version'),
@@ -562,6 +605,8 @@ class TbeViewerApi {
             _ProjectExportPathDart>('tbe_export_project_package'),
         _hitTestCandidates = library.lookupFunction<_HitTestCandidatesNative,
             _HitTestCandidatesDart>('tbe_hit_test_candidates'),
+        _queryRect = library.lookupFunction<_QueryRectNative, _QueryRectDart>(
+            'tbe_query_rect'),
         _lastError = library.lookupFunction<_LastErrorNative, _LastErrorDart>(
             'tbe_get_last_error'),
         _freeString =
@@ -598,16 +643,20 @@ class TbeViewerApi {
     };
     final candidates = <String>[
       if (overridePath != null && overridePath.isNotEmpty) overridePath,
-      if (Platform.isMacOS) ...<String>[
+      if (Platform.isAndroid) 'libtbe_capi.so',
+      if (Platform.isLinux) 'libtbe_capi.so',
+      if (Platform.isWindows) 'tbe_capi.dll',
+      if (Platform.isMacOS || Platform.isIOS) ...<String>[
         '${executableDir.path}/../Frameworks/libtbe_capi.dylib',
         '${executableDir.path}/../Resources/libtbe_capi.dylib',
       ],
       for (final root in repoLikeRoots) ...<String>[
+        '${root.path}/build/src/api/libtbe_capi.dylib',
         '${root.path}/build/dev/src/api/libtbe_capi.dylib',
         '${root.path}/build/dev/src/api/Debug/libtbe_capi.dylib',
         '${root.path}/build/dev/src/api/Release/libtbe_capi.dylib',
       ],
-      'libtbe_capi.dylib',
+      if (Platform.isMacOS || Platform.isIOS) 'libtbe_capi.dylib',
     ];
     final attempted = <String>[];
     for (final candidate in candidates) {
@@ -622,8 +671,8 @@ class TbeViewerApi {
       }
     }
     throw TbeApiException(
-      'Unable to locate libtbe_capi.dylib. Build `tbe_capi_shared`, set TBE_CAPI_PATH, '
-      'or place the dylib at build/dev/src/api/libtbe_capi.dylib. Attempted: ${attempted.join(', ')}',
+      'Unable to locate the TBE native library. Build `tbe_capi_shared`, set TBE_CAPI_PATH, '
+      'or package libtbe_capi for this platform. Attempted: ${attempted.join(', ')}',
     );
   }
 
@@ -631,6 +680,9 @@ class TbeViewerApi {
   final _EngineDestroyDart _engineDestroy;
   final _StringGetterDart _getEngineVersion;
   final _StringGetterDart _getApiVersion;
+  final _StringGetterDart _getRenderSceneJson;
+  final _SetIntOptionDart _setPerformanceProfile;
+  final _SetIntOptionDart _setComputeMode;
   final _SchemaVersionDart _getSchemaVersion;
   final _ProjectLoadJsonDart _projectLoadJson;
   final _CreateLevelDart _createLevel;
@@ -654,6 +706,7 @@ class TbeViewerApi {
   final _ProjectExportPathDart _exportSvg;
   final _ProjectExportPathDart _exportPackage;
   final _HitTestCandidatesDart _hitTestCandidates;
+  final _QueryRectDart _queryRect;
   final _LastErrorDart _lastError;
   final _FreeStringDart _freeString;
   final _FreeMemoryDart _freeMemory;
@@ -687,6 +740,14 @@ class TbeViewerApi {
       _readOwnedString(handle, _getEngineVersion);
   String getApiVersion(ffi.Pointer<ffi.Void> handle) =>
       _readOwnedString(handle, _getApiVersion);
+  String getRenderSceneJson(ffi.Pointer<ffi.Void> handle) =>
+      _readOwnedString(handle, _getRenderSceneJson);
+
+  void configureInteractiveSession(ffi.Pointer<ffi.Void> handle) {
+    // C++ enum order: BatterySaver=0, InteractivePreview=0.
+    _check(handle, _setPerformanceProfile(handle, 0));
+    _check(handle, _setComputeMode(handle, 0));
+  }
 
   int getSchemaVersion(ffi.Pointer<ffi.Void> handle) {
     final out = calloc<ffi.Int32>();
@@ -1152,6 +1213,36 @@ class TbeViewerApi {
     }
   }
 
+  List<int> queryRect(
+    ffi.Pointer<ffi.Void> handle,
+    int levelId, {
+    required double minX,
+    required double minY,
+    required double maxX,
+    required double maxY,
+  }) {
+    final result = calloc<TbeElementIdListResult>();
+    final bounds = calloc<TbeRect2>();
+    bounds.ref
+      ..minX = minX
+      ..minY = minY
+      ..maxX = maxX
+      ..maxY = maxY;
+    try {
+      _check(handle, _queryRect(handle, levelId, bounds.ref, result));
+      return <int>[
+        for (var index = 0; index < result.ref.count; index += 1)
+          result.ref.elementIds[index],
+      ];
+    } finally {
+      if (result.ref.elementIds != ffi.nullptr) {
+        _freeMemory(result.ref.elementIds.cast());
+      }
+      calloc.free(result);
+      calloc.free(bounds);
+    }
+  }
+
   String lastError(ffi.Pointer<ffi.Void> handle) =>
       _lastError(handle).toDartString();
 
@@ -1172,7 +1263,9 @@ class ViewerRepository {
   String? _currentJson;
   String? _currentJsonPath;
   String? _currentPackagePath;
-  String? _lastExportedPackagePath;
+  int? _lastCreatedElementId;
+
+  int? get lastCreatedElementId => _lastCreatedElementId;
 
   Future<ViewerLoadResult> loadFromJson({
     required String projectName,
@@ -1186,6 +1279,7 @@ class ViewerRepository {
     _activeLevelId = _extractPrimaryLevelIdFromProjectJson(json);
     _handle ??= _api.createSession();
     final handle = _handle!;
+    _api.configureInteractiveSession(handle);
     _api.loadProjectJson(handle, json);
     final snapshot = await _buildSnapshot(handle, _projectName ?? projectName);
     return ViewerLoadResult(
@@ -1204,6 +1298,7 @@ class ViewerRepository {
     _activeLevelId = _extractPrimaryLevelIdFromPackage(packagePath);
     _handle ??= _api.createSession();
     final handle = _handle!;
+    _api.configureInteractiveSession(handle);
     _api.importProjectPackage(handle, packagePath);
     final snapshot =
         await _buildSnapshot(handle, _projectName ?? 'Imported Package');
@@ -1237,41 +1332,98 @@ class ViewerRepository {
     ffi.Pointer<ffi.Void> handle,
     String projectName,
   ) async {
-    final validation = _api.validate(handle);
-    final schedules = _api.schedules(handle);
-    final tempDir =
-        await Directory.systemTemp.createTemp('tbe_viewer_flutter_');
-    final svgPath = '${tempDir.path}/floorplan.svg';
-    final packagePath = '${tempDir.path}/package';
-    _api.exportSvg(handle, svgPath);
-    _api.exportPackage(handle, packagePath);
-    _lastExportedPackagePath = packagePath;
     return ViewerSnapshot(
       projectName: _projectName ?? projectName,
       engineVersion: _api.getEngineVersion(handle),
       apiVersion: _api.getApiVersion(handle),
       schemaVersion: _api.getSchemaVersion(handle),
       levelId: _activeLevelId,
-      validation: validation,
-      schedule: schedules,
-      svgPath: svgPath,
-      packagePath: packagePath,
-      validationMessages: _extractValidationMessages(packagePath),
+      validation: ValidationSummary(issueCount: 0, warningCount: 0, errorCount: 0),
+      schedule: ScheduleSummary(
+        wallRows: 0, openingRows: 0, roomRows: 0, slabRows: 0,
+        roofRows: 0, columnRows: 0, beamRows: 0, stairRows: 0,
+        floorRows: 0, ceilingRows: 0, materialTakeoffRows: 0,
+      ),
+      svgPath: '',
+      packagePath: '',
+      validationMessages: const <String>[],
     );
   }
 
   Future<RenderSceneLoadResult> currentRenderScene() async {
-    final packagePath = _lastExportedPackagePath;
-    if (packagePath == null) {
-      return const RenderSceneLoadResult(
-        scene: null,
-        warnings: <String>[],
-        errors: <String>['Engine render scene package has not been exported yet.'],
-      );
+    final handle = _handle;
+    if (handle == null) {
+      throw TbeApiException('No loaded project');
     }
-    final renderScenePath = '$packagePath/exports/render_scene.json';
-    final json = await File(renderScenePath).readAsString();
-    return parseRenderSceneJson(json, source: renderScenePath);
+    return parseRenderSceneJson(
+      _api.getRenderSceneJson(handle),
+      source: 'engine:direct-render-scene',
+    );
+  }
+
+  Future<RenderSceneLoadResult> constrainUnconnectedWallsToNextLevel() async {
+    final handle = _handle;
+    if (handle == null) {
+      throw TbeApiException('No loaded project');
+    }
+    final current = await currentRenderScene();
+    final scene = current.scene;
+    if (scene == null) {
+      return current;
+    }
+    final levels = [...scene.levels]
+      ..sort((left, right) =>
+          left.elevationMeters.compareTo(right.elevationMeters));
+    var changed = false;
+    for (final wall in scene.objects.where((object) => object.kindKey == 'wall')) {
+      final heightMode = wall.metadata['height_mode']?.toString();
+      final baseLevelId = int.tryParse(
+            wall.metadata['base_level_id']?.toString() ?? '',
+          ) ??
+          wall.levelId;
+      final topLevelId =
+          int.tryParse(wall.metadata['top_level_id']?.toString() ?? '') ?? 0;
+      if (baseLevelId == null || topLevelId != 0 || heightMode == 'TopLevel') {
+        continue;
+      }
+      final base = scene.levelById(baseLevelId);
+      if (base == null) {
+        continue;
+      }
+      RenderSceneLevel? top;
+      for (final level in levels) {
+        if (level.elevationMeters > base.elevationMeters + 1.0e-6) {
+          top = level;
+          break;
+        }
+      }
+      if (top == null || wall.elementId == null) {
+        continue;
+      }
+      _api.setWallLevelConstraints(
+        handle,
+        wallId: wall.elementId!,
+        baseLevelId: baseLevelId,
+        topLevelId: top.levelId,
+        baseOffsetMeters:
+            double.tryParse(
+                  wall.metadata['base_offset_meters']?.toString() ?? '',
+                ) ??
+                0.0,
+        topOffsetMeters:
+            double.tryParse(
+                  wall.metadata['top_offset_meters']?.toString() ?? '',
+                ) ??
+                0.0,
+        heightMode: 1,
+      );
+      changed = true;
+    }
+    if (!changed) {
+      return current;
+    }
+    await _buildSnapshot(handle, _projectName ?? 'Project');
+    return currentRenderScene();
   }
 
   Future<RenderSceneLoadResult> createLevel({
@@ -1296,6 +1448,10 @@ class ViewerRepository {
     if (handle == null) {
       throw TbeApiException('No loaded project');
     }
+    // Imported/legacy projects often contain walls with a base level but no
+    // top constraint.  A level move must never leave those walls visually
+    // detached from the level system.
+    await constrainUnconnectedWallsToNextLevel();
     _api.moveLevelElevation(handle, levelId, elevationMeters);
     await _buildSnapshot(handle, _projectName ?? 'Project');
     return currentRenderScene();
@@ -1334,7 +1490,7 @@ class ViewerRepository {
     if (handle == null) {
       throw TbeApiException('No loaded project');
     }
-    _api.createWall(
+    _lastCreatedElementId = _api.createWall(
       handle,
       name,
       levelId,
@@ -1485,7 +1641,7 @@ class ViewerRepository {
     if (handle == null) {
       throw TbeApiException('No loaded project');
     }
-    _api.createProfile(
+    final createdIds = _api.createProfile(
       handle,
       targetKind: targetKind,
       draftMode: draftMode,
@@ -1500,6 +1656,7 @@ class ViewerRepository {
       assemblyId: assemblyId,
       roofType: roofType,
     );
+    _lastCreatedElementId = createdIds.isEmpty ? null : createdIds.first;
     await _buildSnapshot(handle, _projectName ?? 'Project');
     return currentRenderScene();
   }
@@ -1596,43 +1753,17 @@ class ViewerRepository {
     return 0;
   }
 
-  List<String> _extractValidationMessages(String packagePath) {
-    final debugFile = File('$packagePath/debug/debug_report.json');
-    if (!debugFile.existsSync()) {
-      return const <String>[
-        'Validation message list not available from exported debug report.'
-      ];
-    }
-    try {
-      final decoded = jsonDecode(debugFile.readAsStringSync());
-      final validation =
-          decoded is Map<String, dynamic> ? decoded['validation'] : null;
-      final issues =
-          validation is Map<String, dynamic> ? validation['issues'] : null;
-      if (issues is List) {
-        return issues
-            .map((issue) => issue is Map<String, dynamic>
-                ? (issue['message']?.toString() ?? issue.toString())
-                : issue.toString())
-            .toList();
-      }
-    } catch (_) {
-      return const <String>['Unable to parse debug validation messages.'];
-    }
-    return const <String>['No validation issues reported.'];
-  }
-
   int? defaultAssemblyId(String kind) {
-    final packagePath = _lastExportedPackagePath ?? _currentPackagePath;
-    if (packagePath == null) {
-      return null;
-    }
-    final projectJson = File('$packagePath/project.json');
-    if (!projectJson.existsSync()) {
-      return null;
-    }
     try {
-      final decoded = jsonDecode(projectJson.readAsStringSync());
+      final packagePath = _currentPackagePath;
+      final json = _currentJson ??
+          (packagePath == null
+              ? null
+              : File('$packagePath/project.json').readAsStringSync());
+      if (json == null) {
+        return null;
+      }
+      final decoded = jsonDecode(json);
       final document =
           decoded is Map<String, dynamic> ? decoded['document'] : null;
       final assemblies =

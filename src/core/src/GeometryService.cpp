@@ -236,8 +236,8 @@ WallProfile2D GeometryService::build_wall_profile(const WallData& wall) const {
     for (const auto& opening : wall.openings) {
         const auto x_min = opening.offset_meters - (opening.width_meters / 2.0);
         const auto x_max = opening.offset_meters + (opening.width_meters / 2.0);
-        const auto z_min = opening.sill_height_meters;
-        const auto z_max = opening.sill_height_meters + opening.height_meters;
+        const auto z_min = opening.vertical_offset_meters + opening.sill_height_meters;
+        const auto z_max = opening.vertical_offset_meters + opening.sill_height_meters + opening.height_meters;
         profile.openings.push_back(OpeningRectangle{
             .element_id = opening.element_id,
             .kind = opening.kind,

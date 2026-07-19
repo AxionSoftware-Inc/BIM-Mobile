@@ -302,6 +302,214 @@ bool cyclic_polygon_equal(const std::vector<Point2>& first, const std::vector<Po
     return false;
 }
 
+constexpr auto default_ceiling_height_offset_meters = 2.6;
+
+double normalized_ceiling_height_offset(double value) {
+    return std::abs(value) < epsilon ? default_ceiling_height_offset_meters : value;
+}
+
+bool has_duplicate_points(const std::vector<Point2>& points) {
+    for (std::size_t index = 0; index < points.size(); ++index) {
+        for (std::size_t other = index + 1; other < points.size(); ++other) {
+            if (same_point(points[index], points[other])) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool polygon_has_self_intersection(const std::vector<Point2>& polygon) {
+    if (polygon.size() < 4) {
+        return false;
+    }
+    for (std::size_t index = 0; index < polygon.size(); ++index) {
+        const Line2 first{
+            .start = polygon[index],
+            .end = polygon[(index + 1) % polygon.size()],
+        };
+        for (std::size_t other = index + 1; other < polygon.size(); ++other) {
+            const auto first_next = (index + 1) % polygon.size();
+            const auto other_next = (other + 1) % polygon.size();
+            if (index == other || first_next == other || other_next == index) {
+                continue;
+            }
+            const Line2 second{
+                .start = polygon[other],
+                .end = polygon[other_next],
+            };
+            const auto intersection = segment_intersection(first, second);
+            if (intersection.has_value()) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+struct PickWallLoopResult {
+    std::vector<Point2> polygon{};
+    std::vector<ElementId> ordered_wall_ids{};
+};
+
+PickWallLoopResult build_pick_wall_loop(
+    const Document& document,
+    const std::vector<ElementId>& picked_wall_ids
+) {
+    if (picked_wall_ids.size() < 3) {
+        throw std::invalid_argument("pick-walls profile needs at least 3 walls");
+    }
+
+    struct LoopWallRef {
+        ElementId wall_id{};
+        Point2 start{};
+        Point2 end{};
+        std::size_t start_node{};
+        std::size_t end_node{};
+    };
+
+    std::vector<Point2> nodes;
+    auto find_or_add_node = [&](Point2 point) {
+        for (std::size_t index = 0; index < nodes.size(); ++index) {
+            if (same_point(nodes[index], point)) {
+                return index;
+            }
+        }
+        nodes.push_back(point);
+        return nodes.size() - 1;
+    };
+
+    std::vector<LoopWallRef> walls;
+    walls.reserve(picked_wall_ids.size());
+    for (const auto wall_id : picked_wall_ids) {
+        if (std::find_if(
+                walls.begin(),
+                walls.end(),
+                [wall_id](const LoopWallRef& wall) { return wall.wall_id == wall_id; }) != walls.end()) {
+            throw std::invalid_argument("pick-walls profile contains duplicate walls");
+        }
+        const auto* wall_element = document.find_ptr(wall_id);
+        const auto* wall = wall_element == nullptr ? nullptr : wall_element->wall();
+        if (wall == nullptr) {
+            throw std::invalid_argument("pick-walls profile references a non-wall element");
+        }
+        const auto start_node = find_or_add_node(wall->axis.start);
+        const auto end_node = find_or_add_node(wall->axis.end);
+        if (start_node == end_node) {
+            throw std::invalid_argument("pick-walls profile contains a zero-length wall");
+        }
+        walls.push_back(LoopWallRef{
+            .wall_id = wall_id,
+            .start = wall->axis.start,
+            .end = wall->axis.end,
+            .start_node = start_node,
+            .end_node = end_node,
+        });
+    }
+
+    std::vector<std::vector<std::size_t>> adjacency(nodes.size());
+    for (std::size_t index = 0; index < walls.size(); ++index) {
+        adjacency[walls[index].start_node].push_back(index);
+        adjacency[walls[index].end_node].push_back(index);
+    }
+    for (const auto& connected : adjacency) {
+        if (connected.size() != 2) {
+            throw std::invalid_argument("pick-walls profile must form one connected closed loop");
+        }
+    }
+
+    std::vector<bool> visited(walls.size(), false);
+    std::vector<ElementId> ordered_wall_ids;
+    std::vector<Point2> polygon;
+    ordered_wall_ids.reserve(walls.size());
+    polygon.reserve(walls.size());
+
+    std::size_t current_wall_index = 0;
+    std::size_t current_node = walls[current_wall_index].start_node;
+    const auto start_node = current_node;
+    for (std::size_t step = 0; step < walls.size(); ++step) {
+        if (visited[current_wall_index]) {
+            throw std::invalid_argument("pick-walls profile contains an ambiguous or repeated loop");
+        }
+        visited[current_wall_index] = true;
+        const auto& wall = walls[current_wall_index];
+        polygon.push_back(nodes[current_node]);
+        ordered_wall_ids.push_back(wall.wall_id);
+
+        const auto next_node = wall.start_node == current_node ? wall.end_node : wall.start_node;
+        const auto& connected = adjacency[next_node];
+        const auto next_wall_it = std::find_if(
+            connected.begin(),
+            connected.end(),
+            [&](std::size_t candidate) { return candidate != current_wall_index; });
+        current_node = next_node;
+        if (step + 1 == walls.size()) {
+            if (current_node != start_node) {
+                throw std::invalid_argument("pick-walls profile does not close back to its start");
+            }
+            continue;
+        }
+        if (next_wall_it == connected.end()) {
+            throw std::invalid_argument("pick-walls profile became disconnected while ordering walls");
+        }
+        current_wall_index = *next_wall_it;
+    }
+
+    if (std::find(visited.begin(), visited.end(), false) != visited.end()) {
+        throw std::invalid_argument("pick-walls profile must be a single simple loop");
+    }
+
+    polygon = simplify_polygon(std::move(polygon));
+    if (polygon.size() < 3 || has_duplicate_points(polygon) || polygon_has_self_intersection(polygon)) {
+        throw std::invalid_argument("pick-walls profile produced an invalid closed boundary");
+    }
+    if (polygon_signed_area(polygon) < 0.0) {
+        std::reverse(polygon.begin(), polygon.end());
+        std::reverse(ordered_wall_ids.begin(), ordered_wall_ids.end());
+    }
+    return PickWallLoopResult{
+        .polygon = std::move(polygon),
+        .ordered_wall_ids = std::move(ordered_wall_ids),
+    };
+}
+
+void validate_profile_polygon(
+    const std::vector<Point2>& polygon,
+    ProfileTargetKind target_kind
+) {
+    const auto target_label = [target_kind]() -> const char* {
+        switch (target_kind) {
+        case ProfileTargetKind::WallPath: return "wall";
+        case ProfileTargetKind::FloorBoundary: return "floor";
+        case ProfileTargetKind::CeilingBoundary: return "ceiling";
+        case ProfileTargetKind::RoofBoundary: return "roof";
+        }
+        return "profile";
+    }();
+
+    if (polygon.size() < 3) {
+        throw std::invalid_argument(std::string(target_label) + " profile needs at least 3 unique points");
+    }
+    if (has_duplicate_points(polygon)) {
+        throw std::invalid_argument(std::string(target_label) + " profile contains duplicate points");
+    }
+    for (std::size_t index = 0; index < polygon.size(); ++index) {
+        const Line2 edge{
+            .start = polygon[index],
+            .end = polygon[(index + 1) % polygon.size()],
+        };
+        if (length(edge) <= epsilon) {
+            throw std::invalid_argument(std::string(target_label) + " profile contains a too-short edge");
+        }
+    }
+    if (polygon_has_self_intersection(polygon)) {
+        throw std::invalid_argument(std::string(target_label) + " profile self-intersects");
+    }
+    if (polygon_area(polygon) <= epsilon) {
+        throw std::invalid_argument(std::string(target_label) + " profile must enclose a positive area");
+    }
+}
+
 MeshBuffer extrude_polygon_mesh(const std::vector<Point2>& polygon, double thickness, double elevation_offset) {
     MeshBuffer mesh;
     const auto vertex_count = polygon.size();
@@ -708,6 +916,7 @@ ElementId Document::create_door(std::string name, ElementId host_wall_id, double
         .offset_meters = offset_meters,
         .width_meters = width_meters,
         .height_meters = height_meters,
+        .vertical_offset_meters = 0.0,
         .level_locked = true,
     });
 
@@ -718,6 +927,7 @@ ElementId Document::create_door(std::string name, ElementId host_wall_id, double
         .width_meters = width_meters,
         .height_meters = height_meters,
         .sill_height_meters = 0.0,
+        .vertical_offset_meters = 0.0,
     });
 
     invalidate_dependency_graph_cache();
@@ -752,6 +962,7 @@ ElementId Document::create_window(
         .width_meters = width_meters,
         .height_meters = height_meters,
         .sill_height_meters = sill_height_meters,
+        .vertical_offset_meters = 0.0,
         .level_locked = true,
     });
 
@@ -762,6 +973,7 @@ ElementId Document::create_window(
         .width_meters = width_meters,
         .height_meters = height_meters,
         .sill_height_meters = sill_height_meters,
+        .vertical_offset_meters = 0.0,
     });
 
     invalidate_dependency_graph_cache();
@@ -1006,6 +1218,7 @@ ElementId Document::create_ceiling_system_for_room(ElementId room_id, ElementId 
     if (assembly->kind != LayeredAssemblyKind::Ceiling) {
         throw std::invalid_argument("assembly kind must be ceiling");
     }
+    height_offset_meters = normalized_ceiling_height_offset(height_offset_meters);
     for (auto& [system_id, system] : ceiling_systems_) {
         if (system.room_id == room_id) {
             system.assembly_id = assembly_id;
@@ -1053,6 +1266,13 @@ ElementId Document::create_floor_system_from_profile(
     if (boundary_polygon.size() < 3 || polygon_area(boundary_polygon) <= epsilon) {
         throw std::invalid_argument("floor profile must be a valid closed polygon");
     }
+    for (const auto& [existing_id, system] : floor_systems_) {
+        if (system.level_id == level_id &&
+            cyclic_polygon_equal(system.boundary_polygon, boundary_polygon)) {
+            throw std::invalid_argument("a floor already exists for this boundary on the selected level");
+        }
+        (void)existing_id;
+    }
     const auto area = polygon_area(boundary_polygon);
     const auto system_id = allocate_id();
     floor_systems_[system_id] = FloorSystemData{
@@ -1074,6 +1294,7 @@ ElementId Document::create_ceiling_system_from_profile(
     ElementId assembly_id,
     double height_offset_meters
 ) {
+    height_offset_meters = normalized_ceiling_height_offset(height_offset_meters);
     if (level_id != 0) {
         (void)require_level(level_id);
     }
@@ -1087,6 +1308,14 @@ ElementId Document::create_ceiling_system_from_profile(
     boundary_polygon = simplify_polygon(std::move(boundary_polygon));
     if (boundary_polygon.size() < 3 || polygon_area(boundary_polygon) <= epsilon) {
         throw std::invalid_argument("ceiling profile must be a valid closed polygon");
+    }
+    for (const auto& [existing_id, system] : ceiling_systems_) {
+        if (system.level_id == level_id &&
+            std::abs(system.height_offset_meters - height_offset_meters) <= epsilon &&
+            cyclic_polygon_equal(system.boundary_polygon, boundary_polygon)) {
+            throw std::invalid_argument("a ceiling already exists for this boundary on the selected level");
+        }
+        (void)existing_id;
     }
     const auto area = polygon_area(boundary_polygon);
     const auto system_id = allocate_id();
@@ -1213,6 +1442,7 @@ void Document::move_hosted_opening(ElementId opening_id, double offset_meters) {
             .width_meters = door->width_meters,
             .height_meters = door->height_meters,
             .sill_height_meters = 0.0,
+            .vertical_offset_meters = door->vertical_offset_meters,
         };
         auto wall_copy = *require_wall(host_wall_id).wall();
         for (auto& opening : wall_copy.openings) {
@@ -1237,6 +1467,7 @@ void Document::move_hosted_opening(ElementId opening_id, double offset_meters) {
             .width_meters = window->width_meters,
             .height_meters = window->height_meters,
             .sill_height_meters = window->sill_height_meters,
+            .vertical_offset_meters = window->vertical_offset_meters,
         };
         auto wall_copy = *require_wall(host_wall_id).wall();
         for (auto& opening : wall_copy.openings) {
@@ -1265,6 +1496,7 @@ void Document::resize_door(ElementId door_id, double width_meters, double height
         .width_meters = width_meters,
         .height_meters = height_meters,
         .sill_height_meters = 0.0,
+        .vertical_offset_meters = door->vertical_offset_meters,
     };
     auto wall_copy = *require_wall(door->host_wall_id).wall();
     for (auto& opening : wall_copy.openings) {
@@ -1290,6 +1522,7 @@ void Document::resize_window(ElementId window_id, double width_meters, double he
         .width_meters = width_meters,
         .height_meters = height_meters,
         .sill_height_meters = sill_height_meters,
+        .vertical_offset_meters = window->vertical_offset_meters,
     };
     auto wall_copy = *require_wall(window->host_wall_id).wall();
     for (auto& opening : wall_copy.openings) {
@@ -1768,6 +2001,10 @@ std::vector<ElementId> Document::detect_rooms_for_levels(const std::vector<Eleme
     }
 
     for (auto it = floor_systems_.begin(); it != floor_systems_.end();) {
+        if (it->second.room_id == 0) {
+            ++it;
+            continue;
+        }
         const auto* room = find_ptr(it->second.room_id);
         if (room == nullptr || room->room() == nullptr) {
             it = floor_systems_.erase(it);
@@ -1778,6 +2015,10 @@ std::vector<ElementId> Document::detect_rooms_for_levels(const std::vector<Eleme
     }
 
     for (auto it = ceiling_systems_.begin(); it != ceiling_systems_.end();) {
+        if (it->second.room_id == 0) {
+            ++it;
+            continue;
+        }
         const auto* room = find_ptr(it->second.room_id);
         if (room == nullptr || room->room() == nullptr) {
             it = ceiling_systems_.erase(it);
@@ -1971,9 +2212,20 @@ void Document::set_opening_level_lock(ElementId opening_id, bool locked) {
         if (locked) {
             if (const auto* host = find_ptr(door_data->host_wall_id); host != nullptr && host->wall() != nullptr) {
                 door_data->level_id = host->wall()->level_id;
+                door_data->vertical_offset_meters = 0.0;
+                update_wall_opening(door_data->host_wall_id, HostedOpening{
+                    .element_id = opening_id,
+                    .kind = OpeningKind::Door,
+                    .offset_meters = door_data->offset_meters,
+                    .width_meters = door_data->width_meters,
+                    .height_meters = door_data->height_meters,
+                    .sill_height_meters = 0.0,
+                    .vertical_offset_meters = 0.0,
+                });
             }
         }
         element->touch();
+        invalidate_dependency_graph_cache();
         return;
     }
     if (auto* window_data = element->window(); window_data != nullptr) {
@@ -1981,11 +2233,96 @@ void Document::set_opening_level_lock(ElementId opening_id, bool locked) {
         if (locked) {
             if (const auto* host = find_ptr(window_data->host_wall_id); host != nullptr && host->wall() != nullptr) {
                 window_data->level_id = host->wall()->level_id;
+                window_data->vertical_offset_meters = 0.0;
+                update_wall_opening(window_data->host_wall_id, HostedOpening{
+                    .element_id = opening_id,
+                    .kind = OpeningKind::Window,
+                    .offset_meters = window_data->offset_meters,
+                    .width_meters = window_data->width_meters,
+                    .height_meters = window_data->height_meters,
+                    .sill_height_meters = window_data->sill_height_meters,
+                    .vertical_offset_meters = 0.0,
+                });
             }
         }
         element->touch();
+        invalidate_dependency_graph_cache();
         return;
     }
+    throw std::invalid_argument("element is not a hosted opening");
+}
+
+void Document::set_opening_level(ElementId opening_id, ElementId level_id) {
+    (void)require_level(level_id);
+    auto* element = find_ptr(opening_id);
+    if (element == nullptr) {
+        throw std::invalid_argument("opening does not exist");
+    }
+
+    if (auto* door_data = element->door(); door_data != nullptr) {
+        const auto* host = find_ptr(door_data->host_wall_id);
+        const auto* host_wall = host == nullptr ? nullptr : host->wall();
+        if (host_wall == nullptr) {
+            throw std::invalid_argument("opening host wall does not exist");
+        }
+        const auto offset = level_elevation(level_id) - resolved_wall_base_elevation(*host_wall);
+        auto updated = HostedOpening{
+            .element_id = opening_id,
+            .kind = OpeningKind::Door,
+            .offset_meters = door_data->offset_meters,
+            .width_meters = door_data->width_meters,
+            .height_meters = door_data->height_meters,
+            .sill_height_meters = 0.0,
+            .vertical_offset_meters = offset,
+        };
+        auto wall_copy = *host_wall;
+        for (auto& opening : wall_copy.openings) {
+            if (opening.element_id == opening_id) {
+                opening = updated;
+            }
+        }
+        validate_wall_openings(wall_copy);
+        door_data->level_id = level_id;
+        door_data->level_locked = false;
+        door_data->vertical_offset_meters = offset;
+        element->touch();
+        update_wall_opening(door_data->host_wall_id, updated);
+        invalidate_dependency_graph_cache();
+        return;
+    }
+
+    if (auto* window_data = element->window(); window_data != nullptr) {
+        const auto* host = find_ptr(window_data->host_wall_id);
+        const auto* host_wall = host == nullptr ? nullptr : host->wall();
+        if (host_wall == nullptr) {
+            throw std::invalid_argument("opening host wall does not exist");
+        }
+        const auto offset = level_elevation(level_id) - resolved_wall_base_elevation(*host_wall);
+        auto updated = HostedOpening{
+            .element_id = opening_id,
+            .kind = OpeningKind::Window,
+            .offset_meters = window_data->offset_meters,
+            .width_meters = window_data->width_meters,
+            .height_meters = window_data->height_meters,
+            .sill_height_meters = window_data->sill_height_meters,
+            .vertical_offset_meters = offset,
+        };
+        auto wall_copy = *host_wall;
+        for (auto& opening : wall_copy.openings) {
+            if (opening.element_id == opening_id) {
+                opening = updated;
+            }
+        }
+        validate_wall_openings(wall_copy);
+        window_data->level_id = level_id;
+        window_data->level_locked = false;
+        window_data->vertical_offset_meters = offset;
+        element->touch();
+        update_wall_opening(window_data->host_wall_id, updated);
+        invalidate_dependency_graph_cache();
+        return;
+    }
+
     throw std::invalid_argument("element is not a hosted opening");
 }
 
@@ -2007,34 +2344,7 @@ std::vector<Point2> Document::normalized_profile_polygon(const ProfileDraft& dra
         break;
     }
     case ProfileDraftMode::PickWalls: {
-        std::vector<Point2> points;
-        for (const auto wall_id : draft.picked_wall_ids) {
-            const auto& wall_element = require_wall(wall_id);
-            const auto* wall = wall_element.wall();
-            if (wall == nullptr) {
-                continue;
-            }
-            points.push_back(wall->axis.start);
-            points.push_back(wall->axis.end);
-        }
-        if (!points.empty()) {
-            auto minx = points.front().x;
-            auto maxx = points.front().x;
-            auto miny = points.front().y;
-            auto maxy = points.front().y;
-            for (const auto& point : points) {
-                minx = std::min(minx, point.x);
-                maxx = std::max(maxx, point.x);
-                miny = std::min(miny, point.y);
-                maxy = std::max(maxy, point.y);
-            }
-            polygon = {
-                Point2{.x = minx, .y = miny},
-                Point2{.x = maxx, .y = miny},
-                Point2{.x = maxx, .y = maxy},
-                Point2{.x = minx, .y = maxy},
-            };
-        }
+        polygon = build_pick_wall_loop(*this, draft.picked_wall_ids).polygon;
         break;
     }
     case ProfileDraftMode::Polyline:
@@ -2086,9 +2396,7 @@ std::vector<ElementId> Document::create_elements_from_profile(const ProfileDraft
     }
 
     auto polygon = normalized_profile_polygon(draft);
-    if (polygon.size() < 3 || polygon_area(polygon) <= epsilon) {
-        throw std::invalid_argument("surface profile must be a valid closed polygon");
-    }
+    validate_profile_polygon(polygon, draft.target_kind);
 
     switch (draft.target_kind) {
     case ProfileTargetKind::FloorBoundary:
@@ -2104,7 +2412,7 @@ std::vector<ElementId> Document::create_elements_from_profile(const ProfileDraft
             draft.level_id,
             std::move(polygon),
             draft.assembly_id,
-            draft.vertical_offset_meters
+            normalized_ceiling_height_offset(draft.vertical_offset_meters)
         ));
         break;
     case ProfileTargetKind::RoofBoundary:
@@ -3772,7 +4080,10 @@ void Document::validate_wall_openings(const WallData& wall, std::optional<Elemen
         if (opening.offset_meters < 0.0 || opening.width_meters <= 0.0 || opening.height_meters <= 0.0 || opening.sill_height_meters < 0.0) {
             throw std::invalid_argument("opening dimensions must be positive");
         }
-        if ((opening.height_meters + opening.sill_height_meters) > resolved_wall_height(wall)) {
+        if (opening.vertical_offset_meters < 0.0) {
+            throw std::invalid_argument("opening vertical offset must not be negative");
+        }
+        if ((opening.height_meters + opening.sill_height_meters + opening.vertical_offset_meters) > resolved_wall_height(wall)) {
             throw std::invalid_argument("opening is taller than host wall");
         }
         const auto wall_length = length(wall.axis);

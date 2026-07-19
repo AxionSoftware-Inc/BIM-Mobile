@@ -118,6 +118,7 @@ public:
         WallHeightMode height_mode
     );
     void set_opening_level_lock(ElementId opening_id, bool locked);
+    void set_opening_level(ElementId opening_id, ElementId level_id);
     std::vector<ElementId> create_elements_from_profile(const ProfileDraft& draft);
     void set_wall_type(ElementId wall_id, ElementId wall_type_id);
     void set_wall_properties(ElementId wall_id, double thickness_meters, double height_meters, ElementId wall_type_id = 0);

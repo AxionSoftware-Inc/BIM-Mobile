@@ -324,6 +324,11 @@ internal class RenderScenePlatformView(
         result.success(null)
       }
 
+      "setSelection" -> {
+        view.setSelection(call.arguments as? Map<*, *>)
+        result.success(null)
+      }
+
       "highlightElement" -> {
         view.highlightElement(call.arguments)
         result.success(null)

@@ -131,6 +131,7 @@ struct HostedOpening {
     double width_meters{};
     double height_meters{};
     double sill_height_meters{};
+    double vertical_offset_meters{};
 };
 
 struct OpeningRectangle {
@@ -189,6 +190,7 @@ struct DoorData {
     double offset_meters{};
     double width_meters{};
     double height_meters{};
+    double vertical_offset_meters{};
     bool level_locked{true};
 };
 
@@ -199,6 +201,7 @@ struct WindowData {
     double width_meters{};
     double height_meters{};
     double sill_height_meters{};
+    double vertical_offset_meters{};
     bool level_locked{true};
 };
 

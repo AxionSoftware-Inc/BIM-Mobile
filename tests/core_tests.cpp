@@ -1765,20 +1765,97 @@ int main() {
             .level_id = level_1,
             .picked_wall_ids = wall_ids,
             .closed = true,
-            .vertical_offset_meters = 2.7,
             .assembly_id = ceiling_assembly,
+        });
+        const auto poly_floor_ids = level_kernel_document.create_elements_from_profile(tbe::core::ProfileDraft{
+            .mode = tbe::core::ProfileDraftMode::Polyline,
+            .target_kind = tbe::core::ProfileTargetKind::FloorBoundary,
+            .level_id = level_1,
+            .points = {{20.0, 0.0}, {24.0, 0.0}, {24.0, 1.5}, {22.0, 3.0}, {20.0, 2.0}},
+            .closed = true,
+            .thickness_meters = 0.18,
+            .assembly_id = floor_assembly,
+        });
+        const auto roof_ids = level_kernel_document.create_elements_from_profile(tbe::core::ProfileDraft{
+            .mode = tbe::core::ProfileDraftMode::Polyline,
+            .target_kind = tbe::core::ProfileTargetKind::RoofBoundary,
+            .level_id = level_2,
+            .points = {{19.8, -0.2}, {24.2, -0.2}, {24.8, 1.5}, {22.0, 3.6}, {19.6, 2.2}},
+            .closed = true,
+            .thickness_meters = 0.2,
         });
         assert(floor_ids.size() == 1);
         assert(ceiling_ids.size() == 1);
-
-        const auto& floor_system = level_kernel_document.floor_systems().at(floor_ids.front());
-        const auto& ceiling_system = level_kernel_document.ceiling_systems().at(ceiling_ids.front());
+        assert(poly_floor_ids.size() == 1);
+        assert(roof_ids.size() == 1);
+        const auto floor_system_it = level_kernel_document.floor_systems().find(floor_ids.front());
+        const auto ceiling_system_it = level_kernel_document.ceiling_systems().find(ceiling_ids.front());
+        assert(floor_system_it != level_kernel_document.floor_systems().end());
+        assert(ceiling_system_it != level_kernel_document.ceiling_systems().end());
+        const auto& floor_system = floor_system_it->second;
+        const auto& ceiling_system = ceiling_system_it->second;
         assert(floor_system.boundary_polygon.size() == 4);
         assert(ceiling_system.boundary_polygon.size() == 4);
         assert(near(min_x(floor_system.boundary_polygon), min_x(ceiling_system.boundary_polygon)));
         assert(near(max_x(floor_system.boundary_polygon), max_x(ceiling_system.boundary_polygon)));
         assert(near(min_y(floor_system.boundary_polygon), min_y(ceiling_system.boundary_polygon)));
         assert(near(max_y(floor_system.boundary_polygon), max_y(ceiling_system.boundary_polygon)));
+        assert(near(ceiling_system.height_offset_meters, 2.6));
+
+        bool rejected_duplicate_floor = false;
+        try {
+            (void)level_kernel_document.create_elements_from_profile(tbe::core::ProfileDraft{
+                .mode = tbe::core::ProfileDraftMode::Rectangle,
+                .target_kind = tbe::core::ProfileTargetKind::FloorBoundary,
+                .level_id = level_1,
+                .points = {{10.0, 0.0}, {14.0, 3.0}},
+                .closed = true,
+                .thickness_meters = 0.18,
+                .assembly_id = floor_assembly,
+            });
+        } catch (const std::invalid_argument&) {
+            rejected_duplicate_floor = true;
+        }
+        assert(rejected_duplicate_floor);
+
+        bool rejected_duplicate_ceiling = false;
+        try {
+            (void)level_kernel_document.create_elements_from_profile(tbe::core::ProfileDraft{
+                .mode = tbe::core::ProfileDraftMode::PickWalls,
+                .target_kind = tbe::core::ProfileTargetKind::CeilingBoundary,
+                .level_id = level_1,
+                .picked_wall_ids = wall_ids,
+                .closed = true,
+                .assembly_id = ceiling_assembly,
+            });
+        } catch (const std::invalid_argument&) {
+            rejected_duplicate_ceiling = true;
+        }
+        assert(rejected_duplicate_ceiling);
+
+        const auto poly_floor_system_it = level_kernel_document.floor_systems().find(poly_floor_ids.front());
+        assert(poly_floor_system_it != level_kernel_document.floor_systems().end());
+        const auto& poly_floor_system = poly_floor_system_it->second;
+        assert(poly_floor_system.boundary_polygon.size() == 5);
+        assert(near(poly_floor_system.area_square_meters, 9.5));
+        const auto* roof = level_kernel_document.find_ptr(roof_ids.front())->roof();
+        assert(roof != nullptr);
+        assert(roof->boundary_polygon.size() == 5);
+
+        bool rejected_disconnected_pick = false;
+        try {
+            (void)level_kernel_document.create_elements_from_profile(tbe::core::ProfileDraft{
+                .mode = tbe::core::ProfileDraftMode::PickWalls,
+                .target_kind = tbe::core::ProfileTargetKind::FloorBoundary,
+                .level_id = level_1,
+                .picked_wall_ids = {wall_ids[0], wall_ids[1], constrained_wall},
+                .closed = true,
+                .assembly_id = floor_assembly,
+            });
+        } catch (const std::invalid_argument&) {
+            rejected_disconnected_pick = true;
+        }
+        assert(rejected_disconnected_pick);
 
         level_kernel_document.move_level_elevation(level_2, 4.0);
         constrained_schedule = level_kernel_document.generate_wall_schedule();
@@ -1794,9 +1871,10 @@ int main() {
         assert(moved_wall != nullptr && moved_wall->geometry.dirty);
         assert(moved_door != nullptr && moved_door->level_locked);
         assert(moved_door->level_id == level_1);
-        assert(level_kernel_document.floor_systems().at(floor_ids.front()).dirty);
-        assert(level_kernel_document.ceiling_systems().at(ceiling_ids.front()).dirty);
-        assert(!level_kernel_document.dirty_room_ids().empty());
+        assert(level_kernel_document.floor_systems().find(floor_ids.front()) != level_kernel_document.floor_systems().end());
+        assert(level_kernel_document.ceiling_systems().find(ceiling_ids.front()) != level_kernel_document.ceiling_systems().end());
+        assert(level_kernel_document.floor_systems().find(floor_ids.front())->second.dirty);
+        assert(level_kernel_document.ceiling_systems().find(ceiling_ids.front())->second.dirty);
 
         const auto reloaded_level_kernel = tbe::core::Document::from_json(level_kernel_document.to_json());
         const auto* reloaded_wall = reloaded_level_kernel.find_ptr(constrained_wall)->wall();

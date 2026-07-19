@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -13,6 +11,7 @@ import 'render_scene_viewport_painter.dart';
 import 'render_scene_viewport_planar.dart';
 import 'render_scene_viewport_projection.dart';
 import 'render_scene_viewport_types.dart';
+import 'viewport_interaction.dart';
 
 class RenderSceneViewport extends StatefulWidget {
   const RenderSceneViewport({
@@ -25,6 +24,7 @@ class RenderSceneViewport extends StatefulWidget {
     this.onSceneDragEnd,
     this.onSceneSecondaryTap,
     this.onSceneHover,
+    this.onLevelElevationSubmitted,
     this.draftWallThicknessMeters = RenderSceneEditor.defaultWallThicknessMeters,
     this.draftWallHeightMeters = RenderSceneEditor.defaultWallHeightMeters,
   });
@@ -37,6 +37,8 @@ class RenderSceneViewport extends StatefulWidget {
   final ValueChanged<RenderSceneTapDetails>? onSceneDragEnd;
   final ValueChanged<RenderSceneTapDetails>? onSceneSecondaryTap;
   final ValueChanged<RenderSceneTapDetails>? onSceneHover;
+  final Future<void> Function(RenderSceneLevel level, String value)?
+      onLevelElevationSubmitted;
   final double draftWallThicknessMeters;
   final double draftWallHeightMeters;
 
@@ -118,6 +120,7 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
       onSceneDragEnd: widget.onSceneDragEnd,
       onSceneSecondaryTap: widget.onSceneSecondaryTap,
       onSceneHover: widget.onSceneHover,
+      onLevelElevationSubmitted: widget.onLevelElevationSubmitted,
       draftWallThicknessMeters: widget.draftWallThicknessMeters,
       draftWallHeightMeters: widget.draftWallHeightMeters,
     );
@@ -136,9 +139,10 @@ class _AndroidRenderSceneView extends StatelessWidget {
     final scene = controller.scene;
     final creationParams = <String, Object?>{
       'sceneRevision': controller.sceneRevision,
-      if (scene != null) 'renderSceneJson': jsonEncode(scene.toJson()),
+      if (scene != null) 'renderScene': scene.toJson(),
       'visibleKinds': controller.visibleKinds.toList(),
-      'selectedElementId': controller.selectedElementId,
+      'selectedElementIds': controller.selectedElementIds.toList(),
+      'activeElementId': controller.activeElementId,
       'highlightedElementId': controller.highlightedElementId,
       'displayStyle': controller.displayStyle.name,
     };
@@ -164,6 +168,7 @@ class _FallbackRenderSceneView extends StatefulWidget {
     required this.onSceneDragEnd,
     required this.onSceneSecondaryTap,
     required this.onSceneHover,
+    required this.onLevelElevationSubmitted,
     required this.draftWallThicknessMeters,
     required this.draftWallHeightMeters,
   });
@@ -176,6 +181,8 @@ class _FallbackRenderSceneView extends StatefulWidget {
   final ValueChanged<RenderSceneTapDetails>? onSceneDragEnd;
   final ValueChanged<RenderSceneTapDetails>? onSceneSecondaryTap;
   final ValueChanged<RenderSceneTapDetails>? onSceneHover;
+  final Future<void> Function(RenderSceneLevel level, String value)?
+      onLevelElevationSubmitted;
   final double draftWallThicknessMeters;
   final double draftWallHeightMeters;
 
@@ -194,6 +201,21 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
   Offset? _gesturePreviousFocalPoint;
   double _trackpadPreviousScale = 1.0;
   bool _sceneDragStarted = false;
+  final ViewportInteractionController _interaction =
+      ViewportInteractionController();
+  Rect? _selectionRect;
+
+  ViewportSelectionModifiers _selectionModifiers() {
+    final keys = HardwareKeyboard.instance.logicalKeysPressed;
+    return ViewportSelectionModifiers.fromKeyboard(
+      control: keys.contains(LogicalKeyboardKey.controlLeft) ||
+          keys.contains(LogicalKeyboardKey.controlRight) ||
+          keys.contains(LogicalKeyboardKey.metaLeft) ||
+          keys.contains(LogicalKeyboardKey.metaRight),
+      shift: keys.contains(LogicalKeyboardKey.shiftLeft) ||
+          keys.contains(LogicalKeyboardKey.shiftRight),
+    );
+  }
 
   double _tapDistanceThreshold(PointerEvent event) {
     if (event.kind == PointerDeviceKind.touch) {
@@ -230,6 +252,37 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
     );
   }
 
+  Iterable<MapEntry<String, Rect>> _selectionCandidates(
+    RenderScene scene,
+    Size size,
+  ) sync* {
+    final projection = RenderSceneProjection(
+      sceneBounds: scene.bounds,
+      canvasSize: size,
+      projectionMode: controller.projectionMode,
+      orbitProjectionStyle: controller.orbitProjectionStyle,
+      planCamera: controller.planCamera,
+      camera: controller.camera,
+      padding: FallbackRenderScenePainter.padding,
+    );
+    for (final object in scene.objectsForKinds(controller.visibleKinds)) {
+      final id = object.elementId?.toString();
+      if (id == null) continue;
+      final b = object.bounds;
+      final points = <Offset>[
+        for (final x in <double>[b.min.x, b.max.x])
+          for (final y in <double>[b.min.y, b.max.y])
+            for (final z in <double>[b.min.z, b.max.z])
+              projection.project(RenderScenePoint(x: x, y: y, z: z)).screen,
+      ];
+      final minX = points.map((point) => point.dx).reduce((a, b) => a < b ? a : b);
+      final minY = points.map((point) => point.dy).reduce((a, b) => a < b ? a : b);
+      final maxX = points.map((point) => point.dx).reduce((a, b) => a > b ? a : b);
+      final maxY = points.map((point) => point.dy).reduce((a, b) => a > b ? a : b);
+      yield MapEntry<String, Rect>(id, Rect.fromLTRB(minX, minY, maxX, maxY));
+    }
+  }
+
   RenderSceneViewportController get controller => widget.controller;
 
   @override
@@ -245,6 +298,31 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
       builder: (BuildContext context, BoxConstraints constraints) {
         final size = constraints.biggest;
         controller.setViewportSize(size);
+        RenderSceneLevel? inlineLevel;
+        Offset? inlineLevelOrigin;
+        if (controller.selectedLevelId != null &&
+            controller.projectionMode.isElevation) {
+          final projection = RenderSceneProjection(
+            sceneBounds: scene.bounds,
+            canvasSize: size,
+            projectionMode: controller.projectionMode,
+            orbitProjectionStyle: controller.orbitProjectionStyle,
+            planCamera: controller.planCamera,
+            camera: controller.camera,
+            padding: FallbackRenderScenePainter.padding,
+          );
+          for (final overlay in buildLevelOverlayEntries(
+            scene: scene,
+            projectionMode: controller.projectionMode,
+            projection: projection,
+          )) {
+            if (overlay.level.levelId == controller.selectedLevelId) {
+              inlineLevel = overlay.level;
+              inlineLevelOrigin = overlay.labelOrigin + const Offset(0, 16);
+              break;
+            }
+          }
+        }
 
         return GestureDetector(
           behavior: HitTestBehavior.opaque,
@@ -313,8 +391,27 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                   event.buttons == kMiddleMouseButton;
               _sceneDragStarted = false;
               if (!_isSecondaryDrag &&
-                  controller.projectionMode !=
-                      RenderSceneProjectionMode.isometric &&
+                  widget.interactionMode == RenderSceneInteractionMode.select) {
+                final picked = pickObjectAt(
+                  scene: scene,
+                  size: size,
+                  localPosition: event.localPosition,
+                  projectionMode: controller.projectionMode,
+                  orbitProjectionStyle: controller.orbitProjectionStyle,
+                  planCamera: controller.planCamera,
+                  camera: controller.camera,
+                  visibleKinds: controller.visibleKinds,
+                  padding: FallbackRenderScenePainter.padding,
+                );
+                _interaction.begin(
+                  position: event.localPosition,
+                  elementId: picked?.elementId?.toString(),
+                  modifiers: _selectionModifiers(),
+                  allowObjectDrag: !controller.projectionMode.is3D,
+                );
+              }
+              if (!_isSecondaryDrag &&
+                  widget.interactionMode != RenderSceneInteractionMode.select &&
                   (widget.interactionMode ==
                           RenderSceneInteractionMode.moveWall ||
                       widget.interactionMode ==
@@ -399,9 +496,49 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
               }
 
               final delta = event.localPosition - last;
-              if (controller.projectionMode !=
-                      RenderSceneProjectionMode.isometric &&
+              if (widget.interactionMode == RenderSceneInteractionMode.select &&
+                  !_isSecondaryDrag) {
+                final rectangle = _interaction.update(event.localPosition);
+                if (_interaction.intent == ViewportDragIntent.rectangleSelect) {
+                  setState(() => _selectionRect = rectangle);
+                  _lastPointerPosition = event.localPosition;
+                  return;
+                }
+              }
+              if (!_sceneDragStarted &&
+                  widget.interactionMode == RenderSceneInteractionMode.select &&
+                  !controller.projectionMode.is3D &&
+                  _pointerDownPosition != null &&
+                  (event.localPosition - _pointerDownPosition!).distance >
+                      _tapDistanceThreshold(event)) {
+                final picked = pickObjectAt(
+                  scene: scene,
+                  size: size,
+                  localPosition: event.localPosition,
+                  projectionMode: controller.projectionMode,
+                  orbitProjectionStyle: controller.orbitProjectionStyle,
+                  planCamera: controller.planCamera,
+                  camera: controller.camera,
+                  visibleKinds: controller.visibleKinds,
+                  padding: FallbackRenderScenePainter.padding,
+                );
+                final modelPoint =
+                    controller.screenToModelPlan(event.localPosition, size);
+                final pickedLevel =
+                    _pickLevelAtPosition(scene, size, event.localPosition);
+                widget.onSceneDragStart?.call(RenderSceneTapDetails(
+                  screenPosition: event.localPosition,
+                  globalPosition: event.position,
+                  modelPoint: modelPoint,
+                  pickedObject: pickedLevel == null ? picked : null,
+                  pickedLevel: pickedLevel,
+                ));
+                _sceneDragStarted = true;
+              }
+              if (_sceneDragStarted &&
                   (widget.interactionMode ==
+                          RenderSceneInteractionMode.select ||
+                      widget.interactionMode ==
                           RenderSceneInteractionMode.moveWall ||
                       widget.interactionMode ==
                           RenderSceneInteractionMode.moveLevel ||
@@ -427,17 +564,11 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                   pickedObject: picked,
                 );
                 widget.onSceneDragUpdate?.call(details);
-              } else if (controller.projectionMode !=
-                      RenderSceneProjectionMode.isometric &&
-                  widget.interactionMode != RenderSceneInteractionMode.select) {
+              } else if (widget.interactionMode !=
+                  RenderSceneInteractionMode.select) {
                 _emitHover(scene, size, event.localPosition, event.position);
-              } else if (controller.projectionMode !=
-                  RenderSceneProjectionMode.isometric) {
-                controller.panPlanBy(delta);
               } else if (_isSecondaryDrag) {
                 controller.panOrbitBy(delta, size);
-              } else {
-                controller.orbitBy(delta, size);
               }
 
               _lastPointerPosition = event.localPosition;
@@ -461,10 +592,34 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
               final moved = down == null
                   ? double.infinity
                   : (event.localPosition - down).distance;
+              if (widget.interactionMode == RenderSceneInteractionMode.select &&
+                  _interaction.intent == ViewportDragIntent.rectangleSelect &&
+                  _selectionRect != null) {
+                final rectangle = _selectionRect!;
+                // Clear the visual overlay before the controller notification.
+                // Otherwise the notification schedules a frame with the old blue
+                // rectangle and it appears as if the selection did not commit.
+                setState(() => _selectionRect = null);
+                final ids = _interaction.resolveRectangle(
+                  current: ViewportSelectionState(
+                    selectedElementIds: controller.selectedElementIds,
+                    activeElementId: controller.activeElementId,
+                  ),
+                  candidates: _selectionCandidates(scene, size),
+                  rect: rectangle,
+                );
+                await controller.selectElements(
+                  ids,
+                  activeElementId: ids.isEmpty ? null : ids.last,
+                );
+                await controller.highlightElement(controller.activeElementId);
+                _clearPointerState();
+                return;
+              }
               if (_sceneDragStarted &&
-                  controller.projectionMode !=
-                      RenderSceneProjectionMode.isometric &&
                   (widget.interactionMode ==
+                          RenderSceneInteractionMode.select ||
+                      widget.interactionMode ==
                           RenderSceneInteractionMode.moveWall ||
                       widget.interactionMode ==
                           RenderSceneInteractionMode.moveLevel ||
@@ -530,14 +685,22 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
 
                 if (widget.interactionMode ==
                     RenderSceneInteractionMode.select) {
-                  if (picked != null) {
-                    final id = picked.elementId?.toString();
-                    await controller.selectElement(id);
-                    await controller.highlightElement(id);
-                  } else {
-                    await controller.selectElement(null);
-                    await controller.highlightElement(null);
-                  }
+                  final id = picked?.elementId?.toString();
+                  final ids = _interaction.resolveClick(
+                    current: ViewportSelectionState(
+                      selectedElementIds: controller.selectedElementIds,
+                      activeElementId: controller.activeElementId,
+                      selectedLevelId: controller.selectedLevelId,
+                    ),
+                    elementId: id,
+                  );
+                  await controller.selectElements(
+                    ids,
+                    activeElementId: id != null && ids.contains(id)
+                        ? id
+                        : (ids.isEmpty ? null : ids.last),
+                  );
+                  await controller.highlightElement(controller.activeElementId);
                   widget.onSceneTap?.call(details);
                 } else {
                   widget.onSceneTap?.call(details);
@@ -555,7 +718,10 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                     painter: FallbackRenderScenePainter(
                       scene: scene,
                       visibleKinds: controller.visibleKinds,
-                      selectedElementId: controller.selectedElementId,
+                      selectedElementIds: controller.selectedElementIds,
+                      activeElementId: controller.activeElementId,
+                      selectedLevelId: controller.selectedLevelId,
+                      selectionRect: _selectionRect,
                       highlightedElementId: controller.highlightedElementId,
                       projectionMode: controller.projectionMode,
                       orbitProjectionStyle: controller.orbitProjectionStyle,
@@ -572,6 +738,16 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                     size: Size.infinite,
                   ),
                 ),
+                if (inlineLevel != null && inlineLevelOrigin != null)
+                  Positioned(
+                    left: inlineLevelOrigin.dx.clamp(8.0, size.width - 132.0),
+                    top: inlineLevelOrigin.dy.clamp(8.0, size.height - 42.0),
+                    child: _InlineLevelElevationField(
+                      key: ValueKey<int>(inlineLevel.levelId),
+                      level: inlineLevel,
+                      onSubmitted: widget.onLevelElevationSubmitted,
+                    ),
+                  ),
                 Positioned(
                   left: 12,
                   bottom: 12,
@@ -657,6 +833,71 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
     _gesturePreviousScale = 1.0;
     _gesturePreviousFocalPoint = null;
     _sceneDragStarted = false;
+    _selectionRect = null;
+    _interaction.reset();
+  }
+}
+
+class _InlineLevelElevationField extends StatefulWidget {
+  const _InlineLevelElevationField({
+    super.key,
+    required this.level,
+    required this.onSubmitted,
+  });
+
+  final RenderSceneLevel level;
+  final Future<void> Function(RenderSceneLevel level, String value)? onSubmitted;
+
+  @override
+  State<_InlineLevelElevationField> createState() =>
+      _InlineLevelElevationFieldState();
+}
+
+class _InlineLevelElevationFieldState extends State<_InlineLevelElevationField> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(
+      text: widget.level.elevationMeters.toStringAsFixed(2),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _commit() async {
+    await widget.onSubmitted?.call(widget.level, _controller.text);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 124,
+      child: TextField(
+        controller: _controller,
+        autofocus: true,
+        keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
+        textInputAction: TextInputAction.done,
+        onTap: () => _controller.selection = TextSelection(
+          baseOffset: 0,
+          extentOffset: _controller.text.length,
+        ),
+        onSubmitted: (_) => _commit(),
+        onEditingComplete: _commit,
+        decoration: const InputDecoration(
+          isDense: true,
+          suffixText: 'm',
+          filled: true,
+          fillColor: Color(0xFFFFFFFF),
+          border: OutlineInputBorder(),
+        ),
+      ),
+    );
   }
 }
 

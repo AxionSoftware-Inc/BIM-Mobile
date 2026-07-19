@@ -23,6 +23,23 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+
+        externalNativeBuild {
+            cmake {
+                arguments += listOf(
+                    "-DTBE_BUILD_TESTS=OFF",
+                    "-DTBE_BUILD_CLI=OFF",
+                    "-DTBE_BUILD_EXAMPLES=OFF",
+                    "-DTBE_ENABLE_OCCT=OFF",
+                )
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("../../../../CMakeLists.txt")
+        }
     }
 
     buildTypes {

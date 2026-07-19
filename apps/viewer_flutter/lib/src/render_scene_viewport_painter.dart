@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'render_scene_editor.dart';
@@ -13,7 +14,10 @@ class FallbackRenderScenePainter extends CustomPainter {
   FallbackRenderScenePainter({
     required this.scene,
     required this.visibleKinds,
-    required this.selectedElementId,
+    required this.selectedElementIds,
+    required this.activeElementId,
+    required this.selectedLevelId,
+    this.selectionRect,
     required this.highlightedElementId,
     required this.projectionMode,
     required this.orbitProjectionStyle,
@@ -32,7 +36,10 @@ class FallbackRenderScenePainter extends CustomPainter {
 
   final RenderScene scene;
   final Set<String> visibleKinds;
-  final String? selectedElementId;
+  final Set<String> selectedElementIds;
+  final String? activeElementId;
+  final int? selectedLevelId;
+  final Rect? selectionRect;
   final String? highlightedElementId;
   final RenderSceneProjectionMode projectionMode;
   final RenderSceneOrbitProjectionStyle orbitProjectionStyle;
@@ -79,8 +86,7 @@ class FallbackRenderScenePainter extends CustomPainter {
 
     for (final object in filteredObjects) {
       final elementId = object.elementId?.toString();
-      final isSelected =
-          elementId == selectedElementId && selectedElementId != null;
+      final isSelected = elementId != null && selectedElementIds.contains(elementId);
       final isHighlighted =
           elementId == highlightedElementId && highlightedElementId != null;
       final baseColor = _kindColor(object.kindKey);
@@ -196,6 +202,17 @@ class FallbackRenderScenePainter extends CustomPainter {
     _drawLabels(canvas, projection, filteredObjects);
     _drawSelectedWallHandles(canvas, projection);
     _drawDraftOverlay(canvas, projection);
+    final rectangle = selectionRect;
+    if (rectangle != null) {
+      canvas.drawRect(rectangle, Paint()..color = const Color(0x332563EB));
+      canvas.drawRect(
+        rectangle,
+        Paint()
+          ..color = const Color(0xFF2563EB)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.5,
+      );
+    }
 
     canvas.drawRect(
       Offset.zero & size,
@@ -906,8 +923,7 @@ class FallbackRenderScenePainter extends CustomPainter {
 
     for (final object in objects) {
       final elementId = object.elementId?.toString();
-      final isSelected =
-          elementId == selectedElementId && selectedElementId != null;
+      final isSelected = elementId != null && selectedElementIds.contains(elementId);
       final isHighlighted =
           elementId == highlightedElementId && highlightedElementId != null;
       if (!isSelected && !isHighlighted && objects.length > 80) {
@@ -1020,13 +1036,13 @@ class FallbackRenderScenePainter extends CustomPainter {
     RenderSceneProjection projection,
   ) {
     if (!projectionMode.supportsPlanFootprintEditing ||
-        selectedElementId == null) {
+        activeElementId == null) {
       return;
     }
     // Endpoint handles remain plan-only on purpose. The projection/navigation
     // math is unified across planar views, but handle editing here still targets
     // footprint wall endpoints rather than elevation grips.
-    final object = scene.objectByStableId(selectedElementId!);
+    final object = scene.objectByStableId(activeElementId!);
     if (object == null || object.kindKey != 'wall') {
       return;
     }
@@ -1094,13 +1110,15 @@ class FallbackRenderScenePainter extends CustomPainter {
       projection: projection,
     );
     for (final overlay in overlays) {
+      final isSelected = overlay.level.levelId == selectedLevelId;
       _drawDashedLine(
         canvas,
         overlay.lineStart,
         overlay.lineEnd,
         Paint()
-          ..color = const Color(0xFF0F766E).withValues(alpha: 0.88)
-          ..strokeWidth = 1.6,
+          ..color = (isSelected ? const Color(0xFF2563EB) : const Color(0xFF0F766E))
+              .withValues(alpha: 0.96)
+          ..strokeWidth = isSelected ? 3.2 : 1.6,
         dashLength: 12,
         gapLength: 6,
       );
@@ -1108,7 +1126,9 @@ class FallbackRenderScenePainter extends CustomPainter {
         text: TextSpan(
           text:
               '${overlay.level.name} ${overlay.level.elevationMeters.toStringAsFixed(2)}m',
-          style: textStyle,
+          style: isSelected
+              ? textStyle.copyWith(color: const Color(0xFF1D4ED8), fontSize: 13)
+              : textStyle,
         ),
         textDirection: TextDirection.ltr,
         maxLines: 1,
@@ -1181,7 +1201,10 @@ class FallbackRenderScenePainter extends CustomPainter {
   bool shouldRepaint(covariant FallbackRenderScenePainter oldDelegate) {
     return oldDelegate.scene != scene ||
         oldDelegate.visibleKinds != visibleKinds ||
-        oldDelegate.selectedElementId != selectedElementId ||
+        !setEquals(oldDelegate.selectedElementIds, selectedElementIds) ||
+        oldDelegate.activeElementId != activeElementId ||
+        oldDelegate.selectedLevelId != selectedLevelId ||
+        oldDelegate.selectionRect != selectionRect ||
         oldDelegate.highlightedElementId != highlightedElementId ||
         oldDelegate.projectionMode != projectionMode ||
         oldDelegate.orbitProjectionStyle != orbitProjectionStyle ||

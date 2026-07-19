@@ -12,7 +12,9 @@ import 'package:viewer_flutter/src/render_scene_viewport_controller.dart';
 import 'package:viewer_flutter/src/render_scene_viewport_planar.dart';
 import 'package:viewer_flutter/src/render_scene_viewport_projection.dart';
 import 'package:viewer_flutter/src/render_scene_viewport_types.dart';
+import 'package:viewer_flutter/src/tbe_ffi.dart';
 import 'package:viewer_flutter/src/viewer_app.dart';
+import 'package:viewer_flutter/src/viewport_interaction.dart';
 
 void main() {
   test('RenderScene parser loads the bundled sample and keeps finite bounds',
@@ -24,7 +26,11 @@ void main() {
     expect(result.scene, isNotNull);
     expect(result.errors, isEmpty);
 
-    final scene = result.scene!;
+    final scene = RenderSceneEditor.createLevel(
+      scene: result.scene!,
+      name: 'Level 2',
+      elevationMeters: 3.2,
+    );
     expect(scene.objectCount, 6);
     expect(scene.kindCounts['wall'], 4);
     expect(scene.kindCounts['door'], 1);
@@ -48,21 +54,70 @@ void main() {
     expect(result.errors, isNotEmpty);
   });
 
+  test('native engine returns RenderScene without package export', () async {
+    final api = TbeViewerApi.load();
+    final repository = ViewerRepository(api);
+    addTearDown(repository.dispose);
+    final projectJson = File('assets/sample_project.json').readAsStringSync();
+    await repository.loadFromJson(
+      projectName: 'FFI direct scene',
+      json: projectJson,
+    );
+    final result = await repository.currentRenderScene();
+    expect(result.errors, isEmpty);
+    expect(result.scene, isNotNull);
+    expect(result.scene!.objects, isNotEmpty);
+  });
+
+  test('level move updates a wall constrained to that level', () async {
+    final api = TbeViewerApi.load();
+    final repository = ViewerRepository(api);
+    addTearDown(repository.dispose);
+    final projectJson = File('assets/sample_project.json').readAsStringSync();
+    await repository.loadFromJson(
+        projectName: 'Level constraints', json: projectJson);
+
+    final created = await repository.createWall(
+      name: 'Constrained test wall',
+      levelId: 1,
+      start: const RenderScenePoint(x: 12, y: 0, z: 0),
+      end: const RenderScenePoint(x: 16, y: 0, z: 0),
+      thicknessMeters: 0.2,
+      heightMeters: 3.0,
+    );
+    final wallId = repository.lastCreatedElementId;
+    expect(wallId, isNotNull);
+    await repository.setWallLevelConstraints(
+      wallId: wallId!,
+      baseLevelId: 1,
+      topLevelId: 2,
+      heightMode: 1,
+    );
+    final before = (await repository.currentRenderScene()).scene!;
+    final beforeWall = before.objectById(wallId)!;
+
+    await repository.moveLevelElevation(levelId: 2, elevationMeters: 4.5);
+    final after = (await repository.currentRenderScene()).scene!;
+    final afterWall = after.objectById(wallId)!;
+    expect(afterWall.bounds.max.z, greaterThan(beforeWall.bounds.max.z));
+    expect(created.scene, isNotNull);
+  });
+
   test('Bundled render scene retains wall level metadata', () {
-    final json =
-        File('assets/render_scene.json').readAsStringSync();
+    final json = File('assets/render_scene.json').readAsStringSync();
     final result = parseRenderSceneJson(
       json,
       source: 'assets/render_scene.json',
     );
     expect(result.scene, isNotNull);
-    final wall = result.scene!.objects.firstWhere((object) => object.kindKey == 'wall');
+    final wall =
+        result.scene!.objects.firstWhere((object) => object.kindKey == 'wall');
     expect(wall.metadata['base_level_id'], isNotNull);
     expect(wall.metadata['top_level_id'], isNotNull);
     expect(wall.metadata['height_mode'], isNotNull);
   });
 
-  test('normalizeSceneGeometry preserves wall level constraint metadata', () {
+  test('normalizeSceneGeometry upgrades legacy walls to level constraints', () {
     final json = File('assets/render_scene.json').readAsStringSync();
     final result = parseRenderSceneJson(
       json,
@@ -70,14 +125,16 @@ void main() {
     );
     expect(result.scene, isNotNull);
     final scene = result.scene!;
-    final wallBefore = scene.objects.firstWhere((object) => object.kindKey == 'wall');
+    final wallBefore =
+        scene.objects.firstWhere((object) => object.kindKey == 'wall');
     expect(wallBefore.metadata['base_level_id'], isNotNull);
 
     final normalized = RenderSceneEditor.normalizeSceneGeometry(scene);
     final wallAfter = normalized.objectById(wallBefore.elementId)!;
-    expect(wallAfter.metadata['base_level_id'], equals(wallBefore.metadata['base_level_id']));
-    expect(wallAfter.metadata['top_level_id'], equals(wallBefore.metadata['top_level_id']));
-    expect(wallAfter.metadata['height_mode'], equals(wallBefore.metadata['height_mode']));
+    expect(wallAfter.metadata['base_level_id'],
+        equals(wallBefore.metadata['base_level_id']));
+    expect(wallAfter.metadata['top_level_id'], isNot(equals('0')));
+    expect(wallAfter.metadata['height_mode'], equals('TopLevel'));
   });
 
   test('RenderScene editor can add wall, door, and window locally', () {
@@ -89,7 +146,11 @@ void main() {
     );
     expect(result.scene, isNotNull);
 
-    final scene = result.scene!;
+    final scene = RenderSceneEditor.createLevel(
+      scene: result.scene!,
+      name: 'Level 2',
+      elevationMeters: 3.2,
+    );
     final wallAdded = RenderSceneEditor.addWall(
       scene: scene,
       start: const RenderScenePoint(x: 10, y: 0, z: 0),
@@ -136,9 +197,15 @@ void main() {
     );
     expect(leveled.levels.length, greaterThan(result.scene!.levels.length));
 
-    final level2 = leveled.levels.firstWhere((level) => level.name == 'Level 2');
-    final wallOnLevel2 = RenderSceneEditor.addWall(
+    final level2 =
+        leveled.levels.firstWhere((level) => level.name == 'Level 2');
+    final withTopLevel = RenderSceneEditor.createLevel(
       scene: leveled,
+      name: 'Level 3',
+      elevationMeters: 6.4,
+    );
+    final wallOnLevel2 = RenderSceneEditor.addWall(
+      scene: withTopLevel,
       start: const RenderScenePoint(x: 20, y: 0, z: 3.2),
       end: const RenderScenePoint(x: 24, y: 0, z: 3.2),
       levelId: level2.levelId,
@@ -146,11 +213,13 @@ void main() {
     );
 
     final filtered = wallOnLevel2.filteredByLevel(level2.levelId);
-    expect(filtered.objects.every((object) => object.levelId == level2.levelId), isTrue);
+    expect(filtered.objects.every((object) => object.levelId == level2.levelId),
+        isTrue);
     expect(filtered.kindCounts['wall'], greaterThan(0));
   });
 
-  test('Level elevation moves locked wall and leaves unlocked wall in place', () {
+  test('Level elevation moves locked wall and leaves unlocked wall in place',
+      () {
     final json =
         File('test/fixtures/render_scene_sample.json').readAsStringSync();
     final result = parseRenderSceneJson(
@@ -160,8 +229,12 @@ void main() {
     expect(result.scene, isNotNull);
 
     final baseScene = result.scene!;
-    final wall = baseScene.objects.firstWhere((object) => object.kindKey == 'wall');
+    final wall =
+        baseScene.objects.firstWhere((object) => object.kindKey == 'wall');
+    final door =
+        baseScene.objects.firstWhere((object) => object.kindKey == 'door');
     final startBefore = RenderSceneEditor.wallStartPoint(wall)!;
+    final doorBaseBefore = door.bounds.min.z;
 
     final movedScene = RenderSceneEditor.setLevelElevation(
       scene: baseScene,
@@ -171,6 +244,8 @@ void main() {
     final movedWall = movedScene.objectById(wall.elementId)!;
     final startAfter = RenderSceneEditor.wallStartPoint(movedWall)!;
     expect(startAfter.z, closeTo(startBefore.z + 1.5, 1e-6));
+    final movedDoor = movedScene.objectById(door.elementId)!;
+    expect(movedDoor.bounds.min.z, closeTo(doorBaseBefore + 1.5, 1e-6));
 
     final unlockedScene = RenderSceneEditor.setElementLevelLock(
       scene: movedScene,
@@ -358,8 +433,9 @@ void main() {
       padding: 48,
     );
 
-    final tapPoint =
-        projection.project(const RenderScenePoint(x: 0.0, y: 0.05, z: 1.5)).screen;
+    final tapPoint = projection
+        .project(const RenderScenePoint(x: 0.0, y: 0.05, z: 1.5))
+        .screen;
     final picked = pickObjectAt(
       scene: scene,
       size: const Size(1280, 720),
@@ -384,7 +460,8 @@ void main() {
     expect(picked!.kindKey, 'wall');
   });
 
-  test('North/South/East/West are true planar re-projections of the same model', () {
+  test('North/South/East/West are true planar re-projections of the same model',
+      () {
     const bounds = RenderSceneBounds(
       min: RenderScenePoint(x: 0, y: 0, z: 0),
       max: RenderScenePoint(x: 10, y: 20, z: 6),
@@ -421,10 +498,12 @@ void main() {
     final south = projectionFor(RenderSceneProjectionMode.southElevation)
         .project(point)
         .screen;
-    final east =
-        projectionFor(RenderSceneProjectionMode.eastElevation).project(point).screen;
-    final west =
-        projectionFor(RenderSceneProjectionMode.westElevation).project(point).screen;
+    final east = projectionFor(RenderSceneProjectionMode.eastElevation)
+        .project(point)
+        .screen;
+    final west = projectionFor(RenderSceneProjectionMode.westElevation)
+        .project(point)
+        .screen;
 
     // Same vertical axis for all elevation views: higher Z must move up equally.
     expect(north.dy, closeTo(south.dy, 1e-6));
@@ -461,23 +540,81 @@ void main() {
     expect(controller.planCamera.center.z, closeTo(-20, 1e-6));
   });
 
-  test('Switching from elevation to 3D preserves directional meaning', () async {
+  test('Revit-style selection controller clears, toggles and windows objects',
+      () {
+    final interaction = ViewportInteractionController();
+    const initial = ViewportSelectionState(selectedElementIds: <String>{'1'});
+    interaction.begin(
+      position: const Offset(10, 10),
+      elementId: '2',
+      modifiers: const ViewportSelectionModifiers(additive: true),
+      allowObjectDrag: true,
+    );
+    expect(interaction.resolveClick(current: initial, elementId: '2'),
+        <String>{'1', '2'});
+
+    interaction.begin(
+      position: const Offset(10, 10),
+      elementId: null,
+      modifiers: const ViewportSelectionModifiers(),
+      allowObjectDrag: true,
+    );
+    expect(
+        interaction.resolveClick(current: initial, elementId: null), isEmpty);
+    interaction.update(const Offset(100, 100));
+    expect(
+      interaction.resolveRectangle(
+        current: initial,
+        rect: const Rect.fromLTWH(10, 10, 90, 90),
+        candidates: const <MapEntry<String, Rect>>[
+          MapEntry<String, Rect>('inside', Rect.fromLTWH(20, 20, 20, 20)),
+          MapEntry<String, Rect>('crossing', Rect.fromLTWH(90, 90, 30, 30)),
+        ],
+      ),
+      <String>{'inside'},
+    );
+
+    interaction.begin(
+      position: const Offset(100, 10),
+      elementId: null,
+      modifiers: const ViewportSelectionModifiers(),
+      allowObjectDrag: true,
+    );
+    interaction.update(const Offset(10, 100));
+    expect(
+      interaction.resolveRectangle(
+        current: initial,
+        rect: const Rect.fromLTWH(10, 10, 90, 90),
+        candidates: const <MapEntry<String, Rect>>[
+          MapEntry<String, Rect>('inside', Rect.fromLTWH(20, 20, 20, 20)),
+          MapEntry<String, Rect>('crossing', Rect.fromLTWH(90, 90, 30, 30)),
+        ],
+      ),
+      <String>{'inside', 'crossing'},
+    );
+  });
+
+  test('Switching from elevation to 3D preserves directional meaning',
+      () async {
     final controller = RenderSceneViewportController(
       backend: RenderSceneViewportBackend.fallback,
     );
 
-    await controller.setProjectionMode(RenderSceneProjectionMode.northElevation);
+    await controller
+        .setProjectionMode(RenderSceneProjectionMode.northElevation);
     await controller.setProjectionMode(RenderSceneProjectionMode.isometric);
     expect(
       controller.camera.yawRadians,
-      closeTo(RenderSceneProjectionMode.northElevation.spec.orbitYawRadians!, 1e-9),
+      closeTo(
+          RenderSceneProjectionMode.northElevation.spec.orbitYawRadians!, 1e-9),
     );
 
     await controller.setProjectionMode(RenderSceneProjectionMode.westElevation);
     await controller.setProjectionMode(RenderSceneProjectionMode.isometric);
     expect(
       controller.camera.yawRadians,
-      closeTo(RenderSceneProjectionMode.westElevation.spec.orbitYawRadians!, 1e-9),
+      closeTo(
+          RenderSceneProjectionMode.westElevation.spec.orbitYawRadians!, 1e-9),
     );
   });
 
@@ -504,8 +641,7 @@ void main() {
 
   testWidgets('Selecting a wall shows inline wall level controls',
       (WidgetTester tester) async {
-    final json =
-        File('assets/render_scene.json').readAsStringSync();
+    final json = File('assets/render_scene.json').readAsStringSync();
     await tester.binding.setSurfaceSize(const Size(1600, 1000));
     await tester.pumpWidget(
       ViewerApp(

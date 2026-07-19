@@ -154,6 +154,7 @@ internal class RenderSceneFilamentHostView(
   )
   private var currentScene: SceneState? = initialScene
   private var selectedElementId: Long? = null
+  private var selectedElementIds = emptySet<Long>()
   private var highlightedElementId: Long? = null
   private var framePosted = false
   private var surfaceReady = false
@@ -305,6 +306,19 @@ internal class RenderSceneFilamentHostView(
 
   fun selectElement(elementId: Any?) {
     selectedElementId = toLong(elementId)
+    selectedElementIds = selectedElementId?.let { setOf(it) } ?: emptySet()
+    refreshTintState()
+    updateStatus()
+    invalidate()
+  }
+
+  fun setSelection(selection: Map<*, *>?) {
+    val ids = (selection?.get("ids") as? List<*>)
+      ?.mapNotNull { toLong(it) }
+      ?.toSet()
+      ?: emptySet()
+    selectedElementIds = ids
+    selectedElementId = toLong(selection?.get("activeId"))?.takeIf { ids.contains(it) }
     refreshTintState()
     updateStatus()
     invalidate()
@@ -595,9 +609,11 @@ internal class RenderSceneFilamentHostView(
 
   private fun refreshTintState() {
     for (entry in renderables.values) {
-      val selected = entry.objectData.elementId != null && entry.objectData.elementId == selectedElementId
+      val selected = entry.objectData.elementId != null && selectedElementIds.contains(entry.objectData.elementId)
+      val active = entry.objectData.elementId != null && entry.objectData.elementId == selectedElementId
       val highlighted = entry.objectData.elementId != null && entry.objectData.elementId == highlightedElementId
       val color = when {
+        active -> floatArrayOf(0.08f, 0.28f, 0.82f, 1f)
         selected -> floatArrayOf(0.18f, 0.45f, 0.95f, 1f)
         highlighted -> floatArrayOf(0.92f, 0.34f, 0.16f, 1f)
         else -> entry.baseColor

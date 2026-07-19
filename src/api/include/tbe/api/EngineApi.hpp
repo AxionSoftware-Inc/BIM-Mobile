@@ -516,6 +516,7 @@ public:
     ApiVoidResult export_project_package(const std::string& path, PackageExportOptionsDTO options = {}) const;
     ApiVoidResult import_project_package(const std::string& path, LoadMode mode = LoadMode::Strict);
     ApiResult<RenderSceneDTO> get_render_scene() const;
+    ApiResult<std::string> get_render_scene_json() const;
     ApiVoidResult export_render_scene_json(const std::string& path) const;
     ApiVoidResult set_performance_profile(PerformanceProfile profile);
     ApiResult<PerformanceProfile> get_performance_profile() const;
@@ -557,6 +558,7 @@ public:
         double sill_height_meters
     );
     ApiVoidResult set_opening_level_lock(std::uint64_t opening_id, bool locked);
+    ApiVoidResult set_opening_level(std::uint64_t opening_id, std::uint64_t level_id);
     ApiResult<std::vector<ElementIdDTO>> create_elements_from_profile(ProfileDraftDTO draft);
     ApiResult<std::vector<RoomDTO>> detect_rooms();
     ApiVoidResult auto_join_walls();

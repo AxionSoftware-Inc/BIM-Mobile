@@ -2,6 +2,7 @@
 
 #include "tbe/api/EngineApi.hpp"
 
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
@@ -39,6 +40,16 @@ TbeApiStatusCode null_handle_error(TbeEngineHandle* handle) {
         handle->last_error = "engine handle is null";
     }
     return TBE_API_INVALID_ARGUMENT;
+}
+
+bool is_valid_performance_profile(int value) {
+    return value >= static_cast<int>(tbe::api::PerformanceProfile::BatterySaver) &&
+        value <= static_cast<int>(tbe::api::PerformanceProfile::Performance);
+}
+
+bool is_valid_compute_mode(int value) {
+    return value >= static_cast<int>(tbe::api::ComputeMode::InteractivePreview) &&
+        value <= static_cast<int>(tbe::api::ComputeMode::FinalExact);
 }
 
 TbeApiStatusCode copy_string_result(TbeEngineHandle* handle, const tbe::api::ApiResult<std::string>& result, char** out_value) {
@@ -332,6 +343,22 @@ TbeApiStatusCode tbe_set_wall_level_constraints(
     ));
 }
 
+TbeApiStatusCode tbe_set_wall_axis(
+    TbeEngineHandle* handle,
+    uint64_t wall_id,
+    TbeVec2 start,
+    TbeVec2 end
+) {
+    if (handle == nullptr || handle->session == nullptr) {
+        return null_handle_error(handle);
+    }
+    return apply_result(handle, handle->session->set_wall_axis(
+        wall_id,
+        tbe::api::Vec2{.x = start.x, .y = start.y},
+        tbe::api::Vec2{.x = end.x, .y = end.y}
+    ));
+}
+
 TbeApiStatusCode tbe_move_wall(TbeEngineHandle* handle, uint64_t wall_id, double dx_meters, double dy_meters) {
     if (handle == nullptr || handle->session == nullptr) {
         return null_handle_error(handle);
@@ -394,6 +421,20 @@ TbeApiStatusCode tbe_set_opening_level_lock(TbeEngineHandle* handle, uint64_t op
     return apply_result(handle, handle->session->set_opening_level_lock(opening_id, locked != 0));
 }
 
+TbeApiStatusCode tbe_set_opening_level(TbeEngineHandle* handle, uint64_t opening_id, uint64_t level_id) {
+    if (handle == nullptr || handle->session == nullptr) {
+        return null_handle_error(handle);
+    }
+    return apply_result(handle, handle->session->set_opening_level(opening_id, level_id));
+}
+
+TbeApiStatusCode tbe_move_hosted_opening(TbeEngineHandle* handle, uint64_t opening_id, double offset_meters) {
+    if (handle == nullptr || handle->session == nullptr) {
+        return null_handle_error(handle);
+    }
+    return apply_result(handle, handle->session->move_hosted_opening(opening_id, offset_meters));
+}
+
 TbeApiStatusCode tbe_create_profile(
     TbeEngineHandle* handle,
     int target_kind,
@@ -445,6 +486,46 @@ TbeApiStatusCode tbe_create_profile(
         }
     }
     return apply_result(handle, result);
+}
+
+TbeApiStatusCode tbe_create_floor_system_for_room(
+    TbeEngineHandle* handle,
+    uint64_t room_id,
+    uint64_t assembly_id,
+    uint64_t* out_floor_id
+) {
+    if (handle == nullptr || handle->session == nullptr || out_floor_id == nullptr) {
+        return null_handle_error(handle);
+    }
+    const auto result = handle->session->create_floor_system_for_room(room_id, assembly_id);
+    if (result.ok() && result.value.has_value()) {
+        *out_floor_id = result.value->value;
+    }
+    return apply_result(handle, result);
+}
+
+TbeApiStatusCode tbe_create_ceiling_system_for_room(
+    TbeEngineHandle* handle,
+    uint64_t room_id,
+    uint64_t assembly_id,
+    double height_offset_meters,
+    uint64_t* out_ceiling_id
+) {
+    if (handle == nullptr || handle->session == nullptr || out_ceiling_id == nullptr) {
+        return null_handle_error(handle);
+    }
+    const auto result = handle->session->create_ceiling_system_for_room(room_id, assembly_id, height_offset_meters);
+    if (result.ok() && result.value.has_value()) {
+        *out_ceiling_id = result.value->value;
+    }
+    return apply_result(handle, result);
+}
+
+TbeApiStatusCode tbe_delete_element(TbeEngineHandle* handle, uint64_t element_id) {
+    if (handle == nullptr || handle->session == nullptr) {
+        return null_handle_error(handle);
+    }
+    return apply_result(handle, handle->session->delete_element(element_id));
 }
 
 TbeApiStatusCode tbe_detect_rooms(TbeEngineHandle* handle, uint64_t* out_room_count) {
@@ -514,6 +595,50 @@ TbeApiStatusCode tbe_spatial_index_stats(TbeEngineHandle* handle, TbeSpatialInde
         out_stats->average_bucket_occupancy = stats.average_bucket_occupancy;
         out_stats->max_bucket_occupancy = static_cast<uint64_t>(stats.max_bucket_occupancy);
         out_stats->dirty = stats.dirty ? 1 : 0;
+    }
+    return apply_result(handle, result);
+}
+
+TbeApiStatusCode tbe_query_rect(
+    TbeEngineHandle* handle,
+    uint64_t level_id,
+    TbeRect2 bounds,
+    TbeElementIdListResult* out_result
+) {
+    if (handle == nullptr || handle->session == nullptr || out_result == nullptr) {
+        return null_handle_error(handle);
+    }
+    out_result->count = 0;
+    out_result->element_ids = nullptr;
+    if (!std::isfinite(bounds.min_x) || !std::isfinite(bounds.min_y) ||
+        !std::isfinite(bounds.max_x) || !std::isfinite(bounds.max_y) ||
+        bounds.min_x > bounds.max_x || bounds.min_y > bounds.max_y) {
+        handle->last_error = "query rectangle must be finite and normalized";
+        return TBE_API_INVALID_ARGUMENT;
+    }
+    const auto result = handle->session->query_rect(
+        tbe::api::ElementIdDTO{.value = level_id},
+        tbe::api::AABB2D{
+            .min_x = bounds.min_x,
+            .min_y = bounds.min_y,
+            .max_x = bounds.max_x,
+            .max_y = bounds.max_y,
+        }
+    );
+    if (result.ok() && result.value.has_value()) {
+        const auto& elements = *result.value;
+        out_result->count = static_cast<uint64_t>(elements.size());
+        if (!elements.empty()) {
+            auto* ids = static_cast<uint64_t*>(std::malloc(sizeof(uint64_t) * elements.size()));
+            if (ids == nullptr) {
+                handle->last_error = "failed to allocate rectangle query buffer";
+                return TBE_API_INTERNAL_ERROR;
+            }
+            for (std::size_t index = 0; index < elements.size(); ++index) {
+                ids[index] = elements[index].id.value;
+            }
+            out_result->element_ids = ids;
+        }
     }
     return apply_result(handle, result);
 }
@@ -731,6 +856,39 @@ TbeApiStatusCode tbe_export_obj(TbeEngineHandle* handle, const char* path) {
         return null_handle_error(handle);
     }
     return apply_result(handle, handle->session->export_obj(path));
+}
+
+TbeApiStatusCode tbe_get_render_scene_json(TbeEngineHandle* handle, char** out_json) {
+    if (handle == nullptr || handle->session == nullptr || out_json == nullptr) {
+        return null_handle_error(handle);
+    }
+    return copy_string_result(handle, handle->session->get_render_scene_json(), out_json);
+}
+
+TbeApiStatusCode tbe_set_performance_profile(TbeEngineHandle* handle, int profile) {
+    if (handle == nullptr || handle->session == nullptr) {
+        return null_handle_error(handle);
+    }
+    if (!is_valid_performance_profile(profile)) {
+        handle->last_error = "invalid performance profile";
+        return TBE_API_INVALID_ARGUMENT;
+    }
+    return apply_result(handle, handle->session->set_performance_profile(
+        static_cast<tbe::api::PerformanceProfile>(profile)
+    ));
+}
+
+TbeApiStatusCode tbe_set_compute_mode(TbeEngineHandle* handle, int mode) {
+    if (handle == nullptr || handle->session == nullptr) {
+        return null_handle_error(handle);
+    }
+    if (!is_valid_compute_mode(mode)) {
+        handle->last_error = "invalid compute mode";
+        return TBE_API_INVALID_ARGUMENT;
+    }
+    return apply_result(handle, handle->session->set_compute_mode(
+        static_cast<tbe::api::ComputeMode>(mode)
+    ));
 }
 
 const char* tbe_get_last_error(const TbeEngineHandle* handle) {

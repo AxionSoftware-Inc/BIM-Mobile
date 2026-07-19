@@ -518,13 +518,19 @@ RenderSceneDTO build_render_scene(const Document& document) {
             for (const auto& opening : wall->openings) {
                 const auto opening_kind = opening.kind == tbe::core::OpeningKind::Door ? ApiElementKind::Door : ApiElementKind::Window;
                 const auto* opening_element = document.find_ptr(opening.element_id);
+                const auto opening_level_id =
+                    opening_element != nullptr && opening_element->door() != nullptr
+                        ? opening_element->door()->level_id
+                        : (opening_element != nullptr && opening_element->window() != nullptr
+                               ? opening_element->window()->level_id
+                               : wall->level_id);
                 const auto opening_locked = opening_element != nullptr && opening_element->door() != nullptr
                     ? opening_element->door()->level_locked
                     : (opening_element != nullptr && opening_element->window() != nullptr ? opening_element->window()->level_locked : true);
                 append_object(make_object_dto(
                     opening.element_id,
                     opening_kind,
-                    wall->level_id,
+                    opening_level_id,
                     element.revision(),
                     make_opening_mesh(wall->axis, opening, wall->thickness_meters, base_elevation),
                     material_category_name(opening_kind),
@@ -534,6 +540,7 @@ RenderSceneDTO build_render_scene(const Document& document) {
                         {"width_meters", std::to_string(opening.width_meters)},
                         {"height_meters", std::to_string(opening.height_meters)},
                         {"sill_height_meters", std::to_string(opening.sill_height_meters)},
+                        {"vertical_offset_meters", std::to_string(opening.vertical_offset_meters)},
                         {"level_locked", opening_locked ? "true" : "false"},
                     }
                 ));
@@ -1920,6 +1927,18 @@ ApiResult<RenderSceneDTO> EngineSession::get_render_scene() const {
     }
 }
 
+ApiResult<std::string> EngineSession::get_render_scene_json() const {
+    try {
+        auto recompute = recompute_impl(*impl_, ComputeMode::InteractivePreview);
+        if (!recompute.ok()) {
+            return error_result<std::string>(recompute.status, recompute.message);
+        }
+        return success_result(render_scene_to_json(build_render_scene(impl_->document())));
+    } catch (const std::exception& error) {
+        return error_result<std::string>(status_from_exception(error), error.what());
+    }
+}
+
 ApiVoidResult EngineSession::export_render_scene_json(const std::string& path) const {
     namespace fs = std::filesystem;
     try {
@@ -2142,6 +2161,12 @@ ApiResult<ElementIdDTO> EngineSession::create_window(
 ApiVoidResult EngineSession::set_opening_level_lock(std::uint64_t opening_id, bool locked) {
     return apply_mutation(*impl_, "set_opening_level_lock", [&](Document& document) {
         document.set_opening_level_lock(opening_id, locked);
+    });
+}
+
+ApiVoidResult EngineSession::set_opening_level(std::uint64_t opening_id, std::uint64_t level_id) {
+    return apply_mutation(*impl_, "set_opening_level", [&](Document& document) {
+        document.set_opening_level(opening_id, level_id);
     });
 }
 

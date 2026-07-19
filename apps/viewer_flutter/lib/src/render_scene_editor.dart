@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:math' as math;
 
+import 'render_scene_level_binding.dart';
 import 'render_scene_models.dart';
 
 class RenderSceneEditor {
@@ -24,7 +25,14 @@ class RenderSceneEditor {
         object.kindKey == 'door' ||
         object.kindKey == 'window' ||
         object.kindKey == 'floor' ||
-        object.kindKey == 'ceiling';
+        object.kindKey == 'floorsystem' ||
+        object.kindKey == 'ceiling' ||
+        object.kindKey == 'ceilingsystem' ||
+        object.kindKey == 'roof' ||
+        object.kindKey == 'slab' ||
+        object.kindKey == 'column' ||
+        object.kindKey == 'beam' ||
+        object.kindKey == 'stair';
   }
 
   static RenderScene setElementLevelLock({
@@ -39,12 +47,14 @@ class RenderSceneEditor {
     final map = _sceneMap(scene);
     final objects = _objectsFromSceneMap(map);
     for (final entry in objects) {
-      final objectId = _toInt(entry['element_id']) ?? _toInt(entry['elementId']);
+      final objectId =
+          _toInt(entry['element_id']) ?? _toInt(entry['elementId']);
       if (objectId != elementId) {
         continue;
       }
       final metadata = entry['metadata'] is Map
-          ? Map<String, Object?>.from((entry['metadata'] as Map).cast<String, Object?>())
+          ? Map<String, Object?>.from(
+              (entry['metadata'] as Map).cast<String, Object?>())
           : <String, Object?>{};
       metadata['level_locked'] = locked;
       entry['metadata'] = metadata;
@@ -71,7 +81,8 @@ class RenderSceneEditor {
     final map = _sceneMap(scene);
     final levels = _levelsFromSceneMap(map);
     for (final entry in levels) {
-      final entryLevelId = _toInt(entry['level_id']) ?? _toInt(entry['levelId']);
+      final entryLevelId =
+          _toInt(entry['level_id']) ?? _toInt(entry['levelId']);
       if (entryLevelId == levelId) {
         entry['elevation_meters'] = elevationMeters;
         break;
@@ -80,43 +91,79 @@ class RenderSceneEditor {
     map['levels'] = levels;
 
     final objects = _objectsFromSceneMap(map);
+    RenderSceneLevelBinding.normalizeObjects(objects, levels);
+    final wallBaseLevelById = <int, int>{
+      for (final wall in objects)
+        if (RenderSceneLevelBinding.kindKey(wall) == 'wall')
+          if ((_toInt(wall['element_id']) ?? _toInt(wall['elementId'])) != null)
+            (_toInt(wall['element_id']) ?? _toInt(wall['elementId']))!:
+                _toInt((wall['metadata'] as Map?)?['base_level_id']) ??
+                    _toInt(wall['level_id']) ??
+                    0,
+    };
+    final hostBaseLevelByOpeningId = <int, int>{
+      for (final opening in objects)
+        if (<String>{'door', 'window'}.contains(
+          (opening['kind']?.toString() ?? '').toLowerCase(),
+        ))
+          if ((_toInt(opening['element_id']) ?? _toInt(opening['elementId'])) !=
+              null)
+            (_toInt(opening['element_id']) ??
+                _toInt(opening['elementId']))!: wallBaseLevelById[
+                    _toInt((opening['metadata'] as Map?)?['host_wall_id'])] ??
+                0,
+    };
     for (var index = 0; index < objects.length; index += 1) {
       final object = objects[index];
       final objectLevelId =
           _toInt(object['level_id']) ?? _toInt(object['levelId']);
-      if (objectLevelId != levelId) {
-        continue;
-      }
       final parsedObject = RenderSceneObject.fromJson(
         object,
         <String>[],
         <String>[],
       );
-      if (!isElementLevelLocked(parsedObject)) {
-        continue;
-      }
 
-      final kind = (object['kind']?.toString() ?? '').toLowerCase();
+      final kind = RenderSceneLevelBinding.kindKey(object);
       if (kind == 'wall') {
+        if (!RenderSceneLevelBinding.isLevelLocked(object)) {
+          continue;
+        }
         final geometry = _wallGeometryFromMap(object);
         if (geometry == null) {
           continue;
         }
         final metadataMap =
             object['metadata'] is Map ? object['metadata'] as Map : null;
-        final heightMeters =
+        final baseLevelId =
+            _toInt(metadataMap?['base_level_id']) ?? objectLevelId;
+        final topLevelId = _toInt(metadataMap?['top_level_id']) ?? 0;
+        if (baseLevelId != levelId && topLevelId != levelId) {
+          continue;
+        }
+        var heightMeters =
             _toDouble(metadataMap?['height_meters']) ?? defaultWallHeightMeters;
-        final thicknessMeters =
-            geometry.thickness.isFinite ? geometry.thickness : defaultWallThicknessMeters;
+        // Base follows its level. Top-level walls retain an absolute top when
+        // only the base moves, and resize when only the top moves.
+        final baseDelta = baseLevelId == levelId ? delta : 0.0;
+        if (topLevelId == levelId) {
+          heightMeters += delta;
+        }
+        if (baseLevelId == levelId && topLevelId != levelId) {
+          heightMeters -= delta;
+        }
+        heightMeters = math.max(0.01, heightMeters);
+        final thicknessMeters = geometry.thickness.isFinite
+            ? geometry.thickness
+            : defaultWallThicknessMeters;
         final shiftedStart = RenderScenePoint(
           x: geometry.start.x,
           y: geometry.start.y,
-          z: geometry.start.z + delta,
+          z: geometry.start.z + baseDelta,
         );
         final shiftedEnd = RenderScenePoint(
           x: geometry.end.x,
           y: geometry.end.y,
-          z: geometry.end.z + delta,
+          z: geometry.end.z + baseDelta,
         );
         final rebuilt = _buildWallObject(
           elementId: parsedObject.elementId ?? 0,
@@ -124,21 +171,35 @@ class RenderSceneEditor {
           end: shiftedEnd,
           heightMeters: heightMeters,
           thicknessMeters: thicknessMeters,
-          levelId: levelId,
-          metadata: metadataMap == null
-              ? const <String, Object?>{}
-              : Map<String, Object?>.from(
-                  metadataMap.cast<String, Object?>(),
-                ),
+          levelId: baseLevelId,
+          metadata: <String, Object?>{
+            if (metadataMap != null)
+              ...Map<String, Object?>.from(metadataMap.cast<String, Object?>()),
+            'base_level_id': baseLevelId,
+            'top_level_id': topLevelId,
+            if (topLevelId != 0) 'height_mode': 'TopLevel',
+          },
           revision: _toInt(object['revision']) ?? parsedObject.revision,
-          materialCategory:
-              object['material_category']?.toString() ?? parsedObject.materialCategory,
+          materialCategory: object['material_category']?.toString() ??
+              parsedObject.materialCategory,
         );
         objects[index] = rebuilt;
         continue;
       }
 
-      if (kind == 'door' || kind == 'window' || kind == 'room') {
+      if (objectLevelId != levelId ||
+          !RenderSceneLevelBinding.isLevelLocked(object)) {
+        continue;
+      }
+
+      if (kind == 'door' || kind == 'window') {
+        final id = parsedObject.elementId;
+        if (id != null && hostBaseLevelByOpeningId[id] == levelId) {
+          _shiftObjectZInPlace(object, delta);
+        }
+        continue;
+      }
+      if (kind == 'room') {
         continue;
       }
 
@@ -187,6 +248,7 @@ class RenderSceneEditor {
     double heightMeters = defaultWallHeightMeters,
     double thicknessMeters = defaultWallThicknessMeters,
     int? levelId,
+    int? topLevelId,
   }) {
     if (!start.isFinite || !end.isFinite) {
       return scene;
@@ -201,6 +263,17 @@ class RenderSceneEditor {
     final objects = _objectsFromSceneMap(map);
     final nextId = _nextElementId(objects);
     final resolvedLevelId = levelId ?? _primaryLevelId(scene);
+    if (resolvedLevelId == null || resolvedLevelId <= 0) {
+      return scene;
+    }
+    final resolvedTopLevelId = topLevelId ??
+        RenderSceneLevelBinding.nearestHigherLevelId(
+          levels: _levelsFromSceneMap(map),
+          baseLevelId: resolvedLevelId,
+        );
+    if (resolvedTopLevelId == null) {
+      return scene;
+    }
     final resolvedHeight = heightMeters <= 1e-6
         ? _levelDefaultWallHeightMeters(scene, resolvedLevelId)
         : heightMeters;
@@ -211,6 +284,12 @@ class RenderSceneEditor {
       heightMeters: resolvedHeight,
       thicknessMeters: thicknessMeters,
       levelId: resolvedLevelId,
+      metadata: <String, Object?>{
+        'base_level_id': resolvedLevelId.toString(),
+        'top_level_id': resolvedTopLevelId.toString(),
+        'height_mode': 'TopLevel',
+        'level_locked': true,
+      },
     );
     objects.add(wallObject);
     _rebuildAllWallObjects(objects);
@@ -225,6 +304,7 @@ class RenderSceneEditor {
     if (objects.isEmpty) {
       return scene;
     }
+    RenderSceneLevelBinding.normalizeObjects(objects, _levelsFromSceneMap(map));
     _rebuildAllWallObjects(objects);
     _rebuildDetectedRooms(objects);
     map['objects'] = objects;
@@ -604,7 +684,8 @@ class RenderSceneEditor {
     return points;
   }
 
-  static RenderSceneBounds? surfaceBoundsForWalls(List<RenderSceneObject> walls) {
+  static RenderSceneBounds? surfaceBoundsForWalls(
+      List<RenderSceneObject> walls) {
     final validBounds = <RenderSceneBounds>[
       for (final wall in walls)
         if (wall.kindKey == 'wall' &&
@@ -733,14 +814,16 @@ class RenderSceneEditor {
       }
     }
     objects.removeWhere((object) {
-      final objectId = _toInt(object['element_id']) ?? _toInt(object['elementId']);
+      final objectId =
+          _toInt(object['element_id']) ?? _toInt(object['elementId']);
       if (objectId == targetId) {
         return true;
       }
       if (target.kindKey == 'wall') {
         final metadata = object['metadata'];
         if (metadata is Map) {
-          final hostId = _toInt(metadata['host_wall_id'] ?? metadata['hostWallId']);
+          final hostId =
+              _toInt(metadata['host_wall_id'] ?? metadata['hostWallId']);
           if (hostId == targetId) {
             return true;
           }
@@ -828,27 +911,30 @@ class RenderSceneEditor {
     }
 
     for (var index = 0; index < objects.length; index += 1) {
-      final objectId =
-          _toInt(objects[index]['element_id']) ?? _toInt(objects[index]['elementId']);
+      final objectId = _toInt(objects[index]['element_id']) ??
+          _toInt(objects[index]['elementId']);
       final kind = (objects[index]['kind']?.toString() ?? '').toLowerCase();
       if (objectId == null || kind != 'wall') {
         continue;
       }
       final geometry = _wallGeometryFromMap(objects[index]);
-      final metadataMap =
-          objects[index]['metadata'] is Map ? objects[index]['metadata'] as Map : null;
-      final boundsMap =
-          objects[index]['bounds'] is Map ? objects[index]['bounds'] as Map : null;
+      final metadataMap = objects[index]['metadata'] is Map
+          ? objects[index]['metadata'] as Map
+          : null;
+      final boundsMap = objects[index]['bounds'] is Map
+          ? objects[index]['bounds'] as Map
+          : null;
       Map? boundsMax;
       final rawBoundsMax = boundsMap == null ? null : boundsMap['max'];
       if (rawBoundsMax is Map) {
         boundsMax = rawBoundsMax;
       }
-      final heightMeters =
-          _toDouble(metadataMap?['height_meters']) ?? _toDouble(boundsMax?['z']) ?? defaultWallHeightMeters;
+      final heightMeters = _toDouble(metadataMap?['height_meters']) ??
+          _toDouble(boundsMax?['z']) ??
+          defaultWallHeightMeters;
       final thicknessMeters = geometry?.thickness ?? defaultWallThicknessMeters;
-      final levelId =
-          _toInt(objects[index]['level_id']) ?? _toInt(objects[index]['levelId']);
+      final levelId = _toInt(objects[index]['level_id']) ??
+          _toInt(objects[index]['levelId']);
       final nextGeometry = updates[objectId];
       if (nextGeometry == null) {
         continue;
@@ -890,12 +976,15 @@ class RenderSceneEditor {
     final map = _sceneMap(scene);
     final objects = _objectsFromSceneMap(map);
     for (final object in objects) {
-      final objectId = _toInt(object['element_id']) ?? _toInt(object['elementId']);
+      final objectId =
+          _toInt(object['element_id']) ?? _toInt(object['elementId']);
       if (objectId != openingId) {
         continue;
       }
-      final metadata =
-          object['metadata'] is Map ? Map<String, Object?>.from((object['metadata'] as Map).cast<String, Object?>()) : <String, Object?>{};
+      final metadata = object['metadata'] is Map
+          ? Map<String, Object?>.from(
+              (object['metadata'] as Map).cast<String, Object?>())
+          : <String, Object?>{};
       metadata['offset_meters'] = offsetMeters;
       object['metadata'] = metadata;
       _rebuildAllWallObjects(objects);
@@ -929,7 +1018,8 @@ class RenderSceneEditor {
     });
 
     final rooms = objects
-        .where((object) => (object['kind']?.toString() ?? '').toLowerCase() == 'room')
+        .where((object) =>
+            (object['kind']?.toString() ?? '').toLowerCase() == 'room')
         .map(
           (object) => RenderSceneObject.fromJson(
             object,
@@ -967,8 +1057,10 @@ class RenderSceneEditor {
       if (kind != 'floor' && kind != 'ceiling') {
         continue;
       }
-      final metadata =
-          object['metadata'] is Map ? Map<String, Object?>.from((object['metadata'] as Map).cast<String, Object?>()) : <String, Object?>{};
+      final metadata = object['metadata'] is Map
+          ? Map<String, Object?>.from(
+              (object['metadata'] as Map).cast<String, Object?>())
+          : <String, Object?>{};
       if (metadata.containsKey('source_room_id')) {
         metadata['auto_generated_from_room'] = true;
         object['metadata'] = metadata;
@@ -982,7 +1074,8 @@ class RenderSceneEditor {
     return Map<String, Object?>.from(scene.toJson());
   }
 
-  static List<Map<String, Object?>> _levelsFromSceneMap(Map<String, Object?> map) {
+  static List<Map<String, Object?>> _levelsFromSceneMap(
+      Map<String, Object?> map) {
     final rawLevels = map['levels'];
     if (rawLevels is! List) {
       return <Map<String, Object?>>[];
@@ -1131,7 +1224,8 @@ class RenderSceneEditor {
     required String materialCategory,
   }) {
     final geometry = _wallGeometry(hostWall);
-    if (geometry == null) {
+    final resolvedLevelId = hostWall.levelId ?? levelId ?? _primaryLevelId(scene);
+    if (geometry == null || resolvedLevelId == null || resolvedLevelId <= 0) {
       return scene;
     }
 
@@ -1184,7 +1278,7 @@ class RenderSceneEditor {
     final object = <String, Object?>{
       'element_id': nextId,
       'kind': kind,
-      'level_id': levelId ?? hostWall.levelId ?? _primaryLevelId(scene),
+      'level_id': resolvedLevelId,
       'selectable': true,
       'visible_by_default': true,
       'revision': 1,
@@ -1246,6 +1340,7 @@ class RenderSceneEditor {
         'axis_start': geometry.start.toJson(),
         'axis_end': geometry.end.toJson(),
         'level_locked': true,
+        'base_level_id': resolvedLevelId.toString(),
         'kind': kind.toLowerCase(),
       },
     };
@@ -1268,7 +1363,12 @@ class RenderSceneEditor {
     required int? levelId,
   }) {
     final bounds = room.bounds;
-    if (!bounds.isFinite || bounds.width <= 1e-6 || bounds.depth <= 1e-6) {
+    final resolvedLevelId = levelId ?? room.levelId ?? _primaryLevelId(scene);
+    if (!bounds.isFinite ||
+        bounds.width <= 1e-6 ||
+        bounds.depth <= 1e-6 ||
+        resolvedLevelId == null ||
+        resolvedLevelId <= 0) {
       return scene;
     }
 
@@ -1289,7 +1389,7 @@ class RenderSceneEditor {
     final object = <String, Object?>{
       'element_id': nextId,
       'kind': kind,
-      'level_id': levelId ?? room.levelId ?? _primaryLevelId(scene),
+      'level_id': resolvedLevelId,
       'selectable': true,
       'visible_by_default': true,
       'revision': 1,
@@ -1345,6 +1445,7 @@ class RenderSceneEditor {
         'source_room_id': room.elementId,
         'thickness_meters': thicknessMeters,
         'level_locked': true,
+        'base_level_id': resolvedLevelId.toString(),
         'kind': kind.toLowerCase(),
       },
     };
@@ -1365,7 +1466,12 @@ class RenderSceneEditor {
     required double baseZ,
     required int? levelId,
   }) {
-    if (!bounds.isFinite || bounds.width <= 1e-6 || bounds.depth <= 1e-6) {
+    final resolvedLevelId = levelId ?? _primaryLevelId(scene);
+    if (!bounds.isFinite ||
+        bounds.width <= 1e-6 ||
+        bounds.depth <= 1e-6 ||
+        resolvedLevelId == null ||
+        resolvedLevelId <= 0) {
       return scene;
     }
 
@@ -1386,7 +1492,7 @@ class RenderSceneEditor {
     final object = <String, Object?>{
       'element_id': nextId,
       'kind': kind,
-      'level_id': levelId ?? _primaryLevelId(scene),
+      'level_id': resolvedLevelId,
       'selectable': true,
       'visible_by_default': true,
       'revision': 1,
@@ -1399,18 +1505,49 @@ class RenderSceneEditor {
       'mesh': <String, Object?>{
         'positions': positions.map((point) => point.toJson()).toList(),
         'indices': <int>[
-          0, 2, 1, 0, 3, 2,
-          4, 5, 6, 4, 6, 7,
-          0, 1, 5, 0, 5, 4,
-          1, 2, 6, 1, 6, 5,
-          2, 3, 7, 2, 7, 6,
-          3, 0, 4, 3, 4, 7,
+          0,
+          2,
+          1,
+          0,
+          3,
+          2,
+          4,
+          5,
+          6,
+          4,
+          6,
+          7,
+          0,
+          1,
+          5,
+          0,
+          5,
+          4,
+          1,
+          2,
+          6,
+          1,
+          6,
+          5,
+          2,
+          3,
+          7,
+          2,
+          7,
+          6,
+          3,
+          0,
+          4,
+          3,
+          4,
+          7,
         ],
       },
       'material_category': materialCategory,
       'metadata': <String, Object?>{
         'thickness_meters': thicknessMeters,
         'level_locked': true,
+        'base_level_id': resolvedLevelId.toString(),
         'kind': kind.toLowerCase(),
         'footprint_mode': 'draft_bounds',
       },
@@ -1436,7 +1573,8 @@ class RenderSceneEditor {
   }) {
     final axis = end - start;
     final length = start.distanceTo(end);
-    final baseZ = ((start.z + end.z) * 0.5).isFinite ? (start.z + end.z) * 0.5 : 0.0;
+    final baseZ =
+        ((start.z + end.z) * 0.5).isFinite ? (start.z + end.z) * 0.5 : 0.0;
     final axisUnit = axis.scale(1.0 / math.max(length, 1e-9));
     final normal = RenderScenePoint(x: -axisUnit.y, y: axisUnit.x, z: 0);
     final halfThickness = thicknessMeters * 0.5;
@@ -1541,7 +1679,8 @@ class RenderSceneEditor {
   static void _rebuildAllWallObjects(List<Map<String, Object?>> objects) {
     final wallEntries = <_WallEntry>[];
     for (final object in objects) {
-      final objectId = _toInt(object['element_id']) ?? _toInt(object['elementId']);
+      final objectId =
+          _toInt(object['element_id']) ?? _toInt(object['elementId']);
       final kind = (object['kind']?.toString() ?? '').toLowerCase();
       if (objectId == null || kind != 'wall') {
         continue;
@@ -1559,8 +1698,9 @@ class RenderSceneEditor {
       if (rawBoundsMax is Map) {
         boundsMax = rawBoundsMax;
       }
-      final heightMeters =
-          _toDouble(metadataMap?['height_meters']) ?? _toDouble(boundsMax?['z']) ?? defaultWallHeightMeters;
+      final heightMeters = _toDouble(metadataMap?['height_meters']) ??
+          _toDouble(boundsMax?['z']) ??
+          defaultWallHeightMeters;
       wallEntries.add(
         _WallEntry(
           objectId: objectId,
@@ -1577,7 +1717,8 @@ class RenderSceneEditor {
       if (kind != 'door' && kind != 'window') {
         continue;
       }
-      final objectId = _toInt(object['element_id']) ?? _toInt(object['elementId']);
+      final objectId =
+          _toInt(object['element_id']) ?? _toInt(object['elementId']);
       if (objectId == null) {
         continue;
       }
@@ -1596,7 +1737,8 @@ class RenderSceneEditor {
         if (spec.hostWall.objectId == wall.objectId) {
           openings.add(
             _OpeningCutSpec(
-              startOffset: math.max(0.0, spec.offsetMeters - (spec.widthMeters * 0.5)),
+              startOffset:
+                  math.max(0.0, spec.offsetMeters - (spec.widthMeters * 0.5)),
               endOffset: math.min(
                 wall.geometry.length,
                 spec.offsetMeters + (spec.widthMeters * 0.5),
@@ -1626,7 +1768,8 @@ class RenderSceneEditor {
       if (kind != 'door' && kind != 'window') {
         continue;
       }
-      final objectId = _toInt(object['element_id']) ?? _toInt(object['elementId']);
+      final objectId =
+          _toInt(object['element_id']) ?? _toInt(object['elementId']);
       final spec = objectId == null ? null : openingSpecs[objectId];
       if (spec == null) {
         continue;
@@ -1660,7 +1803,8 @@ class RenderSceneEditor {
 
     final wallsByLevel = <int?, List<_WallEntry>>{};
     for (final object in objects) {
-      final objectId = _toInt(object['element_id']) ?? _toInt(object['elementId']);
+      final objectId =
+          _toInt(object['element_id']) ?? _toInt(object['elementId']);
       final kind = (object['kind']?.toString() ?? '').toLowerCase();
       if (objectId == null || kind != 'wall') {
         continue;
@@ -1683,13 +1827,13 @@ class RenderSceneEditor {
           defaultWallHeightMeters;
       final levelId = _toInt(object['level_id']) ?? _toInt(object['levelId']);
       wallsByLevel.putIfAbsent(levelId, () => <_WallEntry>[]).add(
-        _WallEntry(
-          objectId: objectId,
-          objectMap: object,
-          geometry: geometry,
-          heightMeters: heightMeters,
-        ),
-      );
+            _WallEntry(
+              objectId: objectId,
+              objectMap: object,
+              geometry: geometry,
+              heightMeters: heightMeters,
+            ),
+          );
     }
     var nextId = _nextElementId(objects);
     for (final entry in wallsByLevel.entries) {
@@ -1777,7 +1921,8 @@ class RenderSceneEditor {
         tryVisit(
           i,
           j + 1,
-          _blockingWallsHorizontal(walls, ys[j + 1], xs[i], xs[i + 1]).isNotEmpty,
+          _blockingWallsHorizontal(walls, ys[j + 1], xs[i], xs[i + 1])
+              .isNotEmpty,
         );
       }
 
@@ -1823,17 +1968,20 @@ class RenderSceneEditor {
             tryRoom(
               i + 1,
               j,
-              _blockingWallsVertical(walls, xs[i + 1], ys[j], ys[j + 1]).isNotEmpty,
+              _blockingWallsVertical(walls, xs[i + 1], ys[j], ys[j + 1])
+                  .isNotEmpty,
             );
             tryRoom(
               i,
               j - 1,
-              _blockingWallsHorizontal(walls, ys[j], xs[i], xs[i + 1]).isNotEmpty,
+              _blockingWallsHorizontal(walls, ys[j], xs[i], xs[i + 1])
+                  .isNotEmpty,
             );
             tryRoom(
               i,
               j + 1,
-              _blockingWallsHorizontal(walls, ys[j + 1], xs[i], xs[i + 1]).isNotEmpty,
+              _blockingWallsHorizontal(walls, ys[j + 1], xs[i], xs[i + 1])
+                  .isNotEmpty,
             );
           }
 
@@ -2044,8 +2192,9 @@ class RenderSceneEditor {
     required Map<String, Object?> openingObject,
     required List<_WallEntry> allWalls,
   }) {
-    final metadata =
-        openingObject['metadata'] is Map ? openingObject['metadata'] as Map : null;
+    final metadata = openingObject['metadata'] is Map
+        ? openingObject['metadata'] as Map
+        : null;
     final explicitHostWallId =
         _toInt(metadata?['host_wall_id'] ?? metadata?['hostWallId']);
 
@@ -2069,7 +2218,8 @@ class RenderSceneEditor {
 
     final width = _toDouble(metadata?['width_meters']) ??
         _openingWidthAlongWall(hostWall.geometry, openingBounds);
-    final height = _toDouble(metadata?['height_meters']) ?? openingBounds.height;
+    final height =
+        _toDouble(metadata?['height_meters']) ?? openingBounds.height;
     final sill = _toDouble(metadata?['sill_height_meters']) ??
         (openingBounds.min.z - hostWall.geometry.start.z);
     if (height <= 1e-6 || width <= 1e-6) {
@@ -2101,7 +2251,9 @@ class RenderSceneEditor {
     var bestDistance = double.infinity;
     for (final wall in allWalls) {
       final offset = _projectOffsetAlongWall(wall.geometry, center);
-      if (offset == null || offset < -1e-6 || offset > wall.geometry.length + 1e-6) {
+      if (offset == null ||
+          offset < -1e-6 ||
+          offset > wall.geometry.length + 1e-6) {
         continue;
       }
 
@@ -2258,8 +2410,7 @@ class RenderSceneEditor {
         final sampleZ = (z0 + z1) * 0.5;
         final blocked = overlappingOpenings.any(
           (opening) =>
-              sampleZ > opening.bottomZ + 1e-6 &&
-              sampleZ < opening.topZ - 1e-6,
+              sampleZ > opening.bottomZ + 1e-6 && sampleZ < opening.topZ - 1e-6,
         );
         if (blocked) {
           continue;
@@ -2294,7 +2445,8 @@ class RenderSceneEditor {
   static _BuiltMeshResult _buildOpeningMesh(_ResolvedOpeningSpec spec) {
     final positions = <RenderScenePoint>[];
     final indices = <int>[];
-    final axisUnit = _unit3(spec.hostWall.geometry.end - spec.hostWall.geometry.start);
+    final axisUnit =
+        _unit3(spec.hostWall.geometry.end - spec.hostWall.geometry.start);
     final normal = RenderScenePoint(x: -axisUnit.y, y: axisUnit.x, z: 0.0);
 
     RenderScenePoint worldPoint(double localX, double localY, double localZ) {
@@ -2305,7 +2457,7 @@ class RenderSceneEditor {
         y: spec.hostWall.geometry.start.y +
             axisUnit.y * localX +
             normal.y * localY,
-        z: localZ,
+        z: spec.hostWall.geometry.start.z + localZ,
       );
     }
 
@@ -2322,7 +2474,8 @@ class RenderSceneEditor {
     );
 
     final bounds = RenderSceneBounds.union(
-      positions.map((point) => RenderSceneBounds.normalized(min: point, max: point)),
+      positions
+          .map((point) => RenderSceneBounds.normalized(min: point, max: point)),
     );
     return _BuiltMeshResult(
       mesh: <String, Object?>{
@@ -2358,18 +2511,42 @@ class RenderSceneEditor {
     ];
     positions.addAll(corners);
     indices.addAll(<int>[
-      baseIndex + 0, baseIndex + 2, baseIndex + 1,
-      baseIndex + 0, baseIndex + 3, baseIndex + 2,
-      baseIndex + 4, baseIndex + 5, baseIndex + 6,
-      baseIndex + 4, baseIndex + 6, baseIndex + 7,
-      baseIndex + 0, baseIndex + 1, baseIndex + 5,
-      baseIndex + 0, baseIndex + 5, baseIndex + 4,
-      baseIndex + 1, baseIndex + 2, baseIndex + 6,
-      baseIndex + 1, baseIndex + 6, baseIndex + 5,
-      baseIndex + 2, baseIndex + 3, baseIndex + 7,
-      baseIndex + 2, baseIndex + 7, baseIndex + 6,
-      baseIndex + 3, baseIndex + 0, baseIndex + 4,
-      baseIndex + 3, baseIndex + 4, baseIndex + 7,
+      baseIndex + 0,
+      baseIndex + 2,
+      baseIndex + 1,
+      baseIndex + 0,
+      baseIndex + 3,
+      baseIndex + 2,
+      baseIndex + 4,
+      baseIndex + 5,
+      baseIndex + 6,
+      baseIndex + 4,
+      baseIndex + 6,
+      baseIndex + 7,
+      baseIndex + 0,
+      baseIndex + 1,
+      baseIndex + 5,
+      baseIndex + 0,
+      baseIndex + 5,
+      baseIndex + 4,
+      baseIndex + 1,
+      baseIndex + 2,
+      baseIndex + 6,
+      baseIndex + 1,
+      baseIndex + 6,
+      baseIndex + 5,
+      baseIndex + 2,
+      baseIndex + 3,
+      baseIndex + 7,
+      baseIndex + 2,
+      baseIndex + 7,
+      baseIndex + 6,
+      baseIndex + 3,
+      baseIndex + 0,
+      baseIndex + 4,
+      baseIndex + 3,
+      baseIndex + 4,
+      baseIndex + 7,
     ]);
   }
 
@@ -2395,7 +2572,8 @@ class RenderSceneEditor {
 
     final topBase = baseIndex + polygon.length;
     for (var index = 1; index + 1 < polygon.length; index += 1) {
-      indices.addAll(<int>[baseIndex, baseIndex + index + 1, baseIndex + index]);
+      indices
+          .addAll(<int>[baseIndex, baseIndex + index + 1, baseIndex + index]);
       indices.addAll(<int>[topBase, topBase + index, topBase + index + 1]);
     }
 
@@ -2498,10 +2676,12 @@ class RenderSceneEditor {
       if (other.objectId == wall.objectId) {
         continue;
       }
-      final sharedAtStart = _samePoint2(wall.geometry.start, other.geometry.start) ||
-          _samePoint2(wall.geometry.start, other.geometry.end);
-      final sharedAtEnd = _samePoint2(wall.geometry.end, other.geometry.start) ||
-          _samePoint2(wall.geometry.end, other.geometry.end);
+      final sharedAtStart =
+          _samePoint2(wall.geometry.start, other.geometry.start) ||
+              _samePoint2(wall.geometry.start, other.geometry.end);
+      final sharedAtEnd =
+          _samePoint2(wall.geometry.end, other.geometry.start) ||
+              _samePoint2(wall.geometry.end, other.geometry.end);
       if (!sharedAtStart && !sharedAtEnd) {
         continue;
       }
@@ -2563,8 +2743,9 @@ class RenderSceneEditor {
   ) {
     final startDistance = joinPoint.distanceTo(wall.start);
     final endDistance = joinPoint.distanceTo(wall.end);
-    final away =
-        startDistance < endDistance ? (wall.end - wall.start) : (wall.start - wall.end);
+    final away = startDistance < endDistance
+        ? (wall.end - wall.start)
+        : (wall.start - wall.end);
     return _unit2(away);
   }
 
@@ -2585,7 +2766,8 @@ class RenderSceneEditor {
   }
 
   static RenderScenePoint _unit3(RenderScenePoint vector) {
-    final length = vector.distanceTo(const RenderScenePoint(x: 0.0, y: 0.0, z: 0.0));
+    final length =
+        vector.distanceTo(const RenderScenePoint(x: 0.0, y: 0.0, z: 0.0));
     if (length <= 1e-9) {
       return const RenderScenePoint(x: 0.0, y: 0.0, z: 0.0);
     }
@@ -2620,7 +2802,8 @@ class RenderSceneEditor {
       metadataMap?['thickness_meters'] ?? metadataMap?['thicknessMeters'],
     );
     if (axisStart != null && axisEnd != null && thickness != null) {
-      return _WallGeometry(start: axisStart, end: axisEnd, thickness: thickness);
+      return _WallGeometry(
+          start: axisStart, end: axisEnd, thickness: thickness);
     }
 
     final bounds = _boundsFromMap(wallObject);
@@ -2634,12 +2817,12 @@ class RenderSceneEditor {
         start: RenderScenePoint(
           x: bounds.min.x,
           y: (bounds.min.y + bounds.max.y) * 0.5,
-          z: 0.0,
+          z: bounds.min.z,
         ),
         end: RenderScenePoint(
           x: bounds.max.x,
           y: (bounds.min.y + bounds.max.y) * 0.5,
-          z: 0.0,
+          z: bounds.min.z,
         ),
         thickness: depth,
       );
@@ -2649,12 +2832,12 @@ class RenderSceneEditor {
       start: RenderScenePoint(
         x: (bounds.min.x + bounds.max.x) * 0.5,
         y: bounds.min.y,
-        z: 0.0,
+        z: bounds.min.z,
       ),
       end: RenderScenePoint(
         x: (bounds.min.x + bounds.max.x) * 0.5,
         y: bounds.max.y,
-        z: 0.0,
+        z: bounds.min.z,
       ),
       thickness: width,
     );
@@ -2681,7 +2864,8 @@ class RenderSceneEditor {
       return null;
     }
     return RenderSceneBounds.union(
-      points.map((point) => RenderSceneBounds.normalized(min: point, max: point)),
+      points
+          .map((point) => RenderSceneBounds.normalized(min: point, max: point)),
     );
   }
 

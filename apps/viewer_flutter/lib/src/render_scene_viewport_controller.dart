@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
@@ -25,7 +24,9 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
 
   RenderScene? _scene;
   Set<String> _visibleKinds;
-  String? _selectedElementId;
+  Set<String> _selectedElementIds = <String>{};
+  String? _activeElementId;
+  int? _selectedLevelId;
   String? _highlightedElementId;
 
   int _fitRevision = 0;
@@ -68,7 +69,17 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
   Set<String> get visibleKinds => _visibleKinds;
 
   @override
-  String? get selectedElementId => _selectedElementId;
+  Set<String> get selectedElementIds => Set<String>.unmodifiable(_selectedElementIds);
+
+  @override
+  String? get activeElementId => _activeElementId;
+
+  @override
+  int? get selectedLevelId => _selectedLevelId;
+
+  /// Compatibility alias. New code should use [activeElementId].
+  @override
+  String? get selectedElementId => _activeElementId;
 
   @override
   String? get highlightedElementId => _highlightedElementId;
@@ -157,14 +168,16 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
 
     notifyListeners();
 
-    await _invoke('loadRenderSceneJson', jsonEncode(scene.toJson()));
+    await _invoke('loadRenderScene', scene.toJson());
     await _syncNativeBridge();
   }
 
   @override
   Future<void> clearScene() async {
     _scene = null;
-    _selectedElementId = null;
+    _selectedElementIds = <String>{};
+    _activeElementId = null;
+    _selectedLevelId = null;
     _highlightedElementId = null;
     _sceneBounds = RenderSceneBounds.zero();
     _sceneRevision += 1;
@@ -517,13 +530,51 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
 
   @override
   Future<void> selectElement(String? elementId) async {
-    if (_selectedElementId == elementId) {
+    await selectElements(
+      elementId == null ? <String>{} : <String>{elementId},
+      activeElementId: elementId,
+    );
+  }
+
+  @override
+  Future<void> selectElements(
+    Set<String> elementIds, {
+    String? activeElementId,
+  }) async {
+    final normalized = Set<String>.from(elementIds);
+    final resolvedActive = activeElementId != null && normalized.contains(activeElementId)
+        ? activeElementId
+        : (normalized.isEmpty ? null : normalized.last);
+    if (setEquals(_selectedElementIds, normalized) &&
+        _activeElementId == resolvedActive) {
       return;
     }
-
-    _selectedElementId = elementId;
+    _selectedElementIds = normalized;
+    _activeElementId = resolvedActive;
+    _selectedLevelId = null;
     notifyListeners();
-    await _invoke('selectElement', elementId);
+    await _invoke('setSelection', <String, Object?>{
+      'ids': normalized.toList(),
+      'activeId': resolvedActive,
+    });
+  }
+
+  @override
+  Future<void> selectLevel(int? levelId) async {
+    if (_selectedLevelId == levelId &&
+        (levelId != null || _selectedElementIds.isEmpty)) {
+      return;
+    }
+    _selectedLevelId = levelId;
+    _selectedElementIds = <String>{};
+    _activeElementId = null;
+    _highlightedElementId = null;
+    notifyListeners();
+    await _invoke('setSelection', <String, Object?>{
+      'ids': const <String>[],
+      'activeId': null,
+      'levelId': levelId,
+    });
   }
 
   @override
@@ -540,14 +591,17 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
   Future<void> _syncNativeBridge() async {
     final currentScene = _scene;
     if (currentScene != null) {
-      await _invoke('loadRenderSceneJson', jsonEncode(currentScene.toJson()));
+      await _invoke('loadRenderScene', currentScene.toJson());
     }
 
     await _invoke('setVisibleKinds', _visibleKinds.toList());
     await _invoke('setDisplayStyle', _displayStyle.name);
     await _invoke('setProjectionMode', _projectionMode.name);
     await _invoke('setOrbitProjectionStyle', _orbitProjectionStyle.name);
-    await _invoke('selectElement', _selectedElementId);
+    await _invoke('setSelection', <String, Object?>{
+      'ids': _selectedElementIds.toList(),
+      'activeId': _activeElementId,
+    });
     await _invoke('highlightElement', _highlightedElementId);
   }
 

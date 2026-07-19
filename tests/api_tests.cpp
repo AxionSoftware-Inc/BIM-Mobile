@@ -180,7 +180,7 @@ int main() {
             level_1.value->value,
             level_2.value->value,
             0.0,
-            0.2,
+            2.5,
             tbe::api::ApiWallHeightMode::TopLevel
         ).ok());
         assert(session->move_level_elevation(level_2.value->value, 4.0).ok());
@@ -188,6 +188,19 @@ int main() {
         const auto door = session->create_door("Door", wall_id, 1.2, 0.9, 2.1);
         assert(door.ok());
         assert(session->set_opening_level_lock(door.value->value, false).ok());
+        assert(session->set_opening_level(door.value->value, level_2.value->value).ok());
+        const auto moved_opening_scene = session->get_render_scene();
+        assert(moved_opening_scene.ok());
+        assert(moved_opening_scene.value.has_value());
+        const auto moved_door_object = std::find_if(
+            moved_opening_scene.value->objects.begin(),
+            moved_opening_scene.value->objects.end(),
+            [&](const auto& object) {
+                return object.element_id.value == door.value->value;
+            });
+        assert(moved_door_object != moved_opening_scene.value->objects.end());
+        assert(moved_door_object->level_id.value == level_2.value->value);
+        assert(moved_door_object->metadata.at("level_locked") == "false");
         assert(session->set_opening_level_lock(door.value->value, true).ok());
 
         const auto render_scene = session->get_render_scene();
@@ -205,13 +218,14 @@ int main() {
         });
         assert(wall_object != render_scene.value->objects.end());
         assert(wall_object->metadata.at("height_mode") == "TopLevel");
-        assert(nearly_equal(wall_object->bounds.max.z - wall_object->bounds.min.z, 4.2, 1.0e-3));
+        assert(nearly_equal(wall_object->bounds.max.z - wall_object->bounds.min.z, 6.5, 1.0e-3));
 
         const auto door_object = std::find_if(render_scene.value->objects.begin(), render_scene.value->objects.end(), [&](const auto& object) {
             return object.element_id.value == door.value->value;
         });
         assert(door_object != render_scene.value->objects.end());
         assert(door_object->metadata.at("level_locked") == "true");
+        assert(door_object->level_id.value == level_1.value->value);
     }
 
     {
@@ -263,12 +277,23 @@ int main() {
         ceiling_draft.level_id = tbe::api::ElementIdDTO{level_id};
         ceiling_draft.points = {{0.0, 0.0}, {4.0, 3.0}};
         ceiling_draft.closed = true;
-        ceiling_draft.vertical_offset_meters = 2.7;
         ceiling_draft.assembly_id = tbe::api::ElementIdDTO{ceiling_assembly};
         const auto ceiling_created = session->create_elements_from_profile(ceiling_draft);
         assert(ceiling_created.ok());
         assert(ceiling_created.value.has_value());
         assert(ceiling_created.value->size() == 1);
+
+        tbe::api::ProfileDraftDTO roof_draft;
+        roof_draft.mode = tbe::api::ApiProfileDraftMode::Polyline;
+        roof_draft.target_kind = tbe::api::ApiProfileTargetKind::RoofBoundary;
+        roof_draft.level_id = tbe::api::ElementIdDTO{level_id};
+        roof_draft.points = {{-0.2, -0.2}, {4.2, -0.2}, {5.0, 1.5}, {2.0, 3.8}, {-0.4, 2.6}};
+        roof_draft.closed = true;
+        roof_draft.thickness_meters = 0.2;
+        const auto roof_created = session->create_elements_from_profile(roof_draft);
+        assert(roof_created.ok());
+        assert(roof_created.value.has_value());
+        assert(roof_created.value->size() == 1);
 
         const auto render_scene = session->get_render_scene();
         assert(render_scene.ok());
@@ -279,6 +304,14 @@ int main() {
         assert(std::any_of(render_scene.value->objects.begin(), render_scene.value->objects.end(), [](const auto& object) {
             return object.kind == tbe::api::ApiElementKind::CeilingSystem;
         }));
+        assert(std::any_of(render_scene.value->objects.begin(), render_scene.value->objects.end(), [](const auto& object) {
+            return object.kind == tbe::api::ApiElementKind::Roof;
+        }));
+        const auto ceiling_object = std::find_if(render_scene.value->objects.begin(), render_scene.value->objects.end(), [](const auto& object) {
+            return object.kind == tbe::api::ApiElementKind::CeilingSystem;
+        });
+        assert(ceiling_object != render_scene.value->objects.end());
+        assert(nearly_equal(ceiling_object->bounds.min.z, 2.6));
     }
 
     {
@@ -1137,6 +1170,11 @@ int main() {
     TbeSpatialIndexStats spatial_stats{};
     assert(tbe_spatial_index_stats(handle, &spatial_stats) == TBE_API_OK);
     assert(spatial_stats.bucket_count >= 1);
+    TbeElementIdListResult rect_result{};
+    assert(tbe_query_rect(handle, 0, TbeRect2{.min_x = -0.2, .min_y = -0.2, .max_x = 0.2, .max_y = 3.2}, &rect_result) == TBE_API_OK);
+    assert(rect_result.count >= 1);
+    tbe_free_memory(rect_result.element_ids);
+    assert(tbe_query_rect(handle, 0, TbeRect2{.min_x = 1.0, .min_y = 1.0, .max_x = 0.0, .max_y = 1.0}, &rect_result) == TBE_API_INVALID_ARGUMENT);
     TbeHitTestResult hit_result{};
     assert(tbe_hit_test_point(handle, 0, TbeVec2{0.0, 2.0}, 0.2, &hit_result) == TBE_API_OK);
     assert(hit_result.candidate_count >= 1);
@@ -1161,6 +1199,12 @@ int main() {
     assert(tbe_project_save_json(handle, &json) == TBE_API_OK);
     assert(json != nullptr);
     assert(std::string(json).find("\"project_name\"") != std::string::npos);
+
+    char* render_scene_json = nullptr;
+    assert(tbe_get_render_scene_json(handle, &render_scene_json) == TBE_API_OK);
+    assert(render_scene_json != nullptr);
+    assert(std::string(render_scene_json).find("\"objects\"") != std::string::npos);
+    tbe_free_string(render_scene_json);
 
     int c_schema_version = 0;
     assert(tbe_get_schema_version(handle, &c_schema_version) == TBE_API_OK);
