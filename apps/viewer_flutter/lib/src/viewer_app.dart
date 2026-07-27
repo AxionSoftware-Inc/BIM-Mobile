@@ -113,8 +113,6 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   bool _showObjectList = false;
   bool _showDiagnostics = false;
   String? _engineLoadDiagnostic;
-  RenderSceneEstimateCatalog _estimateCatalog =
-      const RenderSceneEstimateCatalog();
   int? _activeLevelId;
   int? _selectedLevelId;
 
@@ -1320,22 +1318,6 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       message:
           '${prettySceneKind(object.kind)} ${scene.levelById(resultConstraint.levelId)?.name ?? 'level'} + ${resultConstraint.offset.toStringAsFixed(2)} m ga biriktirildi.',
     );
-  }
-
-  Future<void> _showElementLevelAssignmentDialog(
-      RenderSceneObject object) async {
-    if (object.kindKey == 'wall') {
-      await _showWallLevelConstraintsDialog(object);
-      return;
-    }
-    if (object.kindKey == 'door' || object.kindKey == 'window') {
-      await _showOpeningLevelDialog(object);
-      return;
-    }
-    setState(() {
-      _editStatusMessage =
-          '${prettySceneKind(object.kind)} uchun level assignment hali ulanmagan.';
-    });
   }
 
   Future<void> _showEditLevelDialog(RenderSceneLevel level) async {
@@ -4305,123 +4287,131 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
                 : ListView(
                     padding: const EdgeInsets.all(16),
                     children: <Widget>[
-                      _DraftEditorCard(
-                        interactionMode: _interactionMode,
-                        draftWallStart: _interactionMode ==
-                                RenderSceneInteractionMode.addWall
-                            ? _wallTool.start
-                            : _interactionMode ==
-                                    RenderSceneInteractionMode.addLevel
-                                ? _levelTool.start
-                                : _draftWallStart,
-                        draftWallEnd: _interactionMode ==
-                                RenderSceneInteractionMode.addWall
-                            ? _wallTool.end
-                            : _interactionMode ==
-                                    RenderSceneInteractionMode.addLevel
-                                ? _levelTool.end
-                                : _draftWallEnd,
-                        draftSurfaceStart: _draftSurfaceStart,
-                        draftSurfaceEnd: _draftSurfaceEnd,
-                        draftSurfacePointCount: _draftSurfacePoints.length,
-                        draftSurfaceWallCount: _draftSurfaceWallIds.length,
-                        draftSurfaceThicknessMeters:
-                            _draftSurfaceThicknessMeters,
-                        draftSurfaceHeightMeters: _interactionMode ==
-                                RenderSceneInteractionMode.addCeiling
-                            ? _draftCeilingHeightOffsetMeters
-                            : _draftSurfaceHeightMeters,
-                        draftStairWidthMeters: _stairTool.widthMeters,
-                        draftFloorTopElevationMeters:
-                            _draftFloorTopElevationMeters,
-                        surfaceDrawMode: _surfaceDrawMode,
-                        draftHostWall: _draftHostWall,
-                        openingOffsetMeters: _draftOpeningOffsetMeters,
-                        openingWidthMeters: _draftOpeningWidthMeters,
-                        openingHeightMeters: _draftOpeningHeightMeters,
-                        openingSillHeightMeters: _draftOpeningSillHeightMeters,
-                        editStatusMessage: _editStatusMessage,
-                        snapEnabled: _snapDraftToGrid,
-                        canConfirm: _draftCanConfirm,
-                        onSnapToggled: (value) {
-                          setState(() {
-                            _snapDraftToGrid = value;
-                          });
-                          if (_interactionMode ==
-                                  RenderSceneInteractionMode.addDoor ||
-                              _interactionMode ==
-                                  RenderSceneInteractionMode.addWindow ||
-                              _interactionMode ==
-                                  RenderSceneInteractionMode.moveOpening) {
-                            _syncOpeningDraft();
-                          } else {
-                            _syncSurfaceDraftPreview();
-                          }
-                        },
-                        onOpeningOffsetChanged: (value) {
-                          setState(() {
-                            _draftOpeningOffsetMeters = value;
-                          });
-                          _syncOpeningDraft();
-                        },
-                        onOpeningWidthChanged: (value) {
-                          setState(() {
-                            _draftOpeningWidthMeters = value;
-                          });
-                          _syncOpeningDraft();
-                        },
-                        onOpeningHeightChanged: (value) {
-                          setState(() {
-                            _draftOpeningHeightMeters = value;
-                          });
-                          _syncOpeningDraft();
-                        },
-                        onOpeningSillHeightChanged: (value) {
-                          setState(() {
-                            _draftOpeningSillHeightMeters = value;
-                          });
-                          _syncOpeningDraft();
-                        },
-                        onSurfaceThicknessChanged: (value) {
-                          setState(() {
-                            _draftSurfaceThicknessMeters = value;
-                          });
-                        },
-                        onSurfaceHeightChanged: (value) {
-                          setState(() {
+                      if (_interactionMode != RenderSceneInteractionMode.select)
+                        _DraftEditorCard(
+                          interactionMode: _interactionMode,
+                          draftWallStart: _interactionMode ==
+                                  RenderSceneInteractionMode.addWall
+                              ? _wallTool.start
+                              : _interactionMode ==
+                                      RenderSceneInteractionMode.addLevel
+                                  ? _levelTool.start
+                                  : _draftWallStart,
+                          draftWallEnd: _interactionMode ==
+                                  RenderSceneInteractionMode.addWall
+                              ? _wallTool.end
+                              : _interactionMode ==
+                                      RenderSceneInteractionMode.addLevel
+                                  ? _levelTool.end
+                                  : _draftWallEnd,
+                          draftSurfaceStart: _draftSurfaceStart,
+                          draftSurfaceEnd: _draftSurfaceEnd,
+                          draftSurfacePointCount: _draftSurfacePoints.length,
+                          draftSurfaceWallCount: _draftSurfaceWallIds.length,
+                          draftSurfaceThicknessMeters:
+                              _draftSurfaceThicknessMeters,
+                          draftSurfaceHeightMeters: _interactionMode ==
+                                  RenderSceneInteractionMode.addCeiling
+                              ? _draftCeilingHeightOffsetMeters
+                              : _draftSurfaceHeightMeters,
+                          draftStairWidthMeters: _stairTool.widthMeters,
+                          draftFloorTopElevationMeters:
+                              _draftFloorTopElevationMeters,
+                          surfaceDrawMode: _surfaceDrawMode,
+                          draftHostWall: _draftHostWall,
+                          openingOffsetMeters: _draftOpeningOffsetMeters,
+                          openingWidthMeters: _draftOpeningWidthMeters,
+                          openingHeightMeters: _draftOpeningHeightMeters,
+                          openingSillHeightMeters:
+                              _draftOpeningSillHeightMeters,
+                          editStatusMessage: _editStatusMessage,
+                          snapEnabled: _snapDraftToGrid,
+                          canConfirm: _draftCanConfirm,
+                          onSnapToggled: (value) {
+                            setState(() {
+                              _snapDraftToGrid = value;
+                            });
                             if (_interactionMode ==
-                                RenderSceneInteractionMode.addCeiling) {
-                              _draftCeilingHeightOffsetMeters = value;
+                                    RenderSceneInteractionMode.addDoor ||
+                                _interactionMode ==
+                                    RenderSceneInteractionMode.addWindow ||
+                                _interactionMode ==
+                                    RenderSceneInteractionMode.moveOpening) {
+                              _syncOpeningDraft();
                             } else {
-                              _draftSurfaceHeightMeters = value;
+                              _syncSurfaceDraftPreview();
                             }
-                          });
-                        },
-                        onFloorTopElevationChanged: (value) {
-                          setState(() {
-                            _draftFloorTopElevationMeters = value;
-                          });
-                        },
-                        onSurfaceDrawModeChanged: (value) {
-                          setState(() {
-                            _surfaceDrawMode = value;
-                            _draftSurfaceStart = null;
-                            _draftSurfaceEnd = null;
-                            _draftSurfacePoints.clear();
-                            _draftSurfaceWallIds.clear();
-                          });
-                          _syncSurfaceDraftPreview();
-                        },
-                        onStairWidthChanged: _stairTool.setWidth,
-                        onConfirm: _confirmDraft,
-                        onCancel: _cancelDraft,
-                        onClearSelection: _clearSelection,
-                        onResetMode: () => _setInteractionMode(
-                          RenderSceneInteractionMode.select,
+                          },
+                          onOpeningOffsetChanged: (value) {
+                            setState(() {
+                              _draftOpeningOffsetMeters = value;
+                            });
+                            _syncOpeningDraft();
+                          },
+                          onOpeningWidthChanged: (value) {
+                            setState(() {
+                              _draftOpeningWidthMeters = value;
+                            });
+                            _syncOpeningDraft();
+                          },
+                          onOpeningHeightChanged: (value) {
+                            setState(() {
+                              _draftOpeningHeightMeters = value;
+                            });
+                            _syncOpeningDraft();
+                          },
+                          onOpeningSillHeightChanged: (value) {
+                            setState(() {
+                              _draftOpeningSillHeightMeters = value;
+                            });
+                            _syncOpeningDraft();
+                          },
+                          onSurfaceThicknessChanged: (value) {
+                            setState(() {
+                              _draftSurfaceThicknessMeters = value;
+                            });
+                          },
+                          onSurfaceHeightChanged: (value) {
+                            setState(() {
+                              if (_interactionMode ==
+                                  RenderSceneInteractionMode.addCeiling) {
+                                _draftCeilingHeightOffsetMeters = value;
+                              } else {
+                                _draftSurfaceHeightMeters = value;
+                              }
+                            });
+                          },
+                          onFloorTopElevationChanged: (value) {
+                            setState(() {
+                              _draftFloorTopElevationMeters = value;
+                            });
+                          },
+                          onSurfaceDrawModeChanged: (value) {
+                            setState(() {
+                              _surfaceDrawMode = value;
+                              _draftSurfaceStart = null;
+                              _draftSurfaceEnd = null;
+                              _draftSurfacePoints.clear();
+                              _draftSurfaceWallIds.clear();
+                            });
+                            _syncSurfaceDraftPreview();
+                          },
+                          onStairWidthChanged: _stairTool.setWidth,
+                          onConfirm: _confirmDraft,
+                          onCancel: _cancelDraft,
+                          onClearSelection: _clearSelection,
+                          onResetMode: () => _setInteractionMode(
+                            RenderSceneInteractionMode.select,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 16),
-                      if (selectedObject == null && selectedLevel == null)
+                      if (_interactionMode != RenderSceneInteractionMode.select)
+                        const SizedBox(height: 16),
+                      if (_viewportController.selectedElementIds.length > 1)
+                        _MultiSelectionInspectorCard(
+                          count: _viewportController.selectedElementIds.length,
+                          onClear: _clearSelection,
+                        )
+                      else if (selectedObject == null && selectedLevel == null)
                         const _EmptyPanelMessage(
                           icon: Icons.ads_click,
                           title: 'Nothing selected',
@@ -4433,6 +4423,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
                           level: selectedLevel,
                           onElevationSubmitted: (value) =>
                               _moveSelectedLevelElevation(selectedLevel, value),
+                          onEdit: () => _showEditLevelDialog(selectedLevel),
                         )
                       else if (selectedObject != null)
                         _SelectedObjectCard(
@@ -4473,13 +4464,9 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
                                         selectedObject,
                                       )
                                   : null,
-                          onAssignLevel: selectedObject.kindKey != 'wall' &&
-                                  selectedObject.kindKey != 'door' &&
-                                  selectedObject.kindKey != 'window'
-                              ? () => _showElementLevelAssignmentDialog(
-                                    selectedObject,
-                                  )
-                              : null,
+                          // Unsupported level assignment actions are hidden
+                          // until their engine transaction exists.
+                          onAssignLevel: null,
                           onApplyWallLevels: selectedObject.kindKey == 'wall'
                               ? ({
                                   required int baseLevelId,
@@ -4493,36 +4480,22 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
                                     heightMode: heightMode,
                                   )
                               : null,
+                          onEditOpeningPlacement:
+                              selectedObject.kindKey == 'door' ||
+                                      selectedObject.kindKey == 'window'
+                                  ? () => _setInteractionMode(
+                                        RenderSceneInteractionMode.moveOpening,
+                                      )
+                                  : null,
+                          onDelete: _deleteSelectedObject,
                         ),
-                      const SizedBox(height: 16),
-                      _SceneSummaryCard(
-                        scene: scene,
-                        activeLevel: _activeLevel(scene),
-                      ),
-                      const SizedBox(height: 16),
-                      _ActiveLevelCard(
-                        level: _activeLevel(scene),
-                        levels: scene.levels,
-                        activeLevelId: _activeLevelId,
-                        onSelectLevel: _setActiveLevel,
-                      ),
-                      const SizedBox(height: 16),
-                      _EstimateSummaryCard(
-                        summary: RenderSceneEstimator.summarize(
-                          scene,
-                          catalog: _estimateCatalog,
+                      if (selectedObject == null && selectedLevel == null)
+                        _ActiveLevelCard(
+                          level: _activeLevel(scene),
+                          levels: scene.levels,
+                          activeLevelId: _activeLevelId,
+                          onSelectLevel: _setActiveLevel,
                         ),
-                        catalog: _estimateCatalog,
-                        onCatalogChanged: (catalog) {
-                          setState(() {
-                            _estimateCatalog = catalog;
-                          });
-                        },
-                      ),
-                      if (_showDiagnostics) ...<Widget>[
-                        const SizedBox(height: 16),
-                        _DiagnosticsCard(scene: scene),
-                      ],
                     ],
                   ),
           ),
@@ -5672,6 +5645,8 @@ class _SelectedObjectCard extends StatelessWidget {
     this.onAttachWallTopToNextLevel,
     this.onMoveOpeningToActiveLevel,
     this.onApplyWallLevels,
+    this.onEditOpeningPlacement,
+    this.onDelete,
   });
 
   final RenderSceneObject object;
@@ -5688,11 +5663,12 @@ class _SelectedObjectCard extends StatelessWidget {
     required int topLevelId,
     required int heightMode,
   })? onApplyWallLevels;
+  final Future<void> Function()? onEditOpeningPlacement;
+  final Future<void> Function()? onDelete;
 
   @override
   Widget build(BuildContext context) {
     final kind = prettySceneKind(object.kind);
-    final bounds = object.bounds;
     final area = _objectMetadataDouble(object, 'area_m2');
     final perimeter = _objectMetadataDouble(object, 'perimeter_m');
     final wallThickness = _objectMetadataDouble(object, 'thickness_meters');
@@ -5713,10 +5689,8 @@ class _SelectedObjectCard extends StatelessWidget {
     final topLevelId = object.metadata['top_level_id'];
     final heightMode = object.metadata['height_mode']?.toString();
     final levelLocked = RenderSceneEditor.isElementLevelLocked(object);
-    final canToggleLevelLock = object.kindKey == 'floor' ||
-        object.kindKey == 'ceiling' ||
-        object.kindKey == 'door' ||
-        object.kindKey == 'window';
+    final canToggleLevelLock =
+        object.kindKey == 'door' || object.kindKey == 'window';
 
     return _InfoCard(
       title: 'Selected object',
@@ -5726,11 +5700,6 @@ class _SelectedObjectCard extends StatelessWidget {
         _InfoRow(
             label: 'Element ID', value: object.elementId?.toString() ?? '-'),
         _InfoRow(label: 'Level ID', value: object.levelId?.toString() ?? '-'),
-        _InfoRow(label: 'Selectable', value: object.selectable ? 'Yes' : 'No'),
-        _InfoRow(
-          label: 'Visible',
-          value: object.visibleByDefault ? 'Default' : 'Hidden',
-        ),
         if (canToggleLevelLock)
           _InfoRow(
             label: 'Level lock',
@@ -5740,17 +5709,6 @@ class _SelectedObjectCard extends StatelessWidget {
               onChanged: onLevelLockChanged,
             ),
           ),
-        _InfoRow(label: 'Revision', value: object.revision.toString()),
-        _InfoRow(
-          label: 'Mesh',
-          value:
-              '${object.mesh.positions.length} vertices · ${object.mesh.triangleCount} triangles',
-        ),
-        _InfoRow(
-          label: 'Bounds',
-          value:
-              '${bounds.width.toStringAsFixed(2)} × ${bounds.depth.toStringAsFixed(2)} × ${bounds.height.toStringAsFixed(2)} m',
-        ),
         if (wallThickness != null)
           _InfoRow(
             label: 'Thickness',
@@ -5848,6 +5806,15 @@ class _SelectedObjectCard extends StatelessWidget {
               label: const Text('Assign level'),
             ),
           ),
+        if (onEditOpeningPlacement != null)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed: onEditOpeningPlacement,
+              icon: const Icon(Icons.open_with),
+              label: const Text('Edit placement and size'),
+            ),
+          ),
         if (wallStart != null && wallEnd != null) ...<Widget>[
           _InfoRow(label: 'Axis start', value: wallStart),
           _InfoRow(label: 'Axis end', value: wallEnd),
@@ -5863,6 +5830,15 @@ class _SelectedObjectCard extends StatelessWidget {
             value: '${perimeter.toStringAsFixed(2)} m',
           ),
         _InfoRow(label: 'Material', value: object.materialCategory),
+        if (onDelete != null)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: onDelete,
+              icon: const Icon(Icons.delete_outline),
+              label: const Text('Delete element'),
+            ),
+          ),
       ],
     );
   }
@@ -5914,6 +5890,8 @@ int? _objectMetadataInt(RenderSceneObject object, String key) {
   return null;
 }
 
+// Kept as a diagnostics building block for the optional diagnostics surface.
+// ignore: unused_element
 class _SceneSummaryCard extends StatelessWidget {
   const _SceneSummaryCard({
     required this.scene,
@@ -5995,10 +5973,12 @@ class _SelectedLevelCard extends StatelessWidget {
   const _SelectedLevelCard({
     required this.level,
     required this.onElevationSubmitted,
+    required this.onEdit,
   });
 
   final RenderSceneLevel level;
   final Future<void> Function(String value) onElevationSubmitted;
+  final VoidCallback onEdit;
 
   @override
   Widget build(BuildContext context) {
@@ -6023,6 +6003,48 @@ class _SelectedLevelCard extends StatelessWidget {
         _InfoRow(
           label: 'Default wall height',
           value: '${level.defaultWallHeightMeters.toStringAsFixed(2)} m',
+        ),
+        const SizedBox(height: 8),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: OutlinedButton.icon(
+            onPressed: onEdit,
+            icon: const Icon(Icons.edit_outlined),
+            label: const Text('Edit level properties'),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _MultiSelectionInspectorCard extends StatelessWidget {
+  const _MultiSelectionInspectorCard({
+    required this.count,
+    required this.onClear,
+  });
+
+  final int count;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    return _InfoCard(
+      title: 'Multiple selection',
+      icon: Icons.select_all,
+      children: <Widget>[
+        Text('$count ta obyekt tanlangan.'),
+        const SizedBox(height: 6),
+        const Text(
+          'Faqat barcha tanlangan obyektlarga umumiy bo‘lgan xavfsiz propertylar keyinroq batch edit qilinadi. Hozir noto‘g‘ri qiymat o‘zgarmasligi uchun individual Inspector oching.',
+        ),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: onClear,
+            icon: const Icon(Icons.clear),
+            label: const Text('Clear selection'),
+          ),
         ),
       ],
     );
@@ -6322,6 +6344,7 @@ class _WallLevelInlineEditorState extends State<_WallLevelInlineEditor> {
   }
 }
 
+// ignore: unused_element
 class _EstimateSummaryCard extends StatelessWidget {
   const _EstimateSummaryCard({
     required this.summary,
@@ -6598,6 +6621,7 @@ class _EstimateCatalogEditorState extends State<_EstimateCatalogEditor> {
   }
 }
 
+// ignore: unused_element
 class _DiagnosticsCard extends StatelessWidget {
   const _DiagnosticsCard({
     required this.scene,
