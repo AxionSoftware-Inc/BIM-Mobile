@@ -1468,14 +1468,17 @@ class ViewerRepository {
     if (handle == null) {
       throw TbeApiException('No loaded project');
     }
-    return parseRenderSceneJson(
-      _activeLevelId > 0
-          ? _api.getRenderSceneJsonNearLevel(handle, _activeLevelId)
-          : _api.getRenderSceneJson(handle),
-      source: _activeLevelId > 0
-          ? 'engine:nearby-level-render-scene'
-          : 'engine:direct-render-scene',
-    );
+    final engineTimer = Stopwatch()..start();
+    final json = _activeLevelId > 0
+        ? _api.getRenderSceneJsonNearLevel(handle, _activeLevelId)
+        : _api.getRenderSceneJson(handle);
+    engineTimer.stop();
+    final source = _activeLevelId > 0
+        ? 'engine:nearby levels active=$_activeLevelId · '
+            '${engineTimer.elapsedMilliseconds} ms · ${json.length ~/ 1024} KiB'
+        : 'engine:full snapshot · ${engineTimer.elapsedMilliseconds} ms · '
+            '${json.length ~/ 1024} KiB';
+    return parseRenderSceneJson(json, source: source);
   }
 
   Future<RenderSceneLoadResult> setActiveLevel(int levelId) async {
