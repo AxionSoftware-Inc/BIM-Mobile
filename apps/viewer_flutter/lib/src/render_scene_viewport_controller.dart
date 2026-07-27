@@ -60,6 +60,8 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
   RenderScenePoint? _draftWallEnd;
   RenderSceneOpeningDraft? _draftOpening;
   RenderSceneSurfaceDraft? _draftSurface;
+  Rect? _selectionRectangle;
+  bool _selectionRectangleCrossing = false;
 
   MethodChannel? _channel;
 
@@ -132,6 +134,9 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
   @override
   RenderSceneSurfaceDraft? get draftSurface => _draftSurface;
 
+  Rect? get selectionRectangle => _selectionRectangle;
+  bool get selectionRectangleCrossing => _selectionRectangleCrossing;
+
   bool get hasNativeBridge => _channel != null;
 
   Future<void> attachNativeBridge(int viewId) async {
@@ -195,6 +200,8 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     _draftWallEnd = null;
     _draftOpening = null;
     _draftSurface = null;
+    _selectionRectangle = null;
+    _selectionRectangleCrossing = false;
 
     notifyListeners();
 
@@ -368,6 +375,25 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     _draftOpening = null;
     _draftSurface = null;
     notifyListeners();
+  }
+
+  /// Shared transient state for the Flutter painter and the Android renderer.
+  /// Selection decisions stay in [ViewportInteractionController].
+  void setSelectionRectangle(Rect? rectangle, {bool crossing = false}) {
+    if (_selectionRectangle == rectangle &&
+        _selectionRectangleCrossing == crossing) {
+      return;
+    }
+    _selectionRectangle = rectangle;
+    _selectionRectangleCrossing = rectangle == null ? false : crossing;
+    notifyListeners();
+    unawaited(_invoke('setSelectionRectangle', <String, Object?>{
+      'left': rectangle?.left,
+      'top': rectangle?.top,
+      'right': rectangle?.right,
+      'bottom': rectangle?.bottom,
+      'crossing': _selectionRectangleCrossing,
+    }));
   }
 
   @override
@@ -562,6 +588,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
       'ids': normalized.toList(),
       'activeId': resolvedActive,
     });
+    setSelectionRectangle(null);
   }
 
   @override
@@ -608,6 +635,14 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
       'activeId': _activeElementId,
     });
     await _invoke('highlightElement', _highlightedElementId);
+    final rectangle = _selectionRectangle;
+    await _invoke('setSelectionRectangle', <String, Object?>{
+      'left': rectangle?.left,
+      'top': rectangle?.top,
+      'right': rectangle?.right,
+      'bottom': rectangle?.bottom,
+      'crossing': _selectionRectangleCrossing,
+    });
   }
 
   Future<void> _invoke(String method, [Object? arguments]) async {

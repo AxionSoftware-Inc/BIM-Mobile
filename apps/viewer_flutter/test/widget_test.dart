@@ -704,6 +704,20 @@ void main() {
     );
   });
 
+  test('viewport owns a backend-independent selection rectangle', () {
+    final controller = RenderSceneViewportController(
+      backend: RenderSceneViewportBackend.fallback,
+    );
+    addTearDown(controller.dispose);
+    const rectangle = Rect.fromLTRB(10, 20, 80, 90);
+    controller.setSelectionRectangle(rectangle, crossing: true);
+    expect(controller.selectionRectangle, rectangle);
+    expect(controller.selectionRectangleCrossing, isTrue);
+    controller.setSelectionRectangle(null);
+    expect(controller.selectionRectangle, isNull);
+    expect(controller.selectionRectangleCrossing, isFalse);
+  });
+
   test('touch selection window requires a hold before it starts', () {
     final interaction = ViewportInteractionController();
     interaction.begin(

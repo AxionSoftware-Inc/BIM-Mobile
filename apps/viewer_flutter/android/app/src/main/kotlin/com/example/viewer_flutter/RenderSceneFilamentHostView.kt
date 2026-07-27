@@ -1,7 +1,10 @@
 package com.example.viewer_flutter
 
 import android.content.Context
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.RectF
 import android.view.MotionEvent
 import android.graphics.Typeface
 import android.os.Handler
@@ -96,6 +99,7 @@ internal class RenderSceneFilamentHostView(
   }
 
   private val renderSurface = TextureView(context)
+  private val selectionOverlay = NativeSelectionOverlay(context)
   private val statusView = TextView(context)
   private val choreographer = Choreographer.getInstance()
   private val uiHelper = UiHelper(UiHelper.ContextErrorPolicy.DONT_CHECK)
@@ -183,6 +187,10 @@ internal class RenderSceneFilamentHostView(
       LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT),
     )
     addView(
+      selectionOverlay,
+      LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT),
+    )
+    addView(
       statusView,
       LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.START or Gravity.BOTTOM),
     )
@@ -244,7 +252,9 @@ internal class RenderSceneFilamentHostView(
   private fun clearScene(message: String) {
     currentScene = null
     selectedElementId = null
+    selectedElementIds = emptySet()
     highlightedElementId = null
+    selectionOverlay.clear()
     destroyRenderables()
     updateMetrics()
     updateStatus(message)
@@ -322,6 +332,27 @@ internal class RenderSceneFilamentHostView(
     refreshTintState()
     updateStatus()
     invalidate()
+  }
+
+  fun setSelectionRectangle(payload: Map<*, *>?) {
+    val left = toDouble(payload?.get("left"))
+    val top = toDouble(payload?.get("top"))
+    val right = toDouble(payload?.get("right"))
+    val bottom = toDouble(payload?.get("bottom"))
+    if (left == null || top == null || right == null || bottom == null) {
+      selectionOverlay.clear()
+      return
+    }
+    val density = resources.displayMetrics.density
+    selectionOverlay.setRectangle(
+      RectF(
+        (left * density).toFloat(),
+        (top * density).toFloat(),
+        (right * density).toFloat(),
+        (bottom * density).toFloat(),
+      ),
+      payload?.get("crossing") as? Boolean ?: false,
+    )
   }
 
   fun highlightElement(elementId: Any?) {
@@ -895,4 +926,42 @@ internal class RenderSceneFilamentHostView(
     val indexData: IntBuffer,
     val bounds: SceneBounds,
   )
+}
+
+private class NativeSelectionOverlay(context: Context) : android.view.View(context) {
+  private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    style = Paint.Style.STROKE
+    strokeWidth = context.resources.displayMetrics.density * 2f
+  }
+  private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    style = Paint.Style.FILL
+  }
+  private var rectangle: RectF? = null
+  private var crossing = false
+
+  init {
+    isClickable = false
+  }
+
+  fun setRectangle(value: RectF, isCrossing: Boolean) {
+    rectangle = RectF(value)
+    crossing = isCrossing
+    invalidate()
+  }
+
+  fun clear() {
+    if (rectangle == null) return
+    rectangle = null
+    invalidate()
+  }
+
+  override fun onDraw(canvas: Canvas) {
+    super.onDraw(canvas)
+    val rect = rectangle ?: return
+    val color = if (crossing) Color.rgb(245, 158, 11) else Color.rgb(37, 99, 235)
+    fill.color = Color.argb(40, Color.red(color), Color.green(color), Color.blue(color))
+    stroke.color = color
+    canvas.drawRect(rect, fill)
+    canvas.drawRect(rect, stroke)
+  }
 }

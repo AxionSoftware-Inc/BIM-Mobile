@@ -208,7 +208,6 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
   bool _touchRectangleArmed = false;
   final ViewportInteractionController _interaction =
       ViewportInteractionController();
-  Rect? _selectionRect;
 
   ViewportSelectionModifiers _selectionModifiers() {
     final keys = HardwareKeyboard.instance.logicalKeysPressed;
@@ -542,7 +541,10 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                   !_isSecondaryDrag) {
                 final rectangle = _interaction.update(event.localPosition);
                 if (_interaction.intent == ViewportDragIntent.rectangleSelect) {
-                  setState(() => _selectionRect = rectangle);
+                  controller.setSelectionRectangle(
+                    rectangle,
+                    crossing: _interaction.isCrossingSelection,
+                  );
                   _lastPointerPosition = event.localPosition;
                   return;
                 }
@@ -656,12 +658,12 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                   : (event.localPosition - down).distance;
               if (widget.interactionMode == RenderSceneInteractionMode.select &&
                   _interaction.intent == ViewportDragIntent.rectangleSelect &&
-                  _selectionRect != null) {
-                final rectangle = _selectionRect!;
+                  controller.selectionRectangle != null) {
+                final rectangle = controller.selectionRectangle!;
                 // Clear the visual overlay before the controller notification.
                 // Otherwise the notification schedules a frame with the old blue
                 // rectangle and it appears as if the selection did not commit.
-                setState(() => _selectionRect = null);
+                controller.setSelectionRectangle(null);
                 final ids = _interaction.resolveRectangle(
                   current: ViewportSelectionState(
                     selectedElementIds: controller.selectedElementIds,
@@ -801,7 +803,7 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                       selectedElementIds: controller.selectedElementIds,
                       activeElementId: controller.activeElementId,
                       selectedLevelId: controller.selectedLevelId,
-                      selectionRect: _selectionRect,
+                      selectionRect: controller.selectionRectangle,
                       highlightedElementId: controller.highlightedElementId,
                       projectionMode: controller.projectionMode,
                       orbitProjectionStyle: controller.orbitProjectionStyle,
@@ -920,7 +922,7 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
     _gesturePreviousScale = 1.0;
     _gesturePreviousFocalPoint = null;
     _sceneDragStarted = false;
-    _selectionRect = null;
+    controller.setSelectionRectangle(null);
     _interaction.reset();
   }
 }

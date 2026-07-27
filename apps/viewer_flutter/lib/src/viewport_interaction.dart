@@ -75,6 +75,7 @@ class ViewportInteractionController {
   bool _crossing = false;
 
   ViewportDragIntent get intent => _intent;
+  bool get isCrossingSelection => _crossing;
 
   void begin({
     required Offset position,
