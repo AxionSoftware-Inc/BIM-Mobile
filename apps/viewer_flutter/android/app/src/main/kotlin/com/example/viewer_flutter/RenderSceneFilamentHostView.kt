@@ -754,9 +754,9 @@ internal class RenderSceneFilamentHostView(
         // Revit-like working view: neutral paper-white surfaces with graphite
         // edges. Material/category colors remain available in Shaded.
         floatArrayOf(
-          0.86f,
-          0.87f,
-          0.88f,
+          0.98f,
+          0.98f,
+          0.98f,
           1.0f,
         )
       } else {
@@ -779,9 +779,9 @@ internal class RenderSceneFilamentHostView(
       entry.edgeMaterialInstance?.setParameter(
         "baseColor",
         Colors.RgbaType.LINEAR,
-        if (active || selected) 0.08f else 0.12f,
-        if (active || selected) 0.32f else 0.14f,
-        if (active || selected) 0.95f else 0.17f,
+        if (active || selected) 0.08f else 0.035f,
+        if (active || selected) 0.32f else 0.045f,
+        if (active || selected) 0.95f else 0.055f,
         1.0f,
       )
     }
