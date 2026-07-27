@@ -25,6 +25,11 @@ internal data class SceneMesh(
   val positions: List<ScenePoint>,
   val indices: List<Int>,
 )
+internal data class SceneLevel(
+  val levelId: Long,
+  val name: String,
+  val elevationMeters: Double,
+)
 
 internal data class SceneObject(
   val elementId: Long?,
@@ -45,6 +50,7 @@ internal data class SceneState(
   val objectCount: Int,
   val vertexCount: Int,
   val indexCount: Int,
+  val levels: List<SceneLevel>,
   val objects: List<SceneObject>,
 )
 
@@ -72,6 +78,21 @@ internal fun toSceneState(payload: Any?): SceneState? {
   val warnings = mutableListOf<String>()
   val errors = mutableListOf<String>()
   val objects = mutableListOf<SceneObject>()
+  val levels = mutableListOf<SceneLevel>()
+  val rawLevels = sceneRoot["levels"]
+  if (rawLevels is List<*>) {
+    for (entry in rawLevels) {
+      val level = entry as? Map<*, *> ?: continue
+      val levelId = toLong(level["level_id"] ?: level["levelId"]) ?: continue
+      levels.add(
+        SceneLevel(
+          levelId = levelId,
+          name = toStringValue(level["name"], "Level $levelId"),
+          elevationMeters = toDouble(level["elevation_meters"] ?: level["elevationMeters"]) ?: 0.0,
+        ),
+      )
+    }
+  }
   val rawObjects = sceneRoot["objects"]
   if (rawObjects is List<*>) {
     for (entry in rawObjects) {
@@ -114,6 +135,7 @@ internal fun toSceneState(payload: Any?): SceneState? {
     objectCount = objectCount,
     vertexCount = vertexCount,
     indexCount = indexCount,
+    levels = levels.sortedBy { it.elevationMeters },
     objects = objects,
   )
 }

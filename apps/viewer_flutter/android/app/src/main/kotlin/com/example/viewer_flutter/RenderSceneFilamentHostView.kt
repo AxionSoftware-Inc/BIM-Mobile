@@ -77,6 +77,12 @@ private data class FilamentSceneMetrics(
   val indexCount: Int,
 )
 
+private data class NativeVisualObject(
+  val elementId: Long?,
+  val kind: String,
+  val bounds: SceneBounds,
+)
+
 internal class RenderSceneFilamentHostView(
   context: Context,
   initialScene: SceneState? = null,
@@ -227,6 +233,13 @@ internal class RenderSceneFilamentHostView(
     }
     currentScene = newScene
     rebuildScene()
+    selectionOverlay.setVisualScene(
+      newScene.objects.map { objectData ->
+        NativeVisualObject(objectData.elementId, normalizeKind(objectData.kind), transformBounds(objectData.bounds))
+      },
+      newScene.levels.map { level -> level.name to level.elevationMeters },
+      sceneMetrics.bounds,
+    )
     syncVisibility()
     refreshTintState()
     fitCamera()
@@ -246,6 +259,7 @@ internal class RenderSceneFilamentHostView(
     selectedElementIds = emptySet()
     highlightedElementId = null
     selectionOverlay.clear()
+    selectionOverlay.clearVisualScene()
     destroyRenderables()
     updateMetrics()
     updateStatus(message)
@@ -271,6 +285,7 @@ internal class RenderSceneFilamentHostView(
     topDownZoom = max(radius * 1.2, 2.0)
     configureCameraProjection()
     updateOrbitCamera()
+    syncVisualOverlay()
     updateStatus("Camera fitted to ${metrics.objectCount} objects.")
     invalidate()
   }
@@ -279,6 +294,7 @@ internal class RenderSceneFilamentHostView(
     projectionMode = mode
     configureCameraProjection()
     updateOrbitCamera()
+    syncVisualOverlay()
     updateStatus()
     invalidate()
   }
@@ -287,6 +303,7 @@ internal class RenderSceneFilamentHostView(
     orbitProjectionStyle = style
     configureCameraProjection()
     updateOrbitCamera()
+    syncVisualOverlay()
     updateStatus()
     invalidate()
   }
@@ -318,6 +335,7 @@ internal class RenderSceneFilamentHostView(
     }
     configureCameraProjection()
     updateOrbitCamera()
+    syncVisualOverlay()
     invalidate()
   }
 
@@ -412,6 +430,7 @@ internal class RenderSceneFilamentHostView(
   override fun onResized(width: Int, height: Int) {
     filamentView?.viewport = Viewport(0, 0, width.coerceAtLeast(1), height.coerceAtLeast(1))
     fitCamera()
+    syncVisualOverlay()
   }
 
   override fun doFrame(frameTimeNanos: Long) {
@@ -830,6 +849,7 @@ internal class RenderSceneFilamentHostView(
             orbitPitchRadians = (orbitPitchRadians + dy * 0.01).coerceIn(Math.toRadians(0.1), Math.toRadians(88.0))
           }
           updateOrbitCamera()
+          syncVisualOverlay()
           invalidate()
         }
         return true
@@ -858,6 +878,7 @@ internal class RenderSceneFilamentHostView(
         0.0,
         -1.0,
       )
+      syncVisualOverlay()
       return
     }
     val cosPitch = cos(orbitPitchRadians)
@@ -874,6 +895,19 @@ internal class RenderSceneFilamentHostView(
       0.0,
       1.0,
       0.0,
+    )
+    syncVisualOverlay()
+  }
+
+  private fun syncVisualOverlay() {
+    selectionOverlay.setVisualCamera(
+      center = orbitCenter,
+      yawRadians = orbitYawRadians,
+      pitchRadians = orbitPitchRadians,
+      distance = orbitDistance,
+      topDownZoom = topDownZoom,
+      topDown = projectionMode == "topDown",
+      perspective = orbitProjectionStyle == "perspective",
     )
   }
 
@@ -1011,6 +1045,31 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
   }
   private var rectangle: RectF? = null
   private var crossing = false
+  private var objects = emptyList<NativeVisualObject>()
+  private var levels = emptyList<Pair<String, Double>>()
+  private var sceneBounds = SceneBounds(ScenePoint(0.0, 0.0, 0.0), ScenePoint(0.0, 0.0, 0.0))
+  private var center = ScenePoint(0.0, 0.0, 0.0)
+  private var yawRadians = 0.0
+  private var pitchRadians = 0.0
+  private var distance = 12.0
+  private var topDownZoom = 8.0
+  private var topDown = true
+  private var perspective = false
+  private val outline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    style = Paint.Style.STROKE
+    color = Color.argb(155, 24, 39, 52)
+    strokeWidth = context.resources.displayMetrics.density * 0.85f
+  }
+  private val levelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    style = Paint.Style.STROKE
+    color = Color.argb(195, 8, 119, 139)
+    strokeWidth = context.resources.displayMetrics.density * 1.2f
+  }
+  private val levelText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    color = Color.rgb(8, 119, 139)
+    textSize = context.resources.displayMetrics.scaledDensity * 11f
+    typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+  }
 
   init {
     isClickable = false
@@ -1028,13 +1087,142 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
     invalidate()
   }
 
+  fun setVisualScene(
+    value: List<NativeVisualObject>,
+    levelValues: List<Pair<String, Double>>,
+    bounds: SceneBounds,
+  ) {
+    // Bounding-box overlays have a predictable cost. Above this threshold we
+    // retain level guides but avoid turning a city-scale view into line soup.
+    objects = if (value.size <= 650) value else emptyList()
+    levels = levelValues
+    sceneBounds = bounds
+    invalidate()
+  }
+
+  fun clearVisualScene() {
+    objects = emptyList()
+    levels = emptyList()
+    invalidate()
+  }
+
+  fun setVisualCamera(
+    center: ScenePoint,
+    yawRadians: Double,
+    pitchRadians: Double,
+    distance: Double,
+    topDownZoom: Double,
+    topDown: Boolean,
+    perspective: Boolean,
+  ) {
+    this.center = center
+    this.yawRadians = yawRadians
+    this.pitchRadians = pitchRadians
+    this.distance = distance
+    this.topDownZoom = topDownZoom
+    this.topDown = topDown
+    this.perspective = perspective
+    invalidate()
+  }
+
   override fun onDraw(canvas: Canvas) {
     super.onDraw(canvas)
+    drawAuthoringEdges(canvas)
     val rect = rectangle ?: return
     val color = if (crossing) Color.rgb(245, 158, 11) else Color.rgb(37, 99, 235)
     fill.color = Color.argb(40, Color.red(color), Color.green(color), Color.blue(color))
     stroke.color = color
     canvas.drawRect(rect, fill)
     canvas.drawRect(rect, stroke)
+  }
+
+  private fun drawAuthoringEdges(canvas: Canvas) {
+    if (width <= 1 || height <= 1) return
+    for (objectData in objects) {
+      val corners = visualCorners(objectData.bounds).mapNotNull(::project)
+      if (corners.size != 8) continue
+      val pairs = intArrayOf(
+        0, 1, 1, 2, 2, 3, 3, 0,
+        4, 5, 5, 6, 6, 7, 7, 4,
+        0, 4, 1, 5, 2, 6, 3, 7,
+      )
+      for (index in pairs.indices step 2) {
+        canvas.drawLine(corners[pairs[index]], corners[pairs[index + 1]], outline)
+      }
+    }
+    if (!topDown) {
+      val widthSpan = max(sceneBounds.max.x - sceneBounds.min.x, 1.0)
+      val backZ = sceneBounds.max.z
+      for ((name, elevation) in levels) {
+        val first = project(ScenePoint(sceneBounds.min.x - widthSpan * 0.08, elevation, backZ))
+        val second = project(ScenePoint(sceneBounds.max.x + widthSpan * 0.08, elevation, backZ))
+        if (first != null && second != null) {
+          canvas.drawLine(first, second, levelPaint)
+          canvas.drawText(name, first.x + 6f, first.y - 5f, levelText)
+        }
+      }
+    }
+  }
+
+  private fun visualCorners(bounds: SceneBounds): List<ScenePoint> = listOf(
+    ScenePoint(bounds.min.x, bounds.min.y, bounds.min.z),
+    ScenePoint(bounds.max.x, bounds.min.y, bounds.min.z),
+    ScenePoint(bounds.max.x, bounds.max.y, bounds.min.z),
+    ScenePoint(bounds.min.x, bounds.max.y, bounds.min.z),
+    ScenePoint(bounds.min.x, bounds.min.y, bounds.max.z),
+    ScenePoint(bounds.max.x, bounds.min.y, bounds.max.z),
+    ScenePoint(bounds.max.x, bounds.max.y, bounds.max.z),
+    ScenePoint(bounds.min.x, bounds.max.y, bounds.max.z),
+  )
+
+  private fun project(point: ScenePoint): android.graphics.PointF? {
+    val aspect = width.toDouble() / max(height, 1).toDouble()
+    if (topDown) {
+      val halfHeight = max(topDownZoom, 0.001)
+      val halfWidth = halfHeight * aspect
+      return android.graphics.PointF(
+        ((point.x - center.x) / halfWidth * 0.5 + 0.5).times(width).toFloat(),
+        ((point.z - center.z) / halfHeight * 0.5 + 0.5).times(height).toFloat(),
+      )
+    }
+    val cosPitch = cos(pitchRadians)
+    val eye = ScenePoint(
+      center.x + distance * cosPitch * cos(yawRadians),
+      center.y + distance * sin(pitchRadians),
+      center.z + distance * cosPitch * sin(yawRadians),
+    )
+    val forward = normalize(ScenePoint(center.x - eye.x, center.y - eye.y, center.z - eye.z))
+    val right = normalize(cross(forward, ScenePoint(0.0, 1.0, 0.0)))
+    val up = cross(right, forward)
+    val relative = ScenePoint(point.x - eye.x, point.y - eye.y, point.z - eye.z)
+    val x = dot(relative, right)
+    val y = dot(relative, up)
+    val depth = dot(relative, forward)
+    if (depth <= 0.01) return null
+    val (screenX, screenY) = if (perspective) {
+      val tangent = tan(Math.toRadians(45.0) * 0.5)
+      (x / (depth * tangent * aspect)) to (y / (depth * tangent))
+    } else {
+      val halfHeight = max(distance * 0.6, 2.0)
+      (x / (halfHeight * aspect)) to (y / halfHeight)
+    }
+    return android.graphics.PointF(
+      ((screenX * 0.5 + 0.5) * width).toFloat(),
+      ((0.5 - screenY * 0.5) * height).toFloat(),
+    )
+  }
+
+  private fun dot(first: ScenePoint, second: ScenePoint): Double =
+    first.x * second.x + first.y * second.y + first.z * second.z
+
+  private fun cross(first: ScenePoint, second: ScenePoint): ScenePoint = ScenePoint(
+    first.y * second.z - first.z * second.y,
+    first.z * second.x - first.x * second.z,
+    first.x * second.y - first.y * second.x,
+  )
+
+  private fun normalize(value: ScenePoint): ScenePoint {
+    val length = kotlin.math.sqrt(dot(value, value))
+    return if (length <= 1e-9) ScenePoint(0.0, 0.0, 0.0) else ScenePoint(value.x / length, value.y / length, value.z / length)
   }
 }
