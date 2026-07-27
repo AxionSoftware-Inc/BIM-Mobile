@@ -703,30 +703,40 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   }
 
   Future<void> _setActiveLevel(int? levelId) async {
-    final scene = _scene;
+    var scene = _scene;
     if (scene == null || levelId == null || _activeLevelId == levelId) {
       return;
     }
-    final level = scene.levelById(levelId);
+    final repository = _engineRepository;
+    if (_engineBackedMode && repository != null) {
+      final result = await repository.setActiveLevel(levelId);
+      if (!mounted) {
+        return;
+      }
+      scene = result.scene ?? scene;
+    }
+    final activeScene = scene;
+    final level = activeScene.levelById(levelId);
     setState(() {
+      _scene = activeScene;
       _activeLevelId = levelId;
       _draftFloorTopElevationMeters = level?.elevationMeters ?? 0.0;
       _draftSurfaceHeightMeters =
           level?.defaultWallHeightMeters ?? _defaultWallHeightMeters;
       _statusMessage = 'Active level changed.';
       if (_usesProjectionDefaultVisibility) {
-        _visibleKinds = _defaultVisibleKindsForProjection(scene);
+        _visibleKinds = _defaultVisibleKindsForProjection(activeScene);
       } else {
         _visibleKinds = _sanitizeVisibleKinds(
           visibleKinds: _visibleKinds,
-          scene: _sceneForViewport(scene),
+          scene: _sceneForViewport(activeScene),
         );
       }
       if (_usesProjectionDefaultDisplayStyle) {
         _displayStyle = _defaultDisplayStyleForProjection();
       }
     });
-    await _viewportController.loadRenderScene(_sceneForViewport(scene));
+    await _viewportController.loadRenderScene(_sceneForViewport(activeScene));
     await _viewportController.setVisibleKinds(_visibleKinds);
     await _viewportController.setProjectionMode(_projectionMode);
     await _viewportController.setOrbitProjectionStyle(_orbitProjectionStyle);

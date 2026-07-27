@@ -458,7 +458,10 @@ RenderSceneObjectDTO make_object_dto(
     return object;
 }
 
-RenderSceneDTO build_render_scene(const Document& document) {
+RenderSceneDTO build_render_scene(
+    const Document& document,
+    const std::set<ElementId>* visible_level_ids = nullptr
+) {
     RenderSceneDTO scene;
     scene.scene_version = 1;
     scene.units = "meters";
@@ -467,6 +470,13 @@ RenderSceneDTO build_render_scene(const Document& document) {
     const auto elevations = level_elevation_map(document);
 
     auto append_object = [&](RenderSceneObjectDTO object) {
+        if (visible_level_ids != nullptr && !visible_level_ids->contains(object.level_id.value)) {
+            const auto host_level = object.metadata.find("host_render_level_id");
+            if (host_level == object.metadata.end() ||
+                !visible_level_ids->contains(static_cast<ElementId>(std::stoull(host_level->second)))) {
+                return;
+            }
+        }
         if (object.mesh.positions.empty() || object.mesh.indices.empty()) {
             return;
         }
@@ -542,6 +552,7 @@ RenderSceneDTO build_render_scene(const Document& document) {
                     material_category_name(opening_kind),
                     {
                         {"host_wall_id", std::to_string(element.id())},
+                        {"host_render_level_id", std::to_string(wall->level_id)},
                         {"offset_meters", std::to_string(opening.offset_meters)},
                         {"width_meters", std::to_string(opening.width_meters)},
                         {"height_meters", std::to_string(opening.height_meters)},
@@ -1964,6 +1975,43 @@ ApiResult<std::string> EngineSession::get_render_scene_json() const {
             return error_result<std::string>(recompute.status, recompute.message);
         }
         return success_result(render_scene_to_json(build_render_scene(impl_->document())));
+    } catch (const std::exception& error) {
+        return error_result<std::string>(status_from_exception(error), error.what());
+    }
+}
+
+ApiResult<std::string> EngineSession::get_render_scene_json_near_level(
+    std::uint64_t active_level_id,
+    int adjacent_level_count
+) const {
+    try {
+        auto recompute = recompute_impl(*impl_, ComputeMode::InteractivePreview);
+        if (!recompute.ok()) {
+            return error_result<std::string>(recompute.status, recompute.message);
+        }
+        const auto& document = impl_->document();
+        std::vector<std::pair<double, ElementId>> levels;
+        for (const auto& element : document.elements()) {
+            if (const auto* level = element.level(); level != nullptr) {
+                levels.emplace_back(level->elevation_meters, element.id());
+            }
+        }
+        std::sort(levels.begin(), levels.end());
+        const auto active = std::find_if(levels.begin(), levels.end(), [active_level_id](const auto& entry) {
+            return entry.second == active_level_id;
+        });
+        if (active == levels.end()) {
+            return error_result<std::string>(ApiStatus::NotFound, "active render level does not exist");
+        }
+        const auto radius = std::max(0, adjacent_level_count);
+        const auto active_index = static_cast<int>(std::distance(levels.begin(), active));
+        std::set<ElementId> visible_levels;
+        for (auto index = std::max(0, active_index - radius);
+             index <= std::min(static_cast<int>(levels.size()) - 1, active_index + radius);
+             ++index) {
+            visible_levels.insert(levels[static_cast<std::size_t>(index)].second);
+        }
+        return success_result(render_scene_to_json(build_render_scene(document, &visible_levels)));
     } catch (const std::exception& error) {
         return error_result<std::string>(status_from_exception(error), error.what());
     }

@@ -196,6 +196,18 @@ typedef _StringGetterDart = int Function(
   ffi.Pointer<ffi.Void>,
   ffi.Pointer<ffi.Pointer<Utf8>>,
 );
+typedef _NearbyRenderSceneNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Uint64,
+  ffi.Int32,
+  ffi.Pointer<ffi.Pointer<Utf8>>,
+);
+typedef _NearbyRenderSceneDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  int,
+  int,
+  ffi.Pointer<ffi.Pointer<Utf8>>,
+);
 typedef _SetIntOptionNative = ffi.Int32 Function(
   ffi.Pointer<ffi.Void>,
   ffi.Int32,
@@ -545,6 +557,9 @@ class TbeViewerApi {
         _getRenderSceneJson =
             library.lookupFunction<_StringGetterNative, _StringGetterDart>(
                 'tbe_get_render_scene_json'),
+        _getRenderSceneJsonNearLevel = library.lookupFunction<
+            _NearbyRenderSceneNative,
+            _NearbyRenderSceneDart>('tbe_get_render_scene_json_near_level'),
         _setPerformanceProfile =
             library.lookupFunction<_SetIntOptionNative, _SetIntOptionDart>(
                 'tbe_set_performance_profile'),
@@ -695,6 +710,7 @@ class TbeViewerApi {
   final _StringGetterDart _getEngineVersion;
   final _StringGetterDart _getApiVersion;
   final _StringGetterDart _getRenderSceneJson;
+  final _NearbyRenderSceneDart _getRenderSceneJsonNearLevel;
   final _SetIntOptionDart _setPerformanceProfile;
   final _SetIntOptionDart _setComputeMode;
   final _SchemaVersionDart _getSchemaVersion;
@@ -758,6 +774,30 @@ class TbeViewerApi {
       _readOwnedString(handle, _getApiVersion);
   String getRenderSceneJson(ffi.Pointer<ffi.Void> handle) =>
       _readOwnedString(handle, _getRenderSceneJson);
+  String getRenderSceneJsonNearLevel(
+    ffi.Pointer<ffi.Void> handle,
+    int activeLevelId, {
+    int adjacentLevelCount = 1,
+  }) {
+    final out = calloc<ffi.Pointer<Utf8>>();
+    try {
+      _check(
+        handle,
+        _getRenderSceneJsonNearLevel(
+          handle,
+          activeLevelId,
+          adjacentLevelCount,
+          out,
+        ),
+      );
+      final value = out.value.toDartString();
+      _freeString(out.value);
+      return value;
+    } finally {
+      calloc.free(out);
+    }
+  }
+
   String saveProjectJson(ffi.Pointer<ffi.Void> handle) =>
       _readOwnedString(handle, _projectSaveJson);
 
@@ -1429,9 +1469,18 @@ class ViewerRepository {
       throw TbeApiException('No loaded project');
     }
     return parseRenderSceneJson(
-      _api.getRenderSceneJson(handle),
-      source: 'engine:direct-render-scene',
+      _activeLevelId > 0
+          ? _api.getRenderSceneJsonNearLevel(handle, _activeLevelId)
+          : _api.getRenderSceneJson(handle),
+      source: _activeLevelId > 0
+          ? 'engine:nearby-level-render-scene'
+          : 'engine:direct-render-scene',
     );
+  }
+
+  Future<RenderSceneLoadResult> setActiveLevel(int levelId) async {
+    _activeLevelId = levelId;
+    return currentRenderScene();
   }
 
   Future<RenderSceneLoadResult> constrainUnconnectedWallsToNextLevel() async {

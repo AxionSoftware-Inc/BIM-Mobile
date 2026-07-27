@@ -517,6 +517,7 @@ public:
     ApiVoidResult import_project_package(const std::string& path, LoadMode mode = LoadMode::Strict);
     ApiResult<RenderSceneDTO> get_render_scene() const;
     ApiResult<std::string> get_render_scene_json() const;
+    ApiResult<std::string> get_render_scene_json_near_level(std::uint64_t active_level_id, int adjacent_level_count = 1) const;
     ApiVoidResult export_render_scene_json(const std::string& path) const;
     ApiVoidResult set_performance_profile(PerformanceProfile profile);
     ApiResult<PerformanceProfile> get_performance_profile() const;

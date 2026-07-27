@@ -877,6 +877,22 @@ TbeApiStatusCode tbe_get_render_scene_json(TbeEngineHandle* handle, char** out_j
     return copy_string_result(handle, handle->session->get_render_scene_json(), out_json);
 }
 
+TbeApiStatusCode tbe_get_render_scene_json_near_level(
+    TbeEngineHandle* handle,
+    uint64_t active_level_id,
+    int adjacent_level_count,
+    char** out_json
+) {
+    if (handle == nullptr || handle->session == nullptr || out_json == nullptr) {
+        return null_handle_error(handle);
+    }
+    return copy_string_result(
+        handle,
+        handle->session->get_render_scene_json_near_level(active_level_id, adjacent_level_count),
+        out_json
+    );
+}
+
 TbeApiStatusCode tbe_set_performance_profile(TbeEngineHandle* handle, int profile) {
     if (handle == nullptr || handle->session == nullptr) {
         return null_handle_error(handle);
