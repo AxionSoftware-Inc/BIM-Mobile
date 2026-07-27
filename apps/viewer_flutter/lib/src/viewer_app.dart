@@ -318,6 +318,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
 
     ViewerRepository? createdRepository;
     try {
+      await TbeViewerApi.prepareForCurrentPlatform();
       final repository = _engineRepository ??
           (createdRepository = ViewerRepository(TbeViewerApi.load()));
       final result = await repository.createResidentialTemplate(
@@ -345,6 +346,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
 
   Future<bool> _tryLoadBundledEngineSample() async {
     try {
+      await TbeViewerApi.prepareForCurrentPlatform();
       final api = TbeViewerApi.load();
       final repository = ViewerRepository(api);
       final projectJson =

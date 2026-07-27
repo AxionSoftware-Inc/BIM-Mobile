@@ -3,6 +3,7 @@ import 'dart:ffi' as ffi;
 import 'dart:io';
 
 import 'package:ffi/ffi.dart';
+import 'package:flutter/services.dart';
 
 import 'app_project_storage.dart';
 import 'render_scene_models.dart';
@@ -662,6 +663,25 @@ class TbeViewerApi {
     return TbeViewerApi._(_openLibrary());
   }
 
+  static String? _androidLibraryPath;
+
+  /// Android's classloader knows the ABI-specific extracted location. Passing
+  /// that exact path to FFI avoids vendor-dependent bare-name dlopen lookup.
+  static Future<void> prepareForCurrentPlatform() async {
+    if (!Platform.isAndroid || _androidLibraryPath != null) return;
+    const channel = MethodChannel('tbe/native_engine');
+    final info =
+        await channel.invokeMapMethod<String, dynamic>('getLibraryInfo');
+    final path = info?['path']?.toString();
+    final loaded = info?['loaded'] == true;
+    if (!loaded || path == null || path.isEmpty) {
+      throw TbeApiException(
+        'Android C++ engine did not load: ${info?['error'] ?? 'native library path unavailable'}',
+      );
+    }
+    _androidLibraryPath = path;
+  }
+
   static ffi.DynamicLibrary _openLibrary() {
     final overridePath = Platform.environment['TBE_CAPI_PATH'];
     final current = Directory.current.absolute;
@@ -685,6 +705,7 @@ class TbeViewerApi {
     };
     final candidates = <String>[
       if (overridePath != null && overridePath.isNotEmpty) overridePath,
+      if (_androidLibraryPath != null) _androidLibraryPath!,
       if (Platform.isAndroid) 'libtbe_capi.so',
       if (Platform.isLinux) 'libtbe_capi.so',
       if (Platform.isWindows) 'tbe_capi.dll',

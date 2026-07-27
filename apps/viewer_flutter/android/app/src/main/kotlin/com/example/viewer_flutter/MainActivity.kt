@@ -8,11 +8,17 @@ import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.platform.PlatformViewRegistry
 
 class MainActivity : FlutterActivity() {
+  private var nativeEngineError: String? = null
+
   override fun onCreate(savedInstanceState: Bundle?) {
     // The C++ authoring engine is packaged by Gradle as libtbe_capi.so. Load
     // it through Android's namespace-aware loader before Dart FFI opens it;
     // relying on a bare dlopen name is device/loader-version dependent.
-    System.loadLibrary("tbe_capi")
+    try {
+      System.loadLibrary("tbe_capi")
+    } catch (error: UnsatisfiedLinkError) {
+      nativeEngineError = error.message ?: error.javaClass.simpleName
+    }
     super.onCreate(savedInstanceState)
   }
 
@@ -34,6 +40,19 @@ class MainActivity : FlutterActivity() {
               result.success(directory.absolutePath)
             }
           }
+          else -> result.notImplemented()
+        }
+      }
+    MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "tbe/native_engine")
+      .setMethodCallHandler { call, result ->
+        when (call.method) {
+          "getLibraryInfo" -> result.success(
+            mapOf(
+              "path" to File(applicationInfo.nativeLibraryDir, "libtbe_capi.so").absolutePath,
+              "loaded" to (nativeEngineError == null),
+              "error" to nativeEngineError,
+            )
+          )
           else -> result.notImplemented()
         }
       }

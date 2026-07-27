@@ -49,6 +49,15 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
     }
+
+    // Dart FFI receives the absolute nativeLibraryDir path from MainActivity.
+    // Keep C++ libraries extracted there instead of relying on zip-backed
+    // loading behaviour, which varies across Android vendors.
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
 }
 
 kotlin {
