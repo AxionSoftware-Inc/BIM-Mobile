@@ -82,7 +82,8 @@ private data class FilamentSceneMetrics(
 private data class NativeVisualObject(
   val elementId: Long?,
   val kind: String,
-  val bounds: SceneBounds,
+  val points: List<ScenePoint>,
+  val featureEdges: List<Pair<Int, Int>>,
 )
 
 internal class RenderSceneFilamentHostView(
@@ -244,9 +245,7 @@ internal class RenderSceneFilamentHostView(
     currentScene = newScene
     rebuildScene()
     selectionOverlay.setVisualScene(
-      newScene.objects.map { objectData ->
-        NativeVisualObject(objectData.elementId, normalizeKind(objectData.kind), transformBounds(objectData.bounds))
-      },
+      newScene.objects.map(::toVisualObject),
       newScene.levels.map { level -> level.name to level.elevationMeters },
       sceneMetrics.bounds,
     )
@@ -353,7 +352,8 @@ internal class RenderSceneFilamentHostView(
   fun setDisplayStyle(style: String) {
     displayStyle = style
     selectionOverlay.setDisplayStyle(style)
-    updateStatus(if (style == "wireframe") "Wire uses native authoring edges over Filament faces." else null)
+    syncVisibility()
+    updateStatus(if (style == "wireframe") "Wireframe: faces hidden, mesh edges shown." else null)
     invalidate()
   }
 
@@ -692,7 +692,8 @@ internal class RenderSceneFilamentHostView(
   private fun syncVisibility() {
     val scene = scene ?: return
     for (entry in renderables.values) {
-      val visible = visibleKinds.isEmpty() || visibleKinds.contains(normalizeKind(entry.objectData.kind))
+      val visible = displayStyle != "wireframe" &&
+        (visibleKinds.isEmpty() || visibleKinds.contains(normalizeKind(entry.objectData.kind)))
       if (visible && !entry.attached) {
         scene.addEntity(entry.entity)
         entry.attached = true
@@ -1081,6 +1082,60 @@ internal class RenderSceneFilamentHostView(
     }
   }
 
+  private fun toVisualObject(objectData: SceneObject): NativeVisualObject {
+    val points = if (objectData.mesh.positions.isNotEmpty() && objectData.mesh.indices.size >= 3) {
+      objectData.mesh.positions.map(::toFilamentPoint)
+    } else {
+      boxCorners(objectData.bounds).map(::toFilamentPoint)
+    }
+    val triangles = if (objectData.mesh.positions.isNotEmpty() && objectData.mesh.indices.size >= 3) {
+      objectData.mesh.indices.chunked(3).mapNotNull { group ->
+        if (group.size == 3 && group.all { it in points.indices }) intArrayOf(group[0], group[1], group[2]) else null
+      }
+    } else {
+      listOf(
+        intArrayOf(0, 1, 2), intArrayOf(0, 2, 3), intArrayOf(4, 6, 5), intArrayOf(4, 7, 6),
+        intArrayOf(0, 4, 5), intArrayOf(0, 5, 1), intArrayOf(1, 5, 6), intArrayOf(1, 6, 2),
+        intArrayOf(2, 6, 7), intArrayOf(2, 7, 4), intArrayOf(3, 7, 4), intArrayOf(3, 4, 0),
+      )
+    }
+    return NativeVisualObject(
+      elementId = objectData.elementId,
+      kind = normalizeKind(objectData.kind),
+      points = points,
+      featureEdges = meshFeatureEdges(points, triangles),
+    )
+  }
+
+  private fun meshFeatureEdges(points: List<ScenePoint>, triangles: List<IntArray>): List<Pair<Int, Int>> {
+    data class Edge(val first: Int, val second: Int)
+    val normals = linkedMapOf<Edge, MutableList<DoubleArray>>()
+    for (triangle in triangles) {
+      val normal = triangleNormal(points[triangle[0]], points[triangle[1]], points[triangle[2]])
+      for ((first, second) in arrayOf(triangle[0] to triangle[1], triangle[1] to triangle[2], triangle[2] to triangle[0])) {
+        val edge = if (first < second) Edge(first, second) else Edge(second, first)
+        normals.getOrPut(edge) { mutableListOf() }.add(normal)
+      }
+    }
+    return normals.mapNotNull { (edge, uses) ->
+      val feature = uses.size == 1 || uses.zipWithNext().any { (first, second) -> normalDot(first, second) < 0.995 }
+      if (feature) edge.first to edge.second else null
+    }
+  }
+
+  private fun triangleNormal(a: ScenePoint, b: ScenePoint, c: ScenePoint): DoubleArray {
+    val abX = b.x - a.x; val abY = b.y - a.y; val abZ = b.z - a.z
+    val acX = c.x - a.x; val acY = c.y - a.y; val acZ = c.z - a.z
+    val x = abY * acZ - abZ * acY
+    val y = abZ * acX - abX * acZ
+    val z = abX * acY - abY * acX
+    val length = kotlin.math.sqrt(x * x + y * y + z * z)
+    return if (length <= 1e-9) doubleArrayOf(0.0, 0.0, 0.0) else doubleArrayOf(x / length, y / length, z / length)
+  }
+
+  private fun normalDot(first: DoubleArray, second: DoubleArray): Double =
+    first[0] * second[0] + first[1] * second[1] + first[2] * second[2]
+
   private data class GeometryData(
     val vertexCount: Int,
     val indexCount: Int,
@@ -1209,18 +1264,10 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
   private fun drawAuthoringEdges(canvas: Canvas) {
     if (width <= 1 || height <= 1) return
     if (showObjectEdges) for (objectData in objects) {
-      val corners = visualCorners(objectData.bounds)
-      val pairs = intArrayOf(
-        0, 1, 1, 2, 2, 3, 3, 0,
-        4, 5, 5, 6, 6, 7, 7, 4,
-        0, 4, 1, 5, 2, 6, 3, 7,
-      )
-      for (index in pairs.indices step 2) {
-        // An orbit camera can cross a bounding-box corner. Draw the visible
-        // segments instead of dropping the entire object for that frame;
-        // this removes the campus-scale popping/flicker seen near the camera.
-        val first = project(corners[pairs[index]])
-        val second = project(corners[pairs[index + 1]])
+      val projected = objectData.points.map(::project)
+      for ((firstIndex, secondIndex) in objectData.featureEdges) {
+        val first = projected.getOrNull(firstIndex)
+        val second = projected.getOrNull(secondIndex)
         if (first != null && second != null) {
           canvas.drawLine(first.x, first.y, second.x, second.y, outline)
         }
@@ -1239,17 +1286,6 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
       }
     }
   }
-
-  private fun visualCorners(bounds: SceneBounds): List<ScenePoint> = listOf(
-    ScenePoint(bounds.min.x, bounds.min.y, bounds.min.z),
-    ScenePoint(bounds.max.x, bounds.min.y, bounds.min.z),
-    ScenePoint(bounds.max.x, bounds.max.y, bounds.min.z),
-    ScenePoint(bounds.min.x, bounds.max.y, bounds.min.z),
-    ScenePoint(bounds.min.x, bounds.min.y, bounds.max.z),
-    ScenePoint(bounds.max.x, bounds.min.y, bounds.max.z),
-    ScenePoint(bounds.max.x, bounds.max.y, bounds.max.z),
-    ScenePoint(bounds.min.x, bounds.max.y, bounds.max.z),
-  )
 
   private fun project(point: ScenePoint): android.graphics.PointF? {
     val aspect = width.toDouble() / max(height, 1).toDouble()
