@@ -228,7 +228,8 @@ internal class RenderSceneFilamentHostView(
       filamentView?.scene = scene
       filamentView?.camera = camera
       filamentView?.viewport = Viewport(0, 0, 1, 1)
-      scene?.skybox = Skybox.Builder().color(0.96f, 0.97f, 0.98f, 1.0f).build(filamentEngine)
+      // Paper-grey canvas keeps the Revit-style white model readable.
+      scene?.skybox = Skybox.Builder().color(0.82f, 0.83f, 0.84f, 1.0f).build(filamentEngine)
       statusMessage = "Filament renderer created."
       Log.i(TAG, statusMessage)
       updateStatus()
@@ -284,7 +285,9 @@ internal class RenderSceneFilamentHostView(
   fun fitCamera() {
     val camera = camera ?: return
     val metrics = sceneMetrics
-    val bounds = transformBounds(metrics.bounds)
+    // sceneMetrics already comes from Filament-space renderable bounds.
+    // Transforming it again moves the fitted camera away from the mesh.
+    val bounds = metrics.bounds
     val width = max(bounds.max.x - bounds.min.x, 0.001)
     val depth = max(bounds.max.y - bounds.min.y, 0.001)
     val height = max(bounds.max.z - bounds.min.z, 0.001)
@@ -618,7 +621,10 @@ internal class RenderSceneFilamentHostView(
       baseColor[2],
       baseColor[3],
     )
-    val bounds = transformBounds(geometry.bounds)
+    // objectGeometry already converts RenderScene coordinates to Filament.
+    // A second conversion corrupts the culling box and makes geometry pop
+    // in/out while orbiting.
+    val bounds = geometry.bounds
     RenderableManager.Builder(1)
       // Filament Box is center + half extent, not min + max. Passing raw
       // min/max makes transformed BIM meshes appear to have zero depth and
