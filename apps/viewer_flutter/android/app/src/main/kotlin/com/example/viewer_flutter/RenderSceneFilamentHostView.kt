@@ -101,7 +101,7 @@ internal class RenderSceneFilamentHostView(
         configureCameraProjection()
       } else {
         val nextDistance = orbitDistance / detector.scaleFactor.toDouble()
-        orbitDistance = nextDistance.coerceIn(2.0, 250.0)
+        orbitDistance = nextDistance.coerceIn(minimumOrbitDistance(), 250.0)
         configureCameraProjection()
       }
       updateOrbitCamera()
@@ -314,7 +314,7 @@ internal class RenderSceneFilamentHostView(
     val distance = toDouble(payload?.get("orbitDistance"))
     val zoom = toDouble(payload?.get("orbitZoomScale"))
     if (distance != null) {
-      orbitDistance = (distance / (zoom ?: 1.0)).coerceIn(2.0, 250.0)
+      orbitDistance = (distance / (zoom ?: 1.0)).coerceIn(minimumOrbitDistance(), 250.0)
     }
     configureCameraProjection()
     updateOrbitCamera()
@@ -880,7 +880,16 @@ internal class RenderSceneFilamentHostView(
   private fun configureCameraProjection() {
     val camera = camera ?: return
     val aspect = aspectRatio()
-    val far = max(orbitDistance * 60.0, 500.0)
+    // A fixed 10 cm near plane clips whole storeys as an orbit camera gets
+    // close to a model. Keep it extremely close but scale it with distance;
+    // the far plane remains bounded for depth precision on a campus.
+    val near = (orbitDistance * 0.0025).coerceIn(0.005, 0.05)
+    val bounds = sceneMetrics.bounds
+    val sceneSpan = max(
+      bounds.max.x - bounds.min.x,
+      max(bounds.max.y - bounds.min.y, bounds.max.z - bounds.min.z),
+    )
+    val far = max(orbitDistance * 12.0 + sceneSpan * 4.0, 250.0)
     if (projectionMode == "topDown" || orbitProjectionStyle == "orthographic") {
       val halfHeight = if (projectionMode == "topDown") topDownZoom else max(orbitDistance * 0.6, 2.0)
       val halfWidth = halfHeight * aspect
@@ -890,13 +899,22 @@ internal class RenderSceneFilamentHostView(
         halfWidth,
         -halfHeight,
         halfHeight,
-        0.1,
+        near,
         far,
       )
       return
     }
 
-    camera.setProjection(45.0, aspect, 0.1, far, Camera.Fov.VERTICAL)
+    camera.setProjection(45.0, aspect, near, far, Camera.Fov.VERTICAL)
+  }
+
+  private fun minimumOrbitDistance(): Double {
+    val bounds = sceneMetrics.bounds
+    val span = max(
+      bounds.max.x - bounds.min.x,
+      max(bounds.max.y - bounds.min.y, bounds.max.z - bounds.min.z),
+    )
+    return max(span * 0.15, 1.25)
   }
 
   private fun boxCorners(bounds: SceneBounds): List<ScenePoint> {
