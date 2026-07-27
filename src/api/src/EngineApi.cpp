@@ -163,12 +163,54 @@ Project make_residential_template(int building_count, int story_count) {
             if (story + 1 < story_count) {
                 document.set_wall_level_constraints(partition_id, level_id, levels[static_cast<std::size_t>(story + 1)], 0.0, 0.0, tbe::core::WallHeightMode::TopLevel);
             }
+            // A realistic authoring / renderer stress fixture needs more
+            // than an empty shell. These repeated apartment cores exercise
+            // openings, stairs, columns and beams while retaining level
+            // ownership and deterministic geometry.
+            for (const auto fraction : {0.25, 0.75}) {
+                const auto horizontal = document.create_wall(
+                    "Building " + std::to_string(building + 1) + " apartment cross partition",
+                    Line2{.start = {.x = origin_x, .y = origin_y + depth * fraction}, .end = {.x = origin_x + width, .y = origin_y + depth * fraction}},
+                    0.12,
+                    3.2,
+                    level_id
+                );
+                document.set_wall_type(horizontal, wall_type);
+                if (story + 1 < story_count) {
+                    document.set_wall_level_constraints(horizontal, level_id, levels[static_cast<std::size_t>(story + 1)], 0.0, 0.0, tbe::core::WallHeightMode::TopLevel);
+                }
+            }
+            for (const auto fraction : {0.25, 0.75}) {
+                const auto vertical = document.create_wall(
+                    "Building " + std::to_string(building + 1) + " apartment room partition",
+                    Line2{.start = {.x = origin_x + width * fraction, .y = origin_y}, .end = {.x = origin_x + width * fraction, .y = origin_y + depth}},
+                    0.12,
+                    3.2,
+                    level_id
+                );
+                document.set_wall_type(vertical, wall_type);
+                if (story + 1 < story_count) {
+                    document.set_wall_level_constraints(vertical, level_id, levels[static_cast<std::size_t>(story + 1)], 0.0, 0.0, tbe::core::WallHeightMode::TopLevel);
+                }
+            }
+            for (const auto xFraction : {0.25, 0.75}) {
+                for (const auto yFraction : {0.25, 0.75}) {
+                    document.create_column(level_id, {.x = origin_x + width * xFraction, .y = origin_y + depth * yFraction}, 0.28, 0.28, 3.2, concrete);
+                }
+            }
+            document.create_beam(level_id, {.x = origin_x, .y = origin_y + depth * 0.5}, {.x = origin_x + width, .y = origin_y + depth * 0.5}, 0.24, 0.42, concrete);
+            document.create_beam(level_id, {.x = origin_x + width * 0.5, .y = origin_y}, {.x = origin_x + width * 0.5, .y = origin_y + depth}, 0.24, 0.42, concrete);
+            if (story + 1 < story_count) {
+                document.create_stair(level_id, levels[static_cast<std::size_t>(story + 1)], {.x = origin_x + width * 0.58, .y = origin_y + 0.45}, {.x = 0.0, .y = 1.0}, 1.1, 3.2, 3.9, 18, 17, concrete);
+            }
             document.create_door("Apartment entry A", perimeter.front(), 2.0, 0.9, 2.1);
             document.create_door("Apartment entry B", perimeter[2], 2.0, 0.9, 2.1);
             document.create_window("Living window A", perimeter[1], 1.8, 1.4, 1.2, 0.9);
             document.create_window("Living window B", perimeter[1], 5.0, 1.4, 1.2, 0.9);
             document.create_window("Living window C", perimeter[3], 1.8, 1.4, 1.2, 0.9);
             document.create_window("Living window D", perimeter[3], 5.0, 1.4, 1.2, 0.9);
+            document.create_window("Bedroom window A", perimeter[0], 4.0, 1.0, 1.2, 1.0);
+            document.create_window("Bedroom window B", perimeter[2], 4.0, 1.0, 1.2, 1.0);
             document.create_floor_system_from_profile(level_id, footprint, floor_assembly, 0.18);
             document.create_ceiling_system_from_profile(level_id, footprint, ceiling_assembly, 2.85);
             if (story + 1 == story_count) {
