@@ -55,6 +55,7 @@ enum RenderSceneInteractionMode {
   addFloor,
   addCeiling,
   addRoof,
+  addStair,
 }
 
 enum RenderSceneSurfaceDrawMode {
@@ -74,6 +75,7 @@ extension RenderSceneInteractionModeX on RenderSceneInteractionMode {
         RenderSceneInteractionMode.addFloor => true,
         RenderSceneInteractionMode.addCeiling => true,
         RenderSceneInteractionMode.addRoof => true,
+        RenderSceneInteractionMode.addStair => true,
         RenderSceneInteractionMode.select => false,
         RenderSceneInteractionMode.addLevel => false,
         RenderSceneInteractionMode.moveLevel => false,
@@ -239,7 +241,8 @@ abstract class RenderSceneViewportActions extends ChangeNotifier {
   void zoomOrbit(double scaleDelta);
   RenderScenePoint? screenToModelPlan(Offset localPosition, Size viewportSize);
   Future<void> selectElement(String? elementId);
-  Future<void> selectElements(Set<String> elementIds, {String? activeElementId});
+  Future<void> selectElements(Set<String> elementIds,
+      {String? activeElementId});
   Future<void> selectLevel(int? levelId);
   Future<void> highlightElement(String? elementId);
 }

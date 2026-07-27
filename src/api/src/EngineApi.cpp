@@ -775,7 +775,17 @@ RenderSceneDTO build_render_scene(
                 stair->base_level_id,
                 element.revision(),
                 mesh_dto_from_mesh_buffer(stair->mesh, level_elevation(elevations, stair->base_level_id, 0.0)),
-                material_category_name(ApiElementKind::Stair)
+                material_category_name(ApiElementKind::Stair),
+                {
+                    {"base_level_id", std::to_string(stair->base_level_id)},
+                    {"top_level_id", std::to_string(stair->top_level_id)},
+                    {"width_meters", std::to_string(stair->width_meters)},
+                    {"total_rise_meters", std::to_string(stair->total_rise_meters)},
+                    {"total_run_meters", std::to_string(stair->total_run_meters)},
+                    {"riser_count", std::to_string(stair->riser_count)},
+                    {"tread_count", std::to_string(stair->tread_count)},
+                    {"level_locked", "true"},
+                }
             ));
         }
     }

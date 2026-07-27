@@ -14,6 +14,7 @@ import 'tbe_ffi.dart';
 import 'tools/level_tool_controller.dart';
 import 'tools/opening_tool_controller.dart';
 import 'tools/surface_tool_controller.dart';
+import 'tools/stair_tool_controller.dart';
 import 'tools/wall_tool_controller.dart';
 import 'render_scene_viewport.dart';
 import 'render_scene_viewport_planar.dart';
@@ -100,6 +101,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   final LevelToolController _levelTool = LevelToolController();
   final OpeningToolController _openingTool = OpeningToolController();
   final SurfaceToolController _surfaceTool = SurfaceToolController();
+  final StairToolController _stairTool = StairToolController();
   ViewerRepository? _engineRepository;
   bool _engineBackedMode = false;
 
@@ -207,6 +209,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     _levelTool.dispose();
     _openingTool.dispose();
     _surfaceTool.dispose();
+    _stairTool.dispose();
     _engineRepository?.dispose();
     super.dispose();
   }
@@ -1716,6 +1719,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       defaultHeight:
           activeLevel?.defaultWallHeightMeters ?? _defaultWallHeightMeters,
     );
+    _stairTool.reset();
     setState(() {
       _draftWallStart = null;
       _draftWallEnd = null;
@@ -1811,6 +1815,9 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       case RenderSceneInteractionMode.addCeiling:
       case RenderSceneInteractionMode.addRoof:
         await _handleSurfaceTap(scene, tappedObject, modelPoint);
+        return;
+      case RenderSceneInteractionMode.addStair:
+        await _handleAddStairTap(modelPoint);
         return;
     }
   }
@@ -1937,6 +1944,20 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         });
         _syncSurfaceDraftPreview();
         return;
+      case RenderSceneInteractionMode.addStair:
+        final start = _stairTool.start;
+        if (start == null) {
+          return;
+        }
+        final snapped =
+            _draftLinePoint(rawPoint: modelPoint, referenceStart: start);
+        _stairTool.preview(snapped);
+        _viewportController.setWallDraft(start, snapped);
+        setState(() {
+          _editStatusMessage =
+              'Stair run: ${start.distanceTo(snapped).toStringAsFixed(2)} m';
+        });
+        return;
     }
   }
 
@@ -1970,6 +1991,88 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     });
     _viewportController.setWallDraft(_wallTool.start, snappedPoint);
     await _commitWallDraft(autoContinue: true);
+  }
+
+  Future<void> _handleAddStairTap(RenderScenePoint? modelPoint) async {
+    final scene = _scene;
+    if (scene == null || modelPoint == null) {
+      setState(() =>
+          _editStatusMessage = 'Stair uchun 2D plan’da ikki nuqta qo‘ying.');
+      return;
+    }
+    final active = _activeLevel(scene);
+    final top = active == null ? null : _nextHigherLevel(scene, active.levelId);
+    if (active == null || top == null) {
+      setState(() => _editStatusMessage =
+          'Stair uchun Base Level va undan yuqori Top Level kerak.');
+      return;
+    }
+    final point =
+        _draftLinePoint(rawPoint: modelPoint, referenceStart: _stairTool.start);
+    if (!_stairTool.hasStart) {
+      _stairTool.begin(point);
+      _viewportController.setWallDraft(point, point);
+      setState(() => _editStatusMessage =
+          'Stair start set. Ikkinchi nuqta run/directionni belgilaydi.');
+      return;
+    }
+    _stairTool.preview(point);
+    _viewportController.setWallDraft(_stairTool.start, point);
+    await _commitStairDraft();
+  }
+
+  Future<void> _commitStairDraft() async {
+    final scene = _scene;
+    final start = _stairTool.start;
+    final end = _stairTool.end;
+    final repository = _engineRepository;
+    final base = scene == null ? null : _activeLevel(scene);
+    final top = base == null || scene == null
+        ? null
+        : _nextHigherLevel(scene, base.levelId);
+    if (scene == null ||
+        start == null ||
+        end == null ||
+        base == null ||
+        top == null) {
+      return;
+    }
+    final run = start.distanceTo(end);
+    if (run < 0.8) {
+      setState(
+          () => _editStatusMessage = 'Stair run kamida 0.80 m bo‘lishi kerak.');
+      return;
+    }
+    if (!_engineBackedMode || repository == null) {
+      setState(() => _editStatusMessage =
+          'Stair productionda engine-backed mode talab qiladi.');
+      return;
+    }
+    final rise = top.elevationMeters - base.elevationMeters;
+    if (rise <= 0.1) {
+      setState(() => _editStatusMessage =
+          'Top Level Base Leveldan yuqorida bo‘lishi kerak.');
+      return;
+    }
+    final risers = (rise / 0.175).round().clamp(1, 60);
+    final result = await repository.createStair(
+      baseLevelId: base.levelId,
+      topLevelId: top.levelId,
+      start: RenderScenePoint(x: start.x, y: start.y, z: base.elevationMeters),
+      direction: RenderScenePoint(x: end.x - start.x, y: end.y - start.y, z: 0),
+      widthMeters: _stairTool.widthMeters,
+      totalRiseMeters: rise,
+      totalRunMeters: run,
+      riserCount: risers,
+      treadCount: risers,
+    );
+    await _applyEngineSceneResult(result,
+        message: 'Stair created: ${base.name} → ${top.name}.');
+    final id = repository.lastCreatedElementId;
+    await _clearDraft();
+    if (id != null) {
+      await _viewportController.selectElement(id.toString());
+    }
   }
 
   Future<void> _handleAddLevelTap(RenderScenePoint? modelPoint) async {
@@ -2927,6 +3030,8 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         final width = (end.x - start.x).abs();
         final depth = (end.y - start.y).abs();
         return width >= 0.1 && depth >= 0.1;
+      case RenderSceneInteractionMode.addStair:
+        return _stairTool.hasRun;
     }
   }
 
@@ -2948,6 +3053,9 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         return;
       case RenderSceneInteractionMode.addLevel:
         await _commitLevelDraft();
+        return;
+      case RenderSceneInteractionMode.addStair:
+        await _commitStairDraft();
         return;
       case RenderSceneInteractionMode.moveLevel:
         final sceneLevel = _scene;
@@ -3910,6 +4018,16 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
                       : () => _setInteractionMode(
                           RenderSceneInteractionMode.addRoof),
                 ),
+                const SizedBox(width: 6),
+                _toolbarChoiceButton(
+                  label: 'Stair',
+                  selected:
+                      _interactionMode == RenderSceneInteractionMode.addStair,
+                  onPressed: scene == null
+                      ? null
+                      : () => _setInteractionMode(
+                          RenderSceneInteractionMode.addStair),
+                ),
                 if (scene != null && selectedWall != null) ...<Widget>[
                   const SizedBox(width: 12),
                   _SelectedWallLevelToolbarControl(
@@ -4213,6 +4331,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
                                 RenderSceneInteractionMode.addCeiling
                             ? _draftCeilingHeightOffsetMeters
                             : _draftSurfaceHeightMeters,
+                        draftStairWidthMeters: _stairTool.widthMeters,
                         draftFloorTopElevationMeters:
                             _draftFloorTopElevationMeters,
                         surfaceDrawMode: _surfaceDrawMode,
@@ -4293,6 +4412,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
                           });
                           _syncSurfaceDraftPreview();
                         },
+                        onStairWidthChanged: _stairTool.setWidth,
                         onConfirm: _confirmDraft,
                         onCancel: _cancelDraft,
                         onClearSelection: _clearSelection,
@@ -4910,6 +5030,7 @@ class _DraftEditorCard extends StatefulWidget {
     required this.draftSurfaceWallCount,
     required this.draftSurfaceThicknessMeters,
     required this.draftSurfaceHeightMeters,
+    required this.draftStairWidthMeters,
     required this.draftFloorTopElevationMeters,
     required this.surfaceDrawMode,
     required this.draftHostWall,
@@ -4929,6 +5050,7 @@ class _DraftEditorCard extends StatefulWidget {
     required this.onSurfaceHeightChanged,
     required this.onFloorTopElevationChanged,
     required this.onSurfaceDrawModeChanged,
+    required this.onStairWidthChanged,
     required this.onConfirm,
     required this.onCancel,
     required this.onClearSelection,
@@ -4944,6 +5066,7 @@ class _DraftEditorCard extends StatefulWidget {
   final int draftSurfaceWallCount;
   final double draftSurfaceThicknessMeters;
   final double draftSurfaceHeightMeters;
+  final double draftStairWidthMeters;
   final double draftFloorTopElevationMeters;
   final RenderSceneSurfaceDrawMode surfaceDrawMode;
   final RenderSceneObject? draftHostWall;
@@ -4963,6 +5086,7 @@ class _DraftEditorCard extends StatefulWidget {
   final ValueChanged<double> onSurfaceHeightChanged;
   final ValueChanged<double> onFloorTopElevationChanged;
   final ValueChanged<RenderSceneSurfaceDrawMode> onSurfaceDrawModeChanged;
+  final ValueChanged<double> onStairWidthChanged;
   final VoidCallback onConfirm;
   final VoidCallback onCancel;
   final VoidCallback onClearSelection;
@@ -4980,6 +5104,7 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
   TextEditingController? _surfaceThicknessController;
   TextEditingController? _surfaceHeightController;
   TextEditingController? _floorTopController;
+  TextEditingController? _stairWidthController;
 
   @override
   void initState() {
@@ -5006,6 +5131,8 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
         oldWidget.draftSurfaceHeightMeters);
     _syncController(_floorTopController, widget.draftFloorTopElevationMeters,
         oldWidget.draftFloorTopElevationMeters);
+    _syncController(_stairWidthController, widget.draftStairWidthMeters,
+        oldWidget.draftStairWidthMeters);
   }
 
   @override
@@ -5017,6 +5144,7 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
     _surfaceThicknessController?.dispose();
     _surfaceHeightController?.dispose();
     _floorTopController?.dispose();
+    _stairWidthController?.dispose();
     super.dispose();
   }
 
@@ -5050,6 +5178,8 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
         TextEditingController(text: _format(widget.draftSurfaceHeightMeters));
     _floorTopController ??= TextEditingController(
         text: _format(widget.draftFloorTopElevationMeters));
+    _stairWidthController ??=
+        TextEditingController(text: _format(widget.draftStairWidthMeters));
   }
 
   String _format(double value) {
@@ -5104,6 +5234,28 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
           _WallDraftSummary(
             start: widget.draftWallStart,
             end: widget.draftWallEnd,
+          )
+        else if (mode == RenderSceneInteractionMode.addStair)
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              const Text(
+                  'Ikki nuqta bilan straight stair run chizing. Rise Base/Top Leveldan olinadi.'),
+              const SizedBox(height: 8),
+              _WallDraftSummary(
+                start: widget.draftWallStart,
+                end: widget.draftWallEnd,
+              ),
+              const SizedBox(height: 8),
+              _NumericField(
+                label: 'Width (m)',
+                controller: _stairWidthController!,
+                onChanged: (value) {
+                  final parsed = _parse(value);
+                  if (parsed != null) widget.onStairWidthChanged(parsed);
+                },
+              ),
+            ],
           )
         else if (mode == RenderSceneInteractionMode.moveWall)
           _WallDraftSummary(
@@ -5616,6 +5768,20 @@ class _SelectedObjectCard extends StatelessWidget {
             label: 'Top constraint',
             value: '${topLevelId ?? '-'} (${heightMode ?? 'Unconnected'})',
           ),
+        if (object.kindKey == 'stair') ...<Widget>[
+          _InfoRow(label: 'Base level', value: '${baseLevelId ?? '-'}'),
+          _InfoRow(label: 'Top level', value: '${topLevelId ?? '-'}'),
+          _InfoRow(
+            label: 'Run / rise',
+            value:
+                '${object.metadata['total_run_meters'] ?? '-'} m / ${object.metadata['total_rise_meters'] ?? '-'} m',
+          ),
+          _InfoRow(
+            label: 'Treads / risers',
+            value:
+                '${object.metadata['tread_count'] ?? '-'} / ${object.metadata['riser_count'] ?? '-'}',
+          ),
+        ],
         if (object.kindKey == 'wall' &&
             sceneLevels.isNotEmpty &&
             onApplyWallLevels != null)

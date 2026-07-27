@@ -587,15 +587,27 @@ MeshBuffer build_stair_mesh(const StairData& stair) {
         return {};
     }
     const auto unit = Point2{.x = stair.direction.x / direction_length, .y = stair.direction.y / direction_length};
+    // A staircase must be represented as steps, not as a single inclined box.
+    // Keeping each tread an independent small prism makes the mesh inexpensive,
+    // deterministic and clear in plan/wire/solid views.
+    MeshBuffer mesh;
+    const auto step_count = std::max(1, stair.tread_count);
+    const auto tread = stair.total_run_meters / static_cast<double>(step_count);
+    const auto rise = stair.total_rise_meters / static_cast<double>(step_count);
     const auto normal = scale(perpendicular_left(unit), stair.width_meters / 2.0);
-    const auto run = scale(unit, stair.total_run_meters);
-    std::vector<Point2> polygon{
-        add(stair.start, normal),
-        add(add(stair.start, run), normal),
-        add(add(stair.start, run), scale(normal, -1.0)),
-        add(stair.start, scale(normal, -1.0)),
-    };
-    return extrude_polygon_mesh(polygon, stair.total_rise_meters, 0.0);
+    for (int step = 0; step < step_count; ++step) {
+        const auto run_start = add(stair.start, scale(unit, tread * step));
+        const auto run_end = add(stair.start, scale(unit, tread * (step + 1)));
+        const std::vector<Point2> polygon{
+            add(run_start, normal), add(run_end, normal),
+            add(run_end, scale(normal, -1.0)), add(run_start, scale(normal, -1.0)),
+        };
+        auto step_mesh = extrude_polygon_mesh(polygon, rise * (step + 1), 0.0);
+        const auto base = static_cast<std::uint32_t>(mesh.vertices.size());
+        mesh.vertices.insert(mesh.vertices.end(), step_mesh.vertices.begin(), step_mesh.vertices.end());
+        for (const auto index : step_mesh.indices) mesh.indices.push_back(base + index);
+    }
+    return mesh;
 }
 
 double roof_plan_area(const RoofData& roof) {
@@ -2582,6 +2594,19 @@ void Document::regenerate_dirty_geometry() {
 
         auto* stair = element.stair();
         if (stair != nullptr && stair->generated_geometry_dirty) {
+            // Legacy/unconnected stairs may carry their own rise with base and
+            // top set to the same level. Only a distinct top level is a live
+            // vertical constraint.
+            if (stair->top_level_id != 0 && stair->top_level_id != stair->base_level_id) {
+                const auto* base_element = find_ptr(stair->base_level_id);
+                const auto* top_element = find_ptr(stair->top_level_id);
+                const auto* base = base_element == nullptr ? nullptr : base_element->level();
+                const auto* top = top_element == nullptr ? nullptr : top_element->level();
+                if (base != nullptr && top != nullptr) {
+                    stair->total_rise_meters = std::max(
+                        epsilon, top->elevation_meters - base->elevation_meters);
+                }
+            }
             stair->footprint_area_square_meters = stair->width_meters * stair->total_run_meters;
             stair->volume_cubic_meters = stair->footprint_area_square_meters * (stair->total_rise_meters / 2.0);
             stair->mesh = build_stair_mesh(*stair);
