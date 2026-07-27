@@ -138,15 +138,11 @@ class _AndroidRenderSceneView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scene = controller.scene;
-    final creationParams = <String, Object?>{
-      'sceneRevision': controller.sceneRevision,
-      if (scene != null) 'renderScene': scene.toJson(),
-      'visibleKinds': controller.visibleKinds.toList(),
-      'selectedElementIds': controller.selectedElementIds.toList(),
-      'activeElementId': controller.activeElementId,
-      'highlightedElementId': controller.highlightedElementId,
-      'displayStyle': controller.displayStyle.name,
-    };
+    // Platform-view creation parameters are the RenderScene itself. Wrapping
+    // this in controller/UI metadata caused Android's StandardMessageCodec
+    // path to initialize Filament with an empty object list. Runtime state is
+    // still synchronized by the per-view MethodChannel after creation.
+    final creationParams = scene?.toJson() ?? <String, Object?>{};
 
     return AndroidView(
       key: ValueKey<int>(controller.sceneRevision),
