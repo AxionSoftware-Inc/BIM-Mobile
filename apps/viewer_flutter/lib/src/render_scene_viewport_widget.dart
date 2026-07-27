@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -25,7 +27,8 @@ class RenderSceneViewport extends StatefulWidget {
     this.onSceneSecondaryTap,
     this.onSceneHover,
     this.onLevelElevationSubmitted,
-    this.draftWallThicknessMeters = RenderSceneEditor.defaultWallThicknessMeters,
+    this.draftWallThicknessMeters =
+        RenderSceneEditor.defaultWallThicknessMeters,
     this.draftWallHeightMeters = RenderSceneEditor.defaultWallHeightMeters,
   });
 
@@ -201,6 +204,8 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
   Offset? _gesturePreviousFocalPoint;
   double _trackpadPreviousScale = 1.0;
   bool _sceneDragStarted = false;
+  Timer? _longPressTimer;
+  bool _touchRectangleArmed = false;
   final ViewportInteractionController _interaction =
       ViewportInteractionController();
   Rect? _selectionRect;
@@ -228,6 +233,31 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
       return 12.0;
     }
     return 8.0;
+  }
+
+  bool _usesTouchNavigation(PointerEvent event) =>
+      event.kind == PointerDeviceKind.touch;
+
+  void _scheduleTouchRectangleSelect(PointerDownEvent event) {
+    _longPressTimer?.cancel();
+    _touchRectangleArmed = false;
+    if (!_usesTouchNavigation(event) ||
+        widget.interactionMode != RenderSceneInteractionMode.select) {
+      return;
+    }
+    _longPressTimer = Timer(const Duration(milliseconds: 420), () {
+      if (!mounted ||
+          _activePointer != event.pointer ||
+          _activePointerCount != 1) {
+        return;
+      }
+      _interaction.armRectangleSelect();
+      _touchRectangleArmed =
+          _interaction.intent == ViewportDragIntent.rectangleSelect;
+      if (_touchRectangleArmed) {
+        setState(() {});
+      }
+    });
   }
 
   RenderSceneLevel? _pickLevelAtPosition(
@@ -275,10 +305,14 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
             for (final z in <double>[b.min.z, b.max.z])
               projection.project(RenderScenePoint(x: x, y: y, z: z)).screen,
       ];
-      final minX = points.map((point) => point.dx).reduce((a, b) => a < b ? a : b);
-      final minY = points.map((point) => point.dy).reduce((a, b) => a < b ? a : b);
-      final maxX = points.map((point) => point.dx).reduce((a, b) => a > b ? a : b);
-      final maxY = points.map((point) => point.dy).reduce((a, b) => a > b ? a : b);
+      final minX =
+          points.map((point) => point.dx).reduce((a, b) => a < b ? a : b);
+      final minY =
+          points.map((point) => point.dy).reduce((a, b) => a < b ? a : b);
+      final maxX =
+          points.map((point) => point.dx).reduce((a, b) => a > b ? a : b);
+      final maxY =
+          points.map((point) => point.dy).reduce((a, b) => a > b ? a : b);
       yield MapEntry<String, Rect>(id, Rect.fromLTRB(minX, minY, maxX, maxY));
     }
   }
@@ -335,6 +369,9 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
               return;
             }
 
+            _longPressTimer?.cancel();
+            _touchRectangleArmed = false;
+
             final previousFocal =
                 _gesturePreviousFocalPoint ?? details.localFocalPoint;
             final focalDelta = details.localFocalPoint - previousFocal;
@@ -351,9 +388,10 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                 viewportSize: size,
               );
             } else {
-              // In 3D, pinch should behave like a plain zoom. Mixing focal-point
-              // drift into orbit panning makes the camera target jump around and
-              // feels like a model-viewer instead of a workspace camera.
+              // Tablet two-finger gesture: pan the target and zoom together.
+              if (focalDelta.distanceSquared > 0.0) {
+                controller.panOrbitBy(focalDelta, size);
+              }
               controller.zoomOrbit(scaleDelta);
             }
 
@@ -390,6 +428,7 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
               _isSecondaryDrag = event.buttons == kSecondaryMouseButton ||
                   event.buttons == kMiddleMouseButton;
               _sceneDragStarted = false;
+              _scheduleTouchRectangleSelect(event);
               if (!_isSecondaryDrag &&
                   widget.interactionMode == RenderSceneInteractionMode.select) {
                 final picked = pickObjectAt(
@@ -408,6 +447,7 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                   elementId: picked?.elementId?.toString(),
                   modifiers: _selectionModifiers(),
                   allowObjectDrag: !controller.projectionMode.is3D,
+                  requireRectangleArm: _usesTouchNavigation(event),
                 );
               }
               if (!_isSecondaryDrag &&
@@ -485,6 +525,8 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                 return;
               }
               if (_activePointerCount > 1) {
+                _longPressTimer?.cancel();
+                _touchRectangleArmed = false;
                 _lastPointerPosition = event.localPosition;
                 return;
               }
@@ -504,6 +546,14 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                   _lastPointerPosition = event.localPosition;
                   return;
                 }
+              }
+              final movedFromDown = _pointerDownPosition == null
+                  ? 0.0
+                  : (event.localPosition - _pointerDownPosition!).distance;
+              if (_usesTouchNavigation(event) &&
+                  movedFromDown > _tapDistanceThreshold(event)) {
+                _longPressTimer?.cancel();
+                _touchRectangleArmed = false;
               }
               if (!_sceneDragStarted &&
                   widget.interactionMode == RenderSceneInteractionMode.select &&
@@ -569,6 +619,18 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                 _emitHover(scene, size, event.localPosition, event.position);
               } else if (_isSecondaryDrag) {
                 controller.panOrbitBy(delta, size);
+              } else if (widget.interactionMode ==
+                      RenderSceneInteractionMode.select &&
+                  _usesTouchNavigation(event) &&
+                  !_sceneDragStarted) {
+                // One finger on empty tablet space navigates the view. Objects
+                // retain direct manipulation in plan/elevation through the
+                // branch above.
+                if (controller.projectionMode.is3D) {
+                  controller.orbitBy(delta, size);
+                } else {
+                  controller.panPlanBy(delta);
+                }
               }
 
               _lastPointerPosition = event.localPosition;
@@ -649,6 +711,24 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                 );
                 widget.onSceneDragEnd?.call(details);
                 _sceneDragStarted = false;
+                _clearPointerState();
+                return;
+              }
+              if (widget.interactionMode ==
+                      RenderSceneInteractionMode.addWall &&
+                  moved >= _tapDistanceThreshold(event)) {
+                // First tap establishes the start; each following drag-release
+                // produces one wall segment and continues from its endpoint.
+                final details = RenderSceneTapDetails(
+                  screenPosition: event.localPosition,
+                  globalPosition: event.position,
+                  modelPoint:
+                      controller.screenToModelPlan(event.localPosition, size),
+                  pickedObject: null,
+                  pickedLevel:
+                      _pickLevelAtPosition(scene, size, event.localPosition),
+                );
+                widget.onSceneTap?.call(details);
                 _clearPointerState();
                 return;
               }
@@ -798,11 +878,15 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
   String _viewportHintText() {
     switch (widget.interactionMode) {
       case RenderSceneInteractionMode.select:
-        return controller.projectionMode.isPlanar
-            ? '2D/Elevation: drag to pan, pinch/scroll to zoom, tap to select.'
-            : '3D: drag to orbit, pinch to zoom, right drag to pan, touchpad 2-finger orbit.';
+        return defaultTargetPlatform == TargetPlatform.android
+            ? 'Tablet: tap object to select; drag empty space to navigate; hold empty space then drag for window select; two fingers pan + zoom.'
+            : controller.projectionMode.isPlanar
+                ? '2D/Elevation: drag to pan, pinch/scroll to zoom, tap to select.'
+                : '3D: drag to orbit, pinch to zoom, right drag to pan, touchpad 2-finger orbit.';
       case RenderSceneInteractionMode.addWall:
-        return 'Add wall: tap start point, then tap end point.';
+        return defaultTargetPlatform == TargetPlatform.android
+            ? 'Wall: tap start, then press-drag and release at the endpoint. Snap/ortho preview is live.'
+            : 'Add wall: tap start point, then tap end point.';
       case RenderSceneInteractionMode.addLevel:
         return 'Add level: elevation view’da ikki marta bosib level line yarating.';
       case RenderSceneInteractionMode.moveLevel:
@@ -825,6 +909,9 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
   }
 
   void _clearPointerState() {
+    _longPressTimer?.cancel();
+    _longPressTimer = null;
+    _touchRectangleArmed = false;
     _activePointer = null;
     _pointerDownPosition = null;
     _lastPointerPosition = null;
@@ -846,15 +933,18 @@ class _InlineLevelElevationField extends StatefulWidget {
   });
 
   final RenderSceneLevel level;
-  final Future<void> Function(RenderSceneLevel level, String value)? onSubmitted;
+  final Future<void> Function(RenderSceneLevel level, String value)?
+      onSubmitted;
 
   @override
   State<_InlineLevelElevationField> createState() =>
       _InlineLevelElevationFieldState();
 }
 
-class _InlineLevelElevationFieldState extends State<_InlineLevelElevationField> {
+class _InlineLevelElevationFieldState
+    extends State<_InlineLevelElevationField> {
   late final TextEditingController _controller;
+  bool _isCommitting = false;
 
   @override
   void initState() {
@@ -870,8 +960,34 @@ class _InlineLevelElevationFieldState extends State<_InlineLevelElevationField> 
     super.dispose();
   }
 
+  @override
+  void didUpdateWidget(covariant _InlineLevelElevationField oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if ((oldWidget.level.elevationMeters - widget.level.elevationMeters).abs() >
+        1e-6) {
+      _controller.text = widget.level.elevationMeters.toStringAsFixed(2);
+    }
+  }
+
   Future<void> _commit() async {
-    await widget.onSubmitted?.call(widget.level, _controller.text);
+    if (_isCommitting) {
+      return;
+    }
+    final value = _controller.text.trim();
+    if (value.isEmpty || double.tryParse(value) == null) {
+      return;
+    }
+    setState(() => _isCommitting = true);
+    try {
+      await widget.onSubmitted?.call(widget.level, value);
+      if (mounted) {
+        FocusScope.of(context).unfocus();
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isCommitting = false);
+      }
+    }
   }
 
   @override
@@ -881,7 +997,8 @@ class _InlineLevelElevationFieldState extends State<_InlineLevelElevationField> 
       child: TextField(
         controller: _controller,
         autofocus: true,
-        keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
+        keyboardType:
+            const TextInputType.numberWithOptions(decimal: true, signed: true),
         textInputAction: TextInputAction.done,
         onTap: () => _controller.selection = TextSelection(
           baseOffset: 0,
@@ -889,12 +1006,23 @@ class _InlineLevelElevationFieldState extends State<_InlineLevelElevationField> 
         ),
         onSubmitted: (_) => _commit(),
         onEditingComplete: _commit,
-        decoration: const InputDecoration(
+        decoration: InputDecoration(
           isDense: true,
           suffixText: 'm',
+          suffixIcon: IconButton(
+            tooltip: 'Apply elevation',
+            onPressed: _isCommitting ? null : _commit,
+            icon: _isCommitting
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.check),
+          ),
           filled: true,
-          fillColor: Color(0xFFFFFFFF),
-          border: OutlineInputBorder(),
+          fillColor: const Color(0xFFFFFFFF),
+          border: const OutlineInputBorder(),
         ),
       ),
     );

@@ -33,10 +33,14 @@ class ViewportSelectionState {
   }) {
     return ViewportSelectionState(
       selectedElementIds: selectedElementIds ?? this.selectedElementIds,
-      activeElementId: clearActive ? null : activeElementId ?? this.activeElementId,
-      selectedLevelId: clearLevel ? null : selectedLevelId ?? this.selectedLevelId,
-      hoveredElementId: clearHover ? null : hoveredElementId ?? this.hoveredElementId,
-      selectionRect: clearRectangle ? null : selectionRect ?? this.selectionRect,
+      activeElementId:
+          clearActive ? null : activeElementId ?? this.activeElementId,
+      selectedLevelId:
+          clearLevel ? null : selectedLevelId ?? this.selectedLevelId,
+      hoveredElementId:
+          clearHover ? null : hoveredElementId ?? this.hoveredElementId,
+      selectionRect:
+          clearRectangle ? null : selectionRect ?? this.selectionRect,
     );
   }
 }
@@ -45,7 +49,8 @@ enum ViewportDragIntent { idle, objectDrag, rectangleSelect, gizmoDrag }
 
 @immutable
 class ViewportSelectionModifiers {
-  const ViewportSelectionModifiers({this.additive = false, this.toggle = false});
+  const ViewportSelectionModifiers(
+      {this.additive = false, this.toggle = false});
 
   final bool additive;
   final bool toggle;
@@ -76,13 +81,24 @@ class ViewportInteractionController {
     required String? elementId,
     required ViewportSelectionModifiers modifiers,
     required bool allowObjectDrag,
+    bool requireRectangleArm = false,
   }) {
     _down = position;
     _downElementId = elementId;
     _modifiers = modifiers;
     _intent = allowObjectDrag && elementId != null
         ? ViewportDragIntent.objectDrag
-        : ViewportDragIntent.idle;
+        : elementId == null && !requireRectangleArm
+            ? ViewportDragIntent.rectangleSelect
+            : ViewportDragIntent.idle;
+  }
+
+  /// Touch uses a hold before beginning a selection window so a normal
+  /// one-finger drag is still free for camera navigation.
+  void armRectangleSelect() {
+    if (_downElementId == null) {
+      _intent = ViewportDragIntent.rectangleSelect;
+    }
   }
 
   Rect? update(Offset position) {
@@ -90,8 +106,8 @@ class ViewportInteractionController {
     if (down == null || (position - down).distance < dragThreshold) {
       return null;
     }
-    if (_downElementId == null) {
-      _intent = ViewportDragIntent.rectangleSelect;
+    if (_downElementId == null &&
+        _intent == ViewportDragIntent.rectangleSelect) {
       _crossing = position.dx < down.dx;
       return Rect.fromPoints(down, position);
     }

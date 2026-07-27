@@ -15,10 +15,11 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     Set<String>? visibleKinds,
     RenderSceneViewportBackend? backend,
   })  : _visibleKinds = visibleKinds ?? kDefaultVisibleSceneKinds.toSet(),
-        _backend = backend ??
-            (defaultTargetPlatform == TargetPlatform.android
-                ? RenderSceneViewportBackend.native
-                : RenderSceneViewportBackend.fallback);
+        // The fallback is deliberately the default until the Filament host has
+        // the same touch selection contract (pick, long-press window select,
+        // direct manipulation) as Flutter.  Rendering may be native, but the
+        // editing contract must never silently disappear on a tablet.
+        _backend = backend ?? RenderSceneViewportBackend.fallback;
 
   static const double _planPadding = 48;
 
@@ -69,7 +70,8 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
   Set<String> get visibleKinds => _visibleKinds;
 
   @override
-  Set<String> get selectedElementIds => Set<String>.unmodifiable(_selectedElementIds);
+  Set<String> get selectedElementIds =>
+      Set<String>.unmodifiable(_selectedElementIds);
 
   @override
   String? get activeElementId => _activeElementId;
@@ -470,7 +472,9 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
 
     final minDimension =
         math.max(math.min(viewportSize.width, viewportSize.height), 1.0);
-    _orbitYawRadians += delta.dx / minDimension * math.pi * 1.25;
+    // Dragging left must turn the model left. Pitch intentionally keeps its
+    // existing sign because vertical tablet motion already matches expectation.
+    _orbitYawRadians -= delta.dx / minDimension * math.pi * 1.25;
     _orbitPitchRadians =
         (_orbitPitchRadians + delta.dy / minDimension * math.pi * 0.95)
             .clamp(-math.pi / 2.0 + 0.12, math.pi / 2.0 - 0.12);
@@ -542,9 +546,10 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     String? activeElementId,
   }) async {
     final normalized = Set<String>.from(elementIds);
-    final resolvedActive = activeElementId != null && normalized.contains(activeElementId)
-        ? activeElementId
-        : (normalized.isEmpty ? null : normalized.last);
+    final resolvedActive =
+        activeElementId != null && normalized.contains(activeElementId)
+            ? activeElementId
+            : (normalized.isEmpty ? null : normalized.last);
     if (setEquals(_selectedElementIds, normalized) &&
         _activeElementId == resolvedActive) {
       return;

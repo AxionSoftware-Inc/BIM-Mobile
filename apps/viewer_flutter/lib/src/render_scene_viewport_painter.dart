@@ -80,13 +80,20 @@ class FallbackRenderScenePainter extends CustomPainter {
 
     final packets = <_RenderPacket>[];
     final filteredObjects = scene.objectsForKinds(visibleKinds);
+    if (projectionMode == RenderSceneProjectionMode.topDown) {
+      // Engine wall meshes are predominantly vertical faces. Their triangles
+      // can collapse to zero area in a top projection, so draw the canonical
+      // wall footprint independently of mesh tessellation.
+      _drawPlanWallFootprints(canvas, projection, filteredObjects);
+    }
     final depthRange = projectionMode.isElevation
         ? _projectedObjectDepthRange(filteredObjects, projection)
         : null;
 
     for (final object in filteredObjects) {
       final elementId = object.elementId?.toString();
-      final isSelected = elementId != null && selectedElementIds.contains(elementId);
+      final isSelected =
+          elementId != null && selectedElementIds.contains(elementId);
       final isHighlighted =
           elementId == highlightedElementId && highlightedElementId != null;
       final baseColor = _kindColor(object.kindKey);
@@ -287,16 +294,77 @@ class FallbackRenderScenePainter extends CustomPainter {
     return rendered;
   }
 
+  void _drawPlanWallFootprints(
+    Canvas canvas,
+    RenderSceneProjection projection,
+    Iterable<RenderSceneObject> objects,
+  ) {
+    for (final wall in objects.where((object) => object.kindKey == 'wall')) {
+      final start = RenderSceneEditor.wallStartPoint(wall);
+      final end = RenderSceneEditor.wallEndPoint(wall);
+      final thickness = RenderSceneEditor.wallThickness(wall);
+      if (start == null || end == null || thickness == null) continue;
+      final axis = end - start;
+      final length = axis.distanceTo(RenderScenePoint.zero());
+      if (length <= 1e-8) continue;
+      final half = thickness * 0.5;
+      final normal = RenderScenePoint(
+        x: -axis.y / length * half,
+        y: axis.x / length * half,
+        z: 0,
+      );
+      final corners = <RenderScenePoint>[
+        start + normal,
+        end + normal,
+        end - normal,
+        start - normal,
+      ];
+      final screen = corners
+          .map((point) => projection.project(point).screen)
+          .toList(growable: false);
+      final id = wall.elementId?.toString();
+      final selected = id != null && selectedElementIds.contains(id);
+      final highlighted = id != null && id == highlightedElementId;
+      final color = selected
+          ? const Color(0xFF2563EB)
+          : highlighted
+              ? const Color(0xFFDC2626)
+              : const Color(0xFF334155);
+      final path = Path()
+        ..moveTo(screen.first.dx, screen.first.dy)
+        ..lineTo(screen[1].dx, screen[1].dy)
+        ..lineTo(screen[2].dx, screen[2].dy)
+        ..lineTo(screen[3].dx, screen[3].dy)
+        ..close();
+      canvas.drawPath(
+        path,
+        Paint()
+          ..style = PaintingStyle.fill
+          ..color =
+              color.withValues(alpha: selected || highlighted ? 0.48 : 0.28),
+      );
+      canvas.drawPath(
+        path,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = selected || highlighted ? 2.4 : 1.6
+          ..color = color,
+      );
+    }
+  }
+
   Color _shadeTriangleColor({
     required Color baseColor,
     required List<RenderScenePoint> triangle,
     double minShade = 0.72,
     double maxShade = 0.98,
   }) {
-    if (triangle.length < 3 || projectionMode != RenderSceneProjectionMode.isometric) {
+    if (triangle.length < 3 ||
+        projectionMode != RenderSceneProjectionMode.isometric) {
       return baseColor;
     }
-    final normal = normalizePoint(crossPoint(triangle[1] - triangle[0], triangle[2] - triangle[0]));
+    final normal = normalizePoint(
+        crossPoint(triangle[1] - triangle[0], triangle[2] - triangle[0]));
     final lightDirection = normalizePoint(
       const RenderScenePoint(x: 0.35, y: -0.25, z: 0.9),
     );
@@ -552,7 +620,8 @@ class FallbackRenderScenePainter extends CustomPainter {
     RenderSceneProjection projection,
   ) {
     if (projectionMode.useProjectedBoundsOutline) {
-      return _buildProjectedBoundsRectOutlineSegments(object.bounds, projection);
+      return _buildProjectedBoundsRectOutlineSegments(
+          object.bounds, projection);
     }
 
     final meshSegments = _buildVisibleMeshOutlineSegments(object, projection);
@@ -685,8 +754,7 @@ class FallbackRenderScenePainter extends CustomPainter {
 
     if (wallStart != null && wallEnd != null) {
       final wallLength = wallStart.distanceTo(wallEnd);
-      if (wallLength > 1e-6 &&
-          projectionMode.supportsPlanFootprintEditing) {
+      if (wallLength > 1e-6 && projectionMode.supportsPlanFootprintEditing) {
         // Filled wall draft is intentionally plan-only. Elevation views reuse the
         // same planar projection pipeline, but wall creation preview there is a
         // line/elevation workflow rather than a thick footprint preview.
@@ -879,8 +947,7 @@ class FallbackRenderScenePainter extends CustomPainter {
     }
 
     final axisUnit = axis.scale(1.0 / length);
-    final normal =
-        RenderScenePoint(x: -axisUnit.y, y: axisUnit.x, z: 0).scale(
+    final normal = RenderScenePoint(x: -axisUnit.y, y: axisUnit.x, z: 0).scale(
       draftWallThicknessMeters * 0.5,
     );
     final lower0 = start + normal;
@@ -923,7 +990,8 @@ class FallbackRenderScenePainter extends CustomPainter {
 
     for (final object in objects) {
       final elementId = object.elementId?.toString();
-      final isSelected = elementId != null && selectedElementIds.contains(elementId);
+      final isSelected =
+          elementId != null && selectedElementIds.contains(elementId);
       final isHighlighted =
           elementId == highlightedElementId && highlightedElementId != null;
       if (!isSelected && !isHighlighted && objects.length > 80) {
@@ -983,13 +1051,16 @@ class FallbackRenderScenePainter extends CustomPainter {
     }
 
     final minHorizontal =
-        (descriptor.minAxis(bounds, descriptor.horizontalAxis) / spacing).floor() *
+        (descriptor.minAxis(bounds, descriptor.horizontalAxis) / spacing)
+                .floor() *
             spacing;
     final maxHorizontal =
-        (descriptor.maxAxis(bounds, descriptor.horizontalAxis) / spacing).ceil() *
+        (descriptor.maxAxis(bounds, descriptor.horizontalAxis) / spacing)
+                .ceil() *
             spacing;
     final minVertical =
-        (descriptor.minAxis(bounds, descriptor.verticalAxis) / spacing).floor() *
+        (descriptor.minAxis(bounds, descriptor.verticalAxis) / spacing)
+                .floor() *
             spacing;
     final maxVertical =
         (descriptor.maxAxis(bounds, descriptor.verticalAxis) / spacing).ceil() *
@@ -1116,8 +1187,9 @@ class FallbackRenderScenePainter extends CustomPainter {
         overlay.lineStart,
         overlay.lineEnd,
         Paint()
-          ..color = (isSelected ? const Color(0xFF2563EB) : const Color(0xFF0F766E))
-              .withValues(alpha: 0.96)
+          ..color =
+              (isSelected ? const Color(0xFF2563EB) : const Color(0xFF0F766E))
+                  .withValues(alpha: 0.96)
           ..strokeWidth = isSelected ? 3.2 : 1.6,
         dashLength: 12,
         gapLength: 6,

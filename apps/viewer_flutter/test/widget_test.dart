@@ -8,6 +8,7 @@ import 'package:viewer_flutter/src/render_scene_estimator.dart';
 import 'package:viewer_flutter/src/render_scene_level_overlay.dart';
 import 'package:viewer_flutter/src/render_scene_models.dart';
 import 'package:viewer_flutter/src/render_scene_repository.dart';
+import 'package:viewer_flutter/src/scene_mutation_service.dart';
 import 'package:viewer_flutter/src/render_scene_viewport_controller.dart';
 import 'package:viewer_flutter/src/render_scene_viewport_planar.dart';
 import 'package:viewer_flutter/src/render_scene_viewport_projection.dart';
@@ -101,6 +102,38 @@ void main() {
     final afterWall = after.objectById(wallId)!;
     expect(afterWall.bounds.max.z, greaterThan(beforeWall.bounds.max.z));
     expect(created.scene, isNotNull);
+  });
+
+  test('wall mutation transaction returns a constrained wall in its snapshot',
+      () async {
+    final api = TbeViewerApi.load();
+    final repository = ViewerRepository(api);
+    addTearDown(repository.dispose);
+    await repository.loadFromJson(
+      projectName: 'Wall transaction',
+      json: File('assets/sample_project.json').readAsStringSync(),
+    );
+    final before = (await repository.currentRenderScene()).scene!;
+    final outcome =
+        await SceneMutationService(engineRepository: repository).createWall(
+      CreateWallRequest(
+        scene: before,
+        start: const RenderScenePoint(x: 12, y: 1, z: 0),
+        end: const RenderScenePoint(x: 16, y: 1, z: 0),
+        baseLevelId: 1,
+        topLevelId: 2,
+        thicknessMeters: 0.2,
+        heightMeters: 3.0,
+      ),
+    );
+    expect(outcome.success, isTrue, reason: outcome.error);
+    expect(outcome.createdElementId, isNotNull);
+    expect(outcome.scene, isNotNull);
+    expect(outcome.scene!.kindCounts['wall'],
+        greaterThan(before.kindCounts['wall'] ?? 0));
+    final wall = outcome.scene!.objectById(outcome.createdElementId)!;
+    expect(wall.metadata['base_level_id']?.toString(), equals('1'));
+    expect(wall.metadata['top_level_id']?.toString(), equals('2'));
   });
 
   test('Bundled render scene retains wall level metadata', () {
@@ -592,6 +625,23 @@ void main() {
       ),
       <String>{'inside', 'crossing'},
     );
+  });
+
+  test('touch selection window requires a hold before it starts', () {
+    final interaction = ViewportInteractionController();
+    interaction.begin(
+      position: const Offset(10, 10),
+      elementId: null,
+      modifiers: const ViewportSelectionModifiers(),
+      allowObjectDrag: true,
+      requireRectangleArm: true,
+    );
+    expect(interaction.intent, ViewportDragIntent.idle);
+    expect(interaction.update(const Offset(100, 100)), isNull);
+
+    interaction.armRectangleSelect();
+    expect(interaction.intent, ViewportDragIntent.rectangleSelect);
+    expect(interaction.update(const Offset(100, 100)), isNotNull);
   });
 
   test('Switching from elevation to 3D preserves directional meaning',

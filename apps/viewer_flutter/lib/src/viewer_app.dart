@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -8,6 +9,7 @@ import 'render_scene_editor.dart';
 import 'render_scene_estimator.dart';
 import 'render_scene_models.dart';
 import 'render_scene_repository.dart';
+import 'scene_mutation_service.dart';
 import 'tbe_ffi.dart';
 import 'render_scene_viewport.dart';
 import 'render_scene_viewport_planar.dart';
@@ -133,6 +135,18 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   double _draftCeilingHeightOffsetMeters = 2.6;
   String? _editStatusMessage;
   bool _snapDraftToGrid = true;
+  final List<String> _androidMutationTrace = <String>[];
+
+  void _traceAndroidMutation(String message) {
+    if (!kDebugMode) return;
+    final timestamp = DateTime.now().toIso8601String().split('T').last;
+    setState(() {
+      _androidMutationTrace.insert(0, '$timestamp  $message');
+      if (_androidMutationTrace.length > 8) {
+        _androidMutationTrace.removeRange(8, _androidMutationTrace.length);
+      }
+    });
+  }
 
   /// Empty means “show all” in RenderSceneViewportController.
   Set<String> _visibleKinds = <String>{};
@@ -335,6 +349,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
             scene: _sceneForViewport(scene),
           );
         }
+        _visibleKinds = _ensurePlanCoreVisibility(_visibleKinds, scene);
       }
     });
 
@@ -399,6 +414,21 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       }
     }
     return <String>{};
+  }
+
+  Set<String> _ensurePlanCoreVisibility(
+    Set<String> kinds,
+    RenderScene scene,
+  ) {
+    if (_projectionMode != RenderSceneProjectionMode.topDown || kinds.isEmpty) {
+      return kinds;
+    }
+    final available = scene.kindCounts.keys.toSet();
+    return <String>{
+      ...kinds,
+      for (final kind in <String>{'wall', 'door', 'window'})
+        if (available.contains(kind)) kind,
+    };
   }
 
   RenderSceneDisplayStyle _defaultDisplayStyleForProjection() {
@@ -651,6 +681,9 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
           visibleKinds: _visibleKinds,
           scene: _sceneForViewport(scene),
         );
+      }
+      if (scene != null) {
+        _visibleKinds = _ensurePlanCoreVisibility(_visibleKinds, scene);
       }
       if (_usesProjectionDefaultDisplayStyle) {
         _displayStyle = _defaultDisplayStyleForProjection();
@@ -1628,7 +1661,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     setState(() {
       _draftWallEnd = snappedPoint;
       _editStatusMessage =
-          'Wall endpoint set. Creating ${_draftWallStart!.distanceTo(snappedPoint).toStringAsFixed(2)} m wall...';
+          'Wall segment: ${_draftWallStart!.distanceTo(snappedPoint).toStringAsFixed(2)} m. Creating...';
     });
     _viewportController.setWallDraft(_draftWallStart, snappedPoint);
     await _commitWallDraft(autoContinue: true);
@@ -1688,6 +1721,11 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     final wallHeight = _activeLevelDefaultWallHeight(scene);
     final topLevel =
         activeLevelId == null ? null : _nextHigherLevel(scene, activeLevelId);
+    _traceAndroidMutation(
+      'wall commit: start=${start.x.toStringAsFixed(2)},${start.y.toStringAsFixed(2)} '
+      'end=${end.x.toStringAsFixed(2)},${end.y.toStringAsFixed(2)} '
+      'base=$activeLevelId top=${topLevel?.levelId} sceneWalls=${scene.kindCounts['wall'] ?? 0}',
+    );
     if (activeLevelId == null || topLevel == null) {
       setState(() {
         _editStatusMessage = activeLevelId == null
@@ -1696,76 +1734,39 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       });
       return;
     }
-    final repository = _engineRepository;
-    if (_engineBackedMode && repository != null) {
-      final result = await repository.createProfile(
-        targetKind: 0,
-        draftMode: 0,
-        levelId: activeLevelId,
-        points: <RenderScenePoint>[
-          RenderScenePoint(x: start.x, y: start.y, z: baseElevation),
-          RenderScenePoint(x: end.x, y: end.y, z: baseElevation),
-        ],
-        wallIds: const <int>[],
-        closed: false,
-        thicknessMeters: _defaultWallThicknessMeters,
+    final mutation = SceneMutationService(
+      engineRepository: _engineBackedMode ? _engineRepository : null,
+    );
+    final outcome = await mutation.createWall(
+      CreateWallRequest(
+        scene: scene,
+        start: RenderScenePoint(x: start.x, y: start.y, z: baseElevation),
+        end: RenderScenePoint(x: end.x, y: end.y, z: baseElevation),
+        baseLevelId: activeLevelId,
+        topLevelId: topLevel.levelId,
         heightMeters: wallHeight,
-        verticalOffsetMeters: 0.0,
-      );
-      await _applyEngineSceneResult(result, message: 'Wall created.');
-      if (result.scene == null) {
-        return;
-      }
-      final createdWallId = repository.lastCreatedElementId;
-      if (createdWallId != null) {
-        final constrained = await repository.setWallLevelConstraints(
-          wallId: createdWallId,
-          baseLevelId: activeLevelId,
-          topLevelId: topLevel.levelId,
-          baseOffsetMeters: 0.0,
-          topOffsetMeters: 0.0,
-          heightMode: 1,
-        );
-        await _applyEngineSceneResult(
-          constrained,
-          message: 'Wall created and constrained to ${topLevel.name}.',
-        );
-      }
-      if (createdWallId != null) {
-        await _viewportController.selectElement(createdWallId.toString());
-        await _viewportController.highlightElement(createdWallId.toString());
-      }
-      if (autoContinue) {
-        setState(() {
-          _draftWallStart = end;
-          _draftWallEnd = end;
-          _editStatusMessage =
-              'Wall created. Tap next point to continue, or Cancel to stop.';
-        });
-        _viewportController.setWallDraft(end, end);
-      } else {
-        await _clearDraft();
-        setState(() {
-          _editStatusMessage = 'Wall created.';
-        });
-      }
+        thicknessMeters: _defaultWallThicknessMeters,
+      ),
+    );
+    for (final entry in outcome.trace) {
+      _traceAndroidMutation(entry);
+    }
+    if (!outcome.success || outcome.scene == null) {
+      setState(() {
+        _editStatusMessage = outcome.error ?? 'Wall yaratilmadi.';
+      });
       return;
     }
-    final nextScene = RenderSceneEditor.addWall(
-      scene: scene,
-      start: RenderScenePoint(x: start.x, y: start.y, z: baseElevation),
-      end: RenderScenePoint(x: end.x, y: end.y, z: baseElevation),
-      heightMeters: wallHeight,
-      thicknessMeters: _defaultWallThicknessMeters,
-      levelId: activeLevelId,
-      topLevelId: topLevel.levelId,
+    await _applySceneChange(
+      outcome.scene!,
+      message: 'Wall created and constrained to ${topLevel.name}.',
+      authoritative: true,
     );
-    await _applySceneChange(nextScene, message: 'Wall created.');
-    final created =
-        nextScene.objects.isNotEmpty ? nextScene.objects.last : null;
-    if (created != null) {
-      await _viewportController.selectElement(created.elementId?.toString());
-      await _viewportController.highlightElement(created.elementId?.toString());
+    if (outcome.createdElementId != null) {
+      await _viewportController
+          .selectElement(outcome.createdElementId.toString());
+      await _viewportController
+          .highlightElement(outcome.createdElementId.toString());
     }
 
     if (autoContinue) {
@@ -2578,12 +2579,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       case RenderSceneInteractionMode.select:
         return false;
       case RenderSceneInteractionMode.addWall:
-        final start = _draftWallStart;
-        final end = _draftWallEnd;
-        if (start == null || end == null) {
-          return false;
-        }
-        return start.distanceTo(end) >= 0.1;
+        return _draftWallStart != null;
       case RenderSceneInteractionMode.addLevel:
         return _draftWallStart != null && _draftWallEnd != null;
       case RenderSceneInteractionMode.moveLevel:
@@ -2641,7 +2637,11 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       case RenderSceneInteractionMode.select:
         return;
       case RenderSceneInteractionMode.addWall:
-        await _commitWallDraft(autoContinue: true);
+        await _clearDraft();
+        await _setInteractionMode(RenderSceneInteractionMode.select);
+        setState(() {
+          _editStatusMessage = 'Wall chizish tugatildi.';
+        });
         return;
       case RenderSceneInteractionMode.addLevel:
         await _commitLevelDraft();
@@ -3141,6 +3141,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
           scene: nextViewportScene,
         );
       }
+      _visibleKinds = _ensurePlanCoreVisibility(_visibleKinds, nextScene);
     });
 
     await _viewportController.updateRenderScene(nextViewportScene);
@@ -3802,6 +3803,13 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
             draftWallHeightMeters: _defaultWallHeightMeters,
           ),
         ),
+        if (kDebugMode && _androidMutationTrace.isNotEmpty)
+          Positioned(
+            left: 8,
+            right: 8,
+            top: 8,
+            child: _AndroidMutationTrace(entries: _androidMutationTrace),
+          ),
         if (_isBusy)
           Positioned.fill(
             child: ColoredBox(
@@ -4232,6 +4240,11 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
             unawaited(_selectObject(object));
           }
         }
+        return;
+      case RenderSceneInteractionMode.addWall:
+        // A tablet drag only places the second endpoint. Keeping the draft
+        // alive lets the visible Confirm action be the explicit commit.
+        _handleSceneHover(details);
         return;
       case RenderSceneInteractionMode.moveWall:
         _handleMoveWallTap(scene, details.pickedObject, details.modelPoint);
@@ -5519,6 +5532,41 @@ class _SceneSummaryCard extends StatelessWidget {
               '${bounds.width.toStringAsFixed(2)} × ${bounds.depth.toStringAsFixed(2)} × ${bounds.height.toStringAsFixed(2)} m',
         ),
       ],
+    );
+  }
+}
+
+class _AndroidMutationTrace extends StatelessWidget {
+  const _AndroidMutationTrace({required this.entries});
+
+  final List<String> entries;
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: Card(
+        color: const Color(0xED111827),
+        child: Padding(
+          padding: const EdgeInsets.all(8),
+          child: DefaultTextStyle(
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 10,
+              height: 1.25,
+              fontFamily: 'monospace',
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                const Text('ANDROID MUTATION TRACE',
+                    style: TextStyle(fontWeight: FontWeight.w700)),
+                for (final entry in entries) Text(entry, maxLines: 2),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
