@@ -1147,7 +1147,9 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
         0, 4, 1, 5, 2, 6, 3, 7,
       )
       for (index in pairs.indices step 2) {
-        canvas.drawLine(corners[pairs[index]], corners[pairs[index + 1]], outline)
+        val first = corners[pairs[index]]
+        val second = corners[pairs[index + 1]]
+        canvas.drawLine(first.x, first.y, second.x, second.y, outline)
       }
     }
     if (!topDown) {
@@ -1157,7 +1159,7 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
         val first = project(ScenePoint(sceneBounds.min.x - widthSpan * 0.08, elevation, backZ))
         val second = project(ScenePoint(sceneBounds.max.x + widthSpan * 0.08, elevation, backZ))
         if (first != null && second != null) {
-          canvas.drawLine(first, second, levelPaint)
+          canvas.drawLine(first.x, first.y, second.x, second.y, levelPaint)
           canvas.drawText(name, first.x + 6f, first.y - 5f, levelText)
         }
       }
