@@ -74,6 +74,46 @@ void main() {
     expect(result.scene!.objects, isNotEmpty);
   });
 
+  test('engine residential tower template is level-bound and reload-safe',
+      () async {
+    final repository = ViewerRepository(TbeViewerApi.load());
+    addTearDown(repository.dispose);
+
+    final result = await repository.createResidentialTemplate(
+      buildingCount: 1,
+      storyCount: 9,
+    );
+    final scene = result.scene!;
+    expect(result.errors, isEmpty);
+    expect(scene.levels, hasLength(9));
+    expect(scene.kindCounts['wall'], greaterThanOrEqualTo(10));
+    final topLevelScene =
+        (await repository.setActiveLevel(scene.levels.last.levelId)).scene!;
+    expect(topLevelScene.kindCounts['roof'], 1);
+
+    final saved = await repository.saveProjectJson();
+    expect(saved, contains('9 Storey Residential Tower'));
+    expect(saved, contains('source_wall_ids'));
+    await repository.reloadCurrent();
+    expect((await repository.currentRenderScene()).scene, isNotNull);
+  });
+
+  test('engine residential campus template creates six 9-storey buildings',
+      () async {
+    final repository = ViewerRepository(TbeViewerApi.load());
+    addTearDown(repository.dispose);
+
+    final result = await repository.createResidentialTemplate(
+      buildingCount: 6,
+      storyCount: 9,
+    );
+    expect(result.scene!.levels, hasLength(9));
+    final saved = await repository.saveProjectJson();
+    expect(saved, contains('Residential Campus'));
+    expect(saved, contains('Building 6 exterior wall'));
+    expect(saved, contains('source_wall_ids'));
+  });
+
   test('level move updates a wall constrained to that level', () async {
     final api = TbeViewerApi.load();
     final repository = ViewerRepository(api);

@@ -84,6 +84,100 @@ std::size_t recommended_final_compute_workers() {
     return std::min<std::size_t>(4u, static_cast<std::size_t>(logical_cores - 1u));
 }
 
+Project make_residential_template(int building_count, int story_count) {
+    if (building_count < 1 || building_count > 12 || story_count < 1 || story_count > 30) {
+        throw std::invalid_argument("residential template supports 1-12 buildings and 1-30 stories");
+    }
+
+    const auto project_name = building_count == 1
+        ? "9 Storey Residential Tower"
+        : "Residential Campus";
+    Project project{project_name};
+    auto& document = project.active_document();
+
+    const auto concrete = document.create_material("Template Concrete", tbe::core::MaterialCategory::Structural, 2400.0, 110.0);
+    const auto masonry = document.create_material("Template Masonry", tbe::core::MaterialCategory::Structural, 1800.0, 90.0);
+    const auto gypsum = document.create_material("Template Gypsum", tbe::core::MaterialCategory::Finish, 850.0, 28.0);
+    const auto wall_type = document.create_wall_type("Residential Exterior Wall", {
+        tbe::core::WallAssemblyLayer{.material_id = masonry, .thickness_meters = 0.20, .function = tbe::core::WallLayerFunction::Core},
+        tbe::core::WallAssemblyLayer{.material_id = gypsum, .thickness_meters = 0.02, .function = tbe::core::WallLayerFunction::InteriorFinish},
+    });
+    const auto floor_assembly = document.create_layered_assembly(tbe::core::LayeredAssemblyKind::Floor, "Residential Floor", {
+        tbe::core::WallAssemblyLayer{.material_id = concrete, .thickness_meters = 0.18, .function = tbe::core::WallLayerFunction::Core},
+    });
+    const auto ceiling_assembly = document.create_layered_assembly(tbe::core::LayeredAssemblyKind::Ceiling, "Residential Ceiling", {
+        tbe::core::WallAssemblyLayer{.material_id = gypsum, .thickness_meters = 0.015, .function = tbe::core::WallLayerFunction::InteriorFinish},
+    });
+
+    std::vector<ElementId> levels;
+    levels.reserve(static_cast<std::size_t>(story_count));
+    for (int story = 0; story < story_count; ++story) {
+        levels.push_back(document.create_level("Level " + std::to_string(story + 1), story * 3.2, 3.2));
+    }
+
+    constexpr double width = 12.0;
+    constexpr double depth = 8.0;
+    constexpr double building_pitch_x = 18.0;
+    constexpr double building_pitch_y = 15.0;
+    for (int building = 0; building < building_count; ++building) {
+        const auto origin_x = static_cast<double>(building % 3) * building_pitch_x;
+        const auto origin_y = static_cast<double>(building / 3) * building_pitch_y;
+        const std::vector<Point2> footprint{
+            {.x = origin_x, .y = origin_y},
+            {.x = origin_x + width, .y = origin_y},
+            {.x = origin_x + width, .y = origin_y + depth},
+            {.x = origin_x, .y = origin_y + depth},
+        };
+        std::vector<ElementId> top_perimeter;
+        for (int story = 0; story < story_count; ++story) {
+            const auto level_id = levels[static_cast<std::size_t>(story)];
+            std::vector<ElementId> perimeter;
+            perimeter.reserve(4);
+            for (std::size_t edge = 0; edge < footprint.size(); ++edge) {
+                const auto wall_id = document.create_wall(
+                    "Building " + std::to_string(building + 1) + " exterior wall",
+                    Line2{.start = footprint[edge], .end = footprint[(edge + 1) % footprint.size()]},
+                    0.24,
+                    3.2,
+                    level_id
+                );
+                document.set_wall_type(wall_id, wall_type);
+                if (story + 1 < story_count) {
+                    document.set_wall_level_constraints(wall_id, level_id, levels[static_cast<std::size_t>(story + 1)], 0.0, 0.0, tbe::core::WallHeightMode::TopLevel);
+                }
+                perimeter.push_back(wall_id);
+            }
+            const auto partition_id = document.create_wall(
+                "Building " + std::to_string(building + 1) + " apartment partition",
+                Line2{.start = {.x = origin_x + width * 0.5, .y = origin_y}, .end = {.x = origin_x + width * 0.5, .y = origin_y + depth}},
+                0.16,
+                3.2,
+                level_id
+            );
+            document.set_wall_type(partition_id, wall_type);
+            if (story + 1 < story_count) {
+                document.set_wall_level_constraints(partition_id, level_id, levels[static_cast<std::size_t>(story + 1)], 0.0, 0.0, tbe::core::WallHeightMode::TopLevel);
+            }
+            document.create_door("Apartment entry A", perimeter.front(), 2.0, 0.9, 2.1);
+            document.create_door("Apartment entry B", perimeter[2], 2.0, 0.9, 2.1);
+            document.create_window("Living window A", perimeter[1], 1.8, 1.4, 1.2, 0.9);
+            document.create_window("Living window B", perimeter[1], 5.0, 1.4, 1.2, 0.9);
+            document.create_window("Living window C", perimeter[3], 1.8, 1.4, 1.2, 0.9);
+            document.create_window("Living window D", perimeter[3], 5.0, 1.4, 1.2, 0.9);
+            document.create_floor_system_from_profile(level_id, footprint, floor_assembly, 0.18);
+            document.create_ceiling_system_from_profile(level_id, footprint, ceiling_assembly, 2.85);
+            if (story + 1 == story_count) {
+                top_perimeter = perimeter;
+            }
+        }
+        document.create_roof(levels.back(), footprint, tbe::core::RoofType::Flat, 0.20, concrete, 0, std::nullopt, std::nullopt, std::move(top_perimeter));
+    }
+    document.auto_join_walls();
+    (void)document.detect_rooms();
+    document.regenerate_dirty_geometry();
+    return project;
+}
+
 double distance(Point2 left, Point2 right) {
     const auto dx = left.x - right.x;
     const auto dy = left.y - right.y;
@@ -2103,6 +2197,25 @@ ApiVoidResult EngineSession::set_compute_mode(ComputeMode mode) {
 
 ApiResult<ComputeMode> EngineSession::get_compute_mode() const {
     return success_result(impl_->compute_mode);
+}
+
+ApiVoidResult EngineSession::create_residential_template(int building_count, int story_count) {
+    try {
+        // Build outside the live session first.  A malformed template can
+        // therefore never leave the user with a half-created project.
+        auto template_project = make_residential_template(building_count, story_count);
+        impl_->project = std::move(template_project);
+        impl_->undo_stack.clear();
+        impl_->redo_stack.clear();
+        impl_->clear_caches();
+        impl_->freshness = FreshnessSummaryDTO{};
+        impl_->mark_all_derived_dirty();
+        (void)recompute_impl(*impl_, ComputeMode::InteractivePreview);
+        rebuild_spatial_index_impl(*impl_);
+        return success_void();
+    } catch (const std::exception& error) {
+        return error_void(status_from_exception(error), error.what());
+    }
 }
 
 ApiResult<DirtySummaryDTO> EngineSession::get_dirty_summary() const {

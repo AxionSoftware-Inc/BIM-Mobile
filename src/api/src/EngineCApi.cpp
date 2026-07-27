@@ -919,6 +919,13 @@ TbeApiStatusCode tbe_set_compute_mode(TbeEngineHandle* handle, int mode) {
     ));
 }
 
+TbeApiStatusCode tbe_create_residential_template(TbeEngineHandle* handle, int building_count, int story_count) {
+    if (handle == nullptr || handle->session == nullptr) {
+        return null_handle_error(handle);
+    }
+    return apply_result(handle, handle->session->create_residential_template(building_count, story_count));
+}
+
 const char* tbe_get_last_error(const TbeEngineHandle* handle) {
     if (handle == nullptr) {
         return "engine handle is null";

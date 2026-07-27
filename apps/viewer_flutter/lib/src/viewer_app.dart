@@ -24,6 +24,11 @@ enum _WallMoveMode {
   endHandle,
 }
 
+enum _ResidentialTemplateKind {
+  tower9,
+  campus6x9,
+}
+
 class ViewerApp extends StatelessWidget {
   const ViewerApp({
     super.key,
@@ -291,6 +296,48 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       setState(() {
         _loadError = error.toString();
         _statusMessage = 'Failed to load bundled sample.';
+        _isBusy = false;
+      });
+    }
+  }
+
+  Future<void> _createResidentialTemplate(
+    _ResidentialTemplateKind template,
+  ) async {
+    if (_isBusy) return;
+    final buildingCount = template == _ResidentialTemplateKind.tower9 ? 1 : 6;
+    const storyCount = 9;
+    final label = buildingCount == 1
+        ? '9-qavatli turar-joy binosi'
+        : '6 ta 9-qavatli turar-joy shaharchasi';
+    setState(() {
+      _isBusy = true;
+      _loadError = null;
+      _statusMessage = '$label engine’da yaratilmoqda...';
+    });
+
+    ViewerRepository? createdRepository;
+    try {
+      final repository = _engineRepository ??
+          (createdRepository = ViewerRepository(TbeViewerApi.load()));
+      final result = await repository.createResidentialTemplate(
+        buildingCount: buildingCount,
+        storyCount: storyCount,
+      );
+      if (!mounted) return;
+      _engineRepository = repository;
+      _engineBackedMode = true;
+      _engineLoadDiagnostic = null;
+      await _applyLoadResult(
+        result,
+        sourceLabel: 'engine template: $label',
+      );
+    } catch (error) {
+      createdRepository?.dispose();
+      if (!mounted) return;
+      setState(() {
+        _loadError = error.toString();
+        _statusMessage = '$label yaratilmadi.';
         _isBusy = false;
       });
     }
@@ -3541,6 +3588,23 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         ],
       ),
       actions: <Widget>[
+        PopupMenuButton<_ResidentialTemplateKind>(
+          tooltip: 'Create engine template',
+          enabled: !_isBusy,
+          icon: const Icon(Icons.apartment_outlined),
+          onSelected: _createResidentialTemplate,
+          itemBuilder: (context) =>
+              const <PopupMenuEntry<_ResidentialTemplateKind>>[
+            PopupMenuItem<_ResidentialTemplateKind>(
+              value: _ResidentialTemplateKind.tower9,
+              child: Text('9-qavatli bino template'),
+            ),
+            PopupMenuItem<_ResidentialTemplateKind>(
+              value: _ResidentialTemplateKind.campus6x9,
+              child: Text('6 × 9-qavatli shaharcha template'),
+            ),
+          ],
+        ),
         if (defaultTargetPlatform == TargetPlatform.android)
           IconButton(
             tooltip:

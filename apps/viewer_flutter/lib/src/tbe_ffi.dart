@@ -213,6 +213,16 @@ typedef _SetIntOptionNative = ffi.Int32 Function(
   ffi.Int32,
 );
 typedef _SetIntOptionDart = int Function(ffi.Pointer<ffi.Void>, int);
+typedef _CreateResidentialTemplateNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Int32,
+  ffi.Int32,
+);
+typedef _CreateResidentialTemplateDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  int,
+  int,
+);
 typedef _ProjectLoadJsonNative = ffi.Int32 Function(
   ffi.Pointer<ffi.Void>,
   ffi.Pointer<Utf8>,
@@ -566,6 +576,9 @@ class TbeViewerApi {
         _setComputeMode =
             library.lookupFunction<_SetIntOptionNative, _SetIntOptionDart>(
                 'tbe_set_compute_mode'),
+        _createResidentialTemplate = library.lookupFunction<
+            _CreateResidentialTemplateNative,
+            _CreateResidentialTemplateDart>('tbe_create_residential_template'),
         _getSchemaVersion =
             library.lookupFunction<_SchemaVersionNative, _SchemaVersionDart>(
                 'tbe_get_schema_version'),
@@ -713,6 +726,7 @@ class TbeViewerApi {
   final _NearbyRenderSceneDart _getRenderSceneJsonNearLevel;
   final _SetIntOptionDart _setPerformanceProfile;
   final _SetIntOptionDart _setComputeMode;
+  final _CreateResidentialTemplateDart _createResidentialTemplate;
   final _SchemaVersionDart _getSchemaVersion;
   final _ProjectLoadJsonDart _projectLoadJson;
   final _StringGetterDart _projectSaveJson;
@@ -805,6 +819,17 @@ class TbeViewerApi {
     // C++ enum order: BatterySaver=0, InteractivePreview=0.
     _check(handle, _setPerformanceProfile(handle, 0));
     _check(handle, _setComputeMode(handle, 0));
+  }
+
+  void createResidentialTemplate(
+    ffi.Pointer<ffi.Void> handle, {
+    required int buildingCount,
+    required int storyCount,
+  }) {
+    _check(
+      handle,
+      _createResidentialTemplate(handle, buildingCount, storyCount),
+    );
   }
 
   int getSchemaVersion(ffi.Pointer<ffi.Void> handle) {
@@ -1377,6 +1402,32 @@ class ViewerRepository {
       snapshot: snapshot,
       hitCandidates: const <HitCandidateView>[],
     );
+  }
+
+  /// Replaces the session with a complete engine-authored residential model.
+  /// Template geometry is created in one native transaction; Flutter only
+  /// receives the final authoritative snapshot.
+  Future<RenderSceneLoadResult> createResidentialTemplate({
+    required int buildingCount,
+    required int storyCount,
+  }) async {
+    _handle ??= _api.createSession();
+    final handle = _handle!;
+    _api.configureInteractiveSession(handle);
+    _api.createResidentialTemplate(
+      handle,
+      buildingCount: buildingCount,
+      storyCount: storyCount,
+    );
+    _projectName = buildingCount == 1
+        ? '$storyCount Storey Residential Tower'
+        : '$buildingCount Building Residential Campus';
+    _currentJson = _api.saveProjectJson(handle);
+    _currentJsonPath = null;
+    _currentPackagePath = null;
+    _activeLevelId = _extractPrimaryLevelIdFromProjectJson(_currentJson!);
+    await _buildSnapshot(handle, _projectName!);
+    return currentRenderScene();
   }
 
   Future<ViewerLoadResult> reloadCurrent() async {

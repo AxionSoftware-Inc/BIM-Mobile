@@ -154,6 +154,7 @@ TbeApiStatusCode tbe_get_render_scene_json(TbeEngineHandle* handle, char** out_j
 TbeApiStatusCode tbe_get_render_scene_json_near_level(TbeEngineHandle* handle, uint64_t active_level_id, int adjacent_level_count, char** out_json);
 TbeApiStatusCode tbe_set_performance_profile(TbeEngineHandle* handle, int profile);
 TbeApiStatusCode tbe_set_compute_mode(TbeEngineHandle* handle, int mode);
+TbeApiStatusCode tbe_create_residential_template(TbeEngineHandle* handle, int building_count, int story_count);
 TbeApiStatusCode tbe_create_level(
     TbeEngineHandle* handle,
     const char* name,

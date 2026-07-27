@@ -523,6 +523,10 @@ public:
     ApiResult<PerformanceProfile> get_performance_profile() const;
     ApiVoidResult set_compute_mode(ComputeMode mode);
     ApiResult<ComputeMode> get_compute_mode() const;
+    // Creates a complete, engine-owned residential authoring fixture.  This
+    // is intentionally one transaction: UI templates never assemble a large
+    // semantic model through local RenderScene mutations.
+    ApiVoidResult create_residential_template(int building_count, int story_count);
     ApiResult<DirtySummaryDTO> get_dirty_summary() const;
     ApiResult<FreshnessSummaryDTO> get_freshness_summary() const;
     ApiVoidResult recompute_dirty();
