@@ -4704,6 +4704,12 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
               const SizedBox(width: 18),
               Text(_engineBackedMode ? 'Engine' : 'Fallback'),
               const SizedBox(width: 12),
+              Text(
+                _viewportController.backend == RenderSceneViewportBackend.native
+                    ? 'Renderer: Filament'
+                    : 'Renderer: Flutter fallback',
+              ),
+              const SizedBox(width: 12),
               Text('Objects: ${scene?.objectCount ?? 0}'),
               const SizedBox(width: 12),
               Text('Triangles: ${scene?.triangleCount ?? 0}'),
