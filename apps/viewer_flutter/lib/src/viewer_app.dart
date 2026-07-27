@@ -269,6 +269,12 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       if (engineLoaded) {
         return;
       }
+      if (kReleaseMode && widget.preferEngineBackedBundledSample) {
+        throw StateError(
+          'Production authoring requires the native C++ BIM engine. '
+          'Fallback RenderScene is debug/demo only.',
+        );
+      }
       final result = await widget.source.loadBundledSample();
       await _applyLoadResult(
         result,
