@@ -21,6 +21,7 @@ import android.widget.FrameLayout
 import android.widget.TextView
 import com.google.android.filament.Camera
 import com.google.android.filament.Colors
+import com.google.android.filament.ColorGrading
 import com.google.android.filament.Engine
 import com.google.android.filament.EntityManager
 import com.google.android.filament.Filament
@@ -152,6 +153,7 @@ internal class RenderSceneFilamentHostView(
   private var scene: Scene? = null
   private var filamentView: View? = null
   private var camera: Camera? = null
+  private var colorGrading: ColorGrading? = null
   private var swapChain: SwapChain? = null
   private var sceneMetrics = FilamentSceneMetrics(
     bounds = SceneBounds(ScenePoint(0.0, 0.0, 0.0), ScenePoint(0.0, 0.0, 0.0)),
@@ -229,6 +231,10 @@ internal class RenderSceneFilamentHostView(
       camera = filamentEngine.createCamera(EntityManager.get().create())
       filamentView?.scene = scene
       filamentView?.camera = camera
+      colorGrading = ColorGrading.Builder()
+        .toneMapping(ColorGrading.ToneMapping.LINEAR)
+        .build(filamentEngine)
+      filamentView?.colorGrading = colorGrading
       filamentView?.viewport = Viewport(0, 0, 1, 1)
       // Paper-grey canvas keeps the Revit-style white model readable.
       scene?.skybox = Skybox.Builder().color(0.68f, 0.69f, 0.70f, 1.0f).build(filamentEngine)
@@ -504,6 +510,9 @@ internal class RenderSceneFilamentHostView(
     filamentView?.let { view ->
       engine?.destroyView(view)
     }
+    colorGrading?.let { grading ->
+      engine?.destroyColorGrading(grading)
+    }
     renderer?.let { renderer ->
       engine?.destroyRenderer(renderer)
     }
@@ -520,6 +529,7 @@ internal class RenderSceneFilamentHostView(
     scene = null
     filamentView = null
     camera = null
+    colorGrading = null
     engine = null
     material = null
     materialBuilderReady = false
