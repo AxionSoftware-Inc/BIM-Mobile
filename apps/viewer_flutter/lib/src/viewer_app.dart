@@ -506,6 +506,20 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     await _viewportController.setInteractionMode(_interactionMode);
     _viewportController.clearDraft();
     await _viewportController.fitCamera();
+    if (_viewportController.backend == RenderSceneViewportBackend.native) {
+      final diagnostics = await _viewportController.nativeDiagnostics();
+      if (diagnostics != null && mounted) {
+        final input = diagnostics['inputObjects'] ?? 0;
+        final renderables = diagnostics['renderables'] ?? 0;
+        final frames = diagnostics['renderedFrames'] ?? 0;
+        final materialReady = diagnostics['materialReady'] == true;
+        setState(() {
+          _statusMessage =
+              'Filament: input=$input · renderables=$renderables · '
+              'frames=$frames · material=${materialReady ? 'ready' : 'FAILED'}';
+        });
+      }
+    }
   }
 
   Set<String> _sanitizeVisibleKinds({

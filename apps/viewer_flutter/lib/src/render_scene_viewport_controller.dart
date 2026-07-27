@@ -141,6 +141,18 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
 
   bool get hasNativeBridge => _channel != null;
 
+  Future<Map<Object?, Object?>?> nativeDiagnostics() async {
+    final channel = _channel;
+    if (channel == null) return null;
+    try {
+      return await channel.invokeMapMethod<Object?, Object?>('getDiagnostics');
+    } on MissingPluginException {
+      return null;
+    } on PlatformException {
+      return null;
+    }
+  }
+
   Future<void> attachNativeBridge(int viewId) async {
     _channel = MethodChannel('tbe/render_scene_view_$viewId');
     await _syncNativeBridge();

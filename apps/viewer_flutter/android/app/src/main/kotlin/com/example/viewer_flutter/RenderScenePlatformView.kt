@@ -350,6 +350,8 @@ internal class RenderScenePlatformView(
         result.success(null)
       }
 
+      "getDiagnostics" -> result.success(view.diagnostics())
+
       else -> result.notImplemented()
     }
   }

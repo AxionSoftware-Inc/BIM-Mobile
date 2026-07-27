@@ -161,6 +161,7 @@ internal class RenderSceneFilamentHostView(
   private var selectedElementIds = emptySet<Long>()
   private var highlightedElementId: Long? = null
   private var framePosted = false
+  private var renderedFrameCount = 0L
   private var surfaceReady = false
   private var materialBuilderReady = false
   private var material: Material? = null
@@ -192,7 +193,7 @@ internal class RenderSceneFilamentHostView(
     )
     addView(
       statusView,
-      LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.START or Gravity.BOTTOM),
+      LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.START or Gravity.TOP),
     )
     statusView.setPadding(24, 16, 24, 16)
     statusView.setTextColor(Color.rgb(17, 24, 39))
@@ -431,6 +432,7 @@ internal class RenderSceneFilamentHostView(
     if (renderer != null && view != null && swapChain != null && renderer.beginFrame(swapChain, frameTimeNanos)) {
       renderer.render(view)
       renderer.endFrame()
+      renderedFrameCount += 1
     }
     scheduleFrame()
   }
@@ -773,6 +775,18 @@ internal class RenderSceneFilamentHostView(
     statusMessage = status
     statusView.text = status
   }
+
+  fun diagnostics(): Map<String, Any> = mapOf(
+    "status" to statusMessage,
+    "inputObjects" to (currentScene?.objects?.size ?: 0),
+    "renderables" to renderables.size,
+    "vertices" to sceneMetrics.vertexCount,
+    "indices" to sceneMetrics.indexCount,
+    "materialReady" to (material != null),
+    "surfaceReady" to surfaceReady,
+    "swapChainReady" to (swapChain != null),
+    "renderedFrames" to renderedFrameCount,
+  )
 
   private fun scheduleFrame() {
     if (!framePosted) {
