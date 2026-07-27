@@ -205,6 +205,7 @@ internal class RenderSceneFilamentHostView(
     statusView.setBackgroundColor(Color.argb(180, 255, 255, 255))
     statusView.typeface = Typeface.MONOSPACE
     statusView.textSize = 12f
+    statusView.maxLines = 2
     statusView.text = DEFAULT_RENDERER_STATUS
 
     uiHelper.renderCallback = this
@@ -440,6 +441,9 @@ internal class RenderSceneFilamentHostView(
 
   override fun onResized(width: Int, height: Int) {
     filamentView?.viewport = Viewport(0, 0, width.coerceAtLeast(1), height.coerceAtLeast(1))
+    // Reserve the upper-right quadrant for Flutter's compact model card.
+    // Telemetry wraps here instead of disappearing behind that card.
+    statusView.maxWidth = (width * 0.60f).toInt().coerceAtLeast(220)
     fitCamera()
     syncVisualOverlay()
   }
@@ -1107,6 +1111,7 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
   private var topDown = true
   private var perspective = false
   private var wireframe = false
+  private var showObjectEdges = true
   private val outline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
     style = Paint.Style.STROKE
     color = Color.argb(155, 24, 39, 52)
@@ -1161,10 +1166,11 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
 
   fun setDisplayStyle(style: String) {
     wireframe = style == "wireframe"
-    outline.color = if (wireframe) {
-      Color.argb(225, 18, 30, 42)
-    } else {
-      Color.argb(72, 18, 30, 42)
+    showObjectEdges = style != "shaded"
+    outline.color = when (style) {
+      "wireframe" -> Color.argb(225, 18, 30, 42)
+      "solid" -> Color.argb(72, 18, 30, 42)
+      else -> Color.TRANSPARENT
     }
     outline.strokeWidth = resources.displayMetrics.density * if (wireframe) 1.15f else 0.65f
     invalidate()
@@ -1202,7 +1208,7 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
 
   private fun drawAuthoringEdges(canvas: Canvas) {
     if (width <= 1 || height <= 1) return
-    for (objectData in objects) {
+    if (showObjectEdges) for (objectData in objects) {
       val corners = visualCorners(objectData.bounds)
       val pairs = intArrayOf(
         0, 1, 1, 2, 2, 3, 3, 0,

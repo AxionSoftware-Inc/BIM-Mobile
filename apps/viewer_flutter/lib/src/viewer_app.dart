@@ -119,7 +119,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   RenderSceneProjectionMode _projectionMode = kDefaultPlanProjectionMode;
   RenderSceneOrbitProjectionStyle _orbitProjectionStyle =
       RenderSceneOrbitProjectionStyle.perspective;
-  RenderSceneDisplayStyle _displayStyle = RenderSceneDisplayStyle.wireframe;
+  RenderSceneDisplayStyle _displayStyle = RenderSceneDisplayStyle.solid;
   RenderSceneInteractionMode _interactionMode =
       RenderSceneInteractionMode.select;
   RenderScenePoint? _draftWallStart;
@@ -587,7 +587,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   RenderSceneDisplayStyle _defaultDisplayStyleForProjection() {
     if (_projectionMode == RenderSceneProjectionMode.topDown ||
         _projectionMode.isElevation) {
-      return RenderSceneDisplayStyle.wireframe;
+      return RenderSceneDisplayStyle.solid;
     }
     return RenderSceneDisplayStyle.solid;
   }
@@ -906,9 +906,11 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     setState(() {
       _displayStyle = style;
       _usesProjectionDefaultDisplayStyle = false;
-      _statusMessage = style == RenderSceneDisplayStyle.solid
-          ? 'Solid display'
-          : 'Wireframe display';
+      _statusMessage = switch (style) {
+        RenderSceneDisplayStyle.shaded => 'Shaded display',
+        RenderSceneDisplayStyle.solid => 'Solid display',
+        RenderSceneDisplayStyle.wireframe => 'Wireframe display',
+      };
     });
 
     await _viewportController.setDisplayStyle(style);
@@ -3711,6 +3713,14 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
                           RenderSceneProjectionMode.isometric),
                 ),
                 const SizedBox(width: 10),
+                _toolbarChoiceButton(
+                  label: 'Shaded',
+                  selected: _displayStyle == RenderSceneDisplayStyle.shaded,
+                  onPressed: scene == null
+                      ? null
+                      : () => _setDisplayStyle(RenderSceneDisplayStyle.shaded),
+                ),
+                const SizedBox(width: 6),
                 _toolbarChoiceButton(
                   label: 'Solid',
                   selected: _displayStyle == RenderSceneDisplayStyle.solid,

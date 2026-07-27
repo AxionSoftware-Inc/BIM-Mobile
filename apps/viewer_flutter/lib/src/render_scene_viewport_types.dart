@@ -27,6 +27,7 @@ const List<RenderSceneProjectionMode> kOrthographicProjectionModes =
 ];
 
 enum RenderSceneDisplayStyle {
+  shaded,
   solid,
   wireframe,
 }
