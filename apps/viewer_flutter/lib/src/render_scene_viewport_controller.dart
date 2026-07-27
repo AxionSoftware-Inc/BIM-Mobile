@@ -439,6 +439,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
       center: descriptor.planarPan(_planCamera.center, delta, zoom),
     );
     notifyListeners();
+    _scheduleNativeCameraSync();
   }
 
   @override
@@ -488,6 +489,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
       zoom: nextZoom,
     );
     notifyListeners();
+    _scheduleNativeCameraSync();
   }
 
   @override
@@ -505,6 +507,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
         (_orbitPitchRadians + delta.dy / minDimension * math.pi * 0.95)
             .clamp(-math.pi / 2.0 + 0.12, math.pi / 2.0 - 0.12);
     notifyListeners();
+    _scheduleNativeCameraSync();
   }
 
   @override
@@ -523,6 +526,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     final moveUp = scalePoint(basis.up, delta.dy * worldScale);
     _orbitCenter = addPoint(_orbitCenter, addPoint(moveRight, moveUp));
     notifyListeners();
+    _scheduleNativeCameraSync();
   }
 
   @override
@@ -533,6 +537,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
 
     _orbitZoomScale = (_orbitZoomScale * scaleDelta).clamp(0.005, 250.0);
     notifyListeners();
+    _scheduleNativeCameraSync();
   }
 
   @override
@@ -630,6 +635,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     await _invoke('setDisplayStyle', _displayStyle.name);
     await _invoke('setProjectionMode', _projectionMode.name);
     await _invoke('setOrbitProjectionStyle', _orbitProjectionStyle.name);
+    await _invoke('setCamera', _nativeCameraPayload());
     await _invoke('setSelection', <String, Object?>{
       'ids': _selectedElementIds.toList(),
       'activeId': _activeElementId,
@@ -643,6 +649,32 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
       'bottom': rectangle?.bottom,
       'crossing': _selectionRectangleCrossing,
     });
+  }
+
+  void _scheduleNativeCameraSync() {
+    unawaited(_invoke('setCamera', _nativeCameraPayload()));
+  }
+
+  Map<String, Object?> _nativeCameraPayload() {
+    final orbitCenter = _orbitCenter;
+    final planCenter = _planCamera.center;
+    return <String, Object?>{
+      'orbitCenter': <String, double>{
+        'x': orbitCenter.x,
+        'y': orbitCenter.y,
+        'z': orbitCenter.z,
+      },
+      'orbitYawRadians': _orbitYawRadians,
+      'orbitPitchRadians': _orbitPitchRadians,
+      'orbitDistance': _orbitDistance,
+      'orbitZoomScale': _orbitZoomScale,
+      'planCenter': <String, double>{
+        'x': planCenter.x,
+        'y': planCenter.y,
+        'z': planCenter.z,
+      },
+      'planZoom': _planCamera.zoom,
+    };
   }
 
   Future<void> _invoke(String method, [Object? arguments]) async {

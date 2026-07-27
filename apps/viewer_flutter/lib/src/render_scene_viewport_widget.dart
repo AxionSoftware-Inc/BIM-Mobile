@@ -92,25 +92,23 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
     }
 
     if (_shouldUseNativeAndroidView) {
-      return Stack(
-        fit: StackFit.expand,
-        children: <Widget>[
-          _AndroidRenderSceneView(controller: widget.controller),
-          Positioned(
-            left: 12,
-            bottom: 12,
-            child: _ViewportNoteCard(
-              message:
-                  'Native Filament viewport. Drag to orbit. Use Fit to recenter.',
-              color: Colors.black.withValues(alpha: 0.78),
-            ),
-          ),
-          Positioned(
-            right: 12,
-            top: 12,
-            child: _ViewportStatsCard(scene: scene, native: true),
-          ),
-        ],
+      return _FallbackRenderSceneView(
+        controller: widget.controller,
+        interactionMode: widget.interactionMode,
+        onSceneTap: widget.onSceneTap,
+        onSceneDragStart: widget.onSceneDragStart,
+        onSceneDragUpdate: widget.onSceneDragUpdate,
+        onSceneDragEnd: widget.onSceneDragEnd,
+        onSceneSecondaryTap: widget.onSceneSecondaryTap,
+        onSceneHover: widget.onSceneHover,
+        onLevelElevationSubmitted: widget.onLevelElevationSubmitted,
+        draftWallThicknessMeters: widget.draftWallThicknessMeters,
+        draftWallHeightMeters: widget.draftWallHeightMeters,
+        nativeRenderer: true,
+        rendererChild: IgnorePointer(
+          ignoring: true,
+          child: _AndroidRenderSceneView(controller: widget.controller),
+        ),
       );
     }
 
@@ -174,6 +172,8 @@ class _FallbackRenderSceneView extends StatefulWidget {
     required this.onLevelElevationSubmitted,
     required this.draftWallThicknessMeters,
     required this.draftWallHeightMeters,
+    this.rendererChild,
+    this.nativeRenderer = false,
   });
 
   final RenderSceneViewportController controller;
@@ -188,6 +188,8 @@ class _FallbackRenderSceneView extends StatefulWidget {
       onLevelElevationSubmitted;
   final double draftWallThicknessMeters;
   final double draftWallHeightMeters;
+  final Widget? rendererChild;
+  final bool nativeRenderer;
 
   @override
   State<_FallbackRenderSceneView> createState() =>
@@ -795,31 +797,33 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
             child: Stack(
               fit: StackFit.expand,
               children: <Widget>[
-                RepaintBoundary(
-                  child: CustomPaint(
-                    painter: FallbackRenderScenePainter(
-                      scene: scene,
-                      visibleKinds: controller.visibleKinds,
-                      selectedElementIds: controller.selectedElementIds,
-                      activeElementId: controller.activeElementId,
-                      selectedLevelId: controller.selectedLevelId,
-                      selectionRect: controller.selectionRectangle,
-                      highlightedElementId: controller.highlightedElementId,
-                      projectionMode: controller.projectionMode,
-                      orbitProjectionStyle: controller.orbitProjectionStyle,
-                      displayStyle: controller.displayStyle,
-                      camera: controller.camera,
-                      planCamera: controller.planCamera,
-                      draftWallStart: controller.draftWallStart,
-                      draftWallEnd: controller.draftWallEnd,
-                      draftOpening: controller.draftOpening,
-                      draftSurface: controller.draftSurface,
-                      draftWallThicknessMeters: widget.draftWallThicknessMeters,
-                      draftWallHeightMeters: widget.draftWallHeightMeters,
+                widget.rendererChild ??
+                    RepaintBoundary(
+                      child: CustomPaint(
+                        painter: FallbackRenderScenePainter(
+                          scene: scene,
+                          visibleKinds: controller.visibleKinds,
+                          selectedElementIds: controller.selectedElementIds,
+                          activeElementId: controller.activeElementId,
+                          selectedLevelId: controller.selectedLevelId,
+                          selectionRect: controller.selectionRectangle,
+                          highlightedElementId: controller.highlightedElementId,
+                          projectionMode: controller.projectionMode,
+                          orbitProjectionStyle: controller.orbitProjectionStyle,
+                          displayStyle: controller.displayStyle,
+                          camera: controller.camera,
+                          planCamera: controller.planCamera,
+                          draftWallStart: controller.draftWallStart,
+                          draftWallEnd: controller.draftWallEnd,
+                          draftOpening: controller.draftOpening,
+                          draftSurface: controller.draftSurface,
+                          draftWallThicknessMeters:
+                              widget.draftWallThicknessMeters,
+                          draftWallHeightMeters: widget.draftWallHeightMeters,
+                        ),
+                        size: Size.infinite,
+                      ),
                     ),
-                    size: Size.infinite,
-                  ),
-                ),
                 if (inlineLevel != null && inlineLevelOrigin != null)
                   Positioned(
                     left: inlineLevelOrigin.dx.clamp(8.0, size.width - 132.0),
@@ -841,7 +845,10 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                 Positioned(
                   right: 12,
                   top: 12,
-                  child: _ViewportStatsCard(scene: scene, native: false),
+                  child: _ViewportStatsCard(
+                    scene: scene,
+                    native: widget.nativeRenderer,
+                  ),
                 ),
               ],
             ),

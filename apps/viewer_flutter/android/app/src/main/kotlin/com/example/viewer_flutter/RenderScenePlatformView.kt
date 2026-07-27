@@ -314,6 +314,11 @@ internal class RenderScenePlatformView(
         result.success(null)
       }
 
+      "setCamera" -> {
+        view.setCamera(call.arguments as? Map<*, *>)
+        result.success(null)
+      }
+
       "setDisplayStyle" -> {
         view.setDisplayStyle(call.arguments as? String ?: "solid")
         result.success(null)

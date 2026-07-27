@@ -300,6 +300,32 @@ internal class RenderSceneFilamentHostView(
     invalidate()
   }
 
+  /// Camera state is owned by Flutter so Filament and fallback receive the
+  /// same tablet interaction policy. Coordinates are converted once here.
+  fun setCamera(payload: Map<*, *>?) {
+    val orbitCenterPayload = parsePoint(payload?.get("orbitCenter"))
+    val planCenterPayload = parsePoint(payload?.get("planCenter"))
+    if (projectionMode == "topDown" && planCenterPayload != null) {
+      orbitCenter = toFilamentPoint(planCenterPayload)
+      val planZoom = toDouble(payload?.get("planZoom"))
+      if (planZoom != null && planZoom > 0.0) {
+        topDownZoom = (96.0 / planZoom).coerceIn(0.5, 200.0)
+      }
+    } else if (orbitCenterPayload != null) {
+      orbitCenter = toFilamentPoint(orbitCenterPayload)
+    }
+    orbitYawRadians = toDouble(payload?.get("orbitYawRadians")) ?: orbitYawRadians
+    orbitPitchRadians = toDouble(payload?.get("orbitPitchRadians")) ?: orbitPitchRadians
+    val distance = toDouble(payload?.get("orbitDistance"))
+    val zoom = toDouble(payload?.get("orbitZoomScale"))
+    if (distance != null) {
+      orbitDistance = (distance / (zoom ?: 1.0)).coerceIn(2.0, 250.0)
+    }
+    configureCameraProjection()
+    updateOrbitCamera()
+    invalidate()
+  }
+
   fun setDisplayStyle(style: String) {
     displayStyle = style
     updateStatus(if (style == "wireframe") "Filament wireframe not yet enabled. Showing solid." else null)

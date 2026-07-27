@@ -377,6 +377,20 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     }
   }
 
+  Future<void> _toggleAndroidRenderer() async {
+    final next =
+        _viewportController.backend == RenderSceneViewportBackend.native
+            ? RenderSceneViewportBackend.fallback
+            : RenderSceneViewportBackend.native;
+    await _viewportController.setBackend(next);
+    if (!mounted) return;
+    setState(() {
+      _statusMessage = next == RenderSceneViewportBackend.native
+          ? 'Filament renderer enabled. Interaction stays Flutter-owned.'
+          : 'Flutter fallback renderer enabled.';
+    });
+  }
+
   Future<void> _applyLoadResult(
     RenderSceneLoadResult result, {
     required String sourceLabel,
@@ -3397,6 +3411,19 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         ],
       ),
       actions: <Widget>[
+        if (defaultTargetPlatform == TargetPlatform.android)
+          IconButton(
+            tooltip:
+                _viewportController.backend == RenderSceneViewportBackend.native
+                    ? 'Use Flutter fallback renderer'
+                    : 'Use Filament renderer',
+            onPressed: _isBusy ? null : _toggleAndroidRenderer,
+            icon: Icon(
+              _viewportController.backend == RenderSceneViewportBackend.native
+                  ? Icons.layers
+                  : Icons.memory,
+            ),
+          ),
         IconButton(
           tooltip: 'Save project',
           onPressed: _isBusy || !_engineBackedMode ? null : _saveCurrentProject,
