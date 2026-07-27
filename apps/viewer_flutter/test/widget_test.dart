@@ -15,6 +15,8 @@ import 'package:viewer_flutter/src/render_scene_viewport_projection.dart';
 import 'package:viewer_flutter/src/render_scene_viewport_types.dart';
 import 'package:viewer_flutter/src/tbe_ffi.dart';
 import 'package:viewer_flutter/src/tools/level_tool_controller.dart';
+import 'package:viewer_flutter/src/tools/opening_tool_controller.dart';
+import 'package:viewer_flutter/src/tools/surface_tool_controller.dart';
 import 'package:viewer_flutter/src/tools/wall_tool_controller.dart';
 import 'package:viewer_flutter/src/viewer_app.dart';
 import 'package:viewer_flutter/src/viewport_interaction.dart';
@@ -680,6 +682,47 @@ void main() {
     expect(tool.end, end);
     tool.reset();
     expect(tool.hasDraft, isFalse);
+  });
+
+  test('opening tool controller owns hosted-opening dimensions', () {
+    final tool = OpeningToolController();
+    addTearDown(tool.dispose);
+    tool.loadFromMetadata(const <String, Object?>{
+      'offset_meters': '1.25',
+      'width_meters': 1.1,
+      'height_meters': '2.2',
+      'sill_height_meters': 0.85,
+    });
+    expect(tool.offsetMeters, closeTo(1.25, 1e-9));
+    expect(tool.widthMeters, closeTo(1.1, 1e-9));
+    expect(tool.heightMeters, closeTo(2.2, 1e-9));
+    expect(tool.sillHeightMeters, closeTo(0.85, 1e-9));
+    tool.reset();
+    expect(tool.offsetMeters, closeTo(1.0, 1e-9));
+  });
+
+  test('surface tool controller resets a level-bound surface draft', () {
+    final tool = SurfaceToolController();
+    addTearDown(tool.dispose);
+    const start = RenderScenePoint(x: 1, y: 2, z: 3);
+    const end = RenderScenePoint(x: 5, y: 6, z: 3);
+    tool
+      ..start = start
+      ..end = end
+      ..points.addAll(const <RenderScenePoint>[start, end])
+      ..wallIds.addAll(const <int>[10, 11])
+      ..drawMode = RenderSceneSurfaceDrawMode.pickWalls
+      ..thicknessMeters = 0.24;
+
+    tool.reset(levelElevation: 4.2, defaultHeight: 3.6);
+
+    expect(tool.start, isNull);
+    expect(tool.end, isNull);
+    expect(tool.points, isEmpty);
+    expect(tool.wallIds, isEmpty);
+    expect(tool.drawMode, RenderSceneSurfaceDrawMode.rectangle);
+    expect(tool.floorTopMeters, closeTo(4.2, 1e-9));
+    expect(tool.heightMeters, closeTo(3.6, 1e-9));
   });
 
   test('Switching from elevation to 3D preserves directional meaning',

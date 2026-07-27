@@ -12,6 +12,8 @@ import 'render_scene_repository.dart';
 import 'scene_mutation_service.dart';
 import 'tbe_ffi.dart';
 import 'tools/level_tool_controller.dart';
+import 'tools/opening_tool_controller.dart';
+import 'tools/surface_tool_controller.dart';
 import 'tools/wall_tool_controller.dart';
 import 'render_scene_viewport.dart';
 import 'render_scene_viewport_planar.dart';
@@ -91,6 +93,8 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       RenderSceneViewportController();
   final WallToolController _wallTool = WallToolController();
   final LevelToolController _levelTool = LevelToolController();
+  final OpeningToolController _openingTool = OpeningToolController();
+  final SurfaceToolController _surfaceTool = SurfaceToolController();
   ViewerRepository? _engineRepository;
   bool _engineBackedMode = false;
 
@@ -115,13 +119,6 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       RenderSceneInteractionMode.select;
   RenderScenePoint? _draftWallStart;
   RenderScenePoint? _draftWallEnd;
-  RenderScenePoint? _draftSurfaceStart;
-  RenderScenePoint? _draftSurfaceEnd;
-  final List<RenderScenePoint> _draftSurfacePoints = <RenderScenePoint>[];
-  final Set<int> _draftSurfaceWallIds = <int>{};
-  RenderSceneSurfaceDrawMode _surfaceDrawMode =
-      RenderSceneSurfaceDrawMode.rectangle;
-  RenderSceneObject? _draftHostWall;
   RenderSceneObject? _draftMoveTarget;
   RenderScenePoint? _moveAnchorPoint;
   RenderScenePoint? _moveWallOriginalStart;
@@ -129,17 +126,45 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   int? _draftMoveLevelId;
   double? _moveLevelOriginalElevation;
   _WallMoveMode _wallMoveMode = _WallMoveMode.translate;
-  double _draftOpeningOffsetMeters = 1.0;
-  double _draftOpeningWidthMeters = 0.9;
-  double _draftOpeningHeightMeters = 2.1;
-  double _draftOpeningSillHeightMeters = 0.9;
-  double _draftSurfaceThicknessMeters = 0.18;
-  double _draftSurfaceHeightMeters = _defaultWallHeightMeters;
-  double _draftFloorTopElevationMeters = 0.0;
-  double _draftCeilingHeightOffsetMeters = 2.6;
   String? _editStatusMessage;
   bool _snapDraftToGrid = true;
   final List<String> _androidMutationTrace = <String>[];
+
+  RenderSceneObject? get _draftHostWall => _openingTool.hostWall;
+  set _draftHostWall(RenderSceneObject? value) =>
+      _openingTool.setHostWall(value);
+  double get _draftOpeningOffsetMeters => _openingTool.offsetMeters;
+  set _draftOpeningOffsetMeters(double value) => _openingTool.setOffset(value);
+  double get _draftOpeningWidthMeters => _openingTool.widthMeters;
+  set _draftOpeningWidthMeters(double value) => _openingTool.setWidth(value);
+  double get _draftOpeningHeightMeters => _openingTool.heightMeters;
+  set _draftOpeningHeightMeters(double value) => _openingTool.setHeight(value);
+  double get _draftOpeningSillHeightMeters => _openingTool.sillHeightMeters;
+  set _draftOpeningSillHeightMeters(double value) =>
+      _openingTool.setSillHeight(value);
+
+  RenderScenePoint? get _draftSurfaceStart => _surfaceTool.start;
+  set _draftSurfaceStart(RenderScenePoint? value) => _surfaceTool.start = value;
+  RenderScenePoint? get _draftSurfaceEnd => _surfaceTool.end;
+  set _draftSurfaceEnd(RenderScenePoint? value) => _surfaceTool.end = value;
+  List<RenderScenePoint> get _draftSurfacePoints => _surfaceTool.points;
+  Set<int> get _draftSurfaceWallIds => _surfaceTool.wallIds;
+  RenderSceneSurfaceDrawMode get _surfaceDrawMode => _surfaceTool.drawMode;
+  set _surfaceDrawMode(RenderSceneSurfaceDrawMode value) =>
+      _surfaceTool.drawMode = value;
+  double get _draftSurfaceThicknessMeters => _surfaceTool.thicknessMeters;
+  set _draftSurfaceThicknessMeters(double value) =>
+      _surfaceTool.thicknessMeters = value;
+  double get _draftSurfaceHeightMeters => _surfaceTool.heightMeters;
+  set _draftSurfaceHeightMeters(double value) =>
+      _surfaceTool.heightMeters = value;
+  double get _draftFloorTopElevationMeters => _surfaceTool.floorTopMeters;
+  set _draftFloorTopElevationMeters(double value) =>
+      _surfaceTool.floorTopMeters = value;
+  double get _draftCeilingHeightOffsetMeters =>
+      _surfaceTool.ceilingOffsetMeters;
+  set _draftCeilingHeightOffsetMeters(double value) =>
+      _surfaceTool.ceilingOffsetMeters = value;
 
   void _traceAndroidMutation(String message) {
     if (!kDebugMode) return;
@@ -175,6 +200,8 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     _viewportController.dispose();
     _wallTool.dispose();
     _levelTool.dispose();
+    _openingTool.dispose();
+    _surfaceTool.dispose();
     _engineRepository?.dispose();
     super.dispose();
   }
@@ -1421,15 +1448,15 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     final activeLevel = _activeLevel(_scene);
     _wallTool.reset();
     _levelTool.reset();
+    _openingTool.reset();
+    _surfaceTool.reset(
+      levelElevation: activeLevel?.elevationMeters ?? 0.0,
+      defaultHeight:
+          activeLevel?.defaultWallHeightMeters ?? _defaultWallHeightMeters,
+    );
     setState(() {
       _draftWallStart = null;
       _draftWallEnd = null;
-      _draftSurfaceStart = null;
-      _draftSurfaceEnd = null;
-      _draftSurfacePoints.clear();
-      _draftSurfaceWallIds.clear();
-      _surfaceDrawMode = RenderSceneSurfaceDrawMode.rectangle;
-      _draftHostWall = null;
       _draftMoveTarget = null;
       _moveAnchorPoint = null;
       _moveWallOriginalStart = null;
@@ -1437,15 +1464,6 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       _draftMoveLevelId = null;
       _moveLevelOriginalElevation = null;
       _wallMoveMode = _WallMoveMode.translate;
-      _draftOpeningOffsetMeters = 1.0;
-      _draftOpeningWidthMeters = 0.9;
-      _draftOpeningHeightMeters = 2.1;
-      _draftOpeningSillHeightMeters = 0.9;
-      _draftSurfaceThicknessMeters = 0.18;
-      _draftSurfaceHeightMeters =
-          activeLevel?.defaultWallHeightMeters ?? _defaultWallHeightMeters;
-      _draftFloorTopElevationMeters = activeLevel?.elevationMeters ?? 0.0;
-      _draftCeilingHeightOffsetMeters = 2.6;
     });
 
     _viewportController.clearDraft();
@@ -3253,15 +3271,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   }
 
   void _primeOpeningDraftFromObject(RenderSceneObject object) {
-    _draftOpeningOffsetMeters =
-        _metadataDouble(object, 'offset_meters') ?? _draftOpeningOffsetMeters;
-    _draftOpeningWidthMeters =
-        _metadataDouble(object, 'width_meters') ?? _draftOpeningWidthMeters;
-    _draftOpeningHeightMeters =
-        _metadataDouble(object, 'height_meters') ?? _draftOpeningHeightMeters;
-    _draftOpeningSillHeightMeters =
-        _metadataDouble(object, 'sill_height_meters') ??
-            _draftOpeningSillHeightMeters;
+    _openingTool.loadFromMetadata(object.metadata);
   }
 
   List<String> _availableKinds(RenderScene? scene) {
