@@ -52,19 +52,9 @@ private const val DEFAULT_RENDERER_STATUS = "Renderer initializing..."
 private const val TAG = "RenderSceneFilament"
 
 private const val FLAT_COLOR_MAT = """
-material {
-    name : RenderSceneFlatColor,
-    shadingModel : unlit,
-    culling : none,
-    doubleSided : true,
-    featureLevel : 0
-}
-
-fragment {
-    void material(inout MaterialInputs material) {
-        prepareMaterial(material);
-        material.baseColor = materialParams.baseColor;
-    }
+void material(inout MaterialInputs material) {
+    prepareMaterial(material);
+    material.baseColor = materialParams.baseColor;
 }
 """
 
@@ -498,6 +488,7 @@ internal class RenderSceneFilamentHostView(
 
       if (!packageData.isValid) {
         statusMessage = "Filament material build returned an invalid package."
+        Log.e(TAG, statusMessage)
         updateStatus()
         return false
       }
