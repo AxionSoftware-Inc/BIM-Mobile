@@ -827,14 +827,6 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                     ),
                   ),
                 Positioned(
-                  left: 12,
-                  bottom: 12,
-                  child: _ViewportNoteCard(
-                    message: _viewportHintText(),
-                    color: Colors.black.withValues(alpha: 0.78),
-                  ),
-                ),
-                Positioned(
                   right: 12,
                   top: 12,
                   child: _ViewportStatsCard(
@@ -874,39 +866,6 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
       pickedObject: picked,
     );
     widget.onSceneHover?.call(details);
-  }
-
-  String _viewportHintText() {
-    switch (widget.interactionMode) {
-      case RenderSceneInteractionMode.select:
-        return defaultTargetPlatform == TargetPlatform.android
-            ? 'Tablet: tap object to select; drag empty space to navigate; hold empty space then drag for window select; two fingers pan + zoom.'
-            : controller.projectionMode.isPlanar
-                ? '2D/Elevation: drag to pan, pinch/scroll to zoom, tap to select.'
-                : '3D: drag to orbit, pinch to zoom, right drag to pan, touchpad 2-finger orbit.';
-      case RenderSceneInteractionMode.addWall:
-        return defaultTargetPlatform == TargetPlatform.android
-            ? 'Wall: tap start, then press-drag and release at the endpoint. Snap/ortho preview is live.'
-            : 'Add wall: tap start point, then tap end point.';
-      case RenderSceneInteractionMode.addLevel:
-        return 'Add level: elevation view’da ikki marta bosib level line yarating.';
-      case RenderSceneInteractionMode.moveLevel:
-        return 'Move level: elevation line yaqinidan ushlab vertikal suring.';
-      case RenderSceneInteractionMode.addDoor:
-        return 'Add door: tap a wall to place immediately with current size.';
-      case RenderSceneInteractionMode.addWindow:
-        return 'Add window: tap a wall to place immediately with current size.';
-      case RenderSceneInteractionMode.moveWall:
-        return 'Move wall: select a wall, tap to start preview, move cursor, then confirm.';
-      case RenderSceneInteractionMode.moveOpening:
-        return 'Move opening: select a door/window, tap to start preview, move cursor, then confirm.';
-      case RenderSceneInteractionMode.addFloor:
-        return 'Add floor: tap a room for instant floor, or draw/select walls.';
-      case RenderSceneInteractionMode.addCeiling:
-        return 'Add ceiling: tap a room for instant ceiling, or draw/select walls.';
-      case RenderSceneInteractionMode.addRoof:
-        return 'Add roof: draw rectangle/polyline or pick wall loop, then confirm.';
-    }
   }
 
   void _clearPointerState() {
@@ -1024,30 +983,6 @@ class _InlineLevelElevationFieldState
           filled: true,
           fillColor: const Color(0xFFFFFFFF),
           border: const OutlineInputBorder(),
-        ),
-      ),
-    );
-  }
-}
-
-class _ViewportNoteCard extends StatelessWidget {
-  const _ViewportNoteCard({
-    required this.message,
-    required this.color,
-  });
-
-  final String message;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      color: color,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: Text(
-          message,
-          style: const TextStyle(color: Colors.white),
         ),
       ),
     );

@@ -3494,28 +3494,6 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     );
   }
 
-  String _topBarText(RenderScene? scene) {
-    if (scene == null) {
-      return 'No RenderScene loaded';
-    }
-
-    final wallCount = scene.kindCounts['wall'] ?? 0;
-    final doorCount = scene.kindCounts['door'] ?? 0;
-    final windowCount = scene.kindCounts['window'] ?? 0;
-
-    final activeLevel = _activeLevel(_scene);
-    final levelLabel = activeLevel == null
-        ? 'No level'
-        : '${activeLevel.name} @ ${activeLevel.elevationMeters.toStringAsFixed(2)}m';
-
-    return '$levelLabel · ${scene.objectCount} objects · '
-        '$wallCount walls · '
-        '$doorCount doors · '
-        '$windowCount windows · '
-        '${scene.vertexCount} vertices · '
-        '${scene.triangleCount} triangles';
-  }
-
   RenderSceneObject? _selectedObject(RenderScene? scene) {
     if (scene == null) {
       return null;
@@ -3593,7 +3571,6 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
                     ],
                   ),
                 ),
-                _buildStatusBar(context, scene),
                 if (_loadError != null) _buildErrorBanner(context, _loadError!),
               ],
             ),
@@ -3608,23 +3585,11 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     RenderScene? fullScene,
     RenderScene? viewportScene,
   ) {
-    final theme = Theme.of(context);
-
     return AppBar(
       titleSpacing: 16,
-      title: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          const Text('Tablet BIM'),
-          Text(
-            _topBarText(viewportScene),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
-        ],
+      title: Semantics(
+        label: _statusMessage ?? 'Tablet BIM ready',
+        child: const Text('Tablet BIM'),
       ),
       actions: <Widget>[
         PopupMenuButton<_ResidentialTemplateKind>(
@@ -4708,73 +4673,6 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       default:
         return;
     }
-  }
-
-  Widget _buildStatusBar(BuildContext context, RenderScene? scene) {
-    final theme = Theme.of(context);
-    final selectedId = _viewportController.selectedElementId;
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      color: const Color(0xFF0F172A),
-      child: DefaultTextStyle(
-        style: theme.textTheme.bodyMedium?.copyWith(
-              color: Colors.white,
-            ) ??
-            const TextStyle(color: Colors.white),
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            children: <Widget>[
-              Icon(
-                _loadError == null ? Icons.check_circle : Icons.error,
-                size: 18,
-                color: _loadError == null
-                    ? const Color(0xFF86EFAC)
-                    : const Color(0xFFFCA5A5),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                _statusMessage ?? (_isBusy ? 'Loading scene...' : 'Ready'),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              const SizedBox(width: 18),
-              Text(_engineBackedMode ? 'Engine' : 'Fallback'),
-              const SizedBox(width: 12),
-              Text(
-                _viewportController.backend == RenderSceneViewportBackend.native
-                    ? 'Renderer: Filament'
-                    : 'Renderer: Flutter fallback',
-              ),
-              const SizedBox(width: 12),
-              Text('Objects: ${scene?.objectCount ?? 0}'),
-              const SizedBox(width: 12),
-              Text('Triangles: ${scene?.triangleCount ?? 0}'),
-              const SizedBox(width: 12),
-              Text(
-                'Mode: ${_projectionMode.modeLabel}',
-              ),
-              const SizedBox(width: 12),
-              Text(
-                'Projection: ${_orbitProjectionStyle == RenderSceneOrbitProjectionStyle.perspective ? 'Perspective' : 'Orthographic'}',
-              ),
-              const SizedBox(width: 12),
-              Text(
-                'Style: ${_displayStyle == RenderSceneDisplayStyle.solid ? 'Solid' : 'Wire'}',
-              ),
-              const SizedBox(width: 12),
-              Text(
-                'Edit: ${_interactionMode.name}',
-              ),
-              const SizedBox(width: 12),
-              Text('Selected: ${selectedId ?? '-'}'),
-            ],
-          ),
-        ),
-      ),
-    );
   }
 
   Widget _buildErrorBanner(BuildContext context, String message) {

@@ -9,6 +9,8 @@ import android.view.MotionEvent
 import android.graphics.Typeface
 import android.os.Handler
 import android.os.Looper
+import android.os.Process
+import android.os.SystemClock
 import android.util.Log
 import android.view.Choreographer
 import android.view.Gravity
@@ -158,6 +160,13 @@ internal class RenderSceneFilamentHostView(
   private var highlightedElementId: Long? = null
   private var framePosted = false
   private var renderedFrameCount = 0L
+  private var telemetrySampleMs = 0L
+  private var telemetryCpuMs = 0L
+  private var telemetryFrameCount = 0L
+  private var cpuPercent = 0.0
+  private var framesPerSecond = 0.0
+  private var residentMemoryMb = 0.0
+  private var nativeThreadCount = 0
   private var surfaceReady = false
   private var materialBuilderReady = false
   private var material: Material? = null
@@ -444,6 +453,7 @@ internal class RenderSceneFilamentHostView(
       renderer.render(view)
       renderer.endFrame()
       renderedFrameCount += 1
+      sampleTelemetry()
     }
     scheduleFrame()
   }
@@ -783,6 +793,19 @@ internal class RenderSceneFilamentHostView(
       append(selectedLabel)
       append(" · ")
       append(highlightLabel)
+      if (surfaceReady) {
+        append(" · CPU ")
+        append(cpuPercent.format(0))
+        append("% · ")
+        append(framesPerSecond.format(0))
+        append(" fps · ")
+        append(residentMemoryMb.format(0))
+        append(" MB · ")
+        append(nativeThreadCount)
+        append(" threads/")
+        append(Runtime.getRuntime().availableProcessors())
+        append(" cores")
+      }
     }
     statusMessage = status
     statusView.text = status
@@ -798,7 +821,33 @@ internal class RenderSceneFilamentHostView(
     "surfaceReady" to surfaceReady,
     "swapChainReady" to (swapChain != null),
     "renderedFrames" to renderedFrameCount,
+    "cpuPercent" to cpuPercent,
+    "fps" to framesPerSecond,
+    "residentMemoryMb" to residentMemoryMb,
+    "threadCount" to nativeThreadCount,
+    "cpuCores" to Runtime.getRuntime().availableProcessors(),
   )
+
+  private fun sampleTelemetry() {
+    val nowMs = SystemClock.elapsedRealtime()
+    if (telemetrySampleMs == 0L) {
+      telemetrySampleMs = nowMs
+      telemetryCpuMs = Process.getElapsedCpuTime()
+      telemetryFrameCount = renderedFrameCount
+      return
+    }
+    val elapsedMs = nowMs - telemetrySampleMs
+    if (elapsedMs < 1000L) return
+    val processCpuMs = Process.getElapsedCpuTime()
+    cpuPercent = ((processCpuMs - telemetryCpuMs).toDouble() / elapsedMs.toDouble() * 100.0).coerceAtLeast(0.0)
+    framesPerSecond = (renderedFrameCount - telemetryFrameCount).toDouble() * 1000.0 / elapsedMs.toDouble()
+    residentMemoryMb = (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()).toDouble() / (1024.0 * 1024.0)
+    nativeThreadCount = java.io.File("/proc/self/task").list()?.size ?: Thread.activeCount()
+    telemetrySampleMs = nowMs
+    telemetryCpuMs = processCpuMs
+    telemetryFrameCount = renderedFrameCount
+    updateStatus()
+  }
 
   private fun scheduleFrame() {
     if (!framePosted) {
@@ -1154,17 +1203,21 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
   private fun drawAuthoringEdges(canvas: Canvas) {
     if (width <= 1 || height <= 1) return
     for (objectData in objects) {
-      val corners = visualCorners(objectData.bounds).mapNotNull(::project)
-      if (corners.size != 8) continue
+      val corners = visualCorners(objectData.bounds)
       val pairs = intArrayOf(
         0, 1, 1, 2, 2, 3, 3, 0,
         4, 5, 5, 6, 6, 7, 7, 4,
         0, 4, 1, 5, 2, 6, 3, 7,
       )
       for (index in pairs.indices step 2) {
-        val first = corners[pairs[index]]
-        val second = corners[pairs[index + 1]]
-        canvas.drawLine(first.x, first.y, second.x, second.y, outline)
+        // An orbit camera can cross a bounding-box corner. Draw the visible
+        // segments instead of dropping the entire object for that frame;
+        // this removes the campus-scale popping/flicker seen near the camera.
+        val first = project(corners[pairs[index]])
+        val second = project(corners[pairs[index + 1]])
+        if (first != null && second != null) {
+          canvas.drawLine(first.x, first.y, second.x, second.y, outline)
+        }
       }
     }
     if (!topDown) {
