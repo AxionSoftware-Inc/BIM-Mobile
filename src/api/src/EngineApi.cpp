@@ -94,6 +94,11 @@ Project make_residential_template(int building_count, int story_count) {
         : "Residential Campus";
     Project project{project_name};
     auto& document = project.active_document();
+    // Calling auto_join for every one of hundreds of walls turns a template
+    // import into an O(n^3) operation. The fixture has exact endpoints and
+    // explicit roof source walls, so joins and room discovery can safely be
+    // deferred until the user asks for final analysis.
+    document.set_automatic_wall_join_enabled(false);
 
     const auto concrete = document.create_material("Template Concrete", tbe::core::MaterialCategory::Structural, 2400.0, 110.0);
     const auto masonry = document.create_material("Template Masonry", tbe::core::MaterialCategory::Structural, 1800.0, 90.0);
@@ -172,8 +177,8 @@ Project make_residential_template(int building_count, int story_count) {
         }
         document.create_roof(levels.back(), footprint, tbe::core::RoofType::Flat, 0.20, concrete, 0, std::nullopt, std::nullopt, std::move(top_perimeter));
     }
-    document.auto_join_walls();
-    (void)document.detect_rooms();
+    document.set_automatic_wall_join_enabled(true);
+    document.clear_dirty_room_requests();
     document.regenerate_dirty_geometry();
     return project;
 }
@@ -2199,12 +2204,22 @@ ApiResult<ComputeMode> EngineSession::get_compute_mode() const {
     return success_result(impl_->compute_mode);
 }
 
-ApiVoidResult EngineSession::create_residential_template(int building_count, int story_count) {
+ApiResult<ElementIdDTO> EngineSession::create_residential_template(int building_count, int story_count) {
+    ElementIdDTO primary_level{};
     try {
         // Build outside the live session first.  A malformed template can
         // therefore never leave the user with a half-created project.
         auto template_project = make_residential_template(building_count, story_count);
         impl_->project = std::move(template_project);
+        for (const auto& element : impl_->document().elements()) {
+            if (element.level() != nullptr) {
+                primary_level.value = element.id();
+                break;
+            }
+        }
+        if (primary_level.value == 0) {
+            return error_result<ElementIdDTO>(ApiStatus::InternalError, "residential template did not create a level");
+        }
         impl_->undo_stack.clear();
         impl_->redo_stack.clear();
         impl_->clear_caches();
@@ -2212,9 +2227,9 @@ ApiVoidResult EngineSession::create_residential_template(int building_count, int
         impl_->mark_all_derived_dirty();
         (void)recompute_impl(*impl_, ComputeMode::InteractivePreview);
         rebuild_spatial_index_impl(*impl_);
-        return success_void();
+        return success_result(primary_level);
     } catch (const std::exception& error) {
-        return error_void(status_from_exception(error), error.what());
+        return error_result<ElementIdDTO>(status_from_exception(error), error.what());
     }
 }
 

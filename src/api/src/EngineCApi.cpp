@@ -919,11 +919,15 @@ TbeApiStatusCode tbe_set_compute_mode(TbeEngineHandle* handle, int mode) {
     ));
 }
 
-TbeApiStatusCode tbe_create_residential_template(TbeEngineHandle* handle, int building_count, int story_count) {
-    if (handle == nullptr || handle->session == nullptr) {
+TbeApiStatusCode tbe_create_residential_template(TbeEngineHandle* handle, int building_count, int story_count, uint64_t* out_primary_level_id) {
+    if (handle == nullptr || handle->session == nullptr || out_primary_level_id == nullptr) {
         return null_handle_error(handle);
     }
-    return apply_result(handle, handle->session->create_residential_template(building_count, story_count));
+    const auto result = handle->session->create_residential_template(building_count, story_count);
+    if (result.ok() && result.value.has_value()) {
+        *out_primary_level_id = result.value->value;
+    }
+    return apply_result(handle, result);
 }
 
 const char* tbe_get_last_error(const TbeEngineHandle* handle) {

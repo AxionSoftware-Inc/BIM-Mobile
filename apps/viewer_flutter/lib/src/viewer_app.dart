@@ -333,6 +333,11 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         result,
         sourceLabel: 'engine template: $label',
       );
+      if (buildingCount == 1) {
+        // A tower is most useful as a whole-building visual test on first
+        // open. Switching back to plan re-enables nearby-level streaming.
+        await _setProjectionMode(RenderSceneProjectionMode.isometric);
+      }
     } catch (error) {
       createdRepository?.dispose();
       if (!mounted) return;
@@ -833,6 +838,24 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         _displayStyle = _defaultDisplayStyleForProjection();
       }
     });
+
+    final repository = _engineRepository;
+    if (_engineBackedMode && repository != null) {
+      // Full geometry fixes 3D fit/orbit for a normal tower. A campus has
+      // hundreds of independent renderables, so preserve nearby-level
+      // streaming instead of turning a navigation gesture into a thermal hit.
+      final is3d = mode == RenderSceneProjectionMode.isometric;
+      final isLargeScene = (scene?.objectCount ?? 0) > 120;
+      final result =
+          await repository.setFullSceneRenderScope(is3d && !isLargeScene);
+      await _applyLoadResult(
+        result,
+        sourceLabel: is3d && !isLargeScene
+            ? 'engine:full tower 3D'
+            : 'engine:nearby-level streaming',
+      );
+      return;
+    }
 
     if (scene != null) {
       await _viewportController.updateRenderScene(_sceneForViewport(scene));

@@ -132,6 +132,9 @@ public:
     void resize_window(ElementId window_id, double width_meters, double height_meters, double sill_height_meters);
 
     void auto_join_walls();
+    /// Bulk import/template construction can defer expensive join discovery
+    /// until a deliberate authoring operation asks for it.
+    void set_automatic_wall_join_enabled(bool enabled) noexcept;
     std::vector<ElementId> detect_rooms();
     void regenerate_dirty_geometry();
     [[nodiscard]] DependencyGraph build_dependency_graph() const;
@@ -141,6 +144,9 @@ public:
     std::vector<ElementId> recompute_dirty_rooms();
     std::vector<ElementId> recompute_all_rooms();
     [[nodiscard]] const std::vector<ElementId>& dirty_room_ids() const noexcept;
+    /// Drops only deferred room-discovery requests. Existing rooms remain
+    /// intact; final compute can still explicitly recompute all rooms.
+    void clear_dirty_room_requests() noexcept;
     [[nodiscard]] ValidationReport validate_document() const;
     [[nodiscard]] std::vector<WallRoomAdjacency> wall_room_adjacencies() const;
     [[nodiscard]] std::vector<WallScheduleRow> generate_wall_schedule() const;
@@ -218,6 +224,7 @@ private:
     // Levels whose room topology changed. This lets interactive snapshots
     // recompute only the edited storey instead of scanning the whole model.
     std::vector<ElementId> dirty_room_level_ids_{};
+    bool automatic_wall_join_enabled_{true};
     mutable DependencyGraph dependency_graph_cache_{};
     mutable bool dependency_graph_dirty_{true};
     mutable Revision dependency_graph_version_{};

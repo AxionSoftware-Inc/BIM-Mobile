@@ -784,7 +784,9 @@ ElementId Document::create_wall(std::string name, Line2 axis, double thickness_m
     if (level_id != 0) {
         dirty_room_level_ids_.push_back(level_id);
     }
-    auto_join_walls();
+    if (automatic_wall_join_enabled_) {
+        auto_join_walls();
+    }
     invalidate_dependency_graph_cache();
     return id;
 }
@@ -1608,6 +1610,10 @@ void Document::auto_join_walls() {
     }
 
     invalidate_dependency_graph_cache();
+}
+
+void Document::set_automatic_wall_join_enabled(bool enabled) noexcept {
+    automatic_wall_join_enabled_ = enabled;
 }
 
 std::vector<ElementId> Document::detect_rooms() {
@@ -2502,6 +2508,11 @@ std::vector<ElementId> Document::recompute_all_rooms() {
 
 const std::vector<ElementId>& Document::dirty_room_ids() const noexcept {
     return dirty_room_ids_;
+}
+
+void Document::clear_dirty_room_requests() noexcept {
+    dirty_room_ids_.clear();
+    dirty_room_level_ids_.clear();
 }
 
 void Document::regenerate_dirty_geometry() {

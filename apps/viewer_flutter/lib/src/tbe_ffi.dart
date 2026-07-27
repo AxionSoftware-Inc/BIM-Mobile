@@ -218,11 +218,13 @@ typedef _CreateResidentialTemplateNative = ffi.Int32 Function(
   ffi.Pointer<ffi.Void>,
   ffi.Int32,
   ffi.Int32,
+  ffi.Pointer<ffi.Uint64>,
 );
 typedef _CreateResidentialTemplateDart = int Function(
   ffi.Pointer<ffi.Void>,
   int,
   int,
+  ffi.Pointer<ffi.Uint64>,
 );
 typedef _ProjectLoadJsonNative = ffi.Int32 Function(
   ffi.Pointer<ffi.Void>,
@@ -842,15 +844,21 @@ class TbeViewerApi {
     _check(handle, _setComputeMode(handle, 0));
   }
 
-  void createResidentialTemplate(
+  int createResidentialTemplate(
     ffi.Pointer<ffi.Void> handle, {
     required int buildingCount,
     required int storyCount,
   }) {
-    _check(
-      handle,
-      _createResidentialTemplate(handle, buildingCount, storyCount),
-    );
+    final out = calloc<ffi.Uint64>();
+    try {
+      _check(
+        handle,
+        _createResidentialTemplate(handle, buildingCount, storyCount, out),
+      );
+      return out.value;
+    } finally {
+      calloc.free(out);
+    }
   }
 
   int getSchemaVersion(ffi.Pointer<ffi.Void> handle) {
@@ -1377,6 +1385,7 @@ class ViewerRepository {
   ffi.Pointer<ffi.Void>? _handle;
   String? _projectName;
   int _activeLevelId = 0;
+  bool _fullSceneRenderScope = false;
   String? _currentJson;
   String? _currentJsonPath;
   String? _currentPackagePath;
@@ -1435,7 +1444,7 @@ class ViewerRepository {
     _handle ??= _api.createSession();
     final handle = _handle!;
     _api.configureInteractiveSession(handle);
-    _api.createResidentialTemplate(
+    _activeLevelId = _api.createResidentialTemplate(
       handle,
       buildingCount: buildingCount,
       storyCount: storyCount,
@@ -1443,10 +1452,12 @@ class ViewerRepository {
     _projectName = buildingCount == 1
         ? '$storyCount Storey Residential Tower'
         : '$buildingCount Building Residential Campus';
-    _currentJson = _api.saveProjectJson(handle);
+    // Do not serialize a large template immediately on the UI path. The
+    // authoritative session is already live; Save creates the durable
+    // checkpoint, and avoids a second full JSON pass during template launch.
+    _currentJson = null;
     _currentJsonPath = null;
     _currentPackagePath = null;
-    _activeLevelId = _extractPrimaryLevelIdFromProjectJson(_currentJson!);
     await _buildSnapshot(handle, _projectName!);
     return currentRenderScene();
   }
@@ -1541,20 +1552,27 @@ class ViewerRepository {
       throw TbeApiException('No loaded project');
     }
     final engineTimer = Stopwatch()..start();
-    final json = _activeLevelId > 0
+    final json = !_fullSceneRenderScope && _activeLevelId > 0
         ? _api.getRenderSceneJsonNearLevel(handle, _activeLevelId)
         : _api.getRenderSceneJson(handle);
     engineTimer.stop();
-    final source = _activeLevelId > 0
+    final source = !_fullSceneRenderScope && _activeLevelId > 0
         ? 'engine:nearby levels active=$_activeLevelId · '
             '${engineTimer.elapsedMilliseconds} ms · ${json.length ~/ 1024} KiB'
-        : 'engine:full snapshot · ${engineTimer.elapsedMilliseconds} ms · '
+        : 'engine:full 3D snapshot · ${engineTimer.elapsedMilliseconds} ms · '
             '${json.length ~/ 1024} KiB';
     return parseRenderSceneJson(json, source: source);
   }
 
   Future<RenderSceneLoadResult> setActiveLevel(int levelId) async {
     _activeLevelId = levelId;
+    return currentRenderScene();
+  }
+
+  /// Plan/elevation retain the nearby-level window. A single tower is cheap
+  /// enough to show whole in 3D, while very large scenes keep their window.
+  Future<RenderSceneLoadResult> setFullSceneRenderScope(bool enabled) async {
+    _fullSceneRenderScope = enabled;
     return currentRenderScene();
   }
 

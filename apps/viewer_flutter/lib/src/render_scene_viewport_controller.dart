@@ -15,11 +15,13 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     Set<String>? visibleKinds,
     RenderSceneViewportBackend? backend,
   })  : _visibleKinds = visibleKinds ?? kDefaultVisibleSceneKinds.toSet(),
-        // The fallback is deliberately the default until the Filament host has
-        // the same touch selection contract (pick, long-press window select,
-        // direct manipulation) as Flutter.  Rendering may be native, but the
-        // editing contract must never silently disappear on a tablet.
-        _backend = backend ?? RenderSceneViewportBackend.fallback;
+        // Flutter remains the owner of all interaction overlays. On Android
+        // the geometry layer can therefore start in Filament immediately,
+        // while macOS/tests keep the canvas fallback.
+        _backend = backend ??
+            (defaultTargetPlatform == TargetPlatform.android
+                ? RenderSceneViewportBackend.native
+                : RenderSceneViewportBackend.fallback);
 
   static const double _planPadding = 48;
 
