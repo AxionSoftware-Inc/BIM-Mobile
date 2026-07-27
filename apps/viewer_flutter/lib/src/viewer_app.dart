@@ -11,6 +11,8 @@ import 'render_scene_models.dart';
 import 'render_scene_repository.dart';
 import 'scene_mutation_service.dart';
 import 'tbe_ffi.dart';
+import 'tools/level_tool_controller.dart';
+import 'tools/wall_tool_controller.dart';
 import 'render_scene_viewport.dart';
 import 'render_scene_viewport_planar.dart';
 
@@ -87,6 +89,8 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
 
   final RenderSceneViewportController _viewportController =
       RenderSceneViewportController();
+  final WallToolController _wallTool = WallToolController();
+  final LevelToolController _levelTool = LevelToolController();
   ViewerRepository? _engineRepository;
   bool _engineBackedMode = false;
 
@@ -169,6 +173,8 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   void dispose() {
     _viewportController.removeListener(_onViewportChanged);
     _viewportController.dispose();
+    _wallTool.dispose();
+    _levelTool.dispose();
     _engineRepository?.dispose();
     super.dispose();
   }
@@ -192,7 +198,9 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   }
 
   Future<void> _handleEscapePressed() async {
-    final hasDraft = _draftWallStart != null ||
+    final hasDraft = _wallTool.hasStart ||
+        _levelTool.hasDraft ||
+        _draftWallStart != null ||
         _draftWallEnd != null ||
         _draftSurfaceStart != null ||
         _draftSurfaceEnd != null ||
@@ -1411,6 +1419,8 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
 
   Future<void> _clearDraft() async {
     final activeLevel = _activeLevel(_scene);
+    _wallTool.reset();
+    _levelTool.reset();
     setState(() {
       _draftWallStart = null;
       _draftWallEnd = null;
@@ -1535,8 +1545,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       case RenderSceneInteractionMode.select:
         return;
       case RenderSceneInteractionMode.addWall:
-      case RenderSceneInteractionMode.addLevel:
-        final start = _draftWallStart;
+        final start = _wallTool.start;
         if (start == null) {
           return;
         }
@@ -1544,15 +1553,32 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
           rawPoint: modelPoint,
           referenceStart: start,
         );
-        if (_draftWallEnd == snappedPoint) {
+        if (_wallTool.end == snappedPoint) {
           return;
         }
+        _wallTool.preview(snappedPoint);
         setState(() {
-          _draftWallEnd = snappedPoint;
-          _editStatusMessage = _interactionMode ==
-                  RenderSceneInteractionMode.addLevel
-              ? 'Level draft: ${snappedPoint.z.toStringAsFixed(2)} m'
-              : 'Wall draft: ${start.distanceTo(snappedPoint).toStringAsFixed(2)} m';
+          _editStatusMessage =
+              'Wall draft: ${start.distanceTo(snappedPoint).toStringAsFixed(2)} m';
+        });
+        _viewportController.setWallDraft(start, snappedPoint);
+        return;
+      case RenderSceneInteractionMode.addLevel:
+        final start = _levelTool.start;
+        if (start == null) {
+          return;
+        }
+        final snappedPoint = _draftLinePoint(
+          rawPoint: modelPoint,
+          referenceStart: start,
+        );
+        if (_levelTool.end == snappedPoint) {
+          return;
+        }
+        _levelTool.preview(snappedPoint);
+        setState(() {
+          _editStatusMessage =
+              'Level draft: ${snappedPoint.z.toStringAsFixed(2)} m';
         });
         _viewportController.setWallDraft(start, snappedPoint);
         return;
@@ -1644,13 +1670,12 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
 
     final snappedPoint = _draftLinePoint(
       rawPoint: modelPoint,
-      referenceStart: _draftWallStart,
+      referenceStart: _wallTool.start,
     );
 
-    if (_draftWallStart == null) {
+    if (!_wallTool.hasStart) {
+      _wallTool.begin(snappedPoint);
       setState(() {
-        _draftWallStart = snappedPoint;
-        _draftWallEnd = snappedPoint;
         _editStatusMessage =
             'Wall start set. Tap again for the end point. Ortho/snap is active.';
       });
@@ -1658,12 +1683,12 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       return;
     }
 
+    _wallTool.preview(snappedPoint);
     setState(() {
-      _draftWallEnd = snappedPoint;
       _editStatusMessage =
-          'Wall segment: ${_draftWallStart!.distanceTo(snappedPoint).toStringAsFixed(2)} m. Creating...';
+          'Wall segment: ${_wallTool.start!.distanceTo(snappedPoint).toStringAsFixed(2)} m. Creating...';
     });
-    _viewportController.setWallDraft(_draftWallStart, snappedPoint);
+    _viewportController.setWallDraft(_wallTool.start, snappedPoint);
     await _commitWallDraft(autoContinue: true);
   }
 
@@ -1677,13 +1702,12 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
 
     final snappedPoint = _draftLinePoint(
       rawPoint: modelPoint,
-      referenceStart: _draftWallStart,
+      referenceStart: _levelTool.start,
     );
 
-    if (_draftWallStart == null) {
+    if (!_levelTool.hasDraft) {
+      _levelTool.begin(snappedPoint);
       setState(() {
-        _draftWallStart = snappedPoint;
-        _draftWallEnd = snappedPoint;
         _editStatusMessage =
             'Level elevation set. Tap again to define the line length.';
       });
@@ -1691,19 +1715,19 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       return;
     }
 
+    _levelTool.preview(snappedPoint);
     setState(() {
-      _draftWallEnd = snappedPoint;
       _editStatusMessage =
           'Level line ready at ${snappedPoint.z.toStringAsFixed(2)} m. Creating level...';
     });
-    _viewportController.setWallDraft(_draftWallStart, snappedPoint);
+    _viewportController.setWallDraft(_levelTool.start, snappedPoint);
     await _commitLevelDraft();
   }
 
   Future<void> _commitWallDraft({required bool autoContinue}) async {
     final scene = _scene;
-    final start = _draftWallStart;
-    final end = _draftWallEnd;
+    final start = _wallTool.start;
+    final end = _wallTool.end;
     if (scene == null || start == null || end == null) {
       return;
     }
@@ -1770,9 +1794,8 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     }
 
     if (autoContinue) {
+      _wallTool.continueFrom(end);
       setState(() {
-        _draftWallStart = end;
-        _draftWallEnd = end;
         _editStatusMessage =
             'Wall created. Tap next point to continue, or Cancel to stop.';
       });
@@ -1787,8 +1810,8 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
 
   Future<void> _commitLevelDraft() async {
     final scene = _scene;
-    final start = _draftWallStart;
-    final end = _draftWallEnd;
+    final start = _levelTool.start;
+    final end = _levelTool.end;
     if (scene == null || start == null || end == null) {
       return;
     }
@@ -2579,9 +2602,9 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       case RenderSceneInteractionMode.select:
         return false;
       case RenderSceneInteractionMode.addWall:
-        return _draftWallStart != null;
+        return _wallTool.hasStart;
       case RenderSceneInteractionMode.addLevel:
-        return _draftWallStart != null && _draftWallEnd != null;
+        return _levelTool.hasDraft;
       case RenderSceneInteractionMode.moveLevel:
         return _draftMoveLevelId != null &&
             _draftWallStart != null &&
@@ -3886,8 +3909,20 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
                     children: <Widget>[
                       _DraftEditorCard(
                         interactionMode: _interactionMode,
-                        draftWallStart: _draftWallStart,
-                        draftWallEnd: _draftWallEnd,
+                        draftWallStart: _interactionMode ==
+                                RenderSceneInteractionMode.addWall
+                            ? _wallTool.start
+                            : _interactionMode ==
+                                    RenderSceneInteractionMode.addLevel
+                                ? _levelTool.start
+                                : _draftWallStart,
+                        draftWallEnd: _interactionMode ==
+                                RenderSceneInteractionMode.addWall
+                            ? _wallTool.end
+                            : _interactionMode ==
+                                    RenderSceneInteractionMode.addLevel
+                                ? _levelTool.end
+                                : _draftWallEnd,
                         draftSurfaceStart: _draftSurfaceStart,
                         draftSurfaceEnd: _draftSurfaceEnd,
                         draftSurfacePointCount: _draftSurfacePoints.length,

@@ -14,6 +14,8 @@ import 'package:viewer_flutter/src/render_scene_viewport_planar.dart';
 import 'package:viewer_flutter/src/render_scene_viewport_projection.dart';
 import 'package:viewer_flutter/src/render_scene_viewport_types.dart';
 import 'package:viewer_flutter/src/tbe_ffi.dart';
+import 'package:viewer_flutter/src/tools/level_tool_controller.dart';
+import 'package:viewer_flutter/src/tools/wall_tool_controller.dart';
 import 'package:viewer_flutter/src/viewer_app.dart';
 import 'package:viewer_flutter/src/viewport_interaction.dart';
 
@@ -642,6 +644,42 @@ void main() {
     interaction.armRectangleSelect();
     expect(interaction.intent, ViewportDragIntent.rectangleSelect);
     expect(interaction.update(const Offset(100, 100)), isNotNull);
+  });
+
+  test('wall tool controller chains each committed endpoint', () {
+    final tool = WallToolController();
+    addTearDown(tool.dispose);
+    const a = RenderScenePoint(x: 0, y: 0, z: 0);
+    const b = RenderScenePoint(x: 4, y: 0, z: 0);
+    const c = RenderScenePoint(x: 4, y: 3, z: 0);
+
+    tool.begin(a);
+    tool.preview(b);
+    expect(tool.hasSegment, isTrue);
+    expect(tool.start, a);
+    expect(tool.end, b);
+
+    tool.continueFrom(b);
+    expect(tool.hasSegment, isFalse);
+    tool.preview(c);
+    expect(tool.hasSegment, isTrue);
+    expect(tool.start, b);
+    expect(tool.end, c);
+  });
+
+  test('level tool controller keeps elevation draft separate from wall tool',
+      () {
+    final tool = LevelToolController();
+    addTearDown(tool.dispose);
+    const start = RenderScenePoint(x: 0, y: 0, z: 3.2);
+    const end = RenderScenePoint(x: 6, y: 0, z: 3.2);
+    tool.begin(start);
+    tool.preview(end);
+    expect(tool.hasDraft, isTrue);
+    expect(tool.start, start);
+    expect(tool.end, end);
+    tool.reset();
+    expect(tool.hasDraft, isFalse);
   });
 
   test('Switching from elevation to 3D preserves directional meaning',
