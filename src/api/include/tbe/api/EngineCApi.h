@@ -218,6 +218,19 @@ TbeApiStatusCode tbe_create_window(
     double sill_height_meters,
     uint64_t* out_window_id
 );
+TbeApiStatusCode tbe_create_stair(
+    TbeEngineHandle* handle,
+    uint64_t base_level_id,
+    uint64_t top_level_id,
+    TbeVec2 start,
+    TbeVec2 direction,
+    double width_meters,
+    double total_rise_meters,
+    double total_run_meters,
+    int riser_count,
+    int tread_count,
+    uint64_t* out_stair_id
+);
 TbeApiStatusCode tbe_set_opening_level_lock(TbeEngineHandle* handle, uint64_t opening_id, int locked);
 TbeApiStatusCode tbe_set_opening_level(TbeEngineHandle* handle, uint64_t opening_id, uint64_t level_id);
 TbeApiStatusCode tbe_set_opening_level_constraint(TbeEngineHandle* handle, uint64_t opening_id, uint64_t level_id, double level_offset_meters);

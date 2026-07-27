@@ -326,6 +326,14 @@ typedef _CreateWallDart = int Function(
   double,
   ffi.Pointer<ffi.Uint64>,
 );
+typedef _CreateStairNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>, ffi.Uint64, ffi.Uint64, TbeVec2, TbeVec2,
+  ffi.Double, ffi.Double, ffi.Double, ffi.Int32, ffi.Int32, ffi.Pointer<ffi.Uint64>,
+);
+typedef _CreateStairDart = int Function(
+  ffi.Pointer<ffi.Void>, int, int, TbeVec2, TbeVec2,
+  double, double, double, int, int, ffi.Pointer<ffi.Uint64>,
+);
 typedef _CreateDoorNative = ffi.Int32 Function(
   ffi.Pointer<ffi.Void>,
   ffi.Pointer<Utf8>,
@@ -607,6 +615,9 @@ class TbeViewerApi {
         _createWall =
             library.lookupFunction<_CreateWallNative, _CreateWallDart>(
                 'tbe_create_wall'),
+        _createStair =
+            library.lookupFunction<_CreateStairNative, _CreateStairDart>(
+                'tbe_create_stair'),
         _createDoor =
             library.lookupFunction<_CreateDoorNative, _CreateDoorDart>(
                 'tbe_create_door'),
@@ -759,6 +770,7 @@ class TbeViewerApi {
   final _SetWallLevelConstraintsDart _setWallLevelConstraints;
   final _SetWallAxisDart _setWallAxis;
   final _CreateWallDart _createWall;
+  final _CreateStairDart _createStair;
   final _CreateDoorDart _createDoor;
   final _CreateWindowDart _createWindow;
   final _SetOpeningLevelLockDart _setOpeningLevelLock;
@@ -1027,6 +1039,41 @@ class TbeViewerApi {
       calloc.free(namePtr);
       calloc.free(start);
       calloc.free(end);
+      calloc.free(out);
+    }
+  }
+
+  int createStair(
+    ffi.Pointer<ffi.Void> handle, {
+    required int baseLevelId,
+    required int topLevelId,
+    required double startX,
+    required double startY,
+    required double directionX,
+    required double directionY,
+    required double widthMeters,
+    required double totalRiseMeters,
+    required double totalRunMeters,
+    required int riserCount,
+    required int treadCount,
+  }) {
+    final out = calloc<ffi.Uint64>();
+    final start = calloc<TbeVec2>();
+    final direction = calloc<TbeVec2>();
+    start.ref
+      ..x = startX
+      ..y = startY;
+    direction.ref
+      ..x = directionX
+      ..y = directionY;
+    try {
+      _check(handle, _createStair(handle, baseLevelId, topLevelId, start.ref,
+          direction.ref, widthMeters, totalRiseMeters, totalRunMeters,
+          riserCount, treadCount, out));
+      return out.value;
+    } finally {
+      calloc.free(start);
+      calloc.free(direction);
       calloc.free(out);
     }
   }
@@ -1713,6 +1760,37 @@ class ViewerRepository {
       end.y,
       thicknessMeters,
       heightMeters,
+    );
+    await _buildSnapshot(handle, _projectName ?? 'Project');
+    return currentRenderScene();
+  }
+
+  Future<RenderSceneLoadResult> createStair({
+    required int baseLevelId,
+    required int topLevelId,
+    required RenderScenePoint start,
+    required RenderScenePoint direction,
+    required double widthMeters,
+    required double totalRiseMeters,
+    required double totalRunMeters,
+    required int riserCount,
+    required int treadCount,
+  }) async {
+    final handle = _handle;
+    if (handle == null) throw TbeApiException('No loaded project');
+    _lastCreatedElementId = _api.createStair(
+      handle,
+      baseLevelId: baseLevelId,
+      topLevelId: topLevelId,
+      startX: start.x,
+      startY: start.y,
+      directionX: direction.x,
+      directionY: direction.y,
+      widthMeters: widthMeters,
+      totalRiseMeters: totalRiseMeters,
+      totalRunMeters: totalRunMeters,
+      riserCount: riserCount,
+      treadCount: treadCount,
     );
     await _buildSnapshot(handle, _projectName ?? 'Project');
     return currentRenderScene();

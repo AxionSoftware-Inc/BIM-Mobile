@@ -414,6 +414,26 @@ TbeApiStatusCode tbe_create_window(
     return apply_result(handle, result);
 }
 
+TbeApiStatusCode tbe_create_stair(
+    TbeEngineHandle* handle, uint64_t base_level_id, uint64_t top_level_id,
+    TbeVec2 start, TbeVec2 direction, double width_meters, double total_rise_meters,
+    double total_run_meters, int riser_count, int tread_count, uint64_t* out_stair_id
+) {
+    if (handle == nullptr || handle->session == nullptr || out_stair_id == nullptr) {
+        return null_handle_error(handle);
+    }
+    const auto result = handle->session->create_stair(
+        base_level_id, top_level_id,
+        tbe::api::Vec2{.x = start.x, .y = start.y},
+        tbe::api::Vec2{.x = direction.x, .y = direction.y},
+        width_meters, total_rise_meters, total_run_meters, riser_count, tread_count, 0
+    );
+    if (result.ok() && result.value.has_value()) {
+        *out_stair_id = result.value->value;
+    }
+    return apply_result(handle, result);
+}
+
 TbeApiStatusCode tbe_set_opening_level_lock(TbeEngineHandle* handle, uint64_t opening_id, int locked) {
     if (handle == nullptr || handle->session == nullptr) {
         return null_handle_error(handle);
