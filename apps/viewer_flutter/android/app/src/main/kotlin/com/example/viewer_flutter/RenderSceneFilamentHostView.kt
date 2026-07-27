@@ -165,6 +165,8 @@ internal class RenderSceneFilamentHostView(
   private var highlightedElementId: Long? = null
   private var framePosted = false
   private var renderedFrameCount = 0L
+  private var lastRenderedFrameNanos = 0L
+  private var interactiveUntilMs = 0L
   private var telemetrySampleMs = 0L
   private var telemetryCpuMs = 0L
   private var telemetryFrameCount = 0L
@@ -302,6 +304,7 @@ internal class RenderSceneFilamentHostView(
     topDownZoom = max(radius * 1.2, 2.0)
     configureCameraProjection()
     updateOrbitCamera()
+    interactiveUntilMs = SystemClock.uptimeMillis() + 500L
     syncVisualOverlay()
     updateStatus("Camera fitted to ${metrics.objectCount} objects.")
     invalidate()
@@ -352,6 +355,7 @@ internal class RenderSceneFilamentHostView(
     }
     configureCameraProjection()
     updateOrbitCamera()
+    interactiveUntilMs = SystemClock.uptimeMillis() + 500L
     syncVisualOverlay()
     invalidate()
   }
@@ -461,10 +465,17 @@ internal class RenderSceneFilamentHostView(
     val renderer = renderer
     val view = filamentView
     val swapChain = swapChain
-    if (renderer != null && view != null && swapChain != null && renderer.beginFrame(swapChain, frameTimeNanos)) {
+    // BIM editing needs instant feedback while navigating, not a permanent
+    // 120 Hz render loop while the model is idle. Cap idle redraw to 30 FPS;
+    // pointer gestures still render at the display cadence.
+    val idleFrameIntervalNanos = 33_000_000L
+    val shouldRender = touching || SystemClock.uptimeMillis() < interactiveUntilMs ||
+      frameTimeNanos - lastRenderedFrameNanos >= idleFrameIntervalNanos
+    if (shouldRender && renderer != null && view != null && swapChain != null && renderer.beginFrame(swapChain, frameTimeNanos)) {
       renderer.render(view)
       renderer.endFrame()
       renderedFrameCount += 1
+      lastRenderedFrameNanos = frameTimeNanos
       sampleTelemetry()
     }
     scheduleFrame()
@@ -760,9 +771,9 @@ internal class RenderSceneFilamentHostView(
         // Revit-like working view: neutral paper-white surfaces with graphite
         // edges. Material/category colors remain available in Shaded.
         floatArrayOf(
-          0.98f,
-          0.98f,
-          0.98f,
+          1.0f,
+          1.0f,
+          1.0f,
           1.0f,
         )
       } else {
