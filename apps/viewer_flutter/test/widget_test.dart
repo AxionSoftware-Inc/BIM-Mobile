@@ -108,6 +108,79 @@ void main() {
     expect(created.scene, isNotNull);
   });
 
+  test('Android vertical slice survives engine save and reload', () async {
+    final api = TbeViewerApi.load();
+    final repository = ViewerRepository(api);
+    addTearDown(repository.dispose);
+    final projectJson = File('assets/sample_project.json').readAsStringSync();
+    await repository.loadFromJson(
+      projectName: 'Android vertical slice',
+      json: projectJson,
+    );
+
+    await repository.createWall(
+      name: 'Tablet wall',
+      levelId: 1,
+      start: const RenderScenePoint(x: 12, y: 0, z: 0),
+      end: const RenderScenePoint(x: 16, y: 0, z: 0),
+      thicknessMeters: 0.2,
+      heightMeters: 3,
+    );
+    final wallId = repository.lastCreatedElementId;
+    expect(wallId, isNotNull);
+    await repository.setWallLevelConstraints(
+      wallId: wallId!,
+      baseLevelId: 1,
+      topLevelId: 2,
+      heightMode: 1,
+    );
+    await repository.createDoor(
+      name: 'Tablet door',
+      hostWallId: wallId,
+      offsetMeters: 0.8,
+      widthMeters: 0.9,
+      heightMeters: 2.1,
+    );
+    await repository.createWindow(
+      name: 'Tablet window',
+      hostWallId: wallId,
+      offsetMeters: 2.4,
+      widthMeters: 1.0,
+      heightMeters: 1.2,
+      sillHeightMeters: 0.9,
+    );
+    await repository.moveLevelElevation(levelId: 2, elevationMeters: 3.8);
+
+    final savedJson = await repository.saveProjectJson();
+    expect(savedJson, contains('Tablet wall'));
+    expect(savedJson, contains('Tablet door'));
+    expect(savedJson, contains('Tablet window'));
+    final savedFile = await repository.saveProjectToDefaultLocation();
+    addTearDown(() async {
+      if (await savedFile.exists()) {
+        await savedFile.delete();
+      }
+    });
+    expect(await savedFile.readAsString(), contains('Tablet wall'));
+    await repository.reloadCurrent();
+
+    final restored = ViewerRepository(api);
+    addTearDown(restored.dispose);
+    await restored.loadFromJson(
+      projectName: 'Restored Android vertical slice',
+      json: savedJson,
+    );
+    final reloaded = (await restored.currentRenderScene()).scene!;
+    final wall = reloaded.objectById(wallId)!;
+    expect(reloaded.kindCounts['wall'], 11);
+    expect(reloaded.kindCounts['door'], 2);
+    expect(reloaded.kindCounts['window'], 3);
+    expect(wall.metadata['base_level_id'], '1');
+    expect(wall.metadata['top_level_id'], '2');
+    expect(wall.metadata['height_mode'], 'TopLevel');
+    expect(reloaded.levelById(2)!.elevationMeters, closeTo(3.8, 1e-9));
+  });
+
   test('wall mutation transaction returns a constrained wall in its snapshot',
       () async {
     final api = TbeViewerApi.load();

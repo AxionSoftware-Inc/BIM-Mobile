@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:ffi/ffi.dart';
 
+import 'app_project_storage.dart';
 import 'render_scene_models.dart';
 
 final class TbeScheduleSummary extends ffi.Struct {
@@ -532,30 +533,31 @@ class TbeViewerApi {
         _getRenderSceneJson =
             library.lookupFunction<_StringGetterNative, _StringGetterDart>(
                 'tbe_get_render_scene_json'),
-        _setPerformanceProfile = library.lookupFunction<
-                _SetIntOptionNative,
-                _SetIntOptionDart>('tbe_set_performance_profile'),
-        _setComputeMode = library.lookupFunction<
-                _SetIntOptionNative,
-                _SetIntOptionDart>('tbe_set_compute_mode'),
+        _setPerformanceProfile =
+            library.lookupFunction<_SetIntOptionNative, _SetIntOptionDart>(
+                'tbe_set_performance_profile'),
+        _setComputeMode =
+            library.lookupFunction<_SetIntOptionNative, _SetIntOptionDart>(
+                'tbe_set_compute_mode'),
         _getSchemaVersion =
             library.lookupFunction<_SchemaVersionNative, _SchemaVersionDart>(
                 'tbe_get_schema_version'),
         _projectLoadJson = library.lookupFunction<_ProjectLoadJsonNative,
             _ProjectLoadJsonDart>('tbe_project_load_json'),
+        _projectSaveJson =
+            library.lookupFunction<_StringGetterNative, _StringGetterDart>(
+                'tbe_project_save_json'),
         _createLevel =
             library.lookupFunction<_CreateLevelNative, _CreateLevelDart>(
                 'tbe_create_level'),
         _updateLevel =
             library.lookupFunction<_UpdateLevelNative, _UpdateLevelDart>(
                 'tbe_update_level'),
-        _moveLevelElevation = library.lookupFunction<
-            _MoveLevelElevationNative,
+        _moveLevelElevation = library.lookupFunction<_MoveLevelElevationNative,
             _MoveLevelElevationDart>('tbe_move_level_elevation'),
         _setWallLevelConstraints = library.lookupFunction<
-                _SetWallLevelConstraintsNative,
-                _SetWallLevelConstraintsDart>(
-            'tbe_set_wall_level_constraints'),
+            _SetWallLevelConstraintsNative,
+            _SetWallLevelConstraintsDart>('tbe_set_wall_level_constraints'),
         _setWallAxis =
             library.lookupFunction<_SetWallAxisNative, _SetWallAxisDart>(
                 'tbe_set_wall_axis'),
@@ -569,21 +571,18 @@ class TbeViewerApi {
             library.lookupFunction<_CreateWindowNative, _CreateWindowDart>(
                 'tbe_create_window'),
         _setOpeningLevelLock = library.lookupFunction<
-                _SetOpeningLevelLockNative,
-                _SetOpeningLevelLockDart>('tbe_set_opening_level_lock'),
-        _setOpeningLevel =
-            library.lookupFunction<_SetOpeningLevelNative, _SetOpeningLevelDart>(
-                'tbe_set_opening_level'),
-        _moveHostedOpening = library.lookupFunction<
-                _MoveHostedOpeningNative,
-                _MoveHostedOpeningDart>('tbe_move_hosted_opening'),
+            _SetOpeningLevelLockNative,
+            _SetOpeningLevelLockDart>('tbe_set_opening_level_lock'),
+        _setOpeningLevel = library.lookupFunction<_SetOpeningLevelNative,
+            _SetOpeningLevelDart>('tbe_set_opening_level'),
+        _moveHostedOpening = library.lookupFunction<_MoveHostedOpeningNative,
+            _MoveHostedOpeningDart>('tbe_move_hosted_opening'),
         _createProfile =
             library.lookupFunction<_CreateProfileNative, _CreateProfileDart>(
                 'tbe_create_profile'),
         _createFloorSystemForRoom = library.lookupFunction<
-                _CreateFloorSystemForRoomNative,
-                _CreateFloorSystemForRoomDart>(
-            'tbe_create_floor_system_for_room'),
+            _CreateFloorSystemForRoomNative,
+            _CreateFloorSystemForRoomDart>('tbe_create_floor_system_for_room'),
         _createCeilingSystemForRoom = library.lookupFunction<
                 _CreateCeilingSystemForRoomNative,
                 _CreateCeilingSystemForRoomDart>(
@@ -605,8 +604,8 @@ class TbeViewerApi {
             _ProjectExportPathDart>('tbe_export_project_package'),
         _hitTestCandidates = library.lookupFunction<_HitTestCandidatesNative,
             _HitTestCandidatesDart>('tbe_hit_test_candidates'),
-        _queryRect = library.lookupFunction<_QueryRectNative, _QueryRectDart>(
-            'tbe_query_rect'),
+        _queryRect = library
+            .lookupFunction<_QueryRectNative, _QueryRectDart>('tbe_query_rect'),
         _lastError = library.lookupFunction<_LastErrorNative, _LastErrorDart>(
             'tbe_get_last_error'),
         _freeString =
@@ -685,6 +684,7 @@ class TbeViewerApi {
   final _SetIntOptionDart _setComputeMode;
   final _SchemaVersionDart _getSchemaVersion;
   final _ProjectLoadJsonDart _projectLoadJson;
+  final _StringGetterDart _projectSaveJson;
   final _CreateLevelDart _createLevel;
   final _UpdateLevelDart _updateLevel;
   final _MoveLevelElevationDart _moveLevelElevation;
@@ -742,6 +742,8 @@ class TbeViewerApi {
       _readOwnedString(handle, _getApiVersion);
   String getRenderSceneJson(ffi.Pointer<ffi.Void> handle) =>
       _readOwnedString(handle, _getRenderSceneJson);
+  String saveProjectJson(ffi.Pointer<ffi.Void> handle) =>
+      _readOwnedString(handle, _projectSaveJson);
 
   void configureInteractiveSession(ffi.Pointer<ffi.Void> handle) {
     // C++ enum order: BatterySaver=0, InteractivePreview=0.
@@ -1074,7 +1076,8 @@ class TbeViewerApi {
   ) {
     final out = calloc<ffi.Uint64>();
     try {
-      _check(handle, _createFloorSystemForRoom(handle, roomId, assemblyId, out));
+      _check(
+          handle, _createFloorSystemForRoom(handle, roomId, assemblyId, out));
       return out.value;
     } finally {
       calloc.free(out);
@@ -1328,6 +1331,39 @@ class ViewerRepository {
     throw TbeApiException('No current project to reload');
   }
 
+  /// Captures the authoritative C++ document as project JSON. Subsequent
+  /// [reloadCurrent] calls use this checkpoint, never the pre-edit source.
+  Future<String> saveProjectJson() async {
+    final handle = _handle;
+    if (handle == null) {
+      throw TbeApiException('No loaded project');
+    }
+    final json = _api.saveProjectJson(handle);
+    _currentJson = json;
+    _currentJsonPath = null;
+    _currentPackagePath = null;
+    _activeLevelId = _extractPrimaryLevelIdFromProjectJson(json);
+    return json;
+  }
+
+  /// Saves the authoritative engine document in the app documents directory.
+  /// The generated file becomes the source used by [reloadCurrent].
+  Future<File> saveProjectToDefaultLocation() async {
+    final json = await saveProjectJson();
+    final directory = await AppProjectStorage.projectDirectory();
+    final rawName = _projectName ?? 'tablet_bim_project';
+    final fileName = rawName
+        .replaceAll(RegExp(r'[^A-Za-z0-9._-]+'), '_')
+        .replaceAll(RegExp(r'_+'), '_');
+    final file = File(
+      '${directory.path}${Platform.pathSeparator}'
+      '${fileName.isEmpty ? 'tablet_bim_project' : fileName}.tbe.json',
+    );
+    await file.writeAsString(json, flush: true);
+    _currentJsonPath = file.path;
+    return file;
+  }
+
   Future<ViewerSnapshot> _buildSnapshot(
     ffi.Pointer<ffi.Void> handle,
     String projectName,
@@ -1338,11 +1374,20 @@ class ViewerRepository {
       apiVersion: _api.getApiVersion(handle),
       schemaVersion: _api.getSchemaVersion(handle),
       levelId: _activeLevelId,
-      validation: ValidationSummary(issueCount: 0, warningCount: 0, errorCount: 0),
+      validation:
+          ValidationSummary(issueCount: 0, warningCount: 0, errorCount: 0),
       schedule: ScheduleSummary(
-        wallRows: 0, openingRows: 0, roomRows: 0, slabRows: 0,
-        roofRows: 0, columnRows: 0, beamRows: 0, stairRows: 0,
-        floorRows: 0, ceilingRows: 0, materialTakeoffRows: 0,
+        wallRows: 0,
+        openingRows: 0,
+        roomRows: 0,
+        slabRows: 0,
+        roofRows: 0,
+        columnRows: 0,
+        beamRows: 0,
+        stairRows: 0,
+        floorRows: 0,
+        ceilingRows: 0,
+        materialTakeoffRows: 0,
       ),
       svgPath: '',
       packagePath: '',
@@ -1371,11 +1416,11 @@ class ViewerRepository {
     if (scene == null) {
       return current;
     }
-    final levels = [...scene.levels]
-      ..sort((left, right) =>
-          left.elevationMeters.compareTo(right.elevationMeters));
+    final levels = [...scene.levels]..sort(
+        (left, right) => left.elevationMeters.compareTo(right.elevationMeters));
     var changed = false;
-    for (final wall in scene.objects.where((object) => object.kindKey == 'wall')) {
+    for (final wall
+        in scene.objects.where((object) => object.kindKey == 'wall')) {
       final heightMode = wall.metadata['height_mode']?.toString();
       final baseLevelId = int.tryParse(
             wall.metadata['base_level_id']?.toString() ?? '',
@@ -1405,16 +1450,14 @@ class ViewerRepository {
         wallId: wall.elementId!,
         baseLevelId: baseLevelId,
         topLevelId: top.levelId,
-        baseOffsetMeters:
-            double.tryParse(
-                  wall.metadata['base_offset_meters']?.toString() ?? '',
-                ) ??
-                0.0,
-        topOffsetMeters:
-            double.tryParse(
-                  wall.metadata['top_offset_meters']?.toString() ?? '',
-                ) ??
-                0.0,
+        baseOffsetMeters: double.tryParse(
+              wall.metadata['base_offset_meters']?.toString() ?? '',
+            ) ??
+            0.0,
+        topOffsetMeters: double.tryParse(
+              wall.metadata['top_offset_meters']?.toString() ?? '',
+            ) ??
+            0.0,
         heightMode: 1,
       );
       changed = true;
@@ -1562,7 +1605,8 @@ class ViewerRepository {
     if (handle == null) {
       throw TbeApiException('No loaded project');
     }
-    _api.createDoor(handle, name, hostWallId, offsetMeters, widthMeters, heightMeters);
+    _api.createDoor(
+        handle, name, hostWallId, offsetMeters, widthMeters, heightMeters);
     await _buildSnapshot(handle, _projectName ?? 'Project');
     return currentRenderScene();
   }
@@ -1579,7 +1623,8 @@ class ViewerRepository {
     if (handle == null) {
       throw TbeApiException('No loaded project');
     }
-    _api.createWindow(handle, name, hostWallId, offsetMeters, widthMeters, heightMeters, sillHeightMeters);
+    _api.createWindow(handle, name, hostWallId, offsetMeters, widthMeters,
+        heightMeters, sillHeightMeters);
     await _buildSnapshot(handle, _projectName ?? 'Project');
     return currentRenderScene();
   }

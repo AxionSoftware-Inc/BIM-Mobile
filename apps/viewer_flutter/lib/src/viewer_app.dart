@@ -347,6 +347,36 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     await _loadBundledSample();
   }
 
+  Future<void> _saveCurrentProject() async {
+    final repository = _engineRepository;
+    if (!_engineBackedMode || repository == null || _isBusy) {
+      setState(() {
+        _statusMessage = 'Save uchun native engine session kerak.';
+      });
+      return;
+    }
+    setState(() {
+      _isBusy = true;
+      _loadError = null;
+      _statusMessage = 'Saving project...';
+    });
+    try {
+      final file = await repository.saveProjectToDefaultLocation();
+      if (!mounted) return;
+      setState(() {
+        _isBusy = false;
+        _statusMessage = 'Saved: ${file.path}';
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _isBusy = false;
+        _loadError = error.toString();
+        _statusMessage = 'Project save failed.';
+      });
+    }
+  }
+
   Future<void> _applyLoadResult(
     RenderSceneLoadResult result, {
     required String sourceLabel,
@@ -3367,6 +3397,11 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         ],
       ),
       actions: <Widget>[
+        IconButton(
+          tooltip: 'Save project',
+          onPressed: _isBusy || !_engineBackedMode ? null : _saveCurrentProject,
+          icon: const Icon(Icons.save_outlined),
+        ),
         IconButton(
           tooltip: 'Reload bundled RenderScene',
           onPressed: _isBusy ? null : _reloadCurrentScene,
