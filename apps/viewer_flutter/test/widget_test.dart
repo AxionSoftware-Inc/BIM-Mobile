@@ -84,7 +84,7 @@ void main() {
 
     final created = await repository.createWall(
       name: 'Constrained test wall',
-      levelId: 1,
+      levelId: 2,
       start: const RenderScenePoint(x: 12, y: 0, z: 0),
       end: const RenderScenePoint(x: 16, y: 0, z: 0),
       thicknessMeters: 0.2,
@@ -179,6 +179,68 @@ void main() {
     expect(wall.metadata['top_level_id'], '2');
     expect(wall.metadata['height_mode'], 'TopLevel');
     expect(reloaded.levelById(2)!.elevationMeters, closeTo(3.8, 1e-9));
+  });
+
+  test('engine-created floor and ceiling remain bound to their level',
+      () async {
+    final repository = ViewerRepository(TbeViewerApi.load());
+    addTearDown(repository.dispose);
+    await repository.loadFromJson(
+      projectName: 'Level-bound floor',
+      json: File('assets/sample_project.json').readAsStringSync(),
+    );
+    await repository.createProfile(
+      targetKind: 1,
+      draftMode: 1,
+      levelId: 2,
+      points: const <RenderScenePoint>[
+        RenderScenePoint(x: 12, y: 0, z: 0),
+        RenderScenePoint(x: 16, y: 4, z: 0),
+      ],
+      closed: true,
+      thicknessMeters: 0.18,
+      heightMeters: 0,
+      verticalOffsetMeters: 0,
+      assemblyId: 9,
+    );
+    final floorId = repository.lastCreatedElementId;
+    expect(floorId, isNotNull);
+    await repository.createProfile(
+      targetKind: 2,
+      draftMode: 1,
+      levelId: 2,
+      points: const <RenderScenePoint>[
+        RenderScenePoint(x: 12, y: 0, z: 0),
+        RenderScenePoint(x: 16, y: 4, z: 0),
+      ],
+      closed: true,
+      thicknessMeters: 0.05,
+      heightMeters: 3,
+      verticalOffsetMeters: 2.6,
+      assemblyId: 10,
+    );
+    final ceilingId = repository.lastCreatedElementId;
+    expect(ceilingId, isNotNull);
+    final before = (await repository.currentRenderScene()).scene!;
+    final beforeFloor = before.objectById(floorId)!;
+    final beforeCeiling = before.objectById(ceilingId)!;
+
+    await repository.moveLevelElevation(levelId: 2, elevationMeters: 4.45);
+    final after = (await repository.currentRenderScene()).scene!;
+    final afterFloor = after.objectById(floorId)!;
+    final afterCeiling = after.objectById(ceilingId)!;
+    expect(afterFloor.kindKey, 'floor');
+    expect(afterFloor.levelId, 2);
+    expect(afterCeiling.kindKey, 'ceiling');
+    expect(afterCeiling.levelId, 2);
+    expect(
+      afterFloor.bounds.min.z - beforeFloor.bounds.min.z,
+      closeTo(1.25, 1e-6),
+    );
+    expect(
+      afterCeiling.bounds.min.z - beforeCeiling.bounds.min.z,
+      closeTo(1.25, 1e-6),
+    );
   });
 
   test('wall mutation transaction returns a constrained wall in its snapshot',

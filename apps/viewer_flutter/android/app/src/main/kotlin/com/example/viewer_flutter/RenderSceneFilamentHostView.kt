@@ -314,7 +314,11 @@ internal class RenderSceneFilamentHostView(
     } else if (orbitCenterPayload != null) {
       orbitCenter = toFilamentPoint(orbitCenterPayload)
     }
-    orbitYawRadians = toDouble(payload?.get("orbitYawRadians")) ?: orbitYawRadians
+    // Flutter uses X/Y plan with Z up; Filament receives X/Z/-Y. Mirror yaw
+    // at this single conversion point so a two-finger side-pan follows the
+    // same camera-right vector in both renderers.
+    orbitYawRadians = toDouble(payload?.get("orbitYawRadians"))?.unaryMinus()
+      ?: orbitYawRadians
     orbitPitchRadians = toDouble(payload?.get("orbitPitchRadians")) ?: orbitPitchRadians
     val distance = toDouble(payload?.get("orbitDistance"))
     val zoom = toDouble(payload?.get("orbitZoomScale"))
