@@ -120,6 +120,7 @@ public:
     );
     void set_opening_level_lock(ElementId opening_id, bool locked);
     void set_opening_level(ElementId opening_id, ElementId level_id);
+    void set_opening_level_constraint(ElementId opening_id, ElementId level_id, double level_offset_meters);
     std::vector<ElementId> create_elements_from_profile(const ProfileDraft& draft);
     void set_wall_type(ElementId wall_id, ElementId wall_type_id);
     void set_wall_properties(ElementId wall_id, double thickness_meters, double height_meters, ElementId wall_type_id = 0);
@@ -195,6 +196,7 @@ private:
     void validate_wall_axis(Line2 axis, double thickness_meters, double height_meters) const;
     void validate_wall_openings(const WallData& wall, std::optional<ElementId> ignored_opening_id = std::nullopt) const;
     void update_wall_opening(ElementId host_wall_id, const HostedOpening& opening);
+    void sync_opening_level_constraint(ElementId opening_id);
     void remove_hosted_opening(ElementId host_wall_id, ElementId opening_id);
     void touch_related_rooms(ElementId wall_id) noexcept;
     void refresh_dependencies_for_wall(ElementId wall_id);
@@ -213,6 +215,9 @@ private:
     std::map<ElementId, FloorSystemData> floor_systems_{};
     std::map<ElementId, CeilingSystemData> ceiling_systems_{};
     std::vector<ElementId> dirty_room_ids_{};
+    // Levels whose room topology changed. This lets interactive snapshots
+    // recompute only the edited storey instead of scanning the whole model.
+    std::vector<ElementId> dirty_room_level_ids_{};
     mutable DependencyGraph dependency_graph_cache_{};
     mutable bool dependency_graph_dirty_{true};
     mutable Revision dependency_graph_version_{};

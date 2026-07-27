@@ -188,7 +188,7 @@ int main() {
         const auto door = session->create_door("Door", wall_id, 1.2, 0.9, 2.1);
         assert(door.ok());
         assert(session->set_opening_level_lock(door.value->value, false).ok());
-        assert(session->set_opening_level(door.value->value, level_2.value->value).ok());
+        assert(session->set_opening_level_constraint(door.value->value, level_2.value->value, 0.3).ok());
         const auto moved_opening_scene = session->get_render_scene();
         assert(moved_opening_scene.ok());
         assert(moved_opening_scene.value.has_value());
@@ -200,8 +200,18 @@ int main() {
             });
         assert(moved_door_object != moved_opening_scene.value->objects.end());
         assert(moved_door_object->level_id.value == level_2.value->value);
-        assert(moved_door_object->metadata.at("level_locked") == "false");
-        assert(session->set_opening_level_lock(door.value->value, true).ok());
+        assert(moved_door_object->metadata.at("level_locked") == "true");
+        assert(nearly_equal(std::stod(moved_door_object->metadata.at("level_offset_meters")), 0.3));
+        assert(nearly_equal(std::stod(moved_door_object->metadata.at("vertical_offset_meters")), 4.3));
+        assert(session->move_level_elevation(level_2.value->value, 4.5).ok());
+        const auto moved_with_level_scene = session->get_render_scene();
+        assert(moved_with_level_scene.ok() && moved_with_level_scene.value.has_value());
+        const auto moved_with_level_door = std::find_if(
+            moved_with_level_scene.value->objects.begin(),
+            moved_with_level_scene.value->objects.end(),
+            [&](const auto& object) { return object.element_id.value == door.value->value; });
+        assert(moved_with_level_door != moved_with_level_scene.value->objects.end());
+        assert(nearly_equal(std::stod(moved_with_level_door->metadata.at("vertical_offset_meters")), 4.8));
 
         const auto render_scene = session->get_render_scene();
         assert(render_scene.ok());
@@ -211,21 +221,21 @@ int main() {
             return level.level_id.value == level_2.value->value;
         });
         assert(level_2_scene != render_scene.value->levels.end());
-        assert(nearly_equal(level_2_scene->elevation_meters, 4.0));
+        assert(nearly_equal(level_2_scene->elevation_meters, 4.5));
 
         const auto wall_object = std::find_if(render_scene.value->objects.begin(), render_scene.value->objects.end(), [&](const auto& object) {
             return object.element_id.value == wall_id;
         });
         assert(wall_object != render_scene.value->objects.end());
         assert(wall_object->metadata.at("height_mode") == "TopLevel");
-        assert(nearly_equal(wall_object->bounds.max.z - wall_object->bounds.min.z, 6.5, 1.0e-3));
+        assert(nearly_equal(wall_object->bounds.max.z - wall_object->bounds.min.z, 7.0, 1.0e-3));
 
         const auto door_object = std::find_if(render_scene.value->objects.begin(), render_scene.value->objects.end(), [&](const auto& object) {
             return object.element_id.value == door.value->value;
         });
         assert(door_object != render_scene.value->objects.end());
         assert(door_object->metadata.at("level_locked") == "true");
-        assert(door_object->level_id.value == level_1.value->value);
+        assert(door_object->level_id.value == level_2.value->value);
     }
 
     {

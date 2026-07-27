@@ -218,6 +218,7 @@ TbeApiStatusCode tbe_create_window(
 );
 TbeApiStatusCode tbe_set_opening_level_lock(TbeEngineHandle* handle, uint64_t opening_id, int locked);
 TbeApiStatusCode tbe_set_opening_level(TbeEngineHandle* handle, uint64_t opening_id, uint64_t level_id);
+TbeApiStatusCode tbe_set_opening_level_constraint(TbeEngineHandle* handle, uint64_t opening_id, uint64_t level_id, double level_offset_meters);
 TbeApiStatusCode tbe_move_hosted_opening(TbeEngineHandle* handle, uint64_t opening_id, double offset_meters);
 TbeApiStatusCode tbe_create_profile(
     TbeEngineHandle* handle,

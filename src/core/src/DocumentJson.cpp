@@ -875,6 +875,7 @@ std::string Document::to_json() const {
             out << ",\"offset\":" << door->offset_meters;
             out << ",\"width\":" << door->width_meters;
             out << ",\"height\":" << door->height_meters;
+            out << ",\"level_offset\":" << door->level_offset_meters;
             out << ",\"vertical_offset\":" << door->vertical_offset_meters;
             out << ",\"level_locked\":" << (door->level_locked ? "true" : "false") << '}';
         } else if (const auto* window = element.window()) {
@@ -884,6 +885,7 @@ std::string Document::to_json() const {
             out << ",\"width\":" << window->width_meters;
             out << ",\"height\":" << window->height_meters;
             out << ",\"sill_height\":" << window->sill_height_meters;
+            out << ",\"level_offset\":" << window->level_offset_meters;
             out << ",\"vertical_offset\":" << window->vertical_offset_meters;
             out << ",\"level_locked\":" << (window->level_locked ? "true" : "false") << '}';
         } else if (const auto* room = element.room()) {
@@ -1154,6 +1156,7 @@ Document Document::from_json(std::string_view json) {
                 .offset_meters = as_number(field(door, "offset")),
                 .width_meters = as_number(field(door, "width")),
                 .height_meters = as_number(field(door, "height")),
+                .level_offset_meters = door.find("level_offset") == door.end() ? 0.0 : as_number(field(door, "level_offset")),
                 .vertical_offset_meters = door.find("vertical_offset") == door.end() ? 0.0 : as_number(field(door, "vertical_offset")),
                 .level_locked = door.find("level_locked") == door.end() ? true : as_bool(field(door, "level_locked")),
             }, revision);
@@ -1166,6 +1169,7 @@ Document Document::from_json(std::string_view json) {
                 .width_meters = as_number(field(window, "width")),
                 .height_meters = as_number(field(window, "height")),
                 .sill_height_meters = as_number(field(window, "sill_height")),
+                .level_offset_meters = window.find("level_offset") == window.end() ? 0.0 : as_number(field(window, "level_offset")),
                 .vertical_offset_meters = window.find("vertical_offset") == window.end() ? 0.0 : as_number(field(window, "vertical_offset")),
                 .level_locked = window.find("level_locked") == window.end() ? true : as_bool(field(window, "level_locked")),
             }, revision);

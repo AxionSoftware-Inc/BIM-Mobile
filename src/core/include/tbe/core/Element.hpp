@@ -190,6 +190,9 @@ struct DoorData {
     double offset_meters{};
     double width_meters{};
     double height_meters{};
+    // Authoritative offset from level_id. vertical_offset_meters is the
+    // derived host-wall-relative value used by the wall opening geometry.
+    double level_offset_meters{};
     double vertical_offset_meters{};
     bool level_locked{true};
 };
@@ -201,6 +204,9 @@ struct WindowData {
     double width_meters{};
     double height_meters{};
     double sill_height_meters{};
+    // Authoritative offset from level_id. vertical_offset_meters is derived
+    // against the current host wall base elevation.
+    double level_offset_meters{};
     double vertical_offset_meters{};
     bool level_locked{true};
 };

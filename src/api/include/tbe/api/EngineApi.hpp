@@ -559,6 +559,7 @@ public:
     );
     ApiVoidResult set_opening_level_lock(std::uint64_t opening_id, bool locked);
     ApiVoidResult set_opening_level(std::uint64_t opening_id, std::uint64_t level_id);
+    ApiVoidResult set_opening_level_constraint(std::uint64_t opening_id, std::uint64_t level_id, double level_offset_meters);
     ApiResult<std::vector<ElementIdDTO>> create_elements_from_profile(ProfileDraftDTO draft);
     ApiResult<std::vector<RoomDTO>> detect_rooms();
     ApiVoidResult auto_join_walls();

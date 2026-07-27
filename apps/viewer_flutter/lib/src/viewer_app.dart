@@ -1123,35 +1123,56 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     }
     int selectedLevelId =
         object.levelId ?? _activeLevelId ?? levels.first.levelId;
-    final resultLevel = await showDialog<int>(
+    final levelOffsetController = TextEditingController(
+      text: (_metadataDouble(object, 'level_offset_meters') ?? 0.0)
+          .toStringAsFixed(2),
+    );
+    final resultConstraint = await showDialog<({int levelId, double offset})>(
       context: context,
       builder: (BuildContext context) {
         return StatefulBuilder(
           builder: (context, setLocalState) {
             return AlertDialog(
               title: Text('Move ${prettySceneKind(object.kind)} to level'),
-              content: DropdownButtonFormField<int>(
-                initialValue: selectedLevelId,
-                decoration: const InputDecoration(
-                  labelText: 'Target level',
-                  border: OutlineInputBorder(),
-                  isDense: true,
-                ),
-                items: levels
-                    .map((level) => DropdownMenuItem<int>(
-                          value: level.levelId,
-                          child: Text(
-                            '${level.name} (${level.elevationMeters.toStringAsFixed(2)} m)',
-                          ),
-                        ))
-                    .toList(growable: false),
-                onChanged: (value) {
-                  if (value != null) {
-                    setLocalState(() {
-                      selectedLevelId = value;
-                    });
-                  }
-                },
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  DropdownButtonFormField<int>(
+                    initialValue: selectedLevelId,
+                    decoration: const InputDecoration(
+                      labelText: 'Base level',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                    items: levels
+                        .map((level) => DropdownMenuItem<int>(
+                              value: level.levelId,
+                              child: Text(
+                                '${level.name} (${level.elevationMeters.toStringAsFixed(2)} m)',
+                              ),
+                            ))
+                        .toList(growable: false),
+                    onChanged: (value) {
+                      if (value != null) {
+                        setLocalState(() {
+                          selectedLevelId = value;
+                        });
+                      }
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: levelOffsetController,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    decoration: const InputDecoration(
+                      labelText: 'Offset from level (m)',
+                      helperText: 'Masalan 0.30 = leveldan 30 sm yuqori',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                  ),
+                ],
               ),
               actions: <Widget>[
                 TextButton(
@@ -1159,7 +1180,15 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
                   child: const Text('Cancel'),
                 ),
                 FilledButton(
-                  onPressed: () => Navigator.of(context).pop(selectedLevelId),
+                  onPressed: () {
+                    final offset = double.tryParse(levelOffsetController.text);
+                    if (offset == null) {
+                      return;
+                    }
+                    Navigator.of(context).pop(
+                      (levelId: selectedLevelId, offset: offset),
+                    );
+                  },
                   child: const Text('Apply'),
                 ),
               ],
@@ -1169,18 +1198,20 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       },
     );
 
-    if (!mounted || resultLevel == null) {
+    levelOffsetController.dispose();
+    if (!mounted || resultConstraint == null) {
       return;
     }
 
-    final result = await repository.setOpeningLevel(
+    final result = await repository.setOpeningLevelConstraint(
       openingId: openingId,
-      levelId: resultLevel,
+      levelId: resultConstraint.levelId,
+      levelOffsetMeters: resultConstraint.offset,
     );
     await _applyEngineSceneResult(
       result,
       message:
-          '${prettySceneKind(object.kind)} moved to ${scene.levelById(resultLevel)?.name ?? 'level'}.',
+          '${prettySceneKind(object.kind)} ${scene.levelById(resultConstraint.levelId)?.name ?? 'level'} + ${resultConstraint.offset.toStringAsFixed(2)} m ga biriktirildi.',
     );
   }
 

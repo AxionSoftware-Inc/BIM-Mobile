@@ -781,6 +781,9 @@ ElementId Document::create_wall(std::string name, Line2 axis, double thickness_m
         .thickness_meters = thickness_meters,
         .height_meters = height_meters,
     });
+    if (level_id != 0) {
+        dirty_room_level_ids_.push_back(level_id);
+    }
     auto_join_walls();
     invalidate_dependency_graph_cache();
     return id;
@@ -923,6 +926,7 @@ ElementId Document::create_door(std::string name, ElementId host_wall_id, double
         .offset_meters = offset_meters,
         .width_meters = width_meters,
         .height_meters = height_meters,
+        .level_offset_meters = 0.0,
         .vertical_offset_meters = 0.0,
         .level_locked = true,
     });
@@ -969,6 +973,7 @@ ElementId Document::create_window(
         .width_meters = width_meters,
         .height_meters = height_meters,
         .sill_height_meters = sill_height_meters,
+        .level_offset_meters = 0.0,
         .vertical_offset_meters = 0.0,
         .level_locked = true,
     });
@@ -2042,8 +2047,11 @@ std::vector<ElementId> Document::detect_rooms_for_levels(const std::vector<Eleme
 }
 
 void Document::mark_rooms_dirty_for_wall(ElementId wall_id) {
-    dirty_room_ids_ = dependency_graph().dependent_rooms(wall_id);
-    for (const auto room_id : dirty_room_ids_) {
+    const auto dependent_rooms = dependency_graph().dependent_rooms(wall_id);
+    for (const auto room_id : dependent_rooms) {
+        if (std::find(dirty_room_ids_.begin(), dirty_room_ids_.end(), room_id) == dirty_room_ids_.end()) {
+            dirty_room_ids_.push_back(room_id);
+        }
         for (auto& [_, system] : floor_systems_) {
             if (system.room_id == room_id) {
                 system.dirty = true;
@@ -2054,6 +2062,12 @@ void Document::mark_rooms_dirty_for_wall(ElementId wall_id) {
                 system.dirty = true;
             }
         }
+    }
+    const auto* wall_element = find_ptr(wall_id);
+    const auto* wall = wall_element == nullptr ? nullptr : wall_element->wall();
+    const auto level_id = wall == nullptr ? 0 : wall->level_id;
+    if (level_id != 0 && std::find(dirty_room_level_ids_.begin(), dirty_room_level_ids_.end(), level_id) == dirty_room_level_ids_.end()) {
+        dirty_room_level_ids_.push_back(level_id);
     }
 }
 
@@ -2128,14 +2142,25 @@ void Document::move_level_elevation(ElementId level_id, double elevation_meters)
         if (auto* wall = element.wall(); wall != nullptr) {
             if (wall->level_id == level_id || wall->base_level_id == level_id || wall->top_level_id == level_id) {
                 mark_wall_dirty(element);
+                for (const auto& opening : wall->openings) {
+                    const auto* opening_element = find_ptr(opening.element_id);
+                    const auto follows_level = opening_element != nullptr &&
+                        ((opening_element->door() != nullptr && opening_element->door()->level_locked) ||
+                         (opening_element->window() != nullptr && opening_element->window()->level_locked));
+                    if (follows_level) {
+                        sync_opening_level_constraint(opening.element_id);
+                    }
+                }
                 refresh_dependencies_for_wall(element.id());
             }
         } else if (auto* door = element.door(); door != nullptr) {
             if (door->level_locked && door->level_id == level_id) {
+                sync_opening_level_constraint(element.id());
                 element.touch();
             }
         } else if (auto* window = element.window(); window != nullptr) {
             if (window->level_locked && window->level_id == level_id) {
+                sync_opening_level_constraint(element.id());
                 element.touch();
             }
         } else if (auto* slab = element.slab(); slab != nullptr) {
@@ -2204,6 +2229,15 @@ void Document::set_wall_level_constraints(
     wall->base_offset_meters = base_offset_meters;
     wall->top_offset_meters = top_offset_meters;
     wall->height_mode = height_mode;
+    for (const auto& opening : wall->openings) {
+        const auto* opening_element = find_ptr(opening.element_id);
+        const auto follows_level = opening_element != nullptr &&
+            ((opening_element->door() != nullptr && opening_element->door()->level_locked) ||
+             (opening_element->window() != nullptr && opening_element->window()->level_locked));
+        if (follows_level) {
+            sync_opening_level_constraint(opening.element_id);
+        }
+    }
     validate_wall_axis(wall->axis, wall->thickness_meters, resolved_wall_height(*wall));
     validate_wall_openings(*wall);
     mark_wall_dirty(wall_element);
@@ -2219,19 +2253,7 @@ void Document::set_opening_level_lock(ElementId opening_id, bool locked) {
     if (auto* door_data = element->door(); door_data != nullptr) {
         door_data->level_locked = locked;
         if (locked) {
-            if (const auto* host = find_ptr(door_data->host_wall_id); host != nullptr && host->wall() != nullptr) {
-                door_data->level_id = host->wall()->level_id;
-                door_data->vertical_offset_meters = 0.0;
-                update_wall_opening(door_data->host_wall_id, HostedOpening{
-                    .element_id = opening_id,
-                    .kind = OpeningKind::Door,
-                    .offset_meters = door_data->offset_meters,
-                    .width_meters = door_data->width_meters,
-                    .height_meters = door_data->height_meters,
-                    .sill_height_meters = 0.0,
-                    .vertical_offset_meters = 0.0,
-                });
-            }
+            sync_opening_level_constraint(opening_id);
         }
         element->touch();
         invalidate_dependency_graph_cache();
@@ -2240,19 +2262,7 @@ void Document::set_opening_level_lock(ElementId opening_id, bool locked) {
     if (auto* window_data = element->window(); window_data != nullptr) {
         window_data->level_locked = locked;
         if (locked) {
-            if (const auto* host = find_ptr(window_data->host_wall_id); host != nullptr && host->wall() != nullptr) {
-                window_data->level_id = host->wall()->level_id;
-                window_data->vertical_offset_meters = 0.0;
-                update_wall_opening(window_data->host_wall_id, HostedOpening{
-                    .element_id = opening_id,
-                    .kind = OpeningKind::Window,
-                    .offset_meters = window_data->offset_meters,
-                    .width_meters = window_data->width_meters,
-                    .height_meters = window_data->height_meters,
-                    .sill_height_meters = window_data->sill_height_meters,
-                    .vertical_offset_meters = 0.0,
-                });
-            }
+            sync_opening_level_constraint(opening_id);
         }
         element->touch();
         invalidate_dependency_graph_cache();
@@ -2262,6 +2272,14 @@ void Document::set_opening_level_lock(ElementId opening_id, bool locked) {
 }
 
 void Document::set_opening_level(ElementId opening_id, ElementId level_id) {
+    set_opening_level_constraint(opening_id, level_id, 0.0);
+}
+
+void Document::set_opening_level_constraint(
+    ElementId opening_id,
+    ElementId level_id,
+    double level_offset_meters
+) {
     (void)require_level(level_id);
     auto* element = find_ptr(opening_id);
     if (element == nullptr) {
@@ -2274,7 +2292,7 @@ void Document::set_opening_level(ElementId opening_id, ElementId level_id) {
         if (host_wall == nullptr) {
             throw std::invalid_argument("opening host wall does not exist");
         }
-        const auto offset = level_elevation(level_id) - resolved_wall_base_elevation(*host_wall);
+        const auto offset = level_elevation(level_id) + level_offset_meters - resolved_wall_base_elevation(*host_wall);
         auto updated = HostedOpening{
             .element_id = opening_id,
             .kind = OpeningKind::Door,
@@ -2292,7 +2310,8 @@ void Document::set_opening_level(ElementId opening_id, ElementId level_id) {
         }
         validate_wall_openings(wall_copy);
         door_data->level_id = level_id;
-        door_data->level_locked = false;
+        door_data->level_offset_meters = level_offset_meters;
+        door_data->level_locked = true;
         door_data->vertical_offset_meters = offset;
         element->touch();
         update_wall_opening(door_data->host_wall_id, updated);
@@ -2306,7 +2325,7 @@ void Document::set_opening_level(ElementId opening_id, ElementId level_id) {
         if (host_wall == nullptr) {
             throw std::invalid_argument("opening host wall does not exist");
         }
-        const auto offset = level_elevation(level_id) - resolved_wall_base_elevation(*host_wall);
+        const auto offset = level_elevation(level_id) + level_offset_meters - resolved_wall_base_elevation(*host_wall);
         auto updated = HostedOpening{
             .element_id = opening_id,
             .kind = OpeningKind::Window,
@@ -2324,7 +2343,8 @@ void Document::set_opening_level(ElementId opening_id, ElementId level_id) {
         }
         validate_wall_openings(wall_copy);
         window_data->level_id = level_id;
-        window_data->level_locked = false;
+        window_data->level_offset_meters = level_offset_meters;
+        window_data->level_locked = true;
         window_data->vertical_offset_meters = offset;
         element->touch();
         update_wall_opening(window_data->host_wall_id, updated);
@@ -2452,11 +2472,11 @@ std::vector<ElementId> Document::create_elements_from_profile(const ProfileDraft
 }
 
 std::vector<ElementId> Document::recompute_dirty_rooms() {
-    if (dirty_room_ids_.empty()) {
+    if (dirty_room_ids_.empty() && dirty_room_level_ids_.empty()) {
         return {};
     }
 
-    std::vector<ElementId> level_ids;
+    auto level_ids = dirty_room_level_ids_;
     for (const auto room_id : dirty_room_ids_) {
         const auto* room_element = find_ptr(room_id);
         const auto* room = room_element == nullptr ? nullptr : room_element->room();
@@ -2465,6 +2485,7 @@ std::vector<ElementId> Document::recompute_dirty_rooms() {
         }
     }
     dirty_room_ids_.clear();
+    dirty_room_level_ids_.clear();
     return detect_rooms_for_levels(level_ids);
 }
 
@@ -4160,6 +4181,51 @@ void Document::update_wall_opening(ElementId host_wall_id, const HostedOpening& 
     mark_wall_dirty(wall_element);
 }
 
+void Document::sync_opening_level_constraint(ElementId opening_id) {
+    auto* opening_element = find_ptr(opening_id);
+    if (opening_element == nullptr) {
+        throw std::invalid_argument("opening does not exist");
+    }
+
+    const auto sync = [&](auto* data, OpeningKind kind, double sill_height_meters) {
+        const auto* host_element = find_ptr(data->host_wall_id);
+        const auto* host_wall = host_element == nullptr ? nullptr : host_element->wall();
+        if (host_wall == nullptr) {
+            throw std::invalid_argument("opening host wall does not exist");
+        }
+        const auto vertical_offset = level_elevation(data->level_id) +
+            data->level_offset_meters - resolved_wall_base_elevation(*host_wall);
+        HostedOpening updated{
+            .element_id = opening_id,
+            .kind = kind,
+            .offset_meters = data->offset_meters,
+            .width_meters = data->width_meters,
+            .height_meters = data->height_meters,
+            .sill_height_meters = sill_height_meters,
+            .vertical_offset_meters = vertical_offset,
+        };
+        auto wall_copy = *host_wall;
+        for (auto& opening : wall_copy.openings) {
+            if (opening.element_id == opening_id) {
+                opening = updated;
+            }
+        }
+        validate_wall_openings(wall_copy);
+        data->vertical_offset_meters = vertical_offset;
+        update_wall_opening(data->host_wall_id, updated);
+    };
+
+    if (auto* door = opening_element->door(); door != nullptr) {
+        sync(door, OpeningKind::Door, 0.0);
+        return;
+    }
+    if (auto* window = opening_element->window(); window != nullptr) {
+        sync(window, OpeningKind::Window, window->sill_height_meters);
+        return;
+    }
+    throw std::invalid_argument("element is not a hosted opening");
+}
+
 void Document::remove_hosted_opening(ElementId host_wall_id, ElementId opening_id) {
     auto& wall_element = require_wall(host_wall_id);
     auto* wall = wall_element.wall();
@@ -4185,14 +4251,6 @@ void Document::refresh_dependencies_for_wall(ElementId wall_id) {
     auto_join_walls();
     mark_rooms_dirty_for_wall(wall_id);
     touch_related_rooms(wall_id);
-    auto recomputed = recompute_dirty_rooms();
-    if (recomputed.empty()) {
-        const auto* wall_element = find_ptr(wall_id);
-        const auto* wall = wall_element == nullptr ? nullptr : wall_element->wall();
-        if (wall != nullptr) {
-            (void)detect_rooms_for_levels({wall->level_id});
-        }
-    }
     invalidate_dependency_graph_cache();
 }
 

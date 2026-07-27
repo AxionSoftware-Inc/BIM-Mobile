@@ -428,6 +428,18 @@ TbeApiStatusCode tbe_set_opening_level(TbeEngineHandle* handle, uint64_t opening
     return apply_result(handle, handle->session->set_opening_level(opening_id, level_id));
 }
 
+TbeApiStatusCode tbe_set_opening_level_constraint(
+    TbeEngineHandle* handle,
+    uint64_t opening_id,
+    uint64_t level_id,
+    double level_offset_meters
+) {
+    if (handle == nullptr || handle->session == nullptr) {
+        return null_handle_error(handle);
+    }
+    return apply_result(handle, handle->session->set_opening_level_constraint(opening_id, level_id, level_offset_meters));
+}
+
 TbeApiStatusCode tbe_move_hosted_opening(TbeEngineHandle* handle, uint64_t opening_id, double offset_meters) {
     if (handle == nullptr || handle->session == nullptr) {
         return null_handle_error(handle);

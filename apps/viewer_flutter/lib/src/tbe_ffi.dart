@@ -359,6 +359,18 @@ typedef _SetOpeningLevelDart = int Function(
   int,
   int,
 );
+typedef _SetOpeningLevelConstraintNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Uint64,
+  ffi.Uint64,
+  ffi.Double,
+);
+typedef _SetOpeningLevelConstraintDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  int,
+  int,
+  double,
+);
 typedef _MoveHostedOpeningNative = ffi.Int32 Function(
   ffi.Pointer<ffi.Void>,
   ffi.Uint64,
@@ -575,6 +587,9 @@ class TbeViewerApi {
             _SetOpeningLevelLockDart>('tbe_set_opening_level_lock'),
         _setOpeningLevel = library.lookupFunction<_SetOpeningLevelNative,
             _SetOpeningLevelDart>('tbe_set_opening_level'),
+        _setOpeningLevelConstraint = library.lookupFunction<
+            _SetOpeningLevelConstraintNative,
+            _SetOpeningLevelConstraintDart>('tbe_set_opening_level_constraint'),
         _moveHostedOpening = library.lookupFunction<_MoveHostedOpeningNative,
             _MoveHostedOpeningDart>('tbe_move_hosted_opening'),
         _createProfile =
@@ -695,6 +710,7 @@ class TbeViewerApi {
   final _CreateWindowDart _createWindow;
   final _SetOpeningLevelLockDart _setOpeningLevelLock;
   final _SetOpeningLevelDart _setOpeningLevel;
+  final _SetOpeningLevelConstraintDart _setOpeningLevelConstraint;
   final _MoveHostedOpeningDart _moveHostedOpening;
   final _CreateProfileDart _createProfile;
   final _CreateFloorSystemForRoomDart _createFloorSystemForRoom;
@@ -997,6 +1013,18 @@ class TbeViewerApi {
     int levelId,
   ) {
     _check(handle, _setOpeningLevel(handle, openingId, levelId));
+  }
+
+  void setOpeningLevelConstraint(
+    ffi.Pointer<ffi.Void> handle,
+    int openingId,
+    int levelId,
+    double levelOffsetMeters,
+  ) {
+    _check(
+      handle,
+      _setOpeningLevelConstraint(handle, openingId, levelId, levelOffsetMeters),
+    );
   }
 
   void moveHostedOpening(
@@ -1651,6 +1679,25 @@ class ViewerRepository {
       throw TbeApiException('No loaded project');
     }
     _api.setOpeningLevel(handle, openingId, levelId);
+    await _buildSnapshot(handle, _projectName ?? 'Project');
+    return currentRenderScene();
+  }
+
+  Future<RenderSceneLoadResult> setOpeningLevelConstraint({
+    required int openingId,
+    required int levelId,
+    required double levelOffsetMeters,
+  }) async {
+    final handle = _handle;
+    if (handle == null) {
+      throw TbeApiException('No loaded project');
+    }
+    _api.setOpeningLevelConstraint(
+      handle,
+      openingId,
+      levelId,
+      levelOffsetMeters,
+    );
     await _buildSnapshot(handle, _projectName ?? 'Project');
     return currentRenderScene();
   }

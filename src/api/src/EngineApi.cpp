@@ -1,6 +1,7 @@
 #include "tbe/api/EngineApi.hpp"
 
 #include "tbe/core/Project.hpp"
+#include "tbe/core/JobSystem.hpp"
 
 #include <algorithm>
 #include <array>
@@ -527,6 +528,11 @@ RenderSceneDTO build_render_scene(const Document& document) {
                 const auto opening_locked = opening_element != nullptr && opening_element->door() != nullptr
                     ? opening_element->door()->level_locked
                     : (opening_element != nullptr && opening_element->window() != nullptr ? opening_element->window()->level_locked : true);
+                const auto opening_level_offset = opening_element != nullptr && opening_element->door() != nullptr
+                    ? opening_element->door()->level_offset_meters
+                    : (opening_element != nullptr && opening_element->window() != nullptr
+                           ? opening_element->window()->level_offset_meters
+                           : 0.0);
                 append_object(make_object_dto(
                     opening.element_id,
                     opening_kind,
@@ -541,6 +547,7 @@ RenderSceneDTO build_render_scene(const Document& document) {
                         {"height_meters", std::to_string(opening.height_meters)},
                         {"sill_height_meters", std::to_string(opening.sill_height_meters)},
                         {"vertical_offset_meters", std::to_string(opening.vertical_offset_meters)},
+                        {"level_offset_meters", std::to_string(opening_level_offset)},
                         {"level_locked", opening_locked ? "true" : "false"},
                     }
                 ));
@@ -1010,6 +1017,10 @@ struct EngineSession::Impl {
     std::map<ElementId, LevelSpatialIndex> spatial_index_by_level{};
     std::uint64_t spatial_index_version{0};
     bool spatial_index_dirty{true};
+    // Final reports are pure reads after geometry regeneration. Keep this
+    // deliberately capped: one UI/FFI thread plus at most two compute workers
+    // is predictable on battery-powered mid-range mobile CPUs.
+    tbe::core::JobSystem final_compute_jobs{2};
 
     [[nodiscard]] Document& document() noexcept {
         return project.active_document();
@@ -1437,12 +1448,31 @@ ApiVoidResult recompute_impl(SessionImpl& impl, ComputeMode mode) {
             impl.document().recompute_all_rooms();
             impl.document().regenerate_dirty_geometry();
             (void)impl.document().dependency_graph();
-            impl.cached_rooms = build_room_cache(impl.document());
-            impl.cached_wall_schedule = build_wall_schedule_cache(impl.document());
-            impl.cached_opening_schedule = build_opening_schedule_cache(impl.document());
-            impl.cached_room_schedule = build_room_schedule_cache(impl.document());
-            impl.cached_material_takeoff = build_material_takeoff_cache(impl.document());
-            impl.cached_validation = to_validation_report(impl.document().validate_document());
+            const auto& document = impl.document();
+            auto rooms_job = impl.final_compute_jobs.submit([&document]() {
+                return build_room_cache(document);
+            });
+            auto wall_schedule_job = impl.final_compute_jobs.submit([&document]() {
+                return build_wall_schedule_cache(document);
+            });
+            auto opening_schedule_job = impl.final_compute_jobs.submit([&document]() {
+                return build_opening_schedule_cache(document);
+            });
+            auto room_schedule_job = impl.final_compute_jobs.submit([&document]() {
+                return build_room_schedule_cache(document);
+            });
+            auto takeoff_job = impl.final_compute_jobs.submit([&document]() {
+                return build_material_takeoff_cache(document);
+            });
+            auto validation_job = impl.final_compute_jobs.submit([&document]() {
+                return to_validation_report(document.validate_document());
+            });
+            impl.cached_rooms = rooms_job.get();
+            impl.cached_wall_schedule = wall_schedule_job.get();
+            impl.cached_opening_schedule = opening_schedule_job.get();
+            impl.cached_room_schedule = room_schedule_job.get();
+            impl.cached_material_takeoff = takeoff_job.get();
+            impl.cached_validation = validation_job.get();
             impl.freshness = FreshnessSummaryDTO{
                 .room_metrics = FreshnessState::Clean,
                 .geometry = FreshnessState::Clean,
@@ -1457,7 +1487,7 @@ ApiVoidResult recompute_impl(SessionImpl& impl, ComputeMode mode) {
 
         impl.freshness.room_metrics = FreshnessState::Computing;
         impl.freshness.geometry = FreshnessState::Computing;
-        impl.document().detect_rooms();
+        (void)impl.document().recompute_dirty_rooms();
         impl.document().regenerate_dirty_geometry();
         impl.cached_rooms = build_room_cache(impl.document());
         impl.freshness.room_metrics = FreshnessState::Clean;
@@ -2167,6 +2197,16 @@ ApiVoidResult EngineSession::set_opening_level_lock(std::uint64_t opening_id, bo
 ApiVoidResult EngineSession::set_opening_level(std::uint64_t opening_id, std::uint64_t level_id) {
     return apply_mutation(*impl_, "set_opening_level", [&](Document& document) {
         document.set_opening_level(opening_id, level_id);
+    });
+}
+
+ApiVoidResult EngineSession::set_opening_level_constraint(
+    std::uint64_t opening_id,
+    std::uint64_t level_id,
+    double level_offset_meters
+) {
+    return apply_mutation(*impl_, "set_opening_level_constraint", [&](Document& document) {
+        document.set_opening_level_constraint(opening_id, level_id, level_offset_meters);
     });
 }
 
