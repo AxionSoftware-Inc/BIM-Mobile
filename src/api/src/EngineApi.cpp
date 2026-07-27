@@ -15,6 +15,7 @@
 #include <set>
 #include <sstream>
 #include <stdexcept>
+#include <thread>
 #include <limits>
 #include <utility>
 
@@ -69,6 +70,18 @@ bool is_non_clean(FreshnessState state) {
 
 bool has_cached_state(FreshnessState state) {
     return state == FreshnessState::Clean || state == FreshnessState::Stale;
+}
+
+std::size_t recommended_final_compute_workers() {
+    // Keep one logical core available for Flutter/Filament and the OS. The
+    // remaining read-only final jobs may run in parallel; cap the pool so a
+    // large ARM CPU does not turn an explicit report/export into a thermal
+    // spike. This is a compute budget, not a "two-core engine" limit.
+    const auto logical_cores = std::max(1u, std::thread::hardware_concurrency());
+    if (logical_cores <= 2u) {
+        return 1;
+    }
+    return std::min<std::size_t>(4u, static_cast<std::size_t>(logical_cores - 1u));
 }
 
 double distance(Point2 left, Point2 right) {
@@ -1028,10 +1041,9 @@ struct EngineSession::Impl {
     std::map<ElementId, LevelSpatialIndex> spatial_index_by_level{};
     std::uint64_t spatial_index_version{0};
     bool spatial_index_dirty{true};
-    // Final reports are pure reads after geometry regeneration. Keep this
-    // deliberately capped: one UI/FFI thread plus at most two compute workers
-    // is predictable on battery-powered mid-range mobile CPUs.
-    tbe::core::JobSystem final_compute_jobs{2};
+    // Final reports are pure reads after geometry regeneration. The pool
+    // scales with the device but preserves one core for UI/OS responsiveness.
+    tbe::core::JobSystem final_compute_jobs{recommended_final_compute_workers()};
 
     [[nodiscard]] Document& document() noexcept {
         return project.active_document();
