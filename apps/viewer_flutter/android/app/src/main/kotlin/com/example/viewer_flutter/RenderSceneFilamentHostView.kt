@@ -240,6 +240,7 @@ internal class RenderSceneFilamentHostView(
       newScene.levels.map { level -> level.name to level.elevationMeters },
       sceneMetrics.bounds,
     )
+    selectionOverlay.setDisplayStyle(displayStyle)
     syncVisibility()
     refreshTintState()
     fitCamera()
@@ -341,7 +342,8 @@ internal class RenderSceneFilamentHostView(
 
   fun setDisplayStyle(style: String) {
     displayStyle = style
-    updateStatus(if (style == "wireframe") "Filament wireframe not yet enabled. Showing solid." else null)
+    selectionOverlay.setDisplayStyle(style)
+    updateStatus(if (style == "wireframe") "Wire uses native authoring edges over Filament faces." else null)
     invalidate()
   }
 
@@ -1055,6 +1057,7 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
   private var topDownZoom = 8.0
   private var topDown = true
   private var perspective = false
+  private var wireframe = false
   private val outline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
     style = Paint.Style.STROKE
     color = Color.argb(155, 24, 39, 52)
@@ -1092,9 +1095,10 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
     levelValues: List<Pair<String, Double>>,
     bounds: SceneBounds,
   ) {
-    // Bounding-box overlays have a predictable cost. Above this threshold we
-    // retain level guides but avoid turning a city-scale view into line soup.
-    objects = if (value.size <= 650) value else emptyList()
+    // Keep coverage across every building at city scale. Sampling avoids line
+    // soup but never makes a campus fall back to an unannotated old view.
+    val stride = max(1, (value.size + 649) / 650)
+    objects = value.filterIndexed { index, _ -> index % stride == 0 }
     levels = levelValues
     sceneBounds = bounds
     invalidate()
@@ -1103,6 +1107,17 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
   fun clearVisualScene() {
     objects = emptyList()
     levels = emptyList()
+    invalidate()
+  }
+
+  fun setDisplayStyle(style: String) {
+    wireframe = style == "wireframe"
+    outline.color = if (wireframe) {
+      Color.argb(225, 18, 30, 42)
+    } else {
+      Color.argb(72, 18, 30, 42)
+    }
+    outline.strokeWidth = resources.displayMetrics.density * if (wireframe) 1.15f else 0.65f
     invalidate()
   }
 
