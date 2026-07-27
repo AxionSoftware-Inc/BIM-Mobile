@@ -535,14 +535,24 @@ internal class RenderSceneFilamentHostView(
       Log.w(TAG, "All RenderScene objects were filtered out by kind visibility; rendering fallback set.")
     }
 
+    var failedObjects = 0
     for (objectData in objects) {
-      val entry = createRenderable(engine, material, objectData) ?: continue
-      renderables[objectData.elementId ?: renderables.size.toLong() + 1L] = entry
-      scene.addEntity(entry.entity)
-      entry.attached = true
-      attachedEntities.add(entry.entity)
+      try {
+        val entry = createRenderable(engine, material, objectData) ?: continue
+        renderables[objectData.elementId ?: renderables.size.toLong() + 1L] = entry
+        scene.addEntity(entry.entity)
+        entry.attached = true
+        attachedEntities.add(entry.entity)
+      } catch (error: Throwable) {
+        failedObjects += 1
+        Log.e(TAG, "Failed to create Filament renderable for ${objectData.kind}", error)
+      }
     }
     updateMetrics()
+    if (failedObjects > 0) {
+      statusMessage = "Filament skipped $failedObjects invalid renderables; loaded ${renderables.size}."
+      Log.w(TAG, statusMessage)
+    }
   }
 
   private fun createRenderable(
@@ -577,16 +587,10 @@ internal class RenderSceneFilamentHostView(
     )
     val bounds = transformBounds(geometry.bounds)
     RenderableManager.Builder(1)
-      .boundingBox(
-        Box(
-          bounds.min.x.toFloat(),
-          bounds.min.y.toFloat(),
-          bounds.min.z.toFloat(),
-          bounds.max.x.toFloat(),
-          bounds.max.y.toFloat(),
-          bounds.max.z.toFloat(),
-        )
-      )
+      // Filament Box is center + half extent, not min + max. Passing raw
+      // min/max makes transformed BIM meshes appear to have zero depth and
+      // lets frustum culling discard the entire scene.
+      .boundingBox(filamentBox(bounds))
       .geometry(0, PrimitiveType.TRIANGLES, vertexBuffer, indexBuffer, 0, geometry.indexCount)
       .material(0, materialInstance)
       .build(engine, entity)
@@ -638,7 +642,10 @@ internal class RenderSceneFilamentHostView(
     }
     vertexData.flip()
 
-    val indexData = IntBuffer.allocate(triangles.size * 3)
+    val indexData = ByteBuffer
+      .allocateDirect(triangles.size * 3 * Int.SIZE_BYTES)
+      .order(ByteOrder.nativeOrder())
+      .asIntBuffer()
     for (triangle in triangles) {
       indexData.put(triangle[0])
       indexData.put(triangle[1])
@@ -902,6 +909,19 @@ internal class RenderSceneFilamentHostView(
 
   private fun transformBounds(bounds: SceneBounds): SceneBounds {
     return boundsForPoints(boxCorners(bounds).map(::toFilamentPoint))
+  }
+
+  private fun filamentBox(bounds: SceneBounds): Box {
+    val centerX = (bounds.min.x + bounds.max.x) * 0.5
+    val centerY = (bounds.min.y + bounds.max.y) * 0.5
+    val centerZ = (bounds.min.z + bounds.max.z) * 0.5
+    val halfX = max((bounds.max.x - bounds.min.x) * 0.5, 0.001)
+    val halfY = max((bounds.max.y - bounds.min.y) * 0.5, 0.001)
+    val halfZ = max((bounds.max.z - bounds.min.z) * 0.5, 0.001)
+    return Box(
+      centerX.toFloat(), centerY.toFloat(), centerZ.toFloat(),
+      halfX.toFloat(), halfY.toFloat(), halfZ.toFloat(),
+    )
   }
 
   private fun toFilamentPoint(point: ScenePoint): ScenePoint {

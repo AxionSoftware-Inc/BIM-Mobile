@@ -63,10 +63,16 @@ internal fun toSceneState(payload: Any?): SceneState? {
     return null
   }
   val root = normalizeScenePayload(payload) ?: return null
+  // AndroidView creation parameters wrap the actual RenderScene. Method
+  // channel updates send the scene directly, so accept both contracts.
+  val sceneRoot = (root["renderScene"] as? Map<*, *>)
+    ?.entries
+    ?.associate { (key, value) -> key.toString() to value }
+    ?: root
   val warnings = mutableListOf<String>()
   val errors = mutableListOf<String>()
   val objects = mutableListOf<SceneObject>()
-  val rawObjects = root["objects"]
+  val rawObjects = sceneRoot["objects"]
   if (rawObjects is List<*>) {
     for (entry in rawObjects) {
       val objectMap = entry as? Map<*, *> ?: continue
@@ -91,10 +97,10 @@ internal fun toSceneState(payload: Any?): SceneState? {
   }
   val derivedVertexCount = objects.sumOf { it.mesh.positions.size }
   val derivedIndexCount = objects.sumOf { it.mesh.indices.size }
-  val sceneVersion = toInt(root["scene_version"]) ?: toInt(root["sceneVersion"]) ?: 1
-  val objectCount = toInt(root["object_count"]) ?: toInt(root["objectCount"]) ?: objects.size
-  val vertexCount = toInt(root["vertex_count"]) ?: toInt(root["vertexCount"]) ?: derivedVertexCount
-  val indexCount = toInt(root["index_count"]) ?: toInt(root["indexCount"]) ?: derivedIndexCount
+  val sceneVersion = toInt(sceneRoot["scene_version"]) ?: toInt(sceneRoot["sceneVersion"]) ?: 1
+  val objectCount = toInt(sceneRoot["object_count"]) ?: toInt(sceneRoot["objectCount"]) ?: objects.size
+  val vertexCount = toInt(sceneRoot["vertex_count"]) ?: toInt(sceneRoot["vertexCount"]) ?: derivedVertexCount
+  val indexCount = toInt(sceneRoot["index_count"]) ?: toInt(sceneRoot["indexCount"]) ?: derivedIndexCount
   if (warnings.isNotEmpty()) {
     // Intentionally left as a debug hook for the skeleton; Dart side owns user-facing diagnostics.
   }
@@ -103,8 +109,8 @@ internal fun toSceneState(payload: Any?): SceneState? {
   }
   return SceneState(
     sceneVersion = sceneVersion,
-    units = toStringValue(root["units"], "meters"),
-    coordinateSystem = toStringValue(root["coordinate_system"] ?: root["coordinateSystem"], "X/Y plan, Z up"),
+    units = toStringValue(sceneRoot["units"], "meters"),
+    coordinateSystem = toStringValue(sceneRoot["coordinate_system"] ?: sceneRoot["coordinateSystem"], "X/Y plan, Z up"),
     objectCount = objectCount,
     vertexCount = vertexCount,
     indexCount = indexCount,
