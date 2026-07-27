@@ -931,6 +931,8 @@ std::string Document::to_json() const {
             if (roof->overhang_meters.has_value()) {
                 out << ",\"overhang_meters\":" << *roof->overhang_meters;
             }
+            out << ",\"source_wall_ids\":";
+            write_ids(out, roof->source_wall_ids);
             out << ",\"boundary_polygon\":";
             write_points(out, roof->boundary_polygon);
             out << '}';
@@ -1254,6 +1256,11 @@ Document Document::from_json(std::string_view json) {
             }
             if (const auto found = roof.find("overhang_meters"); found != roof.end()) {
                 data.overhang_meters = as_number(found->second);
+            }
+            if (const auto found = roof.find("source_wall_ids"); found != roof.end()) {
+                for (const auto& id_value : as_array(found->second)) {
+                    data.source_wall_ids.push_back(as_id(id_value));
+                }
             }
             for (const auto& point_value : as_array(field(roof, "boundary_polygon"))) {
                 data.boundary_polygon.push_back(parse_point(point_value));

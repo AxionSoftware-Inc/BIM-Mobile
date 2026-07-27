@@ -834,6 +834,13 @@ void Document::set_wall_axis(ElementId wall_id, Line2 axis) {
 
     wall->axis = axis;
     mark_wall_dirty(wall_element);
+    for (auto& element : elements_) {
+        auto* roof = element.roof();
+        if (roof != nullptr && std::find(roof->source_wall_ids.begin(), roof->source_wall_ids.end(), wall_id) != roof->source_wall_ids.end()) {
+            roof->generated_geometry_dirty = true;
+            element.touch();
+        }
+    }
     refresh_dependencies_for_wall(wall_id);
     invalidate_dependency_graph_cache();
 }
@@ -1026,7 +1033,8 @@ ElementId Document::create_roof(
     ElementId material_id,
     ElementId assembly_id,
     std::optional<double> slope_degrees,
-    std::optional<double> overhang_meters
+    std::optional<double> overhang_meters,
+    std::vector<ElementId> source_wall_ids
 ) {
     (void)require_level(level_id);
     if (boundary_polygon.size() < 3 || thickness_meters <= 0.0) {
@@ -1049,6 +1057,7 @@ ElementId Document::create_roof(
     elements_.emplace_back(id, ElementKind::Roof, "Roof", RoofData{
         .level_id = level_id,
         .boundary_polygon = std::move(boundary_polygon),
+        .source_wall_ids = std::move(source_wall_ids),
         .roof_type = roof_type,
         .thickness_meters = thickness_meters,
         .slope_degrees = slope_degrees,
@@ -2415,16 +2424,26 @@ std::vector<ElementId> Document::create_elements_from_profile(const ProfileDraft
             normalized_ceiling_height_offset(draft.vertical_offset_meters)
         ));
         break;
-    case ProfileTargetKind::RoofBoundary:
+    case ProfileTargetKind::RoofBoundary: {
+        // Keep the engine-side wall relationship.  The UI may provide a
+        // preview polygon, but it must not become the only source of truth.
+        std::vector<ElementId> roof_source_wall_ids;
+        if (draft.mode == ProfileDraftMode::PickWalls) {
+            roof_source_wall_ids = build_pick_wall_loop(*this, draft.picked_wall_ids).ordered_wall_ids;
+        }
         created_ids.push_back(create_roof(
             draft.level_id,
             std::move(polygon),
             draft.roof_type,
             draft.thickness_meters > 0.0 ? draft.thickness_meters : 0.2,
             draft.material_id,
-            draft.assembly_id
+            draft.assembly_id,
+            std::nullopt,
+            std::nullopt,
+            std::move(roof_source_wall_ids)
         ));
         break;
+    }
     case ProfileTargetKind::WallPath:
         break;
     }
@@ -2487,6 +2506,22 @@ void Document::regenerate_dirty_geometry() {
 
         auto* roof = element.roof();
         if (roof != nullptr && roof->generated_geometry_dirty) {
+            if (!roof->source_wall_ids.empty()) {
+                // A wall can be moved through a short invalid intermediate
+                // state while the user drags it.  Retain the last valid roof
+                // footprint until all source walls close into a loop again.
+                try {
+                    auto refreshed = build_pick_wall_loop(*this, roof->source_wall_ids);
+                    if (!cyclic_polygon_equal(roof->boundary_polygon, refreshed.polygon)) {
+                        roof->boundary_polygon = std::move(refreshed.polygon);
+                        element.touch();
+                    }
+                    roof->source_wall_ids = std::move(refreshed.ordered_wall_ids);
+                } catch (const std::invalid_argument&) {
+                    // Keep the previously valid boundary; the wall edit itself
+                    // remains authoritative and can be completed or repaired.
+                }
+            }
             const auto thickness = roof->assembly_id != 0
                 ? (get_layered_assembly(roof->assembly_id) == nullptr ? roof->thickness_meters : layered_assembly_total_thickness(*get_layered_assembly(roof->assembly_id)))
                 : roof->thickness_meters;
@@ -2546,6 +2581,9 @@ DependencyGraph Document::build_dependency_graph() const {
             auto& geometry = graph.geometry_by_element[element.id()];
             append_unique(geometry, element.id());
             append_unique(graph.geometry_by_element[roof->level_id], element.id());
+            for (const auto wall_id : roof->source_wall_ids) {
+                append_unique(graph.geometry_by_element[wall_id], element.id());
+            }
         } else if (const auto* column = element.column()) {
             auto& geometry = graph.geometry_by_element[element.id()];
             append_unique(geometry, element.id());

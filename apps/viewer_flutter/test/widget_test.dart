@@ -243,6 +243,96 @@ void main() {
     );
   });
 
+  test('automatic roof footprint survives level move and save reload',
+      () async {
+    final api = TbeViewerApi.load();
+    final repository = ViewerRepository(api);
+    addTearDown(repository.dispose);
+    await repository.loadFromJson(
+      projectName: 'Automatic roof',
+      json: File('assets/sample_project.json').readAsStringSync(),
+    );
+    final wallIds = <int>[];
+    const points = <RenderScenePoint>[
+      RenderScenePoint(x: 12, y: 0, z: 0),
+      RenderScenePoint(x: 16, y: 0, z: 0),
+      RenderScenePoint(x: 16, y: 4, z: 0),
+      RenderScenePoint(x: 12, y: 4, z: 0),
+    ];
+    for (var index = 0; index < points.length; index += 1) {
+      await repository.createWall(
+        name: 'Roof footprint wall $index',
+        levelId: 1,
+        start: points[index],
+        end: points[(index + 1) % points.length],
+        thicknessMeters: 0.2,
+        heightMeters: 3.2,
+      );
+      final wallId = repository.lastCreatedElementId!;
+      wallIds.add(wallId);
+      await repository.setWallLevelConstraints(
+        wallId: wallId,
+        baseLevelId: 1,
+        topLevelId: 2,
+        heightMode: 1,
+      );
+    }
+    await repository.createProfile(
+      targetKind: 3,
+      draftMode: 2,
+      levelId: 2,
+      wallIds: wallIds,
+      points: const <RenderScenePoint>[],
+      closed: true,
+      thicknessMeters: 0.2,
+      heightMeters: 0,
+      verticalOffsetMeters: 0,
+      roofType: 0,
+    );
+    final roofId = repository.lastCreatedElementId;
+    expect(roofId, isNotNull);
+    final beforeRoof =
+        (await repository.currentRenderScene()).scene!.objectById(roofId)!;
+
+    await repository.moveLevelElevation(levelId: 2, elevationMeters: 4.45);
+    final after = (await repository.currentRenderScene()).scene!;
+    final afterRoof = after.objectById(roofId)!;
+    expect(afterRoof.kindKey, 'roof');
+    expect(afterRoof.levelId, 2);
+    expect(
+      afterRoof.bounds.min.z - beforeRoof.bounds.min.z,
+      closeTo(1.25, 1e-6),
+    );
+
+    // The roof remembers the picked wall loop in C++, not only its first
+    // Flutter preview polygon.  While the loop is edited it retains the last
+    // valid footprint, then follows it once the loop closes again.
+    const movedPoints = <RenderScenePoint>[
+      RenderScenePoint(x: 12, y: 0, z: 0),
+      RenderScenePoint(x: 17, y: 0, z: 0),
+      RenderScenePoint(x: 17, y: 4, z: 0),
+      RenderScenePoint(x: 12, y: 4, z: 0),
+    ];
+    for (var index = 0; index < wallIds.length; index += 1) {
+      await repository.setWallAxis(
+        wallId: wallIds[index],
+        start: movedPoints[index],
+        end: movedPoints[(index + 1) % movedPoints.length],
+      );
+    }
+    final rebuiltRoof =
+        (await repository.currentRenderScene()).scene!.objectById(roofId)!;
+    expect(rebuiltRoof.bounds.max.x, closeTo(17, 1e-6));
+
+    final saved = await repository.saveProjectJson();
+    expect(saved, contains('source_wall_ids'));
+    final restored = ViewerRepository(api);
+    addTearDown(restored.dispose);
+    await restored.loadFromJson(projectName: 'Restored roof', json: saved);
+    expect((await restored.currentRenderScene()).scene!.objectById(roofId),
+        isNotNull);
+  });
+
   test('wall mutation transaction returns a constrained wall in its snapshot',
       () async {
     final api = TbeViewerApi.load();

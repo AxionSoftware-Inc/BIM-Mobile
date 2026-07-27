@@ -59,7 +59,8 @@ public:
         ElementId material_id = 0,
         ElementId assembly_id = 0,
         std::optional<double> slope_degrees = std::nullopt,
-        std::optional<double> overhang_meters = std::nullopt
+        std::optional<double> overhang_meters = std::nullopt,
+        std::vector<ElementId> source_wall_ids = {}
     );
     ElementId create_column(
         ElementId level_id,

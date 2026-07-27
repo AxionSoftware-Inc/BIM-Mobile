@@ -244,6 +244,10 @@ struct SlabData {
 struct RoofData {
     ElementId level_id{};
     std::vector<Point2> boundary_polygon{};
+    // Present only for roofs created from a PickWalls profile.  The engine owns
+    // this relationship so a changed wall loop can regenerate the roof rather
+    // than leaving a stale, Flutter-side footprint behind.
+    std::vector<ElementId> source_wall_ids{};
     RoofType roof_type{RoofType::Flat};
     double thickness_meters{};
     std::optional<double> slope_degrees{};

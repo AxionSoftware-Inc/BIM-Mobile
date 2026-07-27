@@ -1486,6 +1486,89 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         _projectionMode == RenderSceneProjectionMode.isometric) {
       await _setProjectionMode(kDefaultElevationProjectionMode);
     }
+
+    if (mode == RenderSceneInteractionMode.addRoof) {
+      await _prepareAutomaticFlatRoof();
+    }
+  }
+
+  Future<void> _prepareAutomaticFlatRoof() async {
+    final scene = _scene;
+    final baseLevelId = _activeLevelId;
+    if (scene == null || baseLevelId == null) {
+      return;
+    }
+    final baseLevel = scene.levelById(baseLevelId);
+    final candidates = scene.objects
+        .where((object) => object.kindKey == 'wall')
+        .where((object) =>
+            (_metadataInt(object, 'base_level_id') ?? object.levelId) ==
+            baseLevelId)
+        .where((object) => object.elementId != null)
+        .toList(growable: false);
+    final topLevelIds = <int>{
+      for (final wall in candidates)
+        if ((_metadataInt(wall, 'top_level_id') ?? 0) > 0)
+          _metadataInt(wall, 'top_level_id')!,
+    };
+    final roofLevelId = topLevelIds.isNotEmpty
+        ? (topLevelIds.toList()
+              ..sort((left, right) =>
+                  (scene.levelById(left)?.elevationMeters ?? 0)
+                      .compareTo(scene.levelById(right)?.elevationMeters ?? 0)))
+            .last
+        : (scene.levels
+                .where((level) =>
+                    baseLevel != null &&
+                    level.elevationMeters > baseLevel.elevationMeters + 1e-6)
+                .toList()
+              ..sort((left, right) =>
+                  left.elevationMeters.compareTo(right.elevationMeters)))
+            .firstOrNull
+            ?.levelId;
+    if (roofLevelId == null) {
+      setState(() {
+        _editStatusMessage =
+            'Automatic roof uchun wall top level yoki undan yuqori level kerak.';
+      });
+      return;
+    }
+    final boundWalls = candidates
+        .where(
+            (wall) => (_metadataInt(wall, 'top_level_id') ?? 0) == roofLevelId)
+        .toList(growable: false);
+    final polygon = RenderSceneEditor.surfacePolygonForWalls(boundWalls);
+    if (polygon == null || polygon.length < 3) {
+      setState(() {
+        _editStatusMessage =
+            'Automatic roof faqat bitta yopiq outer wall loop topilganda yaratiladi. Murakkab plan uchun wall loop tanlang yoki footprint chizing.';
+      });
+      return;
+    }
+    final existingRoof = scene.objects.any(
+      (object) => object.kindKey == 'roof' && object.levelId == roofLevelId,
+    );
+    if (existingRoof) {
+      setState(() {
+        _editStatusMessage =
+            'Bu roof levelda roof bor. Duplicate yaratilmadi; avval mavjud roofni tahrir qiling.';
+      });
+      return;
+    }
+    _surfaceTool
+      ..drawMode = RenderSceneSurfaceDrawMode.pickWalls
+      ..replaceWallIds(
+        boundWalls.map((wall) => wall.elementId!).toList(growable: false),
+      )
+      ..replacePoints(polygon);
+    setState(() {
+      _activeLevelId = roofLevelId;
+      _editStatusMessage =
+          'Automatic flat roof footprint ready: ${boundWalls.length} wall, ${scene.levelById(roofLevelId)?.name ?? 'Level'}. Confirm bosing.';
+    });
+    _viewportController.setSurfaceDraft(
+      RenderSceneSurfaceDraft(kind: 'roof', points: polygon, closed: true),
+    );
   }
 
   Future<void> _clearDraft() async {
