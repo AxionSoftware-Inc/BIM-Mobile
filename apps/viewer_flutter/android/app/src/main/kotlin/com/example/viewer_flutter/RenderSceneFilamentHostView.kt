@@ -65,11 +65,15 @@ private data class FilamentRenderableEntry(
   val entity: Int,
   val vertexBuffer: VertexBuffer,
   val indexBuffer: IndexBuffer,
+  val edgeEntity: Int?,
+  val edgeIndexBuffer: IndexBuffer?,
   val material: Material,
   val materialInstance: MaterialInstance,
+  val edgeMaterialInstance: MaterialInstance?,
   val baseColor: FloatArray,
   val bounds: SceneBounds,
   var attached: Boolean = false,
+  var edgeAttached: Boolean = false,
 )
 
 private data class FilamentSceneMetrics(
@@ -624,13 +628,39 @@ internal class RenderSceneFilamentHostView(
       .material(0, materialInstance)
       .build(engine, entity)
 
+    val visual = toVisualObject(objectData)
+    val edgeIndexBuffer = visual.featureEdges.takeIf { it.isNotEmpty() }?.let { edges ->
+      val data = ByteBuffer.allocateDirect(edges.size * 2 * Int.SIZE_BYTES)
+        .order(ByteOrder.nativeOrder()).asIntBuffer()
+      for ((first, second) in edges) { data.put(first); data.put(second) }
+      data.flip()
+      IndexBuffer.Builder().indexCount(edges.size * 2).bufferType(IndexBuffer.Builder.IndexType.UINT)
+        .build(engine).also { it.setBuffer(engine, data) }
+    }
+    val edgeEntity = edgeIndexBuffer?.let { EntityManager.get().create() }
+    val edgeMaterialInstance = edgeEntity?.let {
+      sharedMaterial.createInstance().also { instance ->
+        instance.setParameter("baseColor", Colors.RgbaType.LINEAR, 0.08f, 0.12f, 0.16f, 1.0f)
+      }
+    }
+    if (edgeEntity != null && edgeIndexBuffer != null && edgeMaterialInstance != null) {
+      RenderableManager.Builder(1)
+        .boundingBox(filamentBox(bounds))
+        .geometry(0, PrimitiveType.LINES, vertexBuffer, edgeIndexBuffer, 0, visual.featureEdges.size * 2)
+        .material(0, edgeMaterialInstance)
+        .build(engine, edgeEntity)
+    }
+
     return FilamentRenderableEntry(
       objectData = objectData,
       entity = entity,
       vertexBuffer = vertexBuffer,
       indexBuffer = indexBuffer,
+      edgeEntity = edgeEntity,
+      edgeIndexBuffer = edgeIndexBuffer,
       material = sharedMaterial,
       materialInstance = materialInstance,
+      edgeMaterialInstance = edgeMaterialInstance,
       baseColor = baseColor,
       bounds = bounds,
     )
@@ -702,6 +732,16 @@ internal class RenderSceneFilamentHostView(
         scene.removeEntity(entry.entity)
         entry.attached = false
       }
+      val edgeVisible = displayStyle != "shaded" &&
+        (visibleKinds.isEmpty() || visibleKinds.contains(normalizeKind(entry.objectData.kind)))
+      val edgeEntity = entry.edgeEntity
+      if (edgeEntity != null && edgeVisible && !entry.edgeAttached) {
+        scene.addEntity(edgeEntity)
+        entry.edgeAttached = true
+      } else if (edgeEntity != null && !edgeVisible && entry.edgeAttached) {
+        scene.removeEntity(edgeEntity)
+        entry.edgeAttached = false
+      }
     }
   }
 
@@ -734,6 +774,14 @@ internal class RenderSceneFilamentHostView(
         color[2],
         color[3],
       )
+      entry.edgeMaterialInstance?.setParameter(
+        "baseColor",
+        Colors.RgbaType.LINEAR,
+        if (active || selected) 0.08f else 0.12f,
+        if (active || selected) 0.32f else 0.16f,
+        if (active || selected) 0.95f else 0.20f,
+        1.0f,
+      )
     }
   }
 
@@ -748,11 +796,18 @@ internal class RenderSceneFilamentHostView(
       if (entry.attached) {
         scene?.removeEntity(entry.entity)
       }
+      if (entry.edgeAttached) {
+        entry.edgeEntity?.let { scene?.removeEntity(it) }
+      }
       engine.destroyEntity(entry.entity)
       engine.destroyMaterialInstance(entry.materialInstance)
+      entry.edgeEntity?.let { engine.destroyEntity(it) }
+      entry.edgeMaterialInstance?.let { engine.destroyMaterialInstance(it) }
       engine.destroyVertexBuffer(entry.vertexBuffer)
       engine.destroyIndexBuffer(entry.indexBuffer)
+      entry.edgeIndexBuffer?.let { engine.destroyIndexBuffer(it) }
       EntityManager.get().destroy(entry.entity)
+      entry.edgeEntity?.let { EntityManager.get().destroy(it) }
     }
     renderables.clear()
     attachedEntities.clear()
