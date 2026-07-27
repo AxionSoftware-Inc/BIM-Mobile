@@ -353,6 +353,7 @@ internal class RenderSceneFilamentHostView(
     displayStyle = style
     selectionOverlay.setDisplayStyle(style)
     syncVisibility()
+    refreshTintState()
     updateStatus(if (style == "wireframe") "Wireframe: faces hidden, mesh edges shown." else null)
     invalidate()
   }
@@ -709,11 +710,21 @@ internal class RenderSceneFilamentHostView(
       val selected = entry.objectData.elementId != null && selectedElementIds.contains(entry.objectData.elementId)
       val active = entry.objectData.elementId != null && entry.objectData.elementId == selectedElementId
       val highlighted = entry.objectData.elementId != null && entry.objectData.elementId == highlightedElementId
+      val solidColor = if (displayStyle == "solid") {
+        floatArrayOf(
+          entry.baseColor[0] * 0.78f,
+          entry.baseColor[1] * 0.78f,
+          entry.baseColor[2] * 0.78f,
+          entry.baseColor[3],
+        )
+      } else {
+        entry.baseColor
+      }
       val color = when {
         active -> floatArrayOf(0.08f, 0.28f, 0.82f, 1f)
         selected -> floatArrayOf(0.18f, 0.45f, 0.95f, 1f)
         highlighted -> floatArrayOf(0.92f, 0.34f, 0.16f, 1f)
-        else -> entry.baseColor
+        else -> solidColor
       }
       entry.materialInstance.setParameter(
         "baseColor",
@@ -1004,7 +1015,10 @@ internal class RenderSceneFilamentHostView(
       bounds.max.x - bounds.min.x,
       max(bounds.max.y - bounds.min.y, bounds.max.z - bounds.min.z),
     )
-    return max(span * 0.15, 1.25)
+    // Keep an orbit camera outside dense multi-storey geometry. This avoids
+    // near-plane crossings and depth flicker while direct selection remains
+    // available for close inspection.
+    return max(span * 0.30, 1.75)
   }
 
   private fun boxCorners(bounds: SceneBounds): List<ScenePoint> {
@@ -1221,10 +1235,12 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
 
   fun setDisplayStyle(style: String) {
     wireframe = style == "wireframe"
-    showObjectEdges = style != "shaded"
+    // Canvas has no access to Filament's depth buffer. Showing it over Solid
+    // faces would reveal hidden internal edges, so only Wire owns this pass.
+    showObjectEdges = style == "wireframe"
     outline.color = when (style) {
       "wireframe" -> Color.argb(225, 18, 30, 42)
-      "solid" -> Color.argb(72, 18, 30, 42)
+      "solid" -> Color.TRANSPARENT
       else -> Color.TRANSPARENT
     }
     outline.strokeWidth = resources.displayMetrics.density * if (wireframe) 1.15f else 0.65f

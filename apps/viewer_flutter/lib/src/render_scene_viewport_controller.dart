@@ -558,7 +558,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
       _sceneBounds.width,
       math.max(_sceneBounds.depth, _sceneBounds.height),
     );
-    final minimumDistance = math.max(maxExtent * 0.15, 1.25);
+    final minimumDistance = math.max(maxExtent * 0.30, 1.75);
     final maximumZoom = _orbitDistance / minimumDistance;
     _orbitZoomScale = (_orbitZoomScale * scaleDelta)
         .clamp(0.005, math.max(maximumZoom, 1.0));
