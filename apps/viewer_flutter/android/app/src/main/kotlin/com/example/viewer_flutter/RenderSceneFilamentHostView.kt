@@ -231,7 +231,7 @@ internal class RenderSceneFilamentHostView(
       filamentView?.camera = camera
       filamentView?.viewport = Viewport(0, 0, 1, 1)
       // Paper-grey canvas keeps the Revit-style white model readable.
-      scene?.skybox = Skybox.Builder().color(0.82f, 0.83f, 0.84f, 1.0f).build(filamentEngine)
+      scene?.skybox = Skybox.Builder().color(0.68f, 0.69f, 0.70f, 1.0f).build(filamentEngine)
       statusMessage = "Filament renderer created."
       Log.i(TAG, statusMessage)
       updateStatus()
