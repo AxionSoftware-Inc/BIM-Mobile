@@ -235,6 +235,8 @@ TbeApiStatusCode tbe_set_opening_level_lock(TbeEngineHandle* handle, uint64_t op
 TbeApiStatusCode tbe_set_opening_level(TbeEngineHandle* handle, uint64_t opening_id, uint64_t level_id);
 TbeApiStatusCode tbe_set_opening_level_constraint(TbeEngineHandle* handle, uint64_t opening_id, uint64_t level_id, double level_offset_meters);
 TbeApiStatusCode tbe_move_hosted_opening(TbeEngineHandle* handle, uint64_t opening_id, double offset_meters);
+TbeApiStatusCode tbe_resize_door(TbeEngineHandle* handle, uint64_t door_id, double width_meters, double height_meters);
+TbeApiStatusCode tbe_resize_window(TbeEngineHandle* handle, uint64_t window_id, double width_meters, double height_meters, double sill_height_meters);
 TbeApiStatusCode tbe_create_profile(
     TbeEngineHandle* handle,
     int target_kind,

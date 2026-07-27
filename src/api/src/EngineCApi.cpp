@@ -467,6 +467,20 @@ TbeApiStatusCode tbe_move_hosted_opening(TbeEngineHandle* handle, uint64_t openi
     return apply_result(handle, handle->session->move_hosted_opening(opening_id, offset_meters));
 }
 
+TbeApiStatusCode tbe_resize_door(TbeEngineHandle* handle, uint64_t door_id, double width_meters, double height_meters) {
+    if (handle == nullptr || handle->session == nullptr) {
+        return null_handle_error(handle);
+    }
+    return apply_result(handle, handle->session->resize_door(door_id, width_meters, height_meters));
+}
+
+TbeApiStatusCode tbe_resize_window(TbeEngineHandle* handle, uint64_t window_id, double width_meters, double height_meters, double sill_height_meters) {
+    if (handle == nullptr || handle->session == nullptr) {
+        return null_handle_error(handle);
+    }
+    return apply_result(handle, handle->session->resize_window(window_id, width_meters, height_meters, sill_height_meters));
+}
+
 TbeApiStatusCode tbe_create_profile(
     TbeEngineHandle* handle,
     int target_kind,

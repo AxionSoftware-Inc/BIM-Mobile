@@ -327,12 +327,30 @@ typedef _CreateWallDart = int Function(
   ffi.Pointer<ffi.Uint64>,
 );
 typedef _CreateStairNative = ffi.Int32 Function(
-  ffi.Pointer<ffi.Void>, ffi.Uint64, ffi.Uint64, TbeVec2, TbeVec2,
-  ffi.Double, ffi.Double, ffi.Double, ffi.Int32, ffi.Int32, ffi.Pointer<ffi.Uint64>,
+  ffi.Pointer<ffi.Void>,
+  ffi.Uint64,
+  ffi.Uint64,
+  TbeVec2,
+  TbeVec2,
+  ffi.Double,
+  ffi.Double,
+  ffi.Double,
+  ffi.Int32,
+  ffi.Int32,
+  ffi.Pointer<ffi.Uint64>,
 );
 typedef _CreateStairDart = int Function(
-  ffi.Pointer<ffi.Void>, int, int, TbeVec2, TbeVec2,
-  double, double, double, int, int, ffi.Pointer<ffi.Uint64>,
+  ffi.Pointer<ffi.Void>,
+  int,
+  int,
+  TbeVec2,
+  TbeVec2,
+  double,
+  double,
+  double,
+  int,
+  int,
+  ffi.Pointer<ffi.Uint64>,
 );
 typedef _CreateDoorNative = ffi.Int32 Function(
   ffi.Pointer<ffi.Void>,
@@ -414,6 +432,14 @@ typedef _MoveHostedOpeningDart = int Function(
   int,
   double,
 );
+typedef _ResizeDoorNative = ffi.Int32 Function(
+    ffi.Pointer<ffi.Void>, ffi.Uint64, ffi.Double, ffi.Double);
+typedef _ResizeDoorDart = int Function(
+    ffi.Pointer<ffi.Void>, int, double, double);
+typedef _ResizeWindowNative = ffi.Int32 Function(
+    ffi.Pointer<ffi.Void>, ffi.Uint64, ffi.Double, ffi.Double, ffi.Double);
+typedef _ResizeWindowDart = int Function(
+    ffi.Pointer<ffi.Void>, int, double, double, double);
 typedef _CreateProfileNative = ffi.Int32 Function(
   ffi.Pointer<ffi.Void>,
   ffi.Int32,
@@ -634,6 +660,12 @@ class TbeViewerApi {
             _SetOpeningLevelConstraintDart>('tbe_set_opening_level_constraint'),
         _moveHostedOpening = library.lookupFunction<_MoveHostedOpeningNative,
             _MoveHostedOpeningDart>('tbe_move_hosted_opening'),
+        _resizeDoor =
+            library.lookupFunction<_ResizeDoorNative, _ResizeDoorDart>(
+                'tbe_resize_door'),
+        _resizeWindow =
+            library.lookupFunction<_ResizeWindowNative, _ResizeWindowDart>(
+                'tbe_resize_window'),
         _createProfile =
             library.lookupFunction<_CreateProfileNative, _CreateProfileDart>(
                 'tbe_create_profile'),
@@ -777,6 +809,8 @@ class TbeViewerApi {
   final _SetOpeningLevelDart _setOpeningLevel;
   final _SetOpeningLevelConstraintDart _setOpeningLevelConstraint;
   final _MoveHostedOpeningDart _moveHostedOpening;
+  final _ResizeDoorDart _resizeDoor;
+  final _ResizeWindowDart _resizeWindow;
   final _CreateProfileDart _createProfile;
   final _CreateFloorSystemForRoomDart _createFloorSystemForRoom;
   final _CreateCeilingSystemForRoomDart _createCeilingSystemForRoom;
@@ -999,6 +1033,24 @@ class TbeViewerApi {
     }
   }
 
+  void resizeDoor(ffi.Pointer<ffi.Void> handle,
+      {required int doorId,
+      required double widthMeters,
+      required double heightMeters}) {
+    _check(handle, _resizeDoor(handle, doorId, widthMeters, heightMeters));
+  }
+
+  void resizeWindow(ffi.Pointer<ffi.Void> handle,
+      {required int windowId,
+      required double widthMeters,
+      required double heightMeters,
+      required double sillHeightMeters}) {
+    _check(
+        handle,
+        _resizeWindow(
+            handle, windowId, widthMeters, heightMeters, sillHeightMeters));
+  }
+
   int createWall(
     ffi.Pointer<ffi.Void> handle,
     String name,
@@ -1067,9 +1119,20 @@ class TbeViewerApi {
       ..x = directionX
       ..y = directionY;
     try {
-      _check(handle, _createStair(handle, baseLevelId, topLevelId, start.ref,
-          direction.ref, widthMeters, totalRiseMeters, totalRunMeters,
-          riserCount, treadCount, out));
+      _check(
+          handle,
+          _createStair(
+              handle,
+              baseLevelId,
+              topLevelId,
+              start.ref,
+              direction.ref,
+              widthMeters,
+              totalRiseMeters,
+              totalRunMeters,
+              riserCount,
+              treadCount,
+              out));
       return out.value;
     } finally {
       calloc.free(start);
@@ -1931,6 +1994,33 @@ class ViewerRepository {
       throw TbeApiException('No loaded project');
     }
     _api.moveHostedOpening(handle, openingId, offsetMeters);
+    await _buildSnapshot(handle, _projectName ?? 'Project');
+    return currentRenderScene();
+  }
+
+  Future<RenderSceneLoadResult> resizeOpening({
+    required int openingId,
+    required String kind,
+    required double widthMeters,
+    required double heightMeters,
+    double sillHeightMeters = 0.0,
+  }) async {
+    final handle = _handle;
+    if (handle == null) throw TbeApiException('No loaded project');
+    if (kind == 'door') {
+      _api.resizeDoor(handle,
+          doorId: openingId,
+          widthMeters: widthMeters,
+          heightMeters: heightMeters);
+    } else if (kind == 'window') {
+      _api.resizeWindow(handle,
+          windowId: openingId,
+          widthMeters: widthMeters,
+          heightMeters: heightMeters,
+          sillHeightMeters: sillHeightMeters);
+    } else {
+      throw TbeApiException('Unsupported opening kind: $kind');
+    }
     await _buildSnapshot(handle, _projectName ?? 'Project');
     return currentRenderScene();
   }

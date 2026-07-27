@@ -3130,9 +3130,16 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         if (_engineBackedMode &&
             repository != null &&
             opening.elementId != null) {
-          final result = await repository.moveHostedOpening(
+          var result = await repository.moveHostedOpening(
             openingId: opening.elementId!,
             offsetMeters: _draftOpeningOffsetMeters,
+          );
+          result = await repository.resizeOpening(
+            openingId: opening.elementId!,
+            kind: opening.kindKey,
+            widthMeters: _draftOpeningWidthMeters,
+            heightMeters: _draftOpeningHeightMeters,
+            sillHeightMeters: _draftOpeningSillHeightMeters,
           );
           await _applyEngineSceneResult(
             result,
