@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
@@ -189,7 +190,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
 
     notifyListeners();
 
-    await _invoke('loadRenderScene', scene.toJson());
+    await _invoke('loadRenderSceneJson', jsonEncode(scene.toJson()));
     await _syncNativeBridge();
   }
 
@@ -642,7 +643,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
   Future<void> _syncNativeBridge() async {
     final currentScene = _scene;
     if (currentScene != null) {
-      await _invoke('loadRenderScene', currentScene.toJson());
+      await _invoke('loadRenderSceneJson', jsonEncode(currentScene.toJson()));
     }
 
     await _invoke('setVisibleKinds', _visibleKinds.toList());

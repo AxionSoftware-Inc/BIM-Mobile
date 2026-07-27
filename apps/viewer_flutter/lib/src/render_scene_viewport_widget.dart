@@ -137,18 +137,14 @@ class _AndroidRenderSceneView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scene = controller.scene;
-    // Platform-view creation parameters are the RenderScene itself. Wrapping
-    // this in controller/UI metadata caused Android's StandardMessageCodec
-    // path to initialize Filament with an empty object list. Runtime state is
-    // still synchronized by the per-view MethodChannel after creation.
-    final creationParams = scene?.toJson() ?? <String, Object?>{};
-
     return AndroidView(
       key: ValueKey<int>(controller.sceneRevision),
       viewType: 'tbe/render_scene_view',
       layoutDirection: TextDirection.ltr,
-      creationParams: creationParams,
+      // Scene transfer is intentionally deferred to the per-view channel as
+      // JSON. StandardMessageCodec creation payloads proved unreliable for
+      // deeply nested mesh arrays on several Android devices.
+      creationParams: const <String, Object?>{},
       creationParamsCodec: const StandardMessageCodec(),
       onPlatformViewCreated: controller.attachNativeBridge,
     );
