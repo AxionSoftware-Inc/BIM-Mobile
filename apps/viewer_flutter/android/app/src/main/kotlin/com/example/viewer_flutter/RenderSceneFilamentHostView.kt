@@ -751,11 +751,13 @@ internal class RenderSceneFilamentHostView(
       val active = entry.objectData.elementId != null && entry.objectData.elementId == selectedElementId
       val highlighted = entry.objectData.elementId != null && entry.objectData.elementId == highlightedElementId
       val solidColor = if (displayStyle == "solid") {
+        // Revit-like working view: neutral paper-white surfaces with graphite
+        // edges. Material/category colors remain available in Shaded.
         floatArrayOf(
-          entry.baseColor[0] * 0.78f,
-          entry.baseColor[1] * 0.78f,
-          entry.baseColor[2] * 0.78f,
-          entry.baseColor[3],
+          0.86f,
+          0.87f,
+          0.88f,
+          1.0f,
         )
       } else {
         entry.baseColor
@@ -778,8 +780,8 @@ internal class RenderSceneFilamentHostView(
         "baseColor",
         Colors.RgbaType.LINEAR,
         if (active || selected) 0.08f else 0.12f,
-        if (active || selected) 0.32f else 0.16f,
-        if (active || selected) 0.95f else 0.20f,
+        if (active || selected) 0.32f else 0.14f,
+        if (active || selected) 0.95f else 0.17f,
         1.0f,
       )
     }
