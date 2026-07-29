@@ -89,7 +89,16 @@ private data class NativeVisualObject(
   val kind: String,
   val points: List<ScenePoint>,
   val triangles: List<IntArray>,
-  val featureEdges: List<Pair<Int, Int>>,
+  val featureEdges: List<NativeVisualEdge>,
+)
+
+private data class NativeVisualEdge(
+  val first: Int,
+  val second: Int,
+  val triangleIndices: IntArray,
+  // A true architectural corner (roughly 70 degrees or sharper), not a
+  // tessellation seam. Solid can retain these after silhouette filtering.
+  val sharp: Boolean,
 )
 
 internal class RenderSceneFilamentHostView(
@@ -671,7 +680,7 @@ internal class RenderSceneFilamentHostView(
     val edgeIndexBuffer = visual.featureEdges.takeIf { it.isNotEmpty() }?.let { edges ->
       val data = ByteBuffer.allocateDirect(edges.size * 2 * Int.SIZE_BYTES)
         .order(ByteOrder.nativeOrder()).asIntBuffer()
-      for ((first, second) in edges) { data.put(first); data.put(second) }
+      for (edge in edges) { data.put(edge.first); data.put(edge.second) }
       data.flip()
       IndexBuffer.Builder().indexCount(edges.size * 2).bufferType(IndexBuffer.Builder.IndexType.UINT)
         .build(engine).also { it.setBuffer(engine, data) }
@@ -1221,10 +1230,15 @@ internal class RenderSceneFilamentHostView(
     )
   }
 
-  private fun meshFeatureEdges(points: List<ScenePoint>, triangles: List<IntArray>): List<Pair<Int, Int>> {
+  private fun meshFeatureEdges(points: List<ScenePoint>, triangles: List<IntArray>): List<NativeVisualEdge> {
     data class PointKey(val x: Long, val y: Long, val z: Long)
     data class Edge(val first: Int, val second: Int)
-    data class EdgeUse(val normal: DoubleArray, val firstRaw: Int, val secondRaw: Int)
+    data class EdgeUse(
+      val normal: DoubleArray,
+      val firstRaw: Int,
+      val secondRaw: Int,
+      val triangleIndex: Int,
+    )
     // Engine meshes intentionally duplicate vertices across face boundaries
     // for simple, robust generation. For visual topology those duplicates are
     // one vertex; without this weld every triangle diagonal becomes an edge
@@ -1240,14 +1254,14 @@ internal class RenderSceneFilamentHostView(
       canonicalIndices[index] = canonicalByPoint.getOrPut(key(point)) { canonicalByPoint.size }
     }
     val usesByEdge = linkedMapOf<Edge, MutableList<EdgeUse>>()
-    for (triangle in triangles) {
+    for ((triangleIndex, triangle) in triangles.withIndex()) {
       val normal = triangleNormal(points[triangle[0]], points[triangle[1]], points[triangle[2]])
       for ((first, second) in arrayOf(triangle[0] to triangle[1], triangle[1] to triangle[2], triangle[2] to triangle[0])) {
         val canonicalFirst = canonicalIndices[first]
         val canonicalSecond = canonicalIndices[second]
         if (canonicalFirst == canonicalSecond) continue
         val edge = if (canonicalFirst < canonicalSecond) Edge(canonicalFirst, canonicalSecond) else Edge(canonicalSecond, canonicalFirst)
-        usesByEdge.getOrPut(edge) { mutableListOf() }.add(EdgeUse(normal, first, second))
+        usesByEdge.getOrPut(edge) { mutableListOf() }.add(EdgeUse(normal, first, second, triangleIndex))
       }
     }
     return usesByEdge.values.mapNotNull { uses ->
@@ -1256,7 +1270,16 @@ internal class RenderSceneFilamentHostView(
       val feature = uses.size == 1 || uses.zipWithNext().any { (first, second) ->
         normalDot(first.normal, second.normal) < 0.90
       }
-      if (feature) uses.first().firstRaw to uses.first().secondRaw else null
+      if (!feature) return@mapNotNull null
+      val sharp = uses.size == 1 || uses.zipWithNext().any { (first, second) ->
+        normalDot(first.normal, second.normal) < 0.35
+      }
+      NativeVisualEdge(
+        first = uses.first().firstRaw,
+        second = uses.first().secondRaw,
+        triangleIndices = uses.map { it.triangleIndex }.distinct().toIntArray(),
+        sharp = sharp,
+      )
     }
   }
 
@@ -1378,10 +1401,7 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
     wireframe = style == "wireframe"
     // Solid uses only canonical, front-facing crease/silhouette lines. Canvas
     // line width is density-aware, unlike GPU line primitives on Android.
-    // Solid is a true shaded/clay view. Drawing every semantic feature edge
-    // here made it indistinguishable from Wire and exposed triangulation
-    // seams. The overlay still draws the active object's outline below.
-    showObjectEdges = style == "wireframe"
+    showObjectEdges = style == "wireframe" || style == "solid"
     outline.color = when (style) {
       "wireframe" -> Color.argb(225, 18, 30, 42)
       "solid" -> Color.argb(170, 37, 51, 65)
@@ -1428,10 +1448,10 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
       val selected = objectData.elementId != null && selectedIds.contains(objectData.elementId)
       if (!showObjectEdges && !selected) continue
       val edgePaint = if (selected) selectedOutline else outline
-      for ((firstIndex, secondIndex) in objectData.featureEdges) {
-        if (!wireframe && !selected && !isFrontFacingEdge(objectData, firstIndex, secondIndex)) continue
-        val first = projected.getOrNull(firstIndex)
-        val second = projected.getOrNull(secondIndex)
+      for (edge in objectData.featureEdges) {
+        if (!wireframe && !selected && !isVisibleSolidEdge(objectData, edge)) continue
+        val first = projected.getOrNull(edge.first)
+        val second = projected.getOrNull(edge.second)
         if (first != null && second != null) {
           canvas.drawLine(first.x, first.y, second.x, second.y, edgePaint)
         }
@@ -1451,10 +1471,9 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
     }
   }
 
-  private fun isFrontFacingEdge(
+  private fun isVisibleSolidEdge(
     objectData: NativeVisualObject,
-    firstIndex: Int,
-    secondIndex: Int,
+    edge: NativeVisualEdge,
   ): Boolean {
     if (topDown) return true
     val cosPitch = cos(pitchRadians)
@@ -1463,22 +1482,27 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
       center.y + distance * sin(pitchRadians),
       center.z + distance * cosPitch * sin(yawRadians),
     )
-    return objectData.triangles.any { triangle ->
-      if (!triangle.contains(firstIndex) || !triangle.contains(secondIndex)) {
-        false
-      } else {
-        val a = objectData.points[triangle[0]]
-        val b = objectData.points[triangle[1]]
-        val c = objectData.points[triangle[2]]
-        val normal = overlayTriangleNormal(a, b, c)
-        val centroidX = (a.x + b.x + c.x) / 3.0
-        val centroidY = (a.y + b.y + c.y) / 3.0
-        val centroidZ = (a.z + b.z + c.z) / 3.0
-        normal[0] * (eye.x - centroidX) +
-          normal[1] * (eye.y - centroidY) +
-          normal[2] * (eye.z - centroidZ) > 1e-5
-      }
+    val facing = mutableListOf<Boolean>()
+    for (triangleIndex in edge.triangleIndices) {
+      val triangle = objectData.triangles.getOrNull(triangleIndex) ?: continue
+      val a = objectData.points[triangle[0]]
+      val b = objectData.points[triangle[1]]
+      val c = objectData.points[triangle[2]]
+      val normal = overlayTriangleNormal(a, b, c)
+      val centroidX = (a.x + b.x + c.x) / 3.0
+      val centroidY = (a.y + b.y + c.y) / 3.0
+      val centroidZ = (a.z + b.z + c.z) / 3.0
+      facing += normal[0] * (eye.x - centroidX) +
+        normal[1] * (eye.y - centroidY) +
+        normal[2] * (eye.z - centroidZ) > 1e-5
     }
+    if (facing.isEmpty()) return false
+    // An open boundary is visible only when its face faces the camera. An
+    // edge between front/back faces is a real silhouette. Keep only very
+    // sharp front-facing corners as architectural creases.
+    if (facing.size == 1) return facing.first()
+    if (facing.any() && facing.any { !it }) return true
+    return edge.sharp && facing.all { it }
   }
 
   private fun overlayTriangleNormal(
