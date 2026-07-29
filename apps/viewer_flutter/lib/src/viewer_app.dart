@@ -569,8 +569,6 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         'window',
         'room',
         'column',
-        'beam',
-        'stair',
       };
       final visible = preferred.intersection(available);
       if (visible.isNotEmpty) {
