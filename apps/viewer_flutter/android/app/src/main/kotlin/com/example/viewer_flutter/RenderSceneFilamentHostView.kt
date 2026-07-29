@@ -67,6 +67,7 @@ private data class FilamentRenderableEntry(
   val vertexBuffer: VertexBuffer,
   val indexBuffer: IndexBuffer,
   val edgeEntity: Int?,
+  val edgeVertexBuffer: VertexBuffer?,
   val edgeIndexBuffer: IndexBuffer?,
   val material: Material,
   val materialInstance: MaterialInstance,
@@ -677,24 +678,31 @@ internal class RenderSceneFilamentHostView(
       .build(engine, entity)
 
     val visual = toVisualObject(objectData)
-    val edgeIndexBuffer = visual.featureEdges.takeIf { it.isNotEmpty() }?.let { edges ->
-      val data = ByteBuffer.allocateDirect(edges.size * 2 * Int.SIZE_BYTES)
-        .order(ByteOrder.nativeOrder()).asIntBuffer()
-      for (edge in edges) { data.put(edge.first); data.put(edge.second) }
-      data.flip()
-      IndexBuffer.Builder().indexCount(edges.size * 2).bufferType(IndexBuffer.Builder.IndexType.UINT)
-        .build(engine).also { it.setBuffer(engine, data) }
+    // GPU depth-tested architectural border pass. GLES line primitives are
+    // often clamped to one pixel on Android, therefore sharp semantic edges
+    // are batched as one very thin triangle mesh instead of PrimitiveType.LINES.
+    val edgeGeometry = edgeGeometry(visual.points, visual.featureEdges.filter { it.sharp })
+    val edgeVertexBuffer = edgeGeometry?.let { edge ->
+      VertexBuffer.Builder()
+        .bufferCount(1)
+        .vertexCount(edge.vertexCount)
+        .attribute(VertexBuffer.VertexAttribute.POSITION, 0, VertexBuffer.AttributeType.FLOAT3, 0, 12)
+        .build(engine).also { it.setBufferAt(engine, 0, edge.vertexData) }
     }
-    val edgeEntity = edgeIndexBuffer?.let { EntityManager.get().create() }
+    val edgeIndexBuffer = edgeGeometry?.let { edge ->
+      IndexBuffer.Builder().indexCount(edge.indexCount).bufferType(IndexBuffer.Builder.IndexType.UINT)
+        .build(engine).also { it.setBuffer(engine, edge.indexData) }
+    }
+    val edgeEntity = if (edgeVertexBuffer != null && edgeIndexBuffer != null) EntityManager.get().create() else null
     val edgeMaterialInstance = edgeEntity?.let {
       sharedMaterial.createInstance().also { instance ->
         instance.setParameter("baseColor", Colors.RgbaType.LINEAR, 0.08f, 0.12f, 0.16f, 1.0f)
       }
     }
-    if (edgeEntity != null && edgeIndexBuffer != null && edgeMaterialInstance != null) {
+    if (edgeEntity != null && edgeVertexBuffer != null && edgeIndexBuffer != null && edgeGeometry != null && edgeMaterialInstance != null) {
       RenderableManager.Builder(1)
         .boundingBox(filamentBox(bounds))
-        .geometry(0, PrimitiveType.LINES, vertexBuffer, edgeIndexBuffer, 0, visual.featureEdges.size * 2)
+        .geometry(0, PrimitiveType.TRIANGLES, edgeVertexBuffer, edgeIndexBuffer, 0, edgeGeometry.indexCount)
         .material(0, edgeMaterialInstance)
         .build(engine, edgeEntity)
     }
@@ -705,6 +713,7 @@ internal class RenderSceneFilamentHostView(
       vertexBuffer = vertexBuffer,
       indexBuffer = indexBuffer,
       edgeEntity = edgeEntity,
+      edgeVertexBuffer = edgeVertexBuffer,
       edgeIndexBuffer = edgeIndexBuffer,
       material = sharedMaterial,
       materialInstance = materialInstance,
@@ -767,6 +776,59 @@ internal class RenderSceneFilamentHostView(
     )
   }
 
+  private fun edgeGeometry(points: List<ScenePoint>, edges: List<NativeVisualEdge>): GeometryData? {
+    val validEdges = edges.filter { it.first in points.indices && it.second in points.indices }
+    if (validEdges.isEmpty()) return null
+    // 18 mm is intentionally visual-only: it is thick enough for a tablet
+    // Solid view, but does not change the semantic BIM geometry or picking.
+    val radius = 0.009
+    val vertexData = ByteBuffer.allocateDirect(validEdges.size * 8 * 12).order(ByteOrder.nativeOrder())
+    val indexData = ByteBuffer.allocateDirect(validEdges.size * 36 * Int.SIZE_BYTES)
+      .order(ByteOrder.nativeOrder()).asIntBuffer()
+    val cubeIndices = intArrayOf(
+      0, 1, 2, 0, 2, 3, 4, 6, 5, 4, 7, 6,
+      0, 4, 5, 0, 5, 1, 1, 5, 6, 1, 6, 2,
+      2, 6, 7, 2, 7, 3, 3, 7, 4, 3, 4, 0,
+    )
+    var vertexOffset = 0
+    for (edge in validEdges) {
+      val first = points[edge.first]
+      val second = points[edge.second]
+      val dx = second.x - first.x; val dy = second.y - first.y; val dz = second.z - first.z
+      val length = kotlin.math.sqrt(dx * dx + dy * dy + dz * dz)
+      if (length <= 1e-8) continue
+      val axisX = dx / length; val axisY = dy / length; val axisZ = dz / length
+      val refX = if (kotlin.math.abs(axisY) < 0.85) 0.0 else 1.0
+      val refY = if (kotlin.math.abs(axisY) < 0.85) 1.0 else 0.0
+      val ux0 = axisY * 0.0 - axisZ * refY
+      val uy0 = axisZ * refX - axisX * 0.0
+      val uz0 = axisX * refY - axisY * refX
+      val uLength = kotlin.math.sqrt(ux0 * ux0 + uy0 * uy0 + uz0 * uz0).coerceAtLeast(1e-9)
+      val ux = ux0 / uLength * radius; val uy = uy0 / uLength * radius; val uz = uz0 / uLength * radius
+      val vx = axisY * uz - axisZ * uy
+      val vy = axisZ * ux - axisX * uz
+      val vz = axisX * uy - axisY * ux
+      val corners = arrayOf(
+        doubleArrayOf(first.x - ux - vx, first.y - uy - vy, first.z - uz - vz),
+        doubleArrayOf(first.x + ux - vx, first.y + uy - vy, first.z + uz - vz),
+        doubleArrayOf(first.x + ux + vx, first.y + uy + vy, first.z + uz + vz),
+        doubleArrayOf(first.x - ux + vx, first.y - uy + vy, first.z - uz + vz),
+        doubleArrayOf(second.x - ux - vx, second.y - uy - vy, second.z - uz - vz),
+        doubleArrayOf(second.x + ux - vx, second.y + uy - vy, second.z + uz - vz),
+        doubleArrayOf(second.x + ux + vx, second.y + uy + vy, second.z + uz + vz),
+        doubleArrayOf(second.x - ux + vx, second.y - uy + vy, second.z - uz + vz),
+      )
+      for (corner in corners) {
+        vertexData.putFloat(corner[0].toFloat()); vertexData.putFloat(corner[1].toFloat()); vertexData.putFloat(corner[2].toFloat())
+      }
+      for (index in cubeIndices) indexData.put(vertexOffset + index)
+      vertexOffset += 8
+    }
+    if (vertexOffset == 0) return null
+    vertexData.flip(); indexData.flip()
+    return GeometryData(vertexOffset, (vertexOffset / 8) * 36, vertexData, indexData, boundsForPoints(points))
+  }
+
   private fun syncVisibility() {
     val scene = scene ?: return
     for (entry in renderables.values) {
@@ -779,11 +841,7 @@ internal class RenderSceneFilamentHostView(
         scene.removeEntity(entry.entity)
         entry.attached = false
       }
-      // Solid outlines are rendered by the screen-space authoring overlay.
-      // Mobile drivers commonly clamp native line primitives to one physical
-      // pixel, while the overlay can stay legible at a device-independent dp
-      // width. Keep Filament line primitives exclusively for Wire.
-      val edgeVisible = displayStyle == "wireframe" &&
+      val edgeVisible = displayStyle == "solid" &&
         (visibleKinds.isEmpty() || visibleKinds.contains(normalizeKind(entry.objectData.kind)))
       val edgeEntity = entry.edgeEntity
       if (edgeEntity != null && edgeVisible && !entry.edgeAttached) {
@@ -858,6 +916,7 @@ internal class RenderSceneFilamentHostView(
       entry.edgeMaterialInstance?.let { engine.destroyMaterialInstance(it) }
       engine.destroyVertexBuffer(entry.vertexBuffer)
       engine.destroyIndexBuffer(entry.indexBuffer)
+      entry.edgeVertexBuffer?.let { engine.destroyVertexBuffer(it) }
       entry.edgeIndexBuffer?.let { engine.destroyIndexBuffer(it) }
       EntityManager.get().destroy(entry.entity)
       entry.edgeEntity?.let { EntityManager.get().destroy(it) }
@@ -1401,7 +1460,9 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
     wireframe = style == "wireframe"
     // Solid uses only canonical, front-facing crease/silhouette lines. Canvas
     // line width is density-aware, unlike GPU line primitives on Android.
-    showObjectEdges = style == "wireframe" || style == "solid"
+    // Solid borders are a depth-tested Filament mesh. The overlay is retained
+    // for Wire and selected-object feedback only.
+    showObjectEdges = style == "wireframe"
     outline.color = when (style) {
       "wireframe" -> Color.argb(225, 18, 30, 42)
       "solid" -> Color.argb(170, 37, 51, 65)
