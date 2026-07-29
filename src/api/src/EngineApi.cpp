@@ -103,21 +103,31 @@ Project make_residential_template(int building_count, int story_count) {
     const auto concrete = document.create_material("Template Concrete", tbe::core::MaterialCategory::Structural, 2400.0, 110.0);
     const auto masonry = document.create_material("Template Masonry", tbe::core::MaterialCategory::Structural, 1800.0, 90.0);
     const auto gypsum = document.create_material("Template Gypsum", tbe::core::MaterialCategory::Finish, 850.0, 28.0);
+    const auto insulation = document.create_material("Template Insulation", tbe::core::MaterialCategory::Insulation, 35.0, 18.0);
+    const auto tile = document.create_material("Template Tile", tbe::core::MaterialCategory::Finish, 2100.0, 36.0);
     const auto wall_assembly = document.create_layered_assembly(tbe::core::LayeredAssemblyKind::Wall, "Residential Wall", {
         tbe::core::WallAssemblyLayer{.material_id = masonry, .thickness_meters = 0.20, .function = tbe::core::WallLayerFunction::Core, .priority = 100, .structural = true},
-        tbe::core::WallAssemblyLayer{.material_id = gypsum, .thickness_meters = 0.02, .function = tbe::core::WallLayerFunction::InteriorFinish, .priority = 10},
+        tbe::core::WallAssemblyLayer{.material_id = insulation, .thickness_meters = 0.08, .function = tbe::core::WallLayerFunction::Insulation, .priority = 70},
+        tbe::core::WallAssemblyLayer{.material_id = gypsum, .thickness_meters = 0.015, .function = tbe::core::WallLayerFunction::InteriorFinish, .priority = 10},
+        tbe::core::WallAssemblyLayer{.material_id = masonry, .thickness_meters = 0.012, .function = tbe::core::WallLayerFunction::ExteriorFinish, .priority = 5},
     });
     const auto floor_assembly = document.create_layered_assembly(tbe::core::LayeredAssemblyKind::Floor, "Residential Floor", {
         tbe::core::WallAssemblyLayer{.material_id = concrete, .thickness_meters = 0.18, .function = tbe::core::WallLayerFunction::Core},
+        tbe::core::WallAssemblyLayer{.material_id = tile, .thickness_meters = 0.015, .function = tbe::core::WallLayerFunction::InteriorFinish},
+        tbe::core::WallAssemblyLayer{.material_id = gypsum, .thickness_meters = 0.015, .function = tbe::core::WallLayerFunction::InteriorFinish},
     });
     const auto ceiling_assembly = document.create_layered_assembly(tbe::core::LayeredAssemblyKind::Ceiling, "Residential Ceiling", {
         tbe::core::WallAssemblyLayer{.material_id = gypsum, .thickness_meters = 0.015, .function = tbe::core::WallLayerFunction::InteriorFinish},
+        tbe::core::WallAssemblyLayer{.material_id = insulation, .thickness_meters = 0.04, .function = tbe::core::WallLayerFunction::Insulation},
     });
     const auto roof_assembly = document.create_layered_assembly(tbe::core::LayeredAssemblyKind::Roof, "Residential Roof", {
         tbe::core::WallAssemblyLayer{.material_id = concrete, .thickness_meters = 0.20, .function = tbe::core::WallLayerFunction::Core, .priority = 100, .structural = true},
+        tbe::core::WallAssemblyLayer{.material_id = insulation, .thickness_meters = 0.10, .function = tbe::core::WallLayerFunction::Insulation, .priority = 70},
+        tbe::core::WallAssemblyLayer{.material_id = gypsum, .thickness_meters = 0.015, .function = tbe::core::WallLayerFunction::InteriorFinish, .priority = 10},
     });
     const auto stair_assembly = document.create_layered_assembly(tbe::core::LayeredAssemblyKind::Stair, "Residential Stair", {
         tbe::core::WallAssemblyLayer{.material_id = concrete, .thickness_meters = 0.16, .function = tbe::core::WallLayerFunction::Core, .priority = 100, .structural = true},
+        tbe::core::WallAssemblyLayer{.material_id = tile, .thickness_meters = 0.02, .function = tbe::core::WallLayerFunction::InteriorFinish, .priority = 10},
     });
 
     std::vector<ElementId> levels;
@@ -223,7 +233,7 @@ Project make_residential_template(int building_count, int story_count) {
                 top_perimeter = perimeter;
             }
         }
-        document.create_roof(levels.back(), footprint, tbe::core::RoofType::Flat, 0.20, concrete, roof_assembly, std::nullopt, std::nullopt, std::move(top_perimeter));
+        document.create_roof(levels.back(), footprint, tbe::core::RoofType::SimpleGable, 0.20, concrete, roof_assembly, 28.0, 0.35, std::move(top_perimeter));
     }
     document.set_automatic_wall_join_enabled(true);
     document.clear_dirty_room_requests();
