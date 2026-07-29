@@ -1107,7 +1107,7 @@ internal class RenderSceneFilamentHostView(
     // Keep an orbit camera outside dense multi-storey geometry. This avoids
     // near-plane crossings and depth flicker while direct selection remains
     // available for close inspection.
-    return max(span * 0.42, 2.1)
+    return max(span * 0.30, 1.75)
   }
 
   private fun boxCorners(bounds: SceneBounds): List<ScenePoint> {
@@ -1342,15 +1342,15 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
 
   fun setDisplayStyle(style: String) {
     wireframe = style == "wireframe"
-    // Canvas has no access to Filament's depth buffer. Showing it over Solid
-    // faces would reveal hidden internal edges, so only Wire owns this pass.
-    showObjectEdges = style != "shaded"
+    // Canvas has no access to Filament's depth buffer. In Solid, only the
+    // active selection is outlined; all-model edges belong exclusively to Wire.
+    showObjectEdges = style == "wireframe"
     outline.color = when (style) {
       "wireframe" -> Color.argb(225, 18, 30, 42)
       "solid" -> Color.argb(170, 37, 51, 65)
       else -> Color.TRANSPARENT
     }
-    outline.strokeWidth = resources.displayMetrics.density * if (wireframe) 1.45f else 1.45f
+    outline.strokeWidth = resources.displayMetrics.density * if (wireframe) 1.45f else 1.15f
     invalidate()
   }
 
@@ -1386,9 +1386,10 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
 
   private fun drawAuthoringEdges(canvas: Canvas) {
     if (width <= 1 || height <= 1) return
-    if (showObjectEdges) for (objectData in objects) {
+    for (objectData in objects) {
       val projected = objectData.points.map(::project)
       val selected = objectData.elementId != null && selectedIds.contains(objectData.elementId)
+      if (!showObjectEdges && !selected) continue
       val edgePaint = if (selected) selectedOutline else outline
       for ((firstIndex, secondIndex) in objectData.featureEdges) {
         val first = projected.getOrNull(firstIndex)

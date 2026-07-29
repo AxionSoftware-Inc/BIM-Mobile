@@ -197,10 +197,13 @@ RenderSceneObject? pickObjectAt({
     final score = centerDistance - objectDepth * 0.0001;
     final priority = _selectionPriorityForKind(object.kindKey);
 
-    if (priority < bestPriority ||
-        (priority == bestPriority &&
-            (score < bestScore ||
-                (score == bestScore && objectDepth > bestDepth)))) {
+    // Geometric proximity decides the hit. Type priority only breaks a true
+    // overlap; otherwise a distant opening could win over the item under tap.
+    final scoresAreEquivalent = (score - bestScore).abs() <= 4.0;
+    if (score < bestScore - 4.0 ||
+        (scoresAreEquivalent &&
+            (priority < bestPriority ||
+                (priority == bestPriority && objectDepth > bestDepth)))) {
       bestPriority = priority;
       bestScore = score;
       bestDepth = objectDepth;
@@ -254,10 +257,10 @@ double? _pickScoreForObject({
   // 3D zoom. Keep their bounds pickable even when the pointer lands slightly
   // beside the thin projected mesh or on its host wall.
   final pickInflation = switch (object.kindKey) {
-    'door' || 'window' => 28.0,
-    'stair' || 'column' || 'beam' => 22.0,
-    'floor' || 'ceiling' || 'roof' || 'slab' => 18.0,
-    _ => 14.0,
+    'door' || 'window' => 16.0,
+    'stair' || 'column' || 'beam' => 14.0,
+    'floor' || 'ceiling' || 'roof' || 'slab' => 12.0,
+    _ => 10.0,
   };
   final rect =
       projectBoundsRect(object.bounds, projection).inflate(pickInflation);

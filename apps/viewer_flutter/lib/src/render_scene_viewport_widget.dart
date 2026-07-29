@@ -258,6 +258,13 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
     Size size,
     Offset localPosition,
   ) {
+    // In 3D the long visual level guides cross most of the model. Treating
+    // them as a 24 px hit target steals ordinary object taps, briefly selects
+    // an object, then clears the Inspector. Level direct manipulation remains
+    // precise in elevation; 3D levels stay visible but are non-interactive.
+    if (!controller.projectionMode.isElevation) {
+      return null;
+    }
     final projection = RenderSceneProjection(
       sceneBounds: scene.bounds,
       canvasSize: size,
