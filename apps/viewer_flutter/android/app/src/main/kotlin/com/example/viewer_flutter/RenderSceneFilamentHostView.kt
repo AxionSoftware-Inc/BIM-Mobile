@@ -841,7 +841,10 @@ internal class RenderSceneFilamentHostView(
         scene.removeEntity(entry.entity)
         entry.attached = false
       }
-      val edgeVisible = displayStyle == "solid" &&
+      // Shaded uses the same depth-tested architectural border pass as Solid;
+      // only its face tint differs. Without this it reads as flat category
+      // colour blocks and loses BIM form readability.
+      val edgeVisible = (displayStyle == "solid" || displayStyle == "shaded") &&
         (visibleKinds.isEmpty() || visibleKinds.contains(normalizeKind(entry.objectData.kind)))
       val edgeEntity = entry.edgeEntity
       if (edgeEntity != null && edgeVisible && !entry.edgeAttached) {
@@ -1522,8 +1525,12 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
       val widthSpan = max(sceneBounds.max.x - sceneBounds.min.x, 1.0)
       val backZ = sceneBounds.max.z
       for ((name, elevation) in levels) {
-        val first = project(ScenePoint(sceneBounds.min.x - widthSpan * 0.08, elevation, backZ))
-        val second = project(ScenePoint(sceneBounds.max.x + widthSpan * 0.08, elevation, backZ))
+        // Level annotation is documentation, not geometry. Keep it in a
+        // dedicated exterior gutter instead of drawing through the model;
+        // Canvas has no Filament depth buffer and otherwise appears on the
+        // far side of a building while orbiting.
+        val first = project(ScenePoint(sceneBounds.min.x - widthSpan * 0.30, elevation, backZ))
+        val second = project(ScenePoint(sceneBounds.min.x - widthSpan * 0.06, elevation, backZ))
         if (first != null && second != null) {
           canvas.drawLine(first.x, first.y, second.x, second.y, levelPaint)
           canvas.drawText(name, first.x + 6f, first.y - 5f, levelText)
