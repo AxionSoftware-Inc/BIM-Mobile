@@ -249,13 +249,9 @@ double? _pickScoreForObject({
       }
     }
   }
-  if (bestTriangleDistance != null) {
-    return bestTriangleDistance;
-  }
-
-  // Small hosted elements (doors/windows) occupy only a few pixels at normal
-  // 3D zoom. Keep their bounds pickable even when the pointer lands slightly
-  // beside the thin projected mesh or on its host wall.
+  // Use the projected envelope as a normal hit surface, not just a last-resort
+  // tolerance around mesh lines. This keeps a wall face, opening face or slab
+  // selectable by tapping inside it in 2D, elevation and 3D.
   final pickInflation = switch (object.kindKey) {
     'door' || 'window' => 16.0,
     'stair' || 'column' || 'beam' => 14.0,
@@ -267,7 +263,11 @@ double? _pickScoreForObject({
   if (!rect.contains(localPosition)) {
     return null;
   }
-  return (rect.center - localPosition).distance + 1000.0;
+  final envelopeDistance = (rect.center - localPosition).distance;
+  if (bestTriangleDistance == null) {
+    return envelopeDistance;
+  }
+  return math.min(bestTriangleDistance, envelopeDistance);
 }
 
 int _selectionPriorityForKind(String kind) {

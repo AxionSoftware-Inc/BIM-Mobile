@@ -794,6 +794,9 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
 
   Future<void> _setProjectionMode(RenderSceneProjectionMode mode) async {
     if (_projectionMode == mode) {
+      // Project Browser can be used after a renderer reload. Reassert the
+      // controller state even when the Flutter state already has this mode.
+      await _viewportController.setProjectionMode(mode);
       return;
     }
 

@@ -1342,15 +1342,16 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
 
   fun setDisplayStyle(style: String) {
     wireframe = style == "wireframe"
-    // Canvas has no access to Filament's depth buffer. In Solid, only the
-    // active selection is outlined; all-model edges belong exclusively to Wire.
-    showObjectEdges = style == "wireframe"
+    // Feature edges are outer/crease edges produced from the mesh, not raw
+    // triangle edges. Keep a light Solid pass for BIM readability; Wire owns
+    // the stronger all-edge presentation.
+    showObjectEdges = style != "shaded"
     outline.color = when (style) {
       "wireframe" -> Color.argb(225, 18, 30, 42)
       "solid" -> Color.argb(170, 37, 51, 65)
       else -> Color.TRANSPARENT
     }
-    outline.strokeWidth = resources.displayMetrics.density * if (wireframe) 1.45f else 1.15f
+    outline.strokeWidth = resources.displayMetrics.density * if (wireframe) 1.45f else 0.95f
     invalidate()
   }
 
@@ -1389,7 +1390,6 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
     for (objectData in objects) {
       val projected = objectData.points.map(::project)
       val selected = objectData.elementId != null && selectedIds.contains(objectData.elementId)
-      if (!showObjectEdges && !selected) continue
       val edgePaint = if (selected) selectedOutline else outline
       for ((firstIndex, secondIndex) in objectData.featureEdges) {
         val first = projected.getOrNull(firstIndex)
