@@ -145,7 +145,8 @@ class RenderSceneProjection {
       case RenderSceneProjectionMode.southElevation:
       case RenderSceneProjectionMode.eastElevation:
       case RenderSceneProjectionMode.westElevation:
-        throw StateError('Planar projection modes must resolve via descriptor.');
+        throw StateError(
+            'Planar projection modes must resolve via descriptor.');
     }
   }
 }
@@ -228,7 +229,8 @@ double? _pickScoreForObject({
       final pa = projection.project(a).screen;
       final pb = projection.project(b).screen;
       final pc = projection.project(c).screen;
-      final triangleBounds = Rect.fromPoints(pa, pb).expandToInclude(Rect.fromPoints(pa, pc));
+      final triangleBounds =
+          Rect.fromPoints(pa, pb).expandToInclude(Rect.fromPoints(pa, pc));
       if (!triangleBounds.inflate(6).contains(localPosition)) {
         continue;
       }
@@ -248,7 +250,17 @@ double? _pickScoreForObject({
     return bestTriangleDistance;
   }
 
-  final rect = projectBoundsRect(object.bounds, projection).inflate(14);
+  // Small hosted elements (doors/windows) occupy only a few pixels at normal
+  // 3D zoom. Keep their bounds pickable even when the pointer lands slightly
+  // beside the thin projected mesh or on its host wall.
+  final pickInflation = switch (object.kindKey) {
+    'door' || 'window' => 28.0,
+    'stair' || 'column' || 'beam' => 22.0,
+    'floor' || 'ceiling' || 'roof' || 'slab' => 18.0,
+    _ => 14.0,
+  };
+  final rect =
+      projectBoundsRect(object.bounds, projection).inflate(pickInflation);
   if (!rect.contains(localPosition)) {
     return null;
   }

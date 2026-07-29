@@ -71,7 +71,10 @@ extension RenderSceneInteractionModeX on RenderSceneInteractionMode {
         RenderSceneInteractionMode.addDoor => true,
         RenderSceneInteractionMode.addWindow => true,
         RenderSceneInteractionMode.moveWall => true,
-        RenderSceneInteractionMode.moveOpening => true,
+        // Inspector property editing must not force a 3D selection into plan.
+        // The numeric commit is view-independent; direct placement remains a
+        // separate gesture path.
+        RenderSceneInteractionMode.moveOpening => false,
         RenderSceneInteractionMode.addFloor => true,
         RenderSceneInteractionMode.addCeiling => true,
         RenderSceneInteractionMode.addRoof => true,

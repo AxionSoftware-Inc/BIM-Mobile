@@ -386,6 +386,7 @@ internal class RenderSceneFilamentHostView(
   fun selectElement(elementId: Any?) {
     selectedElementId = toLong(elementId)
     selectedElementIds = selectedElementId?.let { setOf(it) } ?: emptySet()
+    selectionOverlay.setSelection(selectedElementIds, selectedElementId)
     refreshTintState()
     updateStatus()
     invalidate()
@@ -398,6 +399,7 @@ internal class RenderSceneFilamentHostView(
       ?: emptySet()
     selectedElementIds = ids
     selectedElementId = toLong(selection?.get("activeId"))?.takeIf { ids.contains(it) }
+    selectionOverlay.setSelection(selectedElementIds, selectedElementId)
     refreshTintState()
     updateStatus()
     invalidate()
@@ -759,7 +761,9 @@ internal class RenderSceneFilamentHostView(
         scene.removeEntity(entry.entity)
         entry.attached = false
       }
-      val edgeVisible = displayStyle != "shaded" &&
+      // Solid edges are drawn by the authoring canvas overlay. Keeping the
+      // coplanar Filament line entity disabled in Solid removes depth flicker.
+      val edgeVisible = displayStyle == "wireframe" &&
         (visibleKinds.isEmpty() || visibleKinds.contains(normalizeKind(entry.objectData.kind)))
       val edgeEntity = entry.edgeEntity
       if (edgeEntity != null && edgeVisible && !entry.edgeAttached) {
@@ -1254,6 +1258,9 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
   private var rectangle: RectF? = null
   private var crossing = false
   private var objects = emptyList<NativeVisualObject>()
+  private var allObjects = emptyList<NativeVisualObject>()
+  private var selectedIds = emptySet<Long>()
+  private var activeId: Long? = null
   private var levels = emptyList<Pair<String, Double>>()
   private var sceneBounds = SceneBounds(ScenePoint(0.0, 0.0, 0.0), ScenePoint(0.0, 0.0, 0.0))
   private var center = ScenePoint(0.0, 0.0, 0.0)
@@ -1269,6 +1276,11 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
     style = Paint.Style.STROKE
     color = Color.argb(155, 24, 39, 52)
     strokeWidth = context.resources.displayMetrics.density * 0.85f
+  }
+  private val selectedOutline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    style = Paint.Style.STROKE
+    color = Color.rgb(37, 99, 235)
+    strokeWidth = context.resources.displayMetrics.density * 2.8f
   }
   private val levelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
     style = Paint.Style.STROKE
@@ -1305,6 +1317,7 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
     // Keep coverage across every building at city scale. Sampling avoids line
     // soup but never makes a campus fall back to an unannotated old view.
     val stride = max(1, (value.size + 649) / 650)
+    allObjects = value
     objects = value.filterIndexed { index, _ -> index % stride == 0 }
     levels = levelValues
     sceneBounds = bounds
@@ -1313,7 +1326,16 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
 
   fun clearVisualScene() {
     objects = emptyList()
+    allObjects = emptyList()
     levels = emptyList()
+    invalidate()
+  }
+
+  fun setSelection(ids: Set<Long>, active: Long?) {
+    selectedIds = ids
+    activeId = active
+    val selected = allObjects.filter { it.elementId != null && ids.contains(it.elementId) }
+    objects = (objects + selected).distinctBy { it.elementId ?: it.hashCode().toLong() }
     invalidate()
   }
 
@@ -1321,13 +1343,13 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
     wireframe = style == "wireframe"
     // Canvas has no access to Filament's depth buffer. Showing it over Solid
     // faces would reveal hidden internal edges, so only Wire owns this pass.
-    showObjectEdges = style == "wireframe"
+    showObjectEdges = style != "shaded"
     outline.color = when (style) {
       "wireframe" -> Color.argb(225, 18, 30, 42)
-      "solid" -> Color.TRANSPARENT
+      "solid" -> Color.argb(170, 37, 51, 65)
       else -> Color.TRANSPARENT
     }
-    outline.strokeWidth = resources.displayMetrics.density * if (wireframe) 1.15f else 0.65f
+    outline.strokeWidth = resources.displayMetrics.density * if (wireframe) 1.35f else 1.05f
     invalidate()
   }
 
@@ -1365,11 +1387,13 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
     if (width <= 1 || height <= 1) return
     if (showObjectEdges) for (objectData in objects) {
       val projected = objectData.points.map(::project)
+      val selected = objectData.elementId != null && selectedIds.contains(objectData.elementId)
+      val edgePaint = if (selected) selectedOutline else outline
       for ((firstIndex, secondIndex) in objectData.featureEdges) {
         val first = projected.getOrNull(firstIndex)
         val second = projected.getOrNull(secondIndex)
         if (first != null && second != null) {
-          canvas.drawLine(first.x, first.y, second.x, second.y, outline)
+          canvas.drawLine(first.x, first.y, second.x, second.y, edgePaint)
         }
       }
     }
