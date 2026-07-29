@@ -739,7 +739,6 @@ internal class RenderSceneFilamentHostView(
       vertexData.putFloat(point.z.toFloat())
     }
     vertexData.flip()
-
     val indexData = ByteBuffer
       .allocateDirect(triangles.size * 3 * Int.SIZE_BYTES)
       .order(ByteOrder.nativeOrder())
@@ -1379,7 +1378,10 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
     wireframe = style == "wireframe"
     // Solid uses only canonical, front-facing crease/silhouette lines. Canvas
     // line width is density-aware, unlike GPU line primitives on Android.
-    showObjectEdges = style == "wireframe" || style == "solid"
+    // Solid is a true shaded/clay view. Drawing every semantic feature edge
+    // here made it indistinguishable from Wire and exposed triangulation
+    // seams. The overlay still draws the active object's outline below.
+    showObjectEdges = style == "wireframe"
     outline.color = when (style) {
       "wireframe" -> Color.argb(225, 18, 30, 42)
       "solid" -> Color.argb(170, 37, 51, 65)
