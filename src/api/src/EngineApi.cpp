@@ -2051,7 +2051,10 @@ ApiVoidResult EngineSession::load_project_json_with_mode(std::string_view json, 
             return success_void();
         }
         if (mode == LoadMode::Strict && validation.error_count() > 0) {
-            return error_void(ApiStatus::ValidationError, "strict load rejected invalid project data");
+            const auto detail = validation.issues.empty()
+                ? std::string{"invalid project data"}
+                : validation.issues.front().message;
+            return error_void(ApiStatus::ValidationError, "strict load rejected invalid project data: " + detail);
         }
         if (mode == LoadMode::Tolerant && (validation.warning_count() > 0 || validation.error_count() > 0)) {
             ApiVoidResult result = success_void();

@@ -791,6 +791,12 @@ std::string Document::to_json() const {
             << ",\"column_id\":" << beam_column_joins_[index].second << '}';
     }
     out << "],";
+    out << "\"disabled_auto_structural_cuts\":[";
+    for (auto it = disabled_auto_structural_cuts_.begin(); it != disabled_auto_structural_cuts_.end(); ++it) {
+        if (it != disabled_auto_structural_cuts_.begin()) out << ',';
+        out << "{\"wall_id\":" << it->first << ",\"cutter_id\":" << it->second << '}';
+    }
+    out << "],";
     out << "\"host_relations\":[";
     for (std::size_t index = 0; index < host_relations_.size(); ++index) {
         if (index != 0) out << ',';
@@ -1145,6 +1151,13 @@ Document Document::from_json(std::string_view json) {
         for (const auto& item : as_array(joins_it->second)) {
             const auto& join = as_object(item);
             document.beam_column_joins_.emplace_back(as_id(field(join, "beam_id")), as_id(field(join, "column_id")));
+        }
+    }
+    if (const auto cuts_it = root_object.find("disabled_auto_structural_cuts"); cuts_it != root_object.end()) {
+        for (const auto& item : as_array(cuts_it->second)) {
+            const auto& cut = as_object(item);
+            document.disabled_auto_structural_cuts_.emplace(
+                as_id(field(cut, "wall_id")), as_id(field(cut, "cutter_id")));
         }
     }
     if (const auto relations_it = root_object.find("host_relations"); relations_it != root_object.end()) {

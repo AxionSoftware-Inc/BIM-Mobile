@@ -3,6 +3,7 @@
 #include "tbe/core/Element.hpp"
 
 #include <filesystem>
+#include <set>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -237,11 +238,17 @@ private:
     std::map<ElementId, CeilingSystemData> ceiling_systems_{};
     std::vector<std::pair<ElementId, ElementId>> beam_column_joins_{};
     std::vector<HostRelation> host_relations_{};
+    // An explicit "remove wall cut" is a user decision, not an invitation
+    // for the automatic resolver to recreate the same void on the next edit.
+    std::set<std::pair<ElementId, ElementId>> disabled_auto_structural_cuts_{};
     std::vector<ElementId> dirty_room_ids_{};
     // Levels whose room topology changed. This lets interactive snapshots
     // recompute only the edited storey instead of scanning the whole model.
     std::vector<ElementId> dirty_room_level_ids_{};
     bool automatic_wall_join_enabled_{true};
+    // Structural resolution can create semantic wall cuts. Those cuts mark a
+    // wall dirty, but must never recursively start a second resolver pass.
+    bool resolving_structural_relations_{false};
     mutable DependencyGraph dependency_graph_cache_{};
     mutable bool dependency_graph_dirty_{true};
     mutable Revision dependency_graph_version_{};

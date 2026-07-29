@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -1296,7 +1297,7 @@ int main() {
     }
 
     // Native default-template smoke test: this is the exact startup path used
-    // by Flutter, including the sloped roof and layered assemblies.
+    // by Flutter, including compound assemblies and structural relations.
     {
         auto* template_handle = tbe_engine_create();
         assert(template_handle != nullptr);
@@ -1306,11 +1307,15 @@ int main() {
         char* scene_json = nullptr;
         assert(tbe_get_render_scene_json(template_handle, &scene_json) == TBE_API_OK);
         assert(scene_json != nullptr);
-        assert(std::string(scene_json).find("SimpleGable") != std::string::npos);
+        assert(std::string(scene_json).find("\"roof_type\":\"Flat\"") != std::string::npos);
         tbe_free_string(scene_json);
         char* project_json = nullptr;
         assert(tbe_project_save_json(template_handle, &project_json) == TBE_API_OK);
-        assert(tbe_project_load_json(template_handle, project_json) == TBE_API_OK);
+        const auto template_reload_status = tbe_project_load_json(template_handle, project_json);
+        if (template_reload_status != TBE_API_OK) {
+            std::fprintf(stderr, "template reload failed: %s\n", tbe_get_last_error(template_handle));
+        }
+        assert(template_reload_status == TBE_API_OK);
         tbe_free_string(project_json);
         tbe_engine_destroy(template_handle);
     }

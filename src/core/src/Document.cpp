@@ -965,6 +965,12 @@ void Document::set_structural_wall_cut(ElementId wall_id, ElementId cutter_id, b
     if (cutter == nullptr || (cutter->column() == nullptr && cutter->beam() == nullptr)) {
         throw std::invalid_argument("wall cut requires a column or beam cutter");
     }
+    const auto cut_key = std::make_pair(wall_id, cutter_id);
+    if (!enabled) {
+        disabled_auto_structural_cuts_.insert(cut_key);
+    } else if (!resolving_structural_relations_) {
+        disabled_auto_structural_cuts_.erase(cut_key);
+    }
     auto updated = *wall;
     updated.openings.erase(std::remove_if(updated.openings.begin(), updated.openings.end(), [&](const HostedOpening& opening) {
         return opening.element_id == cutter_id && opening.kind == OpeningKind::StructuralVoid;
@@ -1000,6 +1006,15 @@ void Document::set_structural_wall_cut(ElementId wall_id, ElementId cutter_id, b
     }
     wall->openings = std::move(updated.openings);
     mark_wall_dirty(wall_element);
+    if (resolving_structural_relations_) {
+        // auto_join_structural_elements owns this transaction.  Calling the
+        // normal wall refresh path here would re-enter auto_join_walls(),
+        // which in turn invokes this resolver again.
+        mark_rooms_dirty_for_wall(wall_id);
+        touch_related_rooms(wall_id);
+        invalidate_dependency_graph_cache();
+        return;
+    }
     refresh_dependencies_for_wall(wall_id);
 }
 
@@ -1832,6 +1847,15 @@ void Document::set_automatic_wall_join_enabled(bool enabled) noexcept {
 }
 
 void Document::auto_join_structural_elements() {
+    if (resolving_structural_relations_) {
+        return;
+    }
+    struct ResolutionScope {
+        bool& active;
+        ~ResolutionScope() { active = false; }
+    } scope{resolving_structural_relations_};
+    resolving_structural_relations_ = true;
+
     // Relations are cheap semantic records. They deliberately do not boolean-
     // union meshes, keeping edits and save/reload deterministic on mobile.
     beam_column_joins_.clear();
@@ -1888,6 +1912,10 @@ void Document::auto_join_structural_elements() {
             const auto py = wall->axis.start.y + t * dy;
             const auto distance = std::hypot(column->position.x - px, column->position.y - py);
             if (distance <= wall->thickness_meters * 0.5 + 0.01) {
+                if (disabled_auto_structural_cuts_.contains(std::make_pair(wall_element.id(), column_element.id()))) {
+                    host_relations_.push_back({.host_id = wall_element.id(), .guest_id = column_element.id(), .kind = HostRelationKind::Embed, .priority = 10});
+                    continue;
+                }
                 try {
                     set_structural_wall_cut(wall_element.id(), column_element.id(), true);
                     host_relations_.push_back({.host_id = wall_element.id(), .guest_id = column_element.id(), .kind = HostRelationKind::Cut, .priority = 100});
@@ -1987,6 +2015,13 @@ std::vector<ElementId> Document::detect_rooms_for_levels(const std::vector<Eleme
     const auto max_global_y = *std::max_element(all_ys.begin(), all_ys.end()) + 1.0;
 
     std::vector<ElementId> room_ids;
+    // Room detection reads wall pointers from elements_.  Appending a room to
+    // that vector while the sweep is still running can reallocate it and
+    // invalidate every WallRef above.  Keep the discovered semantic rooms
+    // separate until all wall-derived work is complete, then publish them in
+    // one pass.  This is particularly important for multi-storey templates,
+    // where one level can discover many rooms.
+    std::vector<std::pair<ElementId, RoomData>> pending_rooms;
 
     for (const auto& [level_id, walls] : walls_by_level) {
         if (!target_levels.empty() && target_levels.find(level_id) == target_levels.end()) {
@@ -2313,7 +2348,7 @@ std::vector<ElementId> Document::detect_rooms_for_levels(const std::vector<Eleme
 
                 const auto reused = previous_room_ids.find(room_key.str());
                 const auto room_id = reused == previous_room_ids.end() ? allocate_id() : reused->second;
-                elements_.emplace_back(room_id, ElementKind::Room, "Room", RoomData{
+                pending_rooms.emplace_back(room_id, RoomData{
                     .boundary_wall_ids = boundary_wall_ids,
                     .level_id = level_id,
                     .preferred_boundary_mode = RoomBoundaryMode::InteriorFinishFace,
@@ -2331,6 +2366,11 @@ std::vector<ElementId> Document::detect_rooms_for_levels(const std::vector<Eleme
                 room_ids.push_back(room_id);
             }
         }
+    }
+
+    // See pending_rooms above: only now is it safe to grow elements_.
+    for (auto& [room_id, room] : pending_rooms) {
+        elements_.emplace_back(room_id, ElementKind::Room, "Room", std::move(room));
     }
 
     for (auto it = floor_systems_.begin(); it != floor_systems_.end();) {
@@ -3058,8 +3098,19 @@ ValidationReport Document::validate_document() const {
             for (std::size_t index = 0; index < wall->openings.size(); ++index) {
                 const auto& opening = wall->openings[index];
                 const auto* opening_element = find_ptr(opening.element_id);
-                if (opening_element == nullptr || (opening_element->door() == nullptr && opening_element->window() == nullptr)) {
+                const auto structural_void = opening.kind == OpeningKind::StructuralVoid;
+                const auto valid_structural_cutter = opening_element != nullptr &&
+                    (opening_element->column() != nullptr || opening_element->beam() != nullptr);
+                if (opening_element == nullptr ||
+                    (!structural_void && opening_element->door() == nullptr && opening_element->window() == nullptr) ||
+                    (structural_void && !valid_structural_cutter)) {
                     add_issue(report, ValidationSeverity::Error, ValidationIssueCode::OrphanOpening, element.id(), "wall references missing opening");
+                    continue;
+                }
+
+                // Structural voids are owned by the wall but cut by a column
+                // or beam. They have no hosted-opening level contract.
+                if (structural_void) {
                     continue;
                 }
 
