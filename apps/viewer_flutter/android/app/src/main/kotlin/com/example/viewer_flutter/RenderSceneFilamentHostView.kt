@@ -1436,7 +1436,7 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
         val a = objectData.points[triangle[0]]
         val b = objectData.points[triangle[1]]
         val c = objectData.points[triangle[2]]
-        val normal = triangleNormal(a, b, c)
+        val normal = overlayTriangleNormal(a, b, c)
         val centroidX = (a.x + b.x + c.x) / 3.0
         val centroidY = (a.y + b.y + c.y) / 3.0
         val centroidZ = (a.z + b.z + c.z) / 3.0
@@ -1444,6 +1444,24 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
           normal[1] * (eye.y - centroidY) +
           normal[2] * (eye.z - centroidZ) > 1e-5
       }
+    }
+  }
+
+  private fun overlayTriangleNormal(
+    a: ScenePoint,
+    b: ScenePoint,
+    c: ScenePoint,
+  ): DoubleArray {
+    val abX = b.x - a.x; val abY = b.y - a.y; val abZ = b.z - a.z
+    val acX = c.x - a.x; val acY = c.y - a.y; val acZ = c.z - a.z
+    val x = abY * acZ - abZ * acY
+    val y = abZ * acX - abX * acZ
+    val z = abX * acY - abY * acX
+    val length = kotlin.math.sqrt(x * x + y * y + z * z)
+    return if (length <= 1e-9) {
+      doubleArrayOf(0.0, 0.0, 0.0)
+    } else {
+      doubleArrayOf(x / length, y / length, z / length)
     }
   }
 
