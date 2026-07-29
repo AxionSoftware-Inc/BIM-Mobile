@@ -1,0 +1,97 @@
+import 'render_scene_models.dart';
+import 'tbe_ffi.dart';
+
+/// Engine-first Inspector mutations. A command either returns a new
+/// authoritative snapshot or an error; widgets never mutate local geometry.
+class AuthoringCommandService {
+  AuthoringCommandService({
+    required ViewerRepository? Function() repository,
+    required bool Function() engineEnabled,
+  })  : _repository = repository,
+        _engineEnabled = engineEnabled;
+
+  final ViewerRepository? Function() _repository;
+  final bool Function() _engineEnabled;
+
+  Future<RenderSceneLoadResult> updateLevel({
+    required int levelId,
+    required String name,
+    required double elevationMeters,
+    required double defaultWallHeightMeters,
+  }) =>
+      _requireRepository().updateLevel(
+        levelId: levelId,
+        name: name,
+        elevationMeters: elevationMeters,
+        defaultWallHeightMeters: defaultWallHeightMeters,
+      );
+
+  Future<RenderSceneLoadResult> setWallConstraints({
+    required int wallId,
+    required int baseLevelId,
+    required int topLevelId,
+    required int heightMode,
+    double baseOffsetMeters = 0,
+    double topOffsetMeters = 0,
+  }) =>
+      _requireRepository().setWallLevelConstraints(
+        wallId: wallId,
+        baseLevelId: baseLevelId,
+        topLevelId: topLevelId,
+        heightMode: heightMode,
+        baseOffsetMeters: baseOffsetMeters,
+        topOffsetMeters: topOffsetMeters,
+      );
+
+  Future<RenderSceneLoadResult> updateOpening({
+    required RenderSceneObject object,
+    required double offsetMeters,
+    required double widthMeters,
+    required double heightMeters,
+    required double sillHeightMeters,
+  }) async {
+    final id = object.elementId;
+    if (id == null) throw TbeApiException('Opening has no stable element ID');
+    final repository = _requireRepository();
+    await repository.moveHostedOpening(
+        openingId: id, offsetMeters: offsetMeters);
+    return repository.resizeOpening(
+      openingId: id,
+      kind: object.kindKey,
+      widthMeters: widthMeters,
+      heightMeters: heightMeters,
+      sillHeightMeters: sillHeightMeters,
+    );
+  }
+
+  Future<RenderSceneLoadResult> setOpeningLevelLock({
+    required int openingId,
+    required bool locked,
+  }) =>
+      _requireRepository().setOpeningLevelLock(
+        openingId: openingId,
+        locked: locked,
+      );
+
+  Future<RenderSceneLoadResult> setOpeningLevelConstraint({
+    required int openingId,
+    required int levelId,
+    required double levelOffsetMeters,
+  }) =>
+      _requireRepository().setOpeningLevelConstraint(
+        openingId: openingId,
+        levelId: levelId,
+        levelOffsetMeters: levelOffsetMeters,
+      );
+
+  Future<RenderSceneLoadResult> deleteElement(int elementId) =>
+      _requireRepository().deleteElement(elementId: elementId);
+
+  ViewerRepository _requireRepository() {
+    final repository = _repository();
+    if (!_engineEnabled() || repository == null) {
+      throw TbeApiException('Authoritative engine is required for this edit');
+    }
+    return repository;
+  }
+}

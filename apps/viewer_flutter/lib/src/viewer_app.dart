@@ -1,3 +1,7 @@
+// Legacy dialog widgets are kept temporarily for the level-line quick edit
+// path.  The production Inspector is `PropertyEditor` + its controllers.
+// ignore_for_file: unused_element, unused_element_parameter
+
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -5,11 +9,15 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'authoring_command_service.dart';
+import 'inspector_controller.dart';
+import 'property_editor.dart';
 import 'render_scene_editor.dart';
 import 'render_scene_estimator.dart';
 import 'render_scene_models.dart';
 import 'render_scene_repository.dart';
 import 'scene_mutation_service.dart';
+import 'selection_controller.dart';
 import 'tbe_ffi.dart';
 import 'tools/level_tool_controller.dart';
 import 'tools/opening_tool_controller.dart';
@@ -102,6 +110,9 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   final OpeningToolController _openingTool = OpeningToolController();
   final SurfaceToolController _surfaceTool = SurfaceToolController();
   final StairToolController _stairTool = StairToolController();
+  late final SelectionController _selectionController;
+  late final InspectorController _inspectorController;
+  late final AuthoringCommandService _authoringCommands;
   ViewerRepository? _engineRepository;
   bool _engineBackedMode = false;
 
@@ -114,7 +125,6 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   bool _showDiagnostics = false;
   String? _engineLoadDiagnostic;
   int? _activeLevelId;
-  int? _selectedLevelId;
 
   RenderSceneProjectionMode _projectionMode = kDefaultPlanProjectionMode;
   RenderSceneOrbitProjectionStyle _orbitProjectionStyle =
@@ -190,6 +200,12 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   @override
   void initState() {
     super.initState();
+    _selectionController = SelectionController(_viewportController);
+    _inspectorController = InspectorController(_selectionController);
+    _authoringCommands = AuthoringCommandService(
+      repository: () => _engineRepository,
+      engineEnabled: () => _engineBackedMode,
+    );
     _viewportController.addListener(_onViewportChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) {
@@ -208,6 +224,8 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     _openingTool.dispose();
     _surfaceTool.dispose();
     _stairTool.dispose();
+    _inspectorController.dispose();
+    _selectionController.dispose();
     _engineRepository?.dispose();
     super.dispose();
   }
@@ -719,61 +737,6 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       message: constrainToNextLevel
           ? 'Wall active levelga biriktirildi, top ${nextLevel?.name}ga constraint qilindi.'
           : 'Wall active levelga biriktirildi.',
-    );
-  }
-
-  Future<void> _moveOpeningToActiveLevel(RenderSceneObject object) async {
-    final repository = _engineRepository;
-    final openingId = object.elementId;
-    final activeLevelId = _activeLevelId;
-    if (repository == null ||
-        !_engineBackedMode ||
-        openingId == null ||
-        activeLevelId == null ||
-        (object.kindKey != 'door' && object.kindKey != 'window')) {
-      setState(() {
-        _editStatusMessage =
-            'Openingni levelga biriktirish uchun active level va engine mode kerak.';
-      });
-      return;
-    }
-    final result = await repository.setOpeningLevel(
-      openingId: openingId,
-      levelId: activeLevelId,
-    );
-    await _applyEngineSceneResult(
-      result,
-      message: '${prettySceneKind(object.kind)} active levelga o‘tkazildi.',
-    );
-  }
-
-  Future<void> _applyWallLevelConstraintsInline(
-    RenderSceneObject object, {
-    required int baseLevelId,
-    required int topLevelId,
-    required int heightMode,
-  }) async {
-    final repository = _engineRepository;
-    final wallId = object.elementId;
-    if (!_engineBackedMode || repository == null || wallId == null) {
-      setState(() {
-        _editStatusMessage =
-            'Wall level constraintlarni qo‘llash uchun engine mode kerak.';
-      });
-      return;
-    }
-
-    final result = await repository.setWallLevelConstraints(
-      wallId: wallId,
-      baseLevelId: baseLevelId,
-      topLevelId: heightMode == 1 ? topLevelId : 0,
-      baseOffsetMeters: _metadataDouble(object, 'base_offset_meters') ?? 0.0,
-      topOffsetMeters: _metadataDouble(object, 'top_offset_meters') ?? 0.0,
-      heightMode: heightMode,
-    );
-    await _applyEngineSceneResult(
-      result,
-      message: 'Wall level constraintlari yangilandi.',
     );
   }
 
@@ -1532,7 +1495,6 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     final id = object.elementId?.toString();
 
     setState(() {
-      _selectedLevelId = null;
       _statusMessage = id == null
           ? 'Selected ${prettySceneKind(object.kind)}'
           : 'Selected ${prettySceneKind(object.kind)} #$id';
@@ -1541,18 +1503,18 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     // The interaction module may already have created a multi-selection. Keep
     // it intact while making the clicked item the active Inspector object.
     if (id == null || !_viewportController.selectedElementIds.contains(id)) {
-      await _viewportController.selectElement(id);
+      await _selectionController.selectObject(object);
+    } else {
+      await _viewportController.highlightElement(id);
     }
-    await _viewportController.highlightElement(id);
   }
 
   Future<void> _clearSelection() async {
     setState(() {
       _statusMessage = 'Selection cleared';
-      _selectedLevelId = null;
     });
 
-    await _viewportController.selectLevel(null);
+    await _selectionController.clear();
   }
 
   Future<void> _selectLevel(RenderSceneLevel level) async {
@@ -1561,12 +1523,11 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       return;
     }
     setState(() {
-      _selectedLevelId = level.levelId;
       _statusMessage = 'Selected ${level.name}';
       _editStatusMessage =
           '${level.name}: ${level.elevationMeters.toStringAsFixed(2)} m. Inspector orqali tahrir qiling yoki level line’ni torting.';
     });
-    await _viewportController.selectLevel(level.levelId);
+    await _selectionController.selectLevel(level.levelId);
   }
 
   Future<void> _setInteractionMode(RenderSceneInteractionMode mode) async {
@@ -1743,7 +1704,6 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
               await _clearSelection();
             } else {
               setState(() {
-                _selectedLevelId = null;
                 _statusMessage =
                     '${_viewportController.selectedElementIds.length} objects selected';
               });
@@ -3549,9 +3509,6 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
 
     if (previousSelectedLevelId != null &&
         nextScene.levelById(previousSelectedLevelId) != null) {
-      setState(() {
-        _selectedLevelId = previousSelectedLevelId;
-      });
       await _viewportController.selectLevel(previousSelectedLevelId);
       return;
     }
@@ -3631,8 +3588,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   Widget build(BuildContext context) {
     final fullScene = _scene;
     final scene = fullScene == null ? null : _sceneForViewport(fullScene);
-    final selectedObject = _selectedObject(fullScene);
-    final selectedLevel = fullScene?.levelById(_selectedLevelId);
+    final inspectorTarget = _inspectorController.targetFor(fullScene);
 
     return Shortcuts(
       shortcuts: const <ShortcutActivator, Intent>{
@@ -3664,8 +3620,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
                         _buildRightPanel(
                           context: context,
                           scene: fullScene,
-                          selectedObject: selectedObject,
-                          selectedLevel: selectedLevel,
+                          inspectorTarget: inspectorTarget,
                         ),
                     ],
                   ),
@@ -4252,8 +4207,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   Widget _buildRightPanel({
     required BuildContext context,
     required RenderScene? scene,
-    required RenderSceneObject? selectedObject,
-    required RenderSceneLevel? selectedLevel,
+    required InspectorTarget inspectorTarget,
   }) {
     final theme = Theme.of(context);
 
@@ -4413,96 +4367,14 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
                         ),
                       if (_interactionMode != RenderSceneInteractionMode.select)
                         const SizedBox(height: 16),
-                      if (_viewportController.selectedElementIds.length > 1)
-                        _MultiSelectionInspectorCard(
-                          count: _viewportController.selectedElementIds.length,
-                          onClear: _clearSelection,
-                        )
-                      else if (selectedObject == null && selectedLevel == null)
-                        const _EmptyPanelMessage(
-                          icon: Icons.ads_click,
-                          title: 'Nothing selected',
-                          message:
-                              'Tap an object in the model or choose one from the list.',
-                        )
-                      else if (selectedLevel != null)
-                        _SelectedLevelCard(
-                          level: selectedLevel,
-                          onElevationSubmitted: (value) =>
-                              _moveSelectedLevelElevation(selectedLevel, value),
-                          onEdit: () => _showEditLevelDialog(selectedLevel),
-                        )
-                      else if (selectedObject != null)
-                        _SelectedObjectCard(
-                          object: selectedObject,
-                          sceneLevels: scene.levels,
-                          onLevelLockChanged: (locked) =>
-                              _setSelectedObjectLevelLock(
-                            selectedObject,
-                            locked,
-                          ),
-                          onEditWallLevels: selectedObject.kindKey == 'wall'
-                              ? () => _showWallLevelConstraintsDialog(
-                                  selectedObject)
-                              : null,
-                          onAttachWallToActiveLevel:
-                              selectedObject.kindKey == 'wall'
-                                  ? () => _attachWallToActiveLevel(
-                                        selectedObject,
-                                        constrainToNextLevel: false,
-                                      )
-                                  : null,
-                          onAttachWallTopToNextLevel:
-                              selectedObject.kindKey == 'wall'
-                                  ? () => _attachWallToActiveLevel(
-                                        selectedObject,
-                                        constrainToNextLevel: true,
-                                      )
-                                  : null,
-                          onMoveOpeningLevel: selectedObject.kindKey ==
-                                      'door' ||
-                                  selectedObject.kindKey == 'window'
-                              ? () => _showOpeningLevelDialog(selectedObject)
-                              : null,
-                          onMoveOpeningToActiveLevel:
-                              selectedObject.kindKey == 'door' ||
-                                      selectedObject.kindKey == 'window'
-                                  ? () => _moveOpeningToActiveLevel(
-                                        selectedObject,
-                                      )
-                                  : null,
-                          // Unsupported level assignment actions are hidden
-                          // until their engine transaction exists.
-                          onAssignLevel: null,
-                          onApplyWallLevels: selectedObject.kindKey == 'wall'
-                              ? ({
-                                  required int baseLevelId,
-                                  required int topLevelId,
-                                  required int heightMode,
-                                }) =>
-                                  _applyWallLevelConstraintsInline(
-                                    selectedObject,
-                                    baseLevelId: baseLevelId,
-                                    topLevelId: topLevelId,
-                                    heightMode: heightMode,
-                                  )
-                              : null,
-                          onEditOpeningPlacement:
-                              selectedObject.kindKey == 'door' ||
-                                      selectedObject.kindKey == 'window'
-                                  ? () => _setInteractionMode(
-                                        RenderSceneInteractionMode.moveOpening,
-                                      )
-                                  : null,
-                          onDelete: _deleteSelectedObject,
-                        ),
-                      if (selectedObject == null && selectedLevel == null)
-                        _ActiveLevelCard(
-                          level: _activeLevel(scene),
-                          levels: scene.levels,
-                          activeLevelId: _activeLevelId,
-                          onSelectLevel: _setActiveLevel,
-                        ),
+                      PropertyEditor(
+                        scene: scene,
+                        target: inspectorTarget,
+                        commands: _authoringCommands,
+                        onApplied: (result, message) =>
+                            _applyEngineSceneResult(result, message: message),
+                        onClearSelection: _clearSelection,
+                      ),
                     ],
                   ),
           ),
@@ -5898,7 +5770,6 @@ int? _objectMetadataInt(RenderSceneObject object, String key) {
 }
 
 // Kept as a diagnostics building block for the optional diagnostics surface.
-// ignore: unused_element
 class _SceneSummaryCard extends StatelessWidget {
   const _SceneSummaryCard({
     required this.scene,
@@ -6351,7 +6222,6 @@ class _WallLevelInlineEditorState extends State<_WallLevelInlineEditor> {
   }
 }
 
-// ignore: unused_element
 class _EstimateSummaryCard extends StatelessWidget {
   const _EstimateSummaryCard({
     required this.summary,
@@ -6628,7 +6498,6 @@ class _EstimateCatalogEditorState extends State<_EstimateCatalogEditor> {
   }
 }
 
-// ignore: unused_element
 class _DiagnosticsCard extends StatelessWidget {
   const _DiagnosticsCard({
     required this.scene,

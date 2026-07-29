@@ -13,6 +13,9 @@ import 'package:viewer_flutter/src/render_scene_viewport_controller.dart';
 import 'package:viewer_flutter/src/render_scene_viewport_planar.dart';
 import 'package:viewer_flutter/src/render_scene_viewport_projection.dart';
 import 'package:viewer_flutter/src/render_scene_viewport_types.dart';
+import 'package:viewer_flutter/src/selection_controller.dart';
+import 'package:viewer_flutter/src/inspector_controller.dart';
+import 'package:viewer_flutter/src/authoring_command_service.dart';
 import 'package:viewer_flutter/src/tbe_ffi.dart';
 import 'package:viewer_flutter/src/tools/level_tool_controller.dart';
 import 'package:viewer_flutter/src/tools/opening_tool_controller.dart';
@@ -893,6 +896,110 @@ void main() {
         ],
       ),
       <String>{'inside', 'crossing'},
+    );
+  });
+
+  test(
+      'central selection drives every Inspector target and survives view changes',
+      () async {
+    final repository = ViewerRepository(TbeViewerApi.load());
+    addTearDown(repository.dispose);
+    await repository.loadFromJson(
+      projectName: 'Inspector selection',
+      json: File('assets/sample_project.json').readAsStringSync(),
+    );
+    final scene = (await repository.currentRenderScene()).scene!;
+    final viewport = RenderSceneViewportController(
+      backend: RenderSceneViewportBackend.fallback,
+    );
+    final selection = SelectionController(viewport);
+    final inspector = InspectorController(selection);
+    addTearDown(inspector.dispose);
+    addTearDown(selection.dispose);
+    addTearDown(viewport.dispose);
+    await viewport.updateRenderScene(scene);
+
+    for (final kind in <String>[
+      'wall',
+      'door',
+      'window',
+      'floor',
+      'ceiling',
+      'stair',
+      'roof',
+      'column',
+      'beam',
+    ]) {
+      final object = scene.objects.firstWhere((entry) => entry.kindKey == kind);
+      await selection.selectObject(object);
+      expect(inspector.targetFor(scene).kind, InspectorTargetKind.object);
+      expect(inspector.targetFor(scene).object!.elementId, object.elementId);
+
+      await viewport.setProjectionMode(RenderSceneProjectionMode.isometric);
+      await viewport
+          .setProjectionMode(RenderSceneProjectionMode.northElevation);
+      expect(viewport.activeElementId, object.elementId.toString());
+      expect(inspector.targetFor(scene).object!.elementId, object.elementId);
+    }
+
+    await viewport.selectElements(<String>{'11', '25'}, activeElementId: '25');
+    expect(inspector.targetFor(scene).kind, InspectorTargetKind.multiple);
+    await selection.selectLevel(scene.levels.first.levelId);
+    expect(inspector.targetFor(scene).kind, InspectorTargetKind.level);
+    await selection.clear();
+    expect(inspector.targetFor(scene).kind, InspectorTargetKind.empty);
+  });
+
+  test('Inspector commands persist level and opening edits through reload',
+      () async {
+    final repository = ViewerRepository(TbeViewerApi.load());
+    addTearDown(repository.dispose);
+    await repository.loadFromJson(
+      projectName: 'Inspector persistence',
+      json: File('assets/sample_project.json').readAsStringSync(),
+    );
+    final commands = AuthoringCommandService(
+      repository: () => repository,
+      engineEnabled: () => true,
+    );
+    final initial = (await repository.currentRenderScene()).scene!;
+    final door = initial.objects.firstWhere((entry) => entry.kindKey == 'door');
+    final doorId = door.elementId!;
+    final level = initial.levels.first;
+
+    await commands.updateLevel(
+      levelId: level.levelId,
+      name: 'Ground authoring level',
+      elevationMeters: 0.15,
+      defaultWallHeightMeters: 3.35,
+    );
+    await commands.setOpeningLevelConstraint(
+      openingId: doorId,
+      levelId: level.levelId,
+      levelOffsetMeters: 0.25,
+    );
+    await commands.updateOpening(
+      object: door,
+      offsetMeters: 1.15,
+      widthMeters: 1.05,
+      heightMeters: 2.2,
+      sillHeightMeters: 0,
+    );
+    final saved = await repository.saveProjectJson();
+    expect(saved, contains('Ground authoring level'));
+    await repository.reloadCurrent();
+    final reloaded = (await repository.currentRenderScene()).scene!;
+    final nextLevel = reloaded.levelById(level.levelId)!;
+    final nextDoor = reloaded.objectById(doorId)!;
+    expect(nextLevel.name, 'Ground authoring level');
+    expect(nextLevel.elevationMeters, closeTo(0.15, 1e-6));
+    expect(
+      double.parse(nextDoor.metadata['width_meters'].toString()),
+      closeTo(1.05, 1e-6),
+    );
+    expect(
+      double.parse(nextDoor.metadata['level_offset_meters'].toString()),
+      closeTo(0.25, 1e-6),
     );
   });
 
