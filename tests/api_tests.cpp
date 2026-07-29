@@ -1295,5 +1295,24 @@ int main() {
         tbe_engine_destroy(loop_handle);
     }
 
+    // Native default-template smoke test: this is the exact startup path used
+    // by Flutter, including the sloped roof and layered assemblies.
+    {
+        auto* template_handle = tbe_engine_create();
+        assert(template_handle != nullptr);
+        std::uint64_t primary_level = 0;
+        assert(tbe_create_residential_template(template_handle, 1, 3, &primary_level) == TBE_API_OK);
+        assert(primary_level != 0);
+        char* scene_json = nullptr;
+        assert(tbe_get_render_scene_json(template_handle, &scene_json) == TBE_API_OK);
+        assert(scene_json != nullptr);
+        assert(std::string(scene_json).find("SimpleGable") != std::string::npos);
+        tbe_free_string(scene_json);
+        char* project_json = nullptr;
+        assert(tbe_project_save_json(template_handle, &project_json) == TBE_API_OK);
+        assert(tbe_project_load_json(template_handle, project_json) == TBE_API_OK);
+        tbe_free_string(project_json);
+        tbe_engine_destroy(template_handle);
+    }
     return 0;
 }

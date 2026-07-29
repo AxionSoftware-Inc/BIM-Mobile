@@ -373,17 +373,25 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       await TbeViewerApi.prepareForCurrentPlatform();
       final api = TbeViewerApi.load();
       final repository = ViewerRepository(api);
-      final result = await repository.createResidentialTemplate(
-        buildingCount: 1,
-        storyCount: 3,
+      final projectJson =
+          await rootBundle.loadString('assets/sample_project.json');
+      await repository.loadFromJson(
+        projectName: 'Bundled Sample Project',
+        json: projectJson,
+        sourcePath: 'assets/sample_project.json',
       );
+      final result = await repository.constrainUnconnectedWallsToNextLevel();
+      if (result.scene == null) {
+        repository.dispose();
+        return false;
+      }
       _engineRepository?.dispose();
       _engineRepository = repository;
       _engineBackedMode = true;
       _engineLoadDiagnostic = null;
       await _applyLoadResult(
         result,
-        sourceLabel: 'engine:3-storey layered gable house',
+        sourceLabel: 'engine:assets/sample_project.json',
       );
       return true;
     } catch (error) {
