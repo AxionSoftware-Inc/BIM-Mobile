@@ -762,9 +762,10 @@ internal class RenderSceneFilamentHostView(
         scene.removeEntity(entry.entity)
         entry.attached = false
       }
-      // Solid edges are drawn by the authoring canvas overlay. Keeping the
-      // coplanar Filament line entity disabled in Solid removes depth flicker.
-      val edgeVisible = displayStyle == "wireframe" &&
+      // Let Filament depth-test Solid feature lines. The 2D canvas overlay is
+      // reserved for Wire and selection; otherwise it draws hidden/internal
+      // edges over the model and turns Solid into Wire.
+      val edgeVisible = (displayStyle == "wireframe" || displayStyle == "solid") &&
         (visibleKinds.isEmpty() || visibleKinds.contains(normalizeKind(entry.objectData.kind)))
       val edgeEntity = entry.edgeEntity
       if (edgeEntity != null && edgeVisible && !entry.edgeAttached) {
@@ -1342,10 +1343,9 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
 
   fun setDisplayStyle(style: String) {
     wireframe = style == "wireframe"
-    // Feature edges are outer/crease edges produced from the mesh, not raw
-    // triangle edges. Keep a light Solid pass for BIM readability; Wire owns
-    // the stronger all-edge presentation.
-    showObjectEdges = style != "shaded"
+    // The canvas overlay cannot depth-test. It is Wire-only; Solid receives
+    // its visible edges from Filament's depth-tested line renderables.
+    showObjectEdges = style == "wireframe"
     outline.color = when (style) {
       "wireframe" -> Color.argb(225, 18, 30, 42)
       "solid" -> Color.argb(170, 37, 51, 65)
@@ -1390,6 +1390,7 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
     for (objectData in objects) {
       val projected = objectData.points.map(::project)
       val selected = objectData.elementId != null && selectedIds.contains(objectData.elementId)
+      if (!showObjectEdges && !selected) continue
       val edgePaint = if (selected) selectedOutline else outline
       for ((firstIndex, secondIndex) in objectData.featureEdges) {
         val first = projected.getOrNull(firstIndex)
