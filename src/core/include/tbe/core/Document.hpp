@@ -146,6 +146,7 @@ public:
     /// Rebuilds deterministic host relations: beam-to-column joins, safe
     /// column-to-wall cuts and stair openings in matching floor/ceiling systems.
     void auto_join_structural_elements();
+    [[nodiscard]] const std::vector<HostRelation>& host_relations() const noexcept;
     /// Bulk import/template construction can defer expensive join discovery
     /// until a deliberate authoring operation asks for it.
     void set_automatic_wall_join_enabled(bool enabled) noexcept;
@@ -235,6 +236,7 @@ private:
     std::map<ElementId, FloorSystemData> floor_systems_{};
     std::map<ElementId, CeilingSystemData> ceiling_systems_{};
     std::vector<std::pair<ElementId, ElementId>> beam_column_joins_{};
+    std::vector<HostRelation> host_relations_{};
     std::vector<ElementId> dirty_room_ids_{};
     // Levels whose room topology changed. This lets interactive snapshots
     // recompute only the edited storey instead of scanning the whole model.

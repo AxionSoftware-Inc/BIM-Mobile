@@ -54,6 +54,21 @@ enum class OpeningKind {
     StructuralVoid
 };
 
+enum class HostRelationKind {
+    Join,
+    Embed,
+    Cut,
+    Host
+};
+
+struct HostRelation {
+    ElementId host_id{};
+    ElementId guest_id{};
+    HostRelationKind kind{HostRelationKind::Embed};
+    int priority{};
+    double clearance_meters{};
+};
+
 enum class RoomBoundaryMode {
     Centerline,
     InteriorFinishFace

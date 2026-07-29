@@ -1835,6 +1835,16 @@ void Document::auto_join_structural_elements() {
     // Relations are cheap semantic records. They deliberately do not boolean-
     // union meshes, keeping edits and save/reload deterministic on mobile.
     beam_column_joins_.clear();
+    host_relations_.clear();
+    for (auto& element : elements_) {
+        if (auto* wall = element.wall()) {
+            const auto before = wall->openings.size();
+            wall->openings.erase(std::remove_if(wall->openings.begin(), wall->openings.end(), [](const HostedOpening& opening) {
+                return opening.kind == OpeningKind::StructuralVoid;
+            }), wall->openings.end());
+            if (wall->openings.size() != before) mark_wall_dirty(element);
+        }
+    }
     for (const auto& beam_element : elements_) {
         const auto* beam = beam_element.beam();
         if (beam == nullptr) continue;
@@ -1851,7 +1861,10 @@ void Document::auto_join_structural_elements() {
             const auto py = beam->start.y + t * dy;
             const auto distance = std::hypot(column->position.x - px, column->position.y - py);
             const auto tolerance = (beam->width_meters + std::max(column->width_meters, column->depth_meters)) * 0.5 + 0.02;
-            if (distance <= tolerance) beam_column_joins_.emplace_back(beam_element.id(), column_element.id());
+            if (distance <= tolerance) {
+                beam_column_joins_.emplace_back(beam_element.id(), column_element.id());
+                host_relations_.push_back({.host_id = column_element.id(), .guest_id = beam_element.id(), .kind = HostRelationKind::Join, .priority = 100});
+            }
         }
     }
 
@@ -1875,8 +1888,12 @@ void Document::auto_join_structural_elements() {
             const auto py = wall->axis.start.y + t * dy;
             const auto distance = std::hypot(column->position.x - px, column->position.y - py);
             if (distance <= wall->thickness_meters * 0.5 + 0.01) {
-                try { set_structural_wall_cut(wall_element.id(), column_element.id(), true); }
-                catch (const std::invalid_argument&) { /* conflicting authored opening: retain Embed */ }
+                try {
+                    set_structural_wall_cut(wall_element.id(), column_element.id(), true);
+                    host_relations_.push_back({.host_id = wall_element.id(), .guest_id = column_element.id(), .kind = HostRelationKind::Cut, .priority = 100});
+                } catch (const std::invalid_argument&) {
+                    host_relations_.push_back({.host_id = wall_element.id(), .guest_id = column_element.id(), .kind = HostRelationKind::Embed, .priority = 10});
+                }
             }
         }
     }
@@ -1887,6 +1904,7 @@ void Document::auto_join_structural_elements() {
             const auto* stair = element.stair();
             if (stair != nullptr && stair->top_level_id != 0 && stair->top_level_id == system.level_id) {
                 system.stair_opening_ids.push_back(element.id());
+                host_relations_.push_back({.host_id = system_id, .guest_id = element.id(), .kind = HostRelationKind::Host, .priority = 50});
             }
         }
         system.dirty = true;
@@ -1898,12 +1916,17 @@ void Document::auto_join_structural_elements() {
             const auto* stair = element.stair();
             if (stair != nullptr && stair->top_level_id != 0 && stair->top_level_id == system.level_id) {
                 system.stair_opening_ids.push_back(element.id());
+                host_relations_.push_back({.host_id = system_id, .guest_id = element.id(), .kind = HostRelationKind::Host, .priority = 50});
             }
         }
         system.dirty = true;
         (void)system_id;
     }
     invalidate_dependency_graph_cache();
+}
+
+const std::vector<HostRelation>& Document::host_relations() const noexcept {
+    return host_relations_;
 }
 
 std::vector<ElementId> Document::detect_rooms() {

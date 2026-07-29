@@ -791,6 +791,16 @@ std::string Document::to_json() const {
             << ",\"column_id\":" << beam_column_joins_[index].second << '}';
     }
     out << "],";
+    out << "\"host_relations\":[";
+    for (std::size_t index = 0; index < host_relations_.size(); ++index) {
+        if (index != 0) out << ',';
+        const auto& relation = host_relations_[index];
+        out << "{\"host_id\":" << relation.host_id << ",\"guest_id\":" << relation.guest_id
+            << ",\"kind\":" << static_cast<int>(relation.kind)
+            << ",\"priority\":" << relation.priority
+            << ",\"clearance\":" << relation.clearance_meters << '}';
+    }
+    out << "],";
     out << "\"floor_systems\":[";
     {
         auto first = true;
@@ -1135,6 +1145,18 @@ Document Document::from_json(std::string_view json) {
         for (const auto& item : as_array(joins_it->second)) {
             const auto& join = as_object(item);
             document.beam_column_joins_.emplace_back(as_id(field(join, "beam_id")), as_id(field(join, "column_id")));
+        }
+    }
+    if (const auto relations_it = root_object.find("host_relations"); relations_it != root_object.end()) {
+        for (const auto& item : as_array(relations_it->second)) {
+            const auto& relation = as_object(item);
+            document.host_relations_.push_back(HostRelation{
+                .host_id = as_id(field(relation, "host_id")),
+                .guest_id = as_id(field(relation, "guest_id")),
+                .kind = static_cast<HostRelationKind>(static_cast<int>(as_number(field(relation, "kind")))),
+                .priority = static_cast<int>(as_number(field(relation, "priority"))),
+                .clearance_meters = as_number(field(relation, "clearance")),
+            });
         }
     }
 

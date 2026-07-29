@@ -1908,6 +1908,7 @@ int main() {
         const auto beam = compound.create_beam(level, {0.0, 0.0}, {6.0, 0.0}, 0.25, 0.4, concrete);
         compound.auto_join_structural_elements();
         assert(!compound.find_ptr(wall)->wall()->openings.empty());
+        assert(!compound.host_relations().empty());
         compound.set_structural_wall_cut(wall, column, true, 0.02);
         assert(compound.find_ptr(wall)->wall()->openings.size() == 1);
         compound.set_structural_wall_cut(wall, column, false);
@@ -1933,6 +1934,7 @@ int main() {
         assert(restored.find_ptr(roof)->roof()->assembly_id == roof_assembly);
         assert(restored.find_ptr(stair)->stair()->assembly_id == stair_assembly);
         assert(restored.find_ptr(roof)->roof()->generated_geometry_dirty);
+        assert(!restored.host_relations().empty());
     }
 
     return 0;
