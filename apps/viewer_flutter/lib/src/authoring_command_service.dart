@@ -84,6 +84,19 @@ class AuthoringCommandService {
         levelOffsetMeters: levelOffsetMeters,
       );
 
+  Future<RenderSceneLoadResult> updateRoofProperties({
+    required int roofId,
+    required int roofType,
+    double? slopeDegrees,
+    double? overhangMeters,
+  }) =>
+      _requireRepository().updateRoofProperties(
+        roofId: roofId,
+        roofType: roofType,
+        slopeDegrees: slopeDegrees,
+        overhangMeters: overhangMeters,
+      );
+
   Future<RenderSceneLoadResult> deleteElement(int elementId) =>
       _requireRepository().deleteElement(elementId: elementId);
 

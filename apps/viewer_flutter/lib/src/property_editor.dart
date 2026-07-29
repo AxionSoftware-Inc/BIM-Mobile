@@ -193,8 +193,11 @@ class _ObjectPropertiesSection extends StatelessWidget {
               'Rise (m)': _meta(object, 'total_rise_meters'),
               'Treads / risers':
                   '${_meta(object, 'tread_count')} / ${_meta(object, 'riser_count')}',
+              'Assembly': _meta(object, 'assembly_id'),
             }),
-      'floor' || 'ceiling' || 'roof' || 'slab' => _ReadOnlyObjectSection(
+      'roof' => _RoofPropertiesSection(
+          object: object, commands: commands, onApplied: onApplied),
+      'floor' || 'ceiling' || 'slab' => _ReadOnlyObjectSection(
             object: object,
             title: '${_label(object)} properties',
             rows: <String, String>{
@@ -202,6 +205,7 @@ class _ObjectPropertiesSection extends StatelessWidget {
               'Area (m²)': _meta(object, 'area_m2'),
               'Thickness (m)': _meta(object, 'thickness_meters'),
               'Vertical offset (m)': _meta(object, 'vertical_offset_meters'),
+              'Assembly': _meta(object, 'assembly_id'),
             }),
       'column' || 'beam' => _ReadOnlyObjectSection(
             object: object,
@@ -442,6 +446,89 @@ class _OpeningPropertiesSectionState extends State<_OpeningPropertiesSection> {
                 onChanged: (value) => setState(() => _locked = value)),
             _applyButton(_busy, _apply),
           ]);
+}
+
+class _RoofPropertiesSection extends StatefulWidget {
+  const _RoofPropertiesSection({
+    required this.object,
+    required this.commands,
+    required this.onApplied,
+  });
+  final RenderSceneObject object;
+  final AuthoringCommandService commands;
+  final ApplyInspectorResult onApplied;
+
+  @override
+  State<_RoofPropertiesSection> createState() => _RoofPropertiesSectionState();
+}
+
+class _RoofPropertiesSectionState extends State<_RoofPropertiesSection> {
+  late bool _gable;
+  late final TextEditingController _slope;
+  late final TextEditingController _overhang;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _gable = _meta(widget.object, 'roof_type') == 'SimpleGable';
+    _slope = TextEditingController(
+        text: _meta(widget.object, 'slope_degrees') == '-'
+            ? '25'
+            : _meta(widget.object, 'slope_degrees'));
+    _overhang = TextEditingController(
+        text: _meta(widget.object, 'overhang_meters') == '-'
+            ? '0'
+            : _meta(widget.object, 'overhang_meters'));
+  }
+
+  @override
+  void dispose() {
+    _slope.dispose();
+    _overhang.dispose();
+    super.dispose();
+  }
+
+  Future<void> _apply() async {
+    final id = widget.object.elementId;
+    final slope = double.tryParse(_slope.text.trim());
+    final overhang = double.tryParse(_overhang.text.trim());
+    if (id == null ||
+        overhang == null ||
+        (_gable && (slope == null || slope <= 0 || slope >= 75))) {
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      final result = await widget.commands.updateRoofProperties(
+        roofId: id,
+        roofType: _gable ? 1 : 0,
+        slopeDegrees: _gable ? slope : null,
+        overhangMeters: overhang,
+      );
+      await widget.onApplied(result, 'Roof properties updated.');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => _InspectorCard(
+        title: 'Roof properties',
+        icon: Icons.roofing_outlined,
+        children: <Widget>[
+          _row('Assembly', _meta(widget.object, 'assembly_id')),
+          SwitchListTile.adaptive(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Simple gable'),
+            value: _gable,
+            onChanged: (value) => setState(() => _gable = value),
+          ),
+          if (_gable) _field('Slope (degrees)', _slope, numeric: true),
+          _field('Overhang (m)', _overhang, numeric: true),
+          _applyButton(_busy, _apply),
+        ],
+      );
 }
 
 class _ReadOnlyObjectSection extends StatelessWidget {

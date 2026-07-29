@@ -1887,5 +1887,44 @@ int main() {
         assert(reloaded_door->level_locked);
     }
 
+    {
+        // Compound assemblies are semantic data. Their generated meshes are
+        // rebuilt after reload rather than persisted as project payload.
+        tbe::core::Document compound{"Compound V2"};
+        const auto level = compound.create_level("Level 1", 0.0, 3.2);
+        const auto concrete = compound.create_material("Concrete", tbe::core::MaterialCategory::Structural);
+        const auto wall_assembly = compound.create_layered_assembly(tbe::core::LayeredAssemblyKind::Wall, "Wall", {
+            {.material_id = concrete, .thickness_meters = 0.20, .function = tbe::core::WallLayerFunction::Core, .priority = 100, .structural = true},
+            {.material_id = concrete, .thickness_meters = 0.02, .function = tbe::core::WallLayerFunction::InteriorFinish, .priority = 10},
+        });
+        const auto roof_assembly = compound.create_layered_assembly(tbe::core::LayeredAssemblyKind::Roof, "Roof", {
+            {.material_id = concrete, .thickness_meters = 0.18, .function = tbe::core::WallLayerFunction::Core, .priority = 100, .structural = true},
+        });
+        const auto stair_assembly = compound.create_layered_assembly(tbe::core::LayeredAssemblyKind::Stair, "Stair", {
+            {.material_id = concrete, .thickness_meters = 0.15, .function = tbe::core::WallLayerFunction::Core, .priority = 100, .structural = true},
+        });
+        const auto wall = compound.create_wall("Wall", {{0.0, 0.0}, {6.0, 0.0}}, 0.2, 3.2, level, wall_assembly);
+        const auto column = compound.create_column(level, {3.0, 0.0}, 0.30, 0.30, 3.0, concrete);
+        compound.set_structural_wall_cut(wall, column, true, 0.02);
+        assert(compound.find_ptr(wall)->wall()->openings.size() == 1);
+        compound.set_structural_wall_cut(wall, column, false);
+        assert(compound.find_ptr(wall)->wall()->openings.empty());
+        const auto roof = compound.create_roof(level, {{0.0, 0.0}, {6.0, 0.0}, {6.0, 4.0}, {0.0, 4.0}}, tbe::core::RoofType::SimpleGable, 0.18, concrete, roof_assembly, 25.0);
+        assert(!compound.find_ptr(roof)->roof()->mesh.vertices.empty());
+        const auto stair = compound.create_stair(level, level, {0.0, 0.5}, {1.0, 0.0}, 1.1, 3.0, 4.0, 18, 17, concrete, stair_assembly);
+        assert(!compound.find_ptr(stair)->stair()->mesh.vertices.empty());
+        assert(!compound.find_ptr(stair)->stair()->mesh.indices.empty());
+        auto edited = *compound.get_layered_assembly(wall_assembly);
+        edited.layers.front().thickness_meters = 0.25;
+        compound.update_layered_assembly(std::move(edited));
+        assert(compound.find_ptr(wall)->wall()->geometry.dirty);
+        compound.regenerate_dirty_geometry();
+        const auto restored = tbe::core::Document::from_json(compound.to_json());
+        assert(restored.find_ptr(wall)->wall()->assembly_id == wall_assembly);
+        assert(restored.find_ptr(roof)->roof()->assembly_id == roof_assembly);
+        assert(restored.find_ptr(stair)->stair()->assembly_id == stair_assembly);
+        assert(restored.find_ptr(roof)->roof()->generated_geometry_dirty);
+    }
+
     return 0;
 }

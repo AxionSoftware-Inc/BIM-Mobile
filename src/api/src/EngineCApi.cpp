@@ -359,6 +359,34 @@ TbeApiStatusCode tbe_set_wall_axis(
     ));
 }
 
+TbeApiStatusCode tbe_set_element_assembly(TbeEngineHandle* handle, uint64_t element_id, uint64_t assembly_id) {
+    if (handle == nullptr || handle->session == nullptr) return null_handle_error(handle);
+    return apply_result(handle, handle->session->set_element_assembly(element_id, assembly_id));
+}
+
+TbeApiStatusCode tbe_update_roof_properties(
+    TbeEngineHandle* handle, uint64_t roof_id, int roof_type,
+    int has_slope, double slope_degrees, int has_overhang, double overhang_meters
+) {
+    if (handle == nullptr || handle->session == nullptr) return null_handle_error(handle);
+    return apply_result(handle, handle->session->update_roof_properties(
+        roof_id, static_cast<tbe::api::ApiRoofType>(roof_type),
+        has_slope != 0 ? std::optional<double>{slope_degrees} : std::nullopt,
+        has_overhang != 0 ? std::optional<double>{overhang_meters} : std::nullopt));
+}
+
+TbeApiStatusCode tbe_set_structural_wall_cut(
+    TbeEngineHandle* handle, uint64_t wall_id, uint64_t cutter_id, int enabled, double clearance_meters
+) {
+    if (handle == nullptr || handle->session == nullptr) return null_handle_error(handle);
+    return apply_result(handle, handle->session->set_structural_wall_cut(wall_id, cutter_id, enabled != 0, clearance_meters));
+}
+
+TbeApiStatusCode tbe_set_beam_column_join(TbeEngineHandle* handle, uint64_t beam_id, uint64_t column_id, int enabled) {
+    if (handle == nullptr || handle->session == nullptr) return null_handle_error(handle);
+    return apply_result(handle, handle->session->set_beam_column_join(beam_id, column_id, enabled != 0));
+}
+
 TbeApiStatusCode tbe_move_wall(TbeEngineHandle* handle, uint64_t wall_id, double dx_meters, double dy_meters) {
     if (handle == nullptr || handle->session == nullptr) {
         return null_handle_error(handle);

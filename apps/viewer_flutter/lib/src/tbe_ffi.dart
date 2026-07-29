@@ -306,6 +306,60 @@ typedef _SetWallAxisDart = int Function(
   TbeVec2,
   TbeVec2,
 );
+typedef _SetElementAssemblyNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Uint64,
+  ffi.Uint64,
+);
+typedef _SetElementAssemblyDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  int,
+  int,
+);
+typedef _UpdateRoofPropertiesNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Uint64,
+  ffi.Int32,
+  ffi.Int32,
+  ffi.Double,
+  ffi.Int32,
+  ffi.Double,
+);
+typedef _UpdateRoofPropertiesDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  int,
+  int,
+  int,
+  double,
+  int,
+  double,
+);
+typedef _SetStructuralWallCutNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Uint64,
+  ffi.Uint64,
+  ffi.Int32,
+  ffi.Double,
+);
+typedef _SetStructuralWallCutDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  int,
+  int,
+  int,
+  double,
+);
+typedef _SetBeamColumnJoinNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Uint64,
+  ffi.Uint64,
+  ffi.Int32,
+);
+typedef _SetBeamColumnJoinDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  int,
+  int,
+  int,
+);
 typedef _CreateWallNative = ffi.Int32 Function(
   ffi.Pointer<ffi.Void>,
   ffi.Pointer<Utf8>,
@@ -638,6 +692,16 @@ class TbeViewerApi {
         _setWallAxis =
             library.lookupFunction<_SetWallAxisNative, _SetWallAxisDart>(
                 'tbe_set_wall_axis'),
+        _setElementAssembly = library.lookupFunction<_SetElementAssemblyNative,
+            _SetElementAssemblyDart>('tbe_set_element_assembly'),
+        _updateRoofProperties = library.lookupFunction<
+            _UpdateRoofPropertiesNative,
+            _UpdateRoofPropertiesDart>('tbe_update_roof_properties'),
+        _setStructuralWallCut = library.lookupFunction<
+            _SetStructuralWallCutNative,
+            _SetStructuralWallCutDart>('tbe_set_structural_wall_cut'),
+        _setBeamColumnJoin = library.lookupFunction<_SetBeamColumnJoinNative,
+            _SetBeamColumnJoinDart>('tbe_set_beam_column_join'),
         _createWall =
             library.lookupFunction<_CreateWallNative, _CreateWallDart>(
                 'tbe_create_wall'),
@@ -801,6 +865,10 @@ class TbeViewerApi {
   final _MoveLevelElevationDart _moveLevelElevation;
   final _SetWallLevelConstraintsDart _setWallLevelConstraints;
   final _SetWallAxisDart _setWallAxis;
+  final _SetElementAssemblyDart _setElementAssembly;
+  final _UpdateRoofPropertiesDart _updateRoofProperties;
+  final _SetStructuralWallCutDart _setStructuralWallCut;
+  final _SetBeamColumnJoinDart _setBeamColumnJoin;
   final _CreateWallDart _createWall;
   final _CreateStairDart _createStair;
   final _CreateDoorDart _createDoor;
@@ -1032,6 +1100,51 @@ class TbeViewerApi {
       calloc.free(end);
     }
   }
+
+  void setElementAssembly(
+      ffi.Pointer<ffi.Void> handle, int elementId, int assemblyId) {
+    _check(handle, _setElementAssembly(handle, elementId, assemblyId));
+  }
+
+  void updateRoofProperties(
+    ffi.Pointer<ffi.Void> handle, {
+    required int roofId,
+    required int roofType,
+    double? slopeDegrees,
+    double? overhangMeters,
+  }) {
+    _check(
+        handle,
+        _updateRoofProperties(
+            handle,
+            roofId,
+            roofType,
+            slopeDegrees == null ? 0 : 1,
+            slopeDegrees ?? 0.0,
+            overhangMeters == null ? 0 : 1,
+            overhangMeters ?? 0.0));
+  }
+
+  void setStructuralWallCut(
+    ffi.Pointer<ffi.Void> handle, {
+    required int wallId,
+    required int cutterId,
+    required bool enabled,
+    double clearanceMeters = 0.0,
+  }) =>
+      _check(
+          handle,
+          _setStructuralWallCut(
+              handle, wallId, cutterId, enabled ? 1 : 0, clearanceMeters));
+
+  void setBeamColumnJoin(
+    ffi.Pointer<ffi.Void> handle, {
+    required int beamId,
+    required int columnId,
+    required bool enabled,
+  }) =>
+      _check(handle,
+          _setBeamColumnJoin(handle, beamId, columnId, enabled ? 1 : 0));
 
   void resizeDoor(ffi.Pointer<ffi.Void> handle,
       {required int doorId,
@@ -2091,6 +2204,64 @@ class ViewerRepository {
       assemblyId,
       heightOffsetMeters,
     );
+    await _buildSnapshot(handle, _projectName ?? 'Project');
+    return currentRenderScene();
+  }
+
+  Future<RenderSceneLoadResult> setElementAssembly({
+    required int elementId,
+    required int assemblyId,
+  }) async {
+    final handle = _handle;
+    if (handle == null) throw TbeApiException('No loaded project');
+    _api.setElementAssembly(handle, elementId, assemblyId);
+    await _buildSnapshot(handle, _projectName ?? 'Project');
+    return currentRenderScene();
+  }
+
+  Future<RenderSceneLoadResult> updateRoofProperties({
+    required int roofId,
+    required int roofType,
+    double? slopeDegrees,
+    double? overhangMeters,
+  }) async {
+    final handle = _handle;
+    if (handle == null) throw TbeApiException('No loaded project');
+    _api.updateRoofProperties(handle,
+        roofId: roofId,
+        roofType: roofType,
+        slopeDegrees: slopeDegrees,
+        overhangMeters: overhangMeters);
+    await _buildSnapshot(handle, _projectName ?? 'Project');
+    return currentRenderScene();
+  }
+
+  Future<RenderSceneLoadResult> setStructuralWallCut({
+    required int wallId,
+    required int cutterId,
+    required bool enabled,
+    double clearanceMeters = 0.0,
+  }) async {
+    final handle = _handle;
+    if (handle == null) throw TbeApiException('No loaded project');
+    _api.setStructuralWallCut(handle,
+        wallId: wallId,
+        cutterId: cutterId,
+        enabled: enabled,
+        clearanceMeters: clearanceMeters);
+    await _buildSnapshot(handle, _projectName ?? 'Project');
+    return currentRenderScene();
+  }
+
+  Future<RenderSceneLoadResult> setBeamColumnJoin({
+    required int beamId,
+    required int columnId,
+    required bool enabled,
+  }) async {
+    final handle = _handle;
+    if (handle == null) throw TbeApiException('No loaded project');
+    _api.setBeamColumnJoin(handle,
+        beamId: beamId, columnId: columnId, enabled: enabled);
     await _buildSnapshot(handle, _projectName ?? 'Project');
     return currentRenderScene();
   }

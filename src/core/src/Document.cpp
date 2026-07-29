@@ -547,6 +547,37 @@ MeshBuffer extrude_polygon_mesh(const std::vector<Point2>& polygon, double thick
     return mesh;
 }
 
+bool valid_gable_profile(const std::vector<Point2>& polygon) {
+    if (polygon.size() != 4 || polygon_has_self_intersection(polygon)) return false;
+    double min_x = polygon.front().x, max_x = min_x, min_y = polygon.front().y, max_y = min_y;
+    for (const auto& point : polygon) {
+        min_x = std::min(min_x, point.x); max_x = std::max(max_x, point.x);
+        min_y = std::min(min_y, point.y); max_y = std::max(max_y, point.y);
+    }
+    return cyclic_polygon_equal(polygon, {{min_x, min_y}, {max_x, min_y}, {max_x, max_y}, {min_x, max_y}});
+}
+
+MeshBuffer build_gable_roof_mesh(const RoofData& roof, double thickness) {
+    if (!valid_gable_profile(roof.boundary_polygon) || !roof.slope_degrees.has_value()) return {};
+    double min_x = roof.boundary_polygon.front().x, max_x = min_x, min_y = roof.boundary_polygon.front().y, max_y = min_y;
+    for (const auto& point : roof.boundary_polygon) {
+        min_x = std::min(min_x, point.x); max_x = std::max(max_x, point.x);
+        min_y = std::min(min_y, point.y); max_y = std::max(max_y, point.y);
+    }
+    const auto dx = max_x - min_x, dy = max_y - min_y;
+    const auto rise = std::min(dx, dy) * 0.5 * std::tan(*roof.slope_degrees * 3.14159265358979323846 / 180.0);
+    if (rise <= epsilon) return {};
+    MeshBuffer mesh;
+    if (dx >= dy) {
+        mesh.vertices = {{min_x,min_y,0},{max_x,min_y,0},{max_x,max_y,0},{min_x,max_y,0},{min_x,min_y,thickness},{max_x,min_y,thickness},{max_x,max_y,thickness},{min_x,max_y,thickness},{min_x,(min_y+max_y)*0.5,thickness+rise},{max_x,(min_y+max_y)*0.5,thickness+rise}};
+        mesh.indices = {0,2,1,0,3,2,0,1,5,0,5,4,3,7,6,3,6,2,0,4,8,0,8,3,3,8,7,1,2,9,1,9,5,2,6,9,4,5,9,4,9,8,7,8,9,7,9,6};
+    } else {
+        mesh.vertices = {{min_x,min_y,0},{max_x,min_y,0},{max_x,max_y,0},{min_x,max_y,0},{min_x,min_y,thickness},{max_x,min_y,thickness},{max_x,max_y,thickness},{min_x,max_y,thickness},{(min_x+max_x)*0.5,min_y,thickness+rise},{(min_x+max_x)*0.5,max_y,thickness+rise}};
+        mesh.indices = {0,2,1,0,3,2,0,1,5,0,5,4,3,7,6,3,6,2,0,4,8,0,8,1,1,8,5,3,2,9,3,9,7,2,6,9,4,7,9,4,9,8,5,8,9,5,9,6};
+    }
+    return mesh;
+}
+
 std::vector<Point2> rectangle_polygon(Point2 center, double width, double depth) {
     const auto half_width = width / 2.0;
     const auto half_depth = depth / 2.0;
@@ -607,7 +638,23 @@ MeshBuffer build_stair_mesh(const StairData& stair) {
         mesh.vertices.insert(mesh.vertices.end(), step_mesh.vertices.begin(), step_mesh.vertices.end());
         for (const auto index : step_mesh.indices) mesh.indices.push_back(base + index);
     }
-    return mesh;
+    // The stair remains one MeshBuffer in the render snapshot. Weld only this
+    // small authored mesh; general slabs/walls retain their O(n) builder.
+    MeshBuffer welded;
+    welded.vertices.reserve(mesh.vertices.size());
+    for (const auto index : mesh.indices) {
+        const auto& vertex = mesh.vertices[index];
+        const auto found = std::find_if(welded.vertices.begin(), welded.vertices.end(), [&](const Point3& candidate) {
+            return near(candidate.x, vertex.x) && near(candidate.y, vertex.y) && near(candidate.z, vertex.z);
+        });
+        if (found == welded.vertices.end()) {
+            welded.vertices.push_back(vertex);
+            welded.indices.push_back(static_cast<std::uint32_t>(welded.vertices.size() - 1));
+        } else {
+            welded.indices.push_back(static_cast<std::uint32_t>(std::distance(welded.vertices.begin(), found)));
+        }
+    }
+    return welded;
 }
 
 double roof_plan_area(const RoofData& roof) {
@@ -753,7 +800,23 @@ void Document::update_layered_assembly(LayeredAssemblyData assembly) {
             throw std::invalid_argument("assembly layer thickness must be positive");
         }
     }
-    layered_assemblies_[assembly.assembly_id] = std::move(assembly);
+    const auto assembly_id = assembly.assembly_id;
+    layered_assemblies_[assembly_id] = std::move(assembly);
+    for (auto& element : elements_) {
+        if (auto* wall = element.wall(); wall != nullptr && wall->assembly_id == assembly_id) {
+            wall->thickness_meters = layered_assembly_total_thickness(layered_assemblies_.at(assembly_id));
+            mark_wall_dirty(element);
+        } else if (auto* slab = element.slab(); slab != nullptr && slab->assembly_id == assembly_id) {
+            slab->generated_geometry_dirty = true;
+            element.touch();
+        } else if (auto* roof = element.roof(); roof != nullptr && roof->assembly_id == assembly_id) {
+            roof->generated_geometry_dirty = true;
+            element.touch();
+        } else if (auto* stair = element.stair(); stair != nullptr && stair->assembly_id == assembly_id) {
+            stair->generated_geometry_dirty = true;
+            element.touch();
+        }
+    }
     invalidate_dependency_graph_cache();
 }
 
@@ -776,7 +839,7 @@ ElementId Document::create_level(std::string name, double elevation_meters, doub
     return id;
 }
 
-ElementId Document::create_wall(std::string name, Line2 axis, double thickness_meters, double height_meters, ElementId level_id) {
+ElementId Document::create_wall(std::string name, Line2 axis, double thickness_meters, double height_meters, ElementId level_id, ElementId assembly_id) {
     if (name.empty()) {
         throw std::invalid_argument("wall name must not be empty");
     }
@@ -784,11 +847,20 @@ ElementId Document::create_wall(std::string name, Line2 axis, double thickness_m
     if (level_id != 0) {
         (void)require_level(level_id);
     }
+    if (assembly_id != 0) {
+        const auto* assembly = get_layered_assembly(assembly_id);
+        if (assembly == nullptr || assembly->kind != LayeredAssemblyKind::Wall) {
+            throw std::invalid_argument("wall assembly must exist and have Wall kind");
+        }
+        thickness_meters = layered_assembly_total_thickness(*assembly);
+        validate_wall_axis(axis, thickness_meters, height_meters);
+    }
 
     const auto id = allocate_id();
     elements_.emplace_back(id, ElementKind::Wall, std::move(name), WallData{
         .level_id = level_id,
         .base_level_id = level_id,
+        .assembly_id = assembly_id,
         .axis = axis,
         .thickness_meters = thickness_meters,
         .height_meters = height_meters,
@@ -813,6 +885,107 @@ void Document::set_wall_type(ElementId wall_id, ElementId wall_type_id) {
     if (const auto* wall_type = get_wall_type(wall_type_id)) {
         wall->thickness_meters = total_wall_type_thickness(*wall_type);
     }
+    mark_wall_dirty(wall_element);
+    refresh_dependencies_for_wall(wall_id);
+}
+
+void Document::set_element_assembly(ElementId element_id, ElementId assembly_id) {
+    const auto* assembly = get_layered_assembly(assembly_id);
+    if (assembly == nullptr) throw std::invalid_argument("compound assembly does not exist");
+    auto* element = find_ptr(element_id);
+    if (element == nullptr) throw std::invalid_argument("element does not exist");
+    if (auto* wall = element->wall()) {
+        if (assembly->kind != LayeredAssemblyKind::Wall) throw std::invalid_argument("wall requires Wall assembly");
+        wall->assembly_id = assembly_id;
+        wall->wall_type_id = 0;
+        wall->thickness_meters = layered_assembly_total_thickness(*assembly);
+        mark_wall_dirty(*element);
+        refresh_dependencies_for_wall(element_id);
+    } else if (auto* slab = element->slab()) {
+        if (assembly->kind != LayeredAssemblyKind::Floor) throw std::invalid_argument("slab requires Floor assembly");
+        slab->assembly_id = assembly_id; slab->generated_geometry_dirty = true; element->touch();
+    } else if (auto* roof = element->roof()) {
+        if (assembly->kind != LayeredAssemblyKind::Roof) throw std::invalid_argument("roof requires Roof assembly");
+        roof->assembly_id = assembly_id; roof->generated_geometry_dirty = true; element->touch();
+    } else if (auto* stair = element->stair()) {
+        if (assembly->kind != LayeredAssemblyKind::Stair) throw std::invalid_argument("stair requires Stair assembly");
+        stair->assembly_id = assembly_id; stair->generated_geometry_dirty = true; element->touch();
+    } else {
+        throw std::invalid_argument("element does not support compound assemblies");
+    }
+    invalidate_dependency_graph_cache();
+}
+
+void Document::update_roof_properties(ElementId roof_id, RoofType roof_type, std::optional<double> slope_degrees, std::optional<double> overhang_meters) {
+    auto* element = find_ptr(roof_id);
+    auto* roof = element == nullptr ? nullptr : element->roof();
+    if (roof == nullptr) throw std::invalid_argument("roof does not exist");
+    if (roof_type == RoofType::SimpleGable && (!slope_degrees.has_value() || *slope_degrees <= 0.0 || *slope_degrees >= 75.0 || !valid_gable_profile(roof->boundary_polygon))) {
+        throw std::invalid_argument("simple gable requires rectangular profile and 0-75 degree slope");
+    }
+    if (overhang_meters.has_value() && *overhang_meters < 0.0) throw std::invalid_argument("roof overhang cannot be negative");
+    roof->roof_type = roof_type;
+    roof->slope_degrees = slope_degrees;
+    roof->overhang_meters = overhang_meters;
+    roof->generated_geometry_dirty = true;
+    element->touch();
+}
+
+void Document::set_beam_column_join(ElementId beam_id, ElementId column_id, bool enabled) {
+    const auto* beam = find_ptr(beam_id);
+    const auto* column = find_ptr(column_id);
+    if (beam == nullptr || beam->beam() == nullptr || column == nullptr || column->column() == nullptr) {
+        throw std::invalid_argument("join requires a beam and a column");
+    }
+    const auto relation = std::make_pair(beam_id, column_id);
+    const auto found = std::find(beam_column_joins_.begin(), beam_column_joins_.end(), relation);
+    if (enabled && found == beam_column_joins_.end()) beam_column_joins_.push_back(relation);
+    if (!enabled && found != beam_column_joins_.end()) beam_column_joins_.erase(found);
+    invalidate_dependency_graph_cache();
+}
+
+void Document::set_structural_wall_cut(ElementId wall_id, ElementId cutter_id, bool enabled, double clearance_meters) {
+    if (clearance_meters < 0.0) throw std::invalid_argument("structural cut clearance cannot be negative");
+    auto& wall_element = require_wall(wall_id);
+    auto* wall = wall_element.wall();
+    auto* cutter = find_ptr(cutter_id);
+    if (cutter == nullptr || (cutter->column() == nullptr && cutter->beam() == nullptr)) {
+        throw std::invalid_argument("wall cut requires a column or beam cutter");
+    }
+    auto updated = *wall;
+    updated.openings.erase(std::remove_if(updated.openings.begin(), updated.openings.end(), [&](const HostedOpening& opening) {
+        return opening.element_id == cutter_id && opening.kind == OpeningKind::StructuralVoid;
+    }), updated.openings.end());
+    if (enabled) {
+        const auto dx = updated.axis.end.x - updated.axis.start.x;
+        const auto dy = updated.axis.end.y - updated.axis.start.y;
+        const auto length = std::sqrt(dx * dx + dy * dy);
+        if (length <= epsilon) throw std::invalid_argument("wall axis is invalid");
+        Point2 center{};
+        double width{};
+        double height{};
+        if (const auto* column = cutter->column()) {
+            center = column->position;
+            width = std::abs(dx / length) * column->width_meters + std::abs(dy / length) * column->depth_meters;
+            height = column->height_meters;
+        } else if (const auto* beam = cutter->beam()) {
+            center = {(beam->start.x + beam->end.x) * 0.5, (beam->start.y + beam->end.y) * 0.5};
+            width = beam->width_meters;
+            height = beam->height_meters;
+        }
+        const auto offset = ((center.x - updated.axis.start.x) * dx + (center.y - updated.axis.start.y) * dy) / length;
+        updated.openings.push_back(HostedOpening{
+            .element_id = cutter_id,
+            .kind = OpeningKind::StructuralVoid,
+            .offset_meters = offset,
+            .width_meters = width + (2.0 * clearance_meters),
+            .height_meters = std::min(height + clearance_meters, resolved_wall_height(updated)),
+            .sill_height_meters = 0.0,
+            .vertical_offset_meters = 0.0,
+        });
+        validate_wall_openings(updated);
+    }
+    wall->openings = std::move(updated.openings);
     mark_wall_dirty(wall_element);
     refresh_dependencies_for_wall(wall_id);
 }
@@ -1065,14 +1238,22 @@ ElementId Document::create_roof(
     if (assembly_id != 0 && get_layered_assembly(assembly_id) == nullptr) {
         throw std::invalid_argument("roof assembly does not exist");
     }
+    if (assembly_id != 0 && get_layered_assembly(assembly_id)->kind != LayeredAssemblyKind::Roof) {
+        throw std::invalid_argument("roof assembly kind must be Roof");
+    }
+    if (roof_type == RoofType::SimpleGable &&
+        (!slope_degrees.has_value() || *slope_degrees <= 0.0 || *slope_degrees >= 75.0 || !valid_gable_profile(boundary_polygon))) {
+        throw std::invalid_argument("simple gable requires rectangular profile and 0-75 degree slope");
+    }
 
     const auto id = allocate_id();
     const auto area = roof_type == RoofType::SimpleGable
         ? roof_surface_area(RoofData{.boundary_polygon = boundary_polygon, .roof_type = roof_type, .slope_degrees = slope_degrees})
         : polygon_area(boundary_polygon);
+    const auto resolved_thickness = assembly_id != 0 ? layered_assembly_total_thickness(*get_layered_assembly(assembly_id)) : thickness_meters;
     const auto mesh = roof_type == RoofType::Flat
-        ? extrude_polygon_mesh(boundary_polygon, thickness_meters, 0.0)
-        : MeshBuffer{};
+        ? extrude_polygon_mesh(boundary_polygon, resolved_thickness, 0.0)
+        : build_gable_roof_mesh(RoofData{.boundary_polygon = boundary_polygon, .roof_type = roof_type, .slope_degrees = slope_degrees}, resolved_thickness);
     elements_.emplace_back(id, ElementKind::Roof, "Roof", RoofData{
         .level_id = level_id,
         .boundary_polygon = std::move(boundary_polygon),
@@ -1083,7 +1264,7 @@ ElementId Document::create_roof(
         .overhang_meters = overhang_meters,
         .material_id = material_id,
         .assembly_id = assembly_id,
-        .generated_geometry_dirty = roof_type != RoofType::Flat,
+        .generated_geometry_dirty = false,
         .mesh = mesh,
         .area_square_meters = area,
         .volume_cubic_meters = area * thickness_meters,
@@ -1166,7 +1347,8 @@ ElementId Document::create_stair(
     double total_run_meters,
     int riser_count,
     int tread_count,
-    ElementId material_id
+    ElementId material_id,
+    ElementId assembly_id
 ) {
     (void)require_level(base_level_id);
     if (top_level_id != 0) {
@@ -1177,6 +1359,12 @@ ElementId Document::create_stair(
     }
     if (material_id != 0 && get_material(material_id) == nullptr) {
         throw std::invalid_argument("stair material does not exist");
+    }
+    if (assembly_id != 0) {
+        const auto* assembly = get_layered_assembly(assembly_id);
+        if (assembly == nullptr || assembly->kind != LayeredAssemblyKind::Stair) {
+            throw std::invalid_argument("stair assembly must exist and have Stair kind");
+        }
     }
     const auto footprint_area = width_meters * total_run_meters;
     const auto id = allocate_id();
@@ -1191,6 +1379,7 @@ ElementId Document::create_stair(
         .riser_count = riser_count,
         .tread_count = tread_count,
         .material_id = material_id,
+        .assembly_id = assembly_id,
         .generated_geometry_dirty = false,
         .mesh = {},
         .footprint_area_square_meters = footprint_area,
@@ -2573,7 +2762,7 @@ void Document::regenerate_dirty_geometry() {
             roof->volume_cubic_meters = roof->area_square_meters * thickness;
             roof->mesh = roof->roof_type == RoofType::Flat
                 ? extrude_polygon_mesh(roof->boundary_polygon, thickness, 0.0)
-                : MeshBuffer{};
+                : build_gable_roof_mesh(*roof, thickness);
             roof->generated_geometry_dirty = false;
         }
 

@@ -50,7 +50,8 @@ enum class WallJoinKind {
 
 enum class OpeningKind {
     Door,
-    Window
+    Window,
+    StructuralVoid
 };
 
 enum class RoomBoundaryMode {
@@ -89,8 +90,11 @@ enum class QuantityType {
 };
 
 enum class LayeredAssemblyKind {
+    Wall,
     Floor,
-    Ceiling
+    Ceiling,
+    Roof,
+    Stair
 };
 
 enum class RoofType {
@@ -173,6 +177,9 @@ struct WallData {
     ElementId base_level_id{};
     ElementId top_level_id{};
     ElementId wall_type_id{};
+    // WallTypeData is kept for legacy projects. New authoring uses the same
+    // compound assembly contract as floors, roofs and stairs.
+    ElementId assembly_id{};
     Line2 axis{};
     double thickness_meters{};
     double height_meters{};
@@ -302,6 +309,7 @@ struct StairData {
     int riser_count{};
     int tread_count{};
     ElementId material_id{};
+    ElementId assembly_id{};
     bool generated_geometry_dirty{true};
     MeshBuffer mesh{};
     double footprint_area_square_meters{};
@@ -359,6 +367,8 @@ struct WallAssemblyLayer {
     ElementId material_id{};
     double thickness_meters{};
     WallLayerFunction function{WallLayerFunction::Generic};
+    int priority{};
+    bool structural{};
 };
 
 struct LayeredAssemblyData {

@@ -103,15 +103,21 @@ Project make_residential_template(int building_count, int story_count) {
     const auto concrete = document.create_material("Template Concrete", tbe::core::MaterialCategory::Structural, 2400.0, 110.0);
     const auto masonry = document.create_material("Template Masonry", tbe::core::MaterialCategory::Structural, 1800.0, 90.0);
     const auto gypsum = document.create_material("Template Gypsum", tbe::core::MaterialCategory::Finish, 850.0, 28.0);
-    const auto wall_type = document.create_wall_type("Residential Exterior Wall", {
-        tbe::core::WallAssemblyLayer{.material_id = masonry, .thickness_meters = 0.20, .function = tbe::core::WallLayerFunction::Core},
-        tbe::core::WallAssemblyLayer{.material_id = gypsum, .thickness_meters = 0.02, .function = tbe::core::WallLayerFunction::InteriorFinish},
+    const auto wall_assembly = document.create_layered_assembly(tbe::core::LayeredAssemblyKind::Wall, "Residential Wall", {
+        tbe::core::WallAssemblyLayer{.material_id = masonry, .thickness_meters = 0.20, .function = tbe::core::WallLayerFunction::Core, .priority = 100, .structural = true},
+        tbe::core::WallAssemblyLayer{.material_id = gypsum, .thickness_meters = 0.02, .function = tbe::core::WallLayerFunction::InteriorFinish, .priority = 10},
     });
     const auto floor_assembly = document.create_layered_assembly(tbe::core::LayeredAssemblyKind::Floor, "Residential Floor", {
         tbe::core::WallAssemblyLayer{.material_id = concrete, .thickness_meters = 0.18, .function = tbe::core::WallLayerFunction::Core},
     });
     const auto ceiling_assembly = document.create_layered_assembly(tbe::core::LayeredAssemblyKind::Ceiling, "Residential Ceiling", {
         tbe::core::WallAssemblyLayer{.material_id = gypsum, .thickness_meters = 0.015, .function = tbe::core::WallLayerFunction::InteriorFinish},
+    });
+    const auto roof_assembly = document.create_layered_assembly(tbe::core::LayeredAssemblyKind::Roof, "Residential Roof", {
+        tbe::core::WallAssemblyLayer{.material_id = concrete, .thickness_meters = 0.20, .function = tbe::core::WallLayerFunction::Core, .priority = 100, .structural = true},
+    });
+    const auto stair_assembly = document.create_layered_assembly(tbe::core::LayeredAssemblyKind::Stair, "Residential Stair", {
+        tbe::core::WallAssemblyLayer{.material_id = concrete, .thickness_meters = 0.16, .function = tbe::core::WallLayerFunction::Core, .priority = 100, .structural = true},
     });
 
     std::vector<ElementId> levels;
@@ -146,7 +152,7 @@ Project make_residential_template(int building_count, int story_count) {
                     3.2,
                     level_id
                 );
-                document.set_wall_type(wall_id, wall_type);
+                document.set_element_assembly(wall_id, wall_assembly);
                 if (story + 1 < story_count) {
                     document.set_wall_level_constraints(wall_id, level_id, levels[static_cast<std::size_t>(story + 1)], 0.0, 0.0, tbe::core::WallHeightMode::TopLevel);
                 }
@@ -159,7 +165,7 @@ Project make_residential_template(int building_count, int story_count) {
                 3.2,
                 level_id
             );
-            document.set_wall_type(partition_id, wall_type);
+            document.set_element_assembly(partition_id, wall_assembly);
             if (story + 1 < story_count) {
                 document.set_wall_level_constraints(partition_id, level_id, levels[static_cast<std::size_t>(story + 1)], 0.0, 0.0, tbe::core::WallHeightMode::TopLevel);
             }
@@ -175,7 +181,7 @@ Project make_residential_template(int building_count, int story_count) {
                     3.2,
                     level_id
                 );
-                document.set_wall_type(horizontal, wall_type);
+                document.set_element_assembly(horizontal, wall_assembly);
                 if (story + 1 < story_count) {
                     document.set_wall_level_constraints(horizontal, level_id, levels[static_cast<std::size_t>(story + 1)], 0.0, 0.0, tbe::core::WallHeightMode::TopLevel);
                 }
@@ -188,7 +194,7 @@ Project make_residential_template(int building_count, int story_count) {
                     3.2,
                     level_id
                 );
-                document.set_wall_type(vertical, wall_type);
+                document.set_element_assembly(vertical, wall_assembly);
                 if (story + 1 < story_count) {
                     document.set_wall_level_constraints(vertical, level_id, levels[static_cast<std::size_t>(story + 1)], 0.0, 0.0, tbe::core::WallHeightMode::TopLevel);
                 }
@@ -201,7 +207,7 @@ Project make_residential_template(int building_count, int story_count) {
             document.create_beam(level_id, {.x = origin_x, .y = origin_y + depth * 0.5}, {.x = origin_x + width, .y = origin_y + depth * 0.5}, 0.24, 0.42, concrete);
             document.create_beam(level_id, {.x = origin_x + width * 0.5, .y = origin_y}, {.x = origin_x + width * 0.5, .y = origin_y + depth}, 0.24, 0.42, concrete);
             if (story + 1 < story_count) {
-                document.create_stair(level_id, levels[static_cast<std::size_t>(story + 1)], {.x = origin_x + width * 0.58, .y = origin_y + 0.45}, {.x = 0.0, .y = 1.0}, 1.1, 3.2, 3.9, 18, 17, concrete);
+                document.create_stair(level_id, levels[static_cast<std::size_t>(story + 1)], {.x = origin_x + width * 0.58, .y = origin_y + 0.45}, {.x = 0.0, .y = 1.0}, 1.1, 3.2, 3.9, 18, 17, concrete, stair_assembly);
             }
             document.create_door("Apartment entry A", perimeter.front(), 2.0, 0.9, 2.1);
             document.create_door("Apartment entry B", perimeter[2], 2.0, 0.9, 2.1);
@@ -217,7 +223,7 @@ Project make_residential_template(int building_count, int story_count) {
                 top_perimeter = perimeter;
             }
         }
-        document.create_roof(levels.back(), footprint, tbe::core::RoofType::Flat, 0.20, concrete, 0, std::nullopt, std::nullopt, std::move(top_perimeter));
+        document.create_roof(levels.back(), footprint, tbe::core::RoofType::Flat, 0.20, concrete, roof_assembly, std::nullopt, std::nullopt, std::move(top_perimeter));
     }
     document.set_automatic_wall_join_enabled(true);
     document.clear_dirty_room_requests();
@@ -671,6 +677,7 @@ RenderSceneDTO build_render_scene(
                     {"end_x", std::to_string(wall->axis.end.x)},
                     {"end_y", std::to_string(wall->axis.end.y)},
                     {"thickness_meters", std::to_string(wall->thickness_meters)},
+                    {"assembly_id", std::to_string(wall->assembly_id)},
                     {"height_meters", std::to_string(resolved_wall_height(*wall, elevations))},
                     {"base_level_id", std::to_string(wall->base_level_id)},
                     {"top_level_id", std::to_string(wall->top_level_id)},
@@ -681,6 +688,10 @@ RenderSceneDTO build_render_scene(
                 }
             ));
             for (const auto& opening : wall->openings) {
+                // Structural voids cut the host wall geometry but the cutter
+                // (column/beam) is rendered once as its own authoritative
+                // object. Never emit a duplicate selectable opening object.
+                if (opening.kind == tbe::core::OpeningKind::StructuralVoid) continue;
                 const auto opening_kind = opening.kind == tbe::core::OpeningKind::Door ? ApiElementKind::Door : ApiElementKind::Window;
                 const auto* opening_element = document.find_ptr(opening.element_id);
                 const auto opening_level_id =
@@ -730,6 +741,7 @@ RenderSceneDTO build_render_scene(
                 material_category_name(ApiElementKind::Slab),
                 {
                     {"elevation_offset_meters", std::to_string(slab->elevation_offset_meters)},
+                    {"assembly_id", std::to_string(slab->assembly_id)},
                 }
             ));
             (void)elevation;
@@ -742,7 +754,13 @@ RenderSceneDTO build_render_scene(
                 roof->level_id,
                 element.revision(),
                 mesh_dto_from_mesh_buffer(roof->mesh, level_elevation(elevations, roof->level_id, 0.0)),
-                material_category_name(ApiElementKind::Roof)
+                material_category_name(ApiElementKind::Roof),
+                {
+                    {"assembly_id", std::to_string(roof->assembly_id)},
+                    {"roof_type", roof->roof_type == tbe::core::RoofType::SimpleGable ? "SimpleGable" : "Flat"},
+                    {"slope_degrees", roof->slope_degrees.has_value() ? std::to_string(*roof->slope_degrees) : ""},
+                    {"overhang_meters", roof->overhang_meters.has_value() ? std::to_string(*roof->overhang_meters) : ""},
+                }
             ));
             continue;
         }
@@ -784,6 +802,7 @@ RenderSceneDTO build_render_scene(
                     {"total_run_meters", std::to_string(stair->total_run_meters)},
                     {"riser_count", std::to_string(stair->riser_count)},
                     {"tread_count", std::to_string(stair->tread_count)},
+                    {"assembly_id", std::to_string(stair->assembly_id)},
                     {"level_locked", "true"},
                 }
             ));
@@ -799,7 +818,8 @@ RenderSceneDTO build_render_scene(
             system.level_id,
             system.dirty ? 0 : 1,
             std::move(mesh),
-            material_category_name(ApiElementKind::FloorSystem)
+            material_category_name(ApiElementKind::FloorSystem),
+            {{"assembly_id", std::to_string(system.assembly_id)}}
         ));
     }
 
@@ -812,7 +832,8 @@ RenderSceneDTO build_render_scene(
             system.level_id,
             system.dirty ? 0 : 1,
             std::move(mesh),
-            material_category_name(ApiElementKind::CeilingSystem)
+            material_category_name(ApiElementKind::CeilingSystem),
+            {{"assembly_id", std::to_string(system.assembly_id)}}
         ));
     }
 
@@ -2516,6 +2537,33 @@ ApiVoidResult EngineSession::set_wall_axis(std::uint64_t wall_id, Vec2 start, Ve
 ApiVoidResult EngineSession::update_wall_properties(std::uint64_t wall_id, double thickness_meters, double height_meters, std::uint64_t wall_type_id) {
     return apply_mutation(*impl_, "update_wall_properties", [&](Document& document) {
         document.set_wall_properties(wall_id, thickness_meters, height_meters, wall_type_id);
+    });
+}
+
+ApiVoidResult EngineSession::set_element_assembly(std::uint64_t element_id, std::uint64_t assembly_id) {
+    return apply_mutation(*impl_, "set_element_assembly", [&](Document& document) {
+        document.set_element_assembly(element_id, assembly_id);
+    });
+}
+
+ApiVoidResult EngineSession::update_roof_properties(
+    std::uint64_t roof_id, ApiRoofType roof_type,
+    std::optional<double> slope_degrees, std::optional<double> overhang_meters
+) {
+    return apply_mutation(*impl_, "update_roof_properties", [&](Document& document) {
+        document.update_roof_properties(roof_id, to_core_roof_type(roof_type), slope_degrees, overhang_meters);
+    });
+}
+
+ApiVoidResult EngineSession::set_structural_wall_cut(std::uint64_t wall_id, std::uint64_t cutter_id, bool enabled, double clearance_meters) {
+    return apply_mutation(*impl_, "set_structural_wall_cut", [&](Document& document) {
+        document.set_structural_wall_cut(wall_id, cutter_id, enabled, clearance_meters);
+    });
+}
+
+ApiVoidResult EngineSession::set_beam_column_join(std::uint64_t beam_id, std::uint64_t column_id, bool enabled) {
+    return apply_mutation(*impl_, "set_beam_column_join", [&](Document& document) {
+        document.set_beam_column_join(beam_id, column_id, enabled);
     });
 }
 

@@ -356,16 +356,22 @@ WallLayerFunction string_to_wall_layer_function(const std::string& value) {
 
 std::string layered_assembly_kind_to_string(LayeredAssemblyKind kind) {
     switch (kind) {
+    case LayeredAssemblyKind::Wall: return "Wall";
     case LayeredAssemblyKind::Floor: return "Floor";
     case LayeredAssemblyKind::Ceiling: return "Ceiling";
+    case LayeredAssemblyKind::Roof: return "Roof";
+    case LayeredAssemblyKind::Stair: return "Stair";
     }
     return "Floor";
 }
 
 LayeredAssemblyKind string_to_layered_assembly_kind(const std::string& value) {
+    if (value == "Wall") return LayeredAssemblyKind::Wall;
     if (value == "Ceiling") {
         return LayeredAssemblyKind::Ceiling;
     }
+    if (value == "Roof") return LayeredAssemblyKind::Roof;
+    if (value == "Stair") return LayeredAssemblyKind::Stair;
     return LayeredAssemblyKind::Floor;
 }
 
@@ -505,6 +511,7 @@ OpeningKind parse_opening_kind(const std::string& value) {
     if (value == "Window") {
         return OpeningKind::Window;
     }
+    if (value == "StructuralVoid") return OpeningKind::StructuralVoid;
     throw std::invalid_argument("invalid opening kind");
 }
 
@@ -526,6 +533,8 @@ std::string opening_kind_to_string(OpeningKind kind) {
         return "Door";
     case OpeningKind::Window:
         return "Window";
+    case OpeningKind::StructuralVoid:
+        return "StructuralVoid";
     }
     return "Door";
 }
@@ -741,7 +750,9 @@ std::string Document::to_json() const {
                 const auto& layer = wall_type.layers[index];
                 out << "{\"material_id\":" << layer.material_id
                     << ",\"thickness\":" << layer.thickness_meters
-                    << ",\"function\":\"" << wall_layer_function_to_string(layer.function) << "\"}";
+                    << ",\"function\":\"" << wall_layer_function_to_string(layer.function) << "\""
+                    << ",\"priority\":" << layer.priority
+                    << ",\"structural\":" << (layer.structural ? "true" : "false") << "}";
             }
             out << "]}";
         }
@@ -765,10 +776,19 @@ std::string Document::to_json() const {
                 const auto& layer = assembly.layers[index];
                 out << "{\"material_id\":" << layer.material_id
                     << ",\"thickness\":" << layer.thickness_meters
-                    << ",\"function\":\"" << wall_layer_function_to_string(layer.function) << "\"}";
+                    << ",\"function\":\"" << wall_layer_function_to_string(layer.function) << "\""
+                    << ",\"priority\":" << layer.priority
+                    << ",\"structural\":" << (layer.structural ? "true" : "false") << "}";
             }
             out << "]}";
         }
+    }
+    out << "],";
+    out << "\"beam_column_joins\":[";
+    for (std::size_t index = 0; index < beam_column_joins_.size(); ++index) {
+        if (index != 0) out << ',';
+        out << "{\"beam_id\":" << beam_column_joins_[index].first
+            << ",\"column_id\":" << beam_column_joins_[index].second << '}';
     }
     out << "],";
     out << "\"floor_systems\":[";
@@ -837,6 +857,7 @@ std::string Document::to_json() const {
             write_line(out, wall->axis);
             out << ",\"thickness\":" << wall->thickness_meters;
             out << ",\"height\":" << wall->height_meters;
+            out << ",\"assembly_id\":" << wall->assembly_id;
             out << ",\"base_level_id\":" << wall->base_level_id;
             out << ",\"top_level_id\":" << wall->top_level_id;
             out << ",\"base_offset\":" << wall->base_offset_meters;
@@ -973,6 +994,7 @@ std::string Document::to_json() const {
                 << ",\"riser_count\":" << stair->riser_count
                 << ",\"tread_count\":" << stair->tread_count
                 << ",\"material_id\":" << stair->material_id
+                << ",\"assembly_id\":" << stair->assembly_id
                 << ",\"generated_geometry_dirty\":" << (stair->generated_geometry_dirty ? "true" : "false")
                 << ",\"footprint_area\":" << stair->footprint_area_square_meters
                 << ",\"volume\":" << stair->volume_cubic_meters << '}';
@@ -1028,6 +1050,8 @@ Document Document::from_json(std::string_view json) {
                     .material_id = as_id(field(layer, "material_id")),
                     .thickness_meters = as_number(field(layer, "thickness")),
                     .function = string_to_wall_layer_function(as_string(field(layer, "function"))),
+                    .priority = layer.find("priority") == layer.end() ? 0 : static_cast<int>(as_number(field(layer, "priority"))),
+                    .structural = layer.find("structural") != layer.end() && as_bool(field(layer, "structural")),
                 });
             }
             document.update_wall_type(std::move(wall_type));
@@ -1048,6 +1072,8 @@ Document Document::from_json(std::string_view json) {
                     .material_id = as_id(field(layer, "material_id")),
                     .thickness_meters = as_number(field(layer, "thickness")),
                     .function = string_to_wall_layer_function(as_string(field(layer, "function"))),
+                    .priority = layer.find("priority") == layer.end() ? 0 : static_cast<int>(as_number(field(layer, "priority"))),
+                    .structural = layer.find("structural") != layer.end() && as_bool(field(layer, "structural")),
                 });
             }
             document.update_layered_assembly(std::move(assembly));
@@ -1093,6 +1119,13 @@ Document Document::from_json(std::string_view json) {
         }
     }
 
+    if (const auto joins_it = root_object.find("beam_column_joins"); joins_it != root_object.end()) {
+        for (const auto& item : as_array(joins_it->second)) {
+            const auto& join = as_object(item);
+            document.beam_column_joins_.emplace_back(as_id(field(join, "beam_id")), as_id(field(join, "column_id")));
+        }
+    }
+
     for (const auto& item : as_array(field(root_object, "elements"))) {
         const auto& object = as_object(item);
         const auto id = as_id(field(object, "id"));
@@ -1115,6 +1148,7 @@ Document Document::from_json(std::string_view json) {
                 .base_level_id = wall.find("base_level_id") != wall.end() ? as_id(field(wall, "base_level_id")) : as_id(field(wall, "level_id")),
                 .top_level_id = wall.find("top_level_id") != wall.end() ? as_id(field(wall, "top_level_id")) : 0,
                 .wall_type_id = wall.find("wall_type_id") != wall.end() ? as_id(field(wall, "wall_type_id")) : 0,
+                .assembly_id = wall.find("assembly_id") != wall.end() ? as_id(field(wall, "assembly_id")) : 0,
                 .axis = parse_line(field(wall, "axis")),
                 .thickness_meters = as_number(field(wall, "thickness")),
                 .height_meters = as_number(field(wall, "height")),
@@ -1310,6 +1344,7 @@ Document Document::from_json(std::string_view json) {
                 .riser_count = static_cast<int>(as_number(field(stair, "riser_count"))),
                 .tread_count = static_cast<int>(as_number(field(stair, "tread_count"))),
                 .material_id = stair.find("material_id") != stair.end() ? as_id(field(stair, "material_id")) : 0,
+                .assembly_id = stair.find("assembly_id") != stair.end() ? as_id(field(stair, "assembly_id")) : 0,
                 .generated_geometry_dirty = true,
                 .mesh = {},
                 .footprint_area_square_meters = stair.find("footprint_area") != stair.end() ? as_number(field(stair, "footprint_area")) : 0.0,
@@ -1319,6 +1354,29 @@ Document Document::from_json(std::string_view json) {
     }
 
     document.replace_state(as_string(field(root_object, "name")), std::move(elements), as_id(field(root_object, "next_id")));
+
+    // v1 projects stored wall compositions only in WallTypeData. Promote each
+    // referenced legacy type to a canonical compound assembly on load so a
+    // subsequent edit/save follows the same contract as new walls.
+    std::map<ElementId, ElementId> migrated_wall_assemblies;
+    for (auto& element : document.elements_) {
+        auto* wall = element.wall();
+        if (wall == nullptr || wall->assembly_id != 0 || wall->wall_type_id == 0) continue;
+        auto found = migrated_wall_assemblies.find(wall->wall_type_id);
+        if (found == migrated_wall_assemblies.end()) {
+            const auto* type = document.get_wall_type(wall->wall_type_id);
+            if (type == nullptr) continue;
+            const auto assembly_id = document.create_layered_assembly(
+                LayeredAssemblyKind::Wall, type->name, type->layers);
+            found = migrated_wall_assemblies.emplace(wall->wall_type_id, assembly_id).first;
+        }
+        wall->assembly_id = found->second;
+        wall->thickness_meters = 0.0;
+        for (const auto& layer : document.get_layered_assembly(found->second)->layers) {
+            wall->thickness_meters += layer.thickness_meters;
+        }
+        wall->geometry.dirty = true;
+    }
     return document;
 }
 

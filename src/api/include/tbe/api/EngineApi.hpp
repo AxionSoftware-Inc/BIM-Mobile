@@ -570,6 +570,15 @@ public:
     ApiVoidResult auto_join_walls();
     ApiVoidResult set_wall_axis(std::uint64_t wall_id, Vec2 start, Vec2 end);
     ApiVoidResult update_wall_properties(std::uint64_t wall_id, double thickness_meters, double height_meters, std::uint64_t wall_type_id = 0);
+    ApiVoidResult set_element_assembly(std::uint64_t element_id, std::uint64_t assembly_id);
+    ApiVoidResult update_roof_properties(
+        std::uint64_t roof_id,
+        ApiRoofType roof_type,
+        std::optional<double> slope_degrees = std::nullopt,
+        std::optional<double> overhang_meters = std::nullopt
+    );
+    ApiVoidResult set_structural_wall_cut(std::uint64_t wall_id, std::uint64_t cutter_id, bool enabled, double clearance_meters = 0.0);
+    ApiVoidResult set_beam_column_join(std::uint64_t beam_id, std::uint64_t column_id, bool enabled);
     ApiResult<ElementIdDTO> split_wall(std::uint64_t wall_id, double offset_meters);
     ApiVoidResult delete_element(std::uint64_t element_id);
     ApiVoidResult move_hosted_opening(std::uint64_t opening_id, double offset_meters);

@@ -198,6 +198,17 @@ TbeApiStatusCode tbe_set_wall_axis(
     TbeVec2 start,
     TbeVec2 end
 );
+TbeApiStatusCode tbe_set_element_assembly(TbeEngineHandle* handle, uint64_t element_id, uint64_t assembly_id);
+TbeApiStatusCode tbe_update_roof_properties(
+    TbeEngineHandle* handle, uint64_t roof_id, int roof_type,
+    int has_slope, double slope_degrees, int has_overhang, double overhang_meters
+);
+TbeApiStatusCode tbe_set_structural_wall_cut(
+    TbeEngineHandle* handle, uint64_t wall_id, uint64_t cutter_id, int enabled, double clearance_meters
+);
+TbeApiStatusCode tbe_set_beam_column_join(
+    TbeEngineHandle* handle, uint64_t beam_id, uint64_t column_id, int enabled
+);
 TbeApiStatusCode tbe_move_wall(TbeEngineHandle* handle, uint64_t wall_id, double dx_meters, double dy_meters);
 TbeApiStatusCode tbe_create_door(
     TbeEngineHandle* handle,

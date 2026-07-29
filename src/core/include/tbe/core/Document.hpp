@@ -33,7 +33,7 @@ public:
     [[nodiscard]] const LayeredAssemblyData* get_layered_assembly(ElementId assembly_id) const noexcept;
     void update_layered_assembly(LayeredAssemblyData assembly);
     ElementId create_level(std::string name, double elevation_meters, double default_wall_height_meters);
-    ElementId create_wall(std::string name, Line2 axis, double thickness_meters, double height_meters, ElementId level_id = 0);
+    ElementId create_wall(std::string name, Line2 axis, double thickness_meters, double height_meters, ElementId level_id = 0, ElementId assembly_id = 0);
     ElementId create_door(std::string name, ElementId host_wall_id, double offset_meters, double width_meters, double height_meters);
     ElementId create_window(
         std::string name,
@@ -88,7 +88,8 @@ public:
         double total_run_meters,
         int riser_count,
         int tread_count,
-        ElementId material_id
+        ElementId material_id,
+        ElementId assembly_id = 0
     );
     ElementId create_floor_system_for_room(ElementId room_id, ElementId assembly_id);
     ElementId create_ceiling_system_for_room(ElementId room_id, ElementId assembly_id, double height_offset_meters = 0.0);
@@ -123,6 +124,16 @@ public:
     void set_opening_level_constraint(ElementId opening_id, ElementId level_id, double level_offset_meters);
     std::vector<ElementId> create_elements_from_profile(const ProfileDraft& draft);
     void set_wall_type(ElementId wall_id, ElementId wall_type_id);
+    /// Applies a canonical compound assembly to a supported element. Legacy
+    /// wall types remain readable, but new authoring should use this API.
+    void set_element_assembly(ElementId element_id, ElementId assembly_id);
+    void update_roof_properties(ElementId roof_id, RoofType roof_type, std::optional<double> slope_degrees, std::optional<double> overhang_meters);
+    /// Creates/removes an explicit structural void in a wall. No destructive
+    /// boolean is performed; the host wall owns the cut profile semantically.
+    void set_structural_wall_cut(ElementId wall_id, ElementId cutter_id, bool enabled, double clearance_meters = 0.0);
+    /// Stores an explicit analytical beam-to-column join. Geometry remains
+    /// separate and cheap to regenerate.
+    void set_beam_column_join(ElementId beam_id, ElementId column_id, bool enabled);
     void set_wall_properties(ElementId wall_id, double thickness_meters, double height_meters, ElementId wall_type_id = 0);
     void set_wall_axis(ElementId wall_id, Line2 axis);
     ElementId split_wall(ElementId wall_id, double offset_meters);
@@ -220,6 +231,7 @@ private:
     std::map<ElementId, LayeredAssemblyData> layered_assemblies_{};
     std::map<ElementId, FloorSystemData> floor_systems_{};
     std::map<ElementId, CeilingSystemData> ceiling_systems_{};
+    std::vector<std::pair<ElementId, ElementId>> beam_column_joins_{};
     std::vector<ElementId> dirty_room_ids_{};
     // Levels whose room topology changed. This lets interactive snapshots
     // recompute only the edited storey instead of scanning the whole model.
