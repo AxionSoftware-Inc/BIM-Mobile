@@ -801,7 +801,20 @@ void Document::update_layered_assembly(LayeredAssemblyData assembly) {
         }
     }
     const auto assembly_id = assembly.assembly_id;
+    const auto previous = get_layered_assembly(assembly_id);
+    // Rendering uses a single proxy envelope. Material/function/priority edits
+    // are semantic-only and must not trigger a viewport geometry rebuild. The
+    // only current proxy-affecting layer value is total thickness.
+    const auto previous_thickness = previous == nullptr ? -1.0 : layered_assembly_total_thickness(*previous);
+    const auto next_thickness = layered_assembly_total_thickness(assembly);
+    const auto proxy_geometry_changed = std::abs(previous_thickness - next_thickness) > epsilon;
     layered_assemblies_[assembly_id] = std::move(assembly);
+    if (!proxy_geometry_changed) {
+        // Reports/export read the semantic layers on demand. Do not touch any
+        // element revision or mesh when only metadata changes.
+        invalidate_dependency_graph_cache();
+        return;
+    }
     for (auto& element : elements_) {
         if (auto* wall = element.wall(); wall != nullptr && wall->assembly_id == assembly_id) {
             wall->thickness_meters = layered_assembly_total_thickness(layered_assemblies_.at(assembly_id));

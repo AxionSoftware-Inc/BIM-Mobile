@@ -1923,6 +1923,11 @@ int main() {
         compound.update_layered_assembly(std::move(edited));
         assert(compound.find_ptr(wall)->wall()->geometry.dirty);
         compound.regenerate_dirty_geometry();
+        auto metadata_only = *compound.get_layered_assembly(wall_assembly);
+        metadata_only.layers.front().priority = 999;
+        metadata_only.layers.front().structural = false;
+        compound.update_layered_assembly(std::move(metadata_only));
+        assert(!compound.find_ptr(wall)->wall()->geometry.dirty);
         const auto restored = tbe::core::Document::from_json(compound.to_json());
         assert(restored.find_ptr(wall)->wall()->assembly_id == wall_assembly);
         assert(restored.find_ptr(roof)->roof()->assembly_id == roof_assembly);
