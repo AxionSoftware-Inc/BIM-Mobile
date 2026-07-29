@@ -320,6 +320,12 @@ internal class RenderSceneFilamentHostView(
 
   fun setProjectionMode(mode: String) {
     projectionMode = mode
+    when (mode) {
+      "northElevation" -> { orbitYawRadians = Math.PI / 2.0; orbitPitchRadians = 0.0 }
+      "southElevation" -> { orbitYawRadians = -Math.PI / 2.0; orbitPitchRadians = 0.0 }
+      "eastElevation" -> { orbitYawRadians = Math.PI; orbitPitchRadians = 0.0 }
+      "westElevation" -> { orbitYawRadians = 0.0; orbitPitchRadians = 0.0 }
+    }
     configureCameraProjection()
     updateOrbitCamera()
     syncVisualOverlay()
@@ -353,9 +359,11 @@ internal class RenderSceneFilamentHostView(
     // Flutter uses X/Y plan with Z up; Filament receives X/Z/-Y. Mirror yaw
     // at this single conversion point so a two-finger side-pan follows the
     // same camera-right vector in both renderers.
-    orbitYawRadians = toDouble(payload?.get("orbitYawRadians"))?.unaryMinus()
-      ?: orbitYawRadians
-    orbitPitchRadians = toDouble(payload?.get("orbitPitchRadians")) ?: orbitPitchRadians
+    if (projectionMode == "isometric") {
+      orbitYawRadians = toDouble(payload?.get("orbitYawRadians"))?.unaryMinus()
+        ?: orbitYawRadians
+      orbitPitchRadians = toDouble(payload?.get("orbitPitchRadians")) ?: orbitPitchRadians
+    }
     val distance = toDouble(payload?.get("orbitDistance"))
     val zoom = toDouble(payload?.get("orbitZoomScale"))
     if (distance != null) {
@@ -763,9 +771,9 @@ internal class RenderSceneFilamentHostView(
         scene.removeEntity(entry.entity)
         entry.attached = false
       }
-      // Wire uses Filament's full feature-line pass. Solid gets a filtered,
-      // camera-facing authoring outline from the overlay below.
-      val edgeVisible = displayStyle == "wireframe" &&
+      // Filament depth-tests the subtle Solid feature pass. Wire remains the
+      // stronger all-edge mode.
+      val edgeVisible = (displayStyle == "wireframe" || displayStyle == "solid") &&
         (visibleKinds.isEmpty() || visibleKinds.contains(normalizeKind(entry.objectData.kind)))
       val edgeEntity = entry.edgeEntity
       if (edgeEntity != null && edgeVisible && !entry.edgeAttached) {
@@ -1081,7 +1089,7 @@ internal class RenderSceneFilamentHostView(
       max(bounds.max.y - bounds.min.y, bounds.max.z - bounds.min.z),
     )
     val far = max(orbitDistance * 7.0 + sceneSpan * 2.5, 160.0)
-    if (projectionMode == "topDown" || orbitProjectionStyle == "orthographic") {
+    if (projectionMode != "isometric" || orbitProjectionStyle == "orthographic") {
       val halfHeight = if (projectionMode == "topDown") topDownZoom else max(orbitDistance * 0.6, 2.0)
       val halfWidth = halfHeight * aspect
       camera.setProjection(
@@ -1344,16 +1352,14 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
 
   fun setDisplayStyle(style: String) {
     wireframe = style == "wireframe"
-    // Solid draws only camera-facing feature edges, while Wire keeps every
-    // feature edge. This gives Solid a thicker working outline without
-    // turning back edges into a wireframe.
-    showObjectEdges = style != "shaded"
+    // Canvas is Wire-only. Solid keeps the depth-tested 1px native edge pass.
+    showObjectEdges = style == "wireframe"
     outline.color = when (style) {
       "wireframe" -> Color.argb(225, 18, 30, 42)
       "solid" -> Color.argb(170, 37, 51, 65)
       else -> Color.TRANSPARENT
     }
-    outline.strokeWidth = resources.displayMetrics.density * if (wireframe) 1.45f else 1.35f
+    outline.strokeWidth = resources.displayMetrics.density * if (wireframe) 1.45f else 0.95f
     invalidate()
   }
 
