@@ -3646,6 +3646,45 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         child: const Text('Tablet BIM'),
       ),
       actions: <Widget>[
+        PopupMenuButton<String>(
+          tooltip: 'View display',
+          icon: const Icon(Icons.visibility_outlined),
+          onSelected: (value) async {
+            switch (value) {
+              case '3d':
+                await _setProjectionMode(RenderSceneProjectionMode.isometric);
+                return;
+              case 'shaded':
+                await _setDisplayStyle(RenderSceneDisplayStyle.shaded);
+                return;
+              case 'solid':
+                await _setDisplayStyle(RenderSceneDisplayStyle.solid);
+                return;
+              case 'wire':
+                await _setDisplayStyle(RenderSceneDisplayStyle.wireframe);
+                return;
+              case 'ortho':
+                await _setOrbitProjectionStyle(
+                    RenderSceneOrbitProjectionStyle.orthographic);
+                return;
+              case 'perspective':
+                await _setOrbitProjectionStyle(
+                    RenderSceneOrbitProjectionStyle.perspective);
+                return;
+            }
+          },
+          itemBuilder: (context) => <PopupMenuEntry<String>>[
+            const PopupMenuItem(value: '3d', child: Text('3D view')),
+            const PopupMenuDivider(),
+            const PopupMenuItem(value: 'shaded', child: Text('Shaded')),
+            const PopupMenuItem(value: 'solid', child: Text('Solid')),
+            const PopupMenuItem(value: 'wire', child: Text('Wireframe')),
+            const PopupMenuDivider(),
+            const PopupMenuItem(value: 'ortho', child: Text('Orthographic')),
+            const PopupMenuItem(
+                value: 'perspective', child: Text('Perspective')),
+          ],
+        ),
         PopupMenuButton<_ResidentialTemplateKind>(
           tooltip: 'Create engine template',
           enabled: !_isBusy,
@@ -3699,7 +3738,8 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
           icon: const Icon(Icons.deselect),
         ),
         IconButton(
-          tooltip: _showObjectList ? 'Hide object list' : 'Show object list',
+          tooltip:
+              _showObjectList ? 'Hide project browser' : 'Show project browser',
           onPressed: () {
             setState(() {
               _showObjectList = !_showObjectList;
@@ -4051,7 +4091,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       children: <Widget>[
         const SizedBox(height: 8),
         IconButton(
-          tooltip: 'Show object list',
+          tooltip: 'Show project browser',
           onPressed: () {
             setState(() {
               _showObjectList = true;
@@ -4089,12 +4129,12 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
             children: <Widget>[
               Expanded(
                 child: Text(
-                  'Objects',
+                  'Project Browser',
                   style: theme.textTheme.titleMedium,
                 ),
               ),
               IconButton(
-                tooltip: 'Collapse object list',
+                tooltip: 'Collapse project browser',
                 onPressed: () {
                   setState(() {
                     _showObjectList = false;
@@ -4105,14 +4145,25 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
             ],
           ),
         ),
+        if (scene != null) ...<Widget>[
+          _buildProjectBrowserViews(context, scene),
+          const Divider(height: 20),
+        ],
         if (scene != null)
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: _KindFilterWrap(
-              availableKinds: availableKinds,
-              selectedKinds: _visibleKinds,
-              kindCounts: scene.kindCounts,
-              onChanged: _setVisibleKinds,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text('Categories', style: theme.textTheme.labelLarge),
+                const SizedBox(height: 6),
+                _KindFilterWrap(
+                  availableKinds: availableKinds,
+                  selectedKinds: _visibleKinds,
+                  kindCounts: scene.kindCounts,
+                  onChanged: _setVisibleKinds,
+                ),
+              ],
             ),
           ),
         const Divider(height: 20),
@@ -4145,6 +4196,84 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
                     ),
         ),
       ],
+    );
+  }
+
+  Widget _buildProjectBrowserViews(BuildContext context, RenderScene scene) {
+    final theme = Theme.of(context);
+    Widget viewRow({
+      required String label,
+      required bool selected,
+      required IconData icon,
+      required Future<void> Function() onTap,
+    }) =>
+        ListTile(
+          dense: true,
+          minLeadingWidth: 24,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+          leading: Icon(icon, size: 18),
+          selected: selected,
+          title: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+          onTap: () => onTap(),
+        );
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Text('Views', style: theme.textTheme.labelLarge),
+          ),
+          viewRow(
+            label: '3D View',
+            icon: Icons.view_in_ar_outlined,
+            selected: _projectionMode == RenderSceneProjectionMode.isometric,
+            onTap: () =>
+                _setProjectionMode(RenderSceneProjectionMode.isometric),
+          ),
+          ExpansionTile(
+            dense: true,
+            initiallyExpanded: true,
+            leading: const Icon(Icons.map_outlined, size: 18),
+            title: const Text('Floor Plans'),
+            children: <Widget>[
+              for (final level in scene.levels)
+                viewRow(
+                  label: '${level.name} plan',
+                  icon: Icons.grid_4x4_outlined,
+                  selected:
+                      _projectionMode == RenderSceneProjectionMode.topDown &&
+                          _activeLevelId == level.levelId,
+                  onTap: () async {
+                    await _setActiveLevel(level.levelId);
+                    await _setProjectionMode(RenderSceneProjectionMode.topDown);
+                  },
+                ),
+            ],
+          ),
+          ExpansionTile(
+            dense: true,
+            leading: const Icon(Icons.stacked_line_chart_outlined, size: 18),
+            title: const Text('Elevations'),
+            children: <Widget>[
+              for (final mode in <RenderSceneProjectionMode>[
+                RenderSceneProjectionMode.northElevation,
+                RenderSceneProjectionMode.southElevation,
+                RenderSceneProjectionMode.eastElevation,
+                RenderSceneProjectionMode.westElevation,
+              ])
+                viewRow(
+                  label: mode.shortLabel,
+                  icon: Icons.straighten,
+                  selected: _projectionMode == mode,
+                  onTap: () => _setProjectionMode(mode),
+                ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 

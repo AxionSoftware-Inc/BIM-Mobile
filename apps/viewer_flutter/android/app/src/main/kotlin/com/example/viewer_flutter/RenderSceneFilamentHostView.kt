@@ -236,8 +236,9 @@ internal class RenderSceneFilamentHostView(
         .build(filamentEngine)
       filamentView?.colorGrading = colorGrading
       filamentView?.viewport = Viewport(0, 0, 1, 1)
-      // Paper-grey canvas keeps the Revit-style white model readable.
-      scene?.skybox = Skybox.Builder().color(0.68f, 0.69f, 0.70f, 1.0f).build(filamentEngine)
+      // Light paper canvas preserves true-white Solid geometry without the
+      // old overall grey cast.
+      scene?.skybox = Skybox.Builder().color(0.91f, 0.92f, 0.91f, 1.0f).build(filamentEngine)
       statusMessage = "Filament renderer created."
       Log.i(TAG, statusMessage)
       updateStatus()
@@ -1072,13 +1073,13 @@ internal class RenderSceneFilamentHostView(
     // A fixed 10 cm near plane clips whole storeys as an orbit camera gets
     // close to a model. Keep it extremely close but scale it with distance;
     // the far plane remains bounded for depth precision on a campus.
-    val near = (orbitDistance * 0.0025).coerceIn(0.005, 0.05)
+    val near = (orbitDistance * 0.0015).coerceIn(0.002, 0.025)
     val bounds = sceneMetrics.bounds
     val sceneSpan = max(
       bounds.max.x - bounds.min.x,
       max(bounds.max.y - bounds.min.y, bounds.max.z - bounds.min.z),
     )
-    val far = max(orbitDistance * 12.0 + sceneSpan * 4.0, 250.0)
+    val far = max(orbitDistance * 7.0 + sceneSpan * 2.5, 160.0)
     if (projectionMode == "topDown" || orbitProjectionStyle == "orthographic") {
       val halfHeight = if (projectionMode == "topDown") topDownZoom else max(orbitDistance * 0.6, 2.0)
       val halfWidth = halfHeight * aspect
@@ -1106,7 +1107,7 @@ internal class RenderSceneFilamentHostView(
     // Keep an orbit camera outside dense multi-storey geometry. This avoids
     // near-plane crossings and depth flicker while direct selection remains
     // available for close inspection.
-    return max(span * 0.30, 1.75)
+    return max(span * 0.42, 2.1)
   }
 
   private fun boxCorners(bounds: SceneBounds): List<ScenePoint> {
@@ -1349,7 +1350,7 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
       "solid" -> Color.argb(170, 37, 51, 65)
       else -> Color.TRANSPARENT
     }
-    outline.strokeWidth = resources.displayMetrics.density * if (wireframe) 1.35f else 1.05f
+    outline.strokeWidth = resources.displayMetrics.density * if (wireframe) 1.45f else 1.45f
     invalidate()
   }
 

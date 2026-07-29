@@ -730,6 +730,7 @@ int run_residential_benchmark(int stories) {
     const auto load_ms = measure_ms([&]() { (void)session->load_project_json_with_mode(json, tbe::api::LoadMode::Repair); });
     const auto full_ms = measure_ms([&]() { (void)session->get_render_scene_json(); });
     const auto nearby_ms = measure_ms([&]() { (void)session->get_render_scene_json_near_level(levels[story_count / 2], 1); });
+    const auto render_scene = session->get_render_scene();
     const auto saved = session->save_project_json();
     const auto save_ok = saved.ok() && saved.value.has_value();
     bool reload_ok = false;
@@ -752,6 +753,12 @@ int run_residential_benchmark(int stories) {
     std::cout << "Load ms: " << load_ms << '\n';
     std::cout << "Full snapshot ms: " << full_ms << '\n';
     std::cout << "Nearby snapshot ms: " << nearby_ms << '\n';
+    if (render_scene.ok() && render_scene.value.has_value()) {
+        const auto& snapshot = *render_scene.value;
+        std::cout << "Render objects: " << snapshot.objects.size() << '\n';
+        std::cout << "Vertices: " << snapshot.vertex_count << '\n';
+        std::cout << "Triangles: " << snapshot.index_count / 3 << '\n';
+    }
     std::cout << "Save/reload ready: " << (save_ok && reload_ok ? "yes" : "no") << '\n';
     std::cout << "Spatial query ready: " << (spatial.ok() && query.ok() ? "yes" : "no") << '\n';
     std::cout << "Nearby query hits: " << (query.value.has_value() ? query.value->size() : 0) << '\n';

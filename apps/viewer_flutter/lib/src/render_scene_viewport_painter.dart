@@ -80,6 +80,14 @@ class FallbackRenderScenePainter extends CustomPainter {
 
     final packets = <_RenderPacket>[];
     final filteredObjects = scene.objectsForKinds(visibleKinds);
+    // Keep structural/active silhouettes at city scale, but avoid drawing a
+    // distracting soup of passive secondary edges.
+    final denseModel = filteredObjects.length > 420 ||
+        filteredObjects.fold<int>(
+              0,
+              (sum, object) => sum + object.mesh.triangleCount,
+            ) >
+            42000;
     if (projectionMode == RenderSceneProjectionMode.topDown) {
       // Engine wall meshes are predominantly vertical faces. Their triangles
       // can collapse to zero area in a top projection, so draw the canonical
@@ -101,7 +109,9 @@ class FallbackRenderScenePainter extends CustomPainter {
           ? const Color(0xFF2563EB)
           : isHighlighted
               ? const Color(0xFFDC2626)
-              : baseColor;
+              : displayStyle == RenderSceneDisplayStyle.solid
+                  ? Colors.white
+                  : baseColor;
       final depthWeight = projectionMode.isElevation
           ? _depthVisualWeight(
               depth: projectObjectDepth(object.bounds, projection),
@@ -143,6 +153,7 @@ class FallbackRenderScenePainter extends CustomPainter {
                     kind: object.kindKey,
                     isSelected: isSelected,
                     isHighlighted: isHighlighted,
+                    denseModel: denseModel,
                   )
               ? _buildOutlineSegments(object, projection)
               : const <_OutlineSegment>[],
@@ -207,6 +218,7 @@ class FallbackRenderScenePainter extends CustomPainter {
     }
 
     _drawLabels(canvas, projection, filteredObjects);
+    _drawActiveObjectGizmo(canvas, projection);
     _drawSelectedWallHandles(canvas, projection);
     _drawDraftOverlay(canvas, projection);
     final rectangle = selectionRect;
@@ -527,7 +539,7 @@ class FallbackRenderScenePainter extends CustomPainter {
       };
       return base.withValues(alpha: alpha);
     }
-    return const Color(0xFF475569).withValues(alpha: 0.40);
+    return const Color(0xFF1F2937).withValues(alpha: 0.72);
   }
 
   double _outlineStrokeWidth({
@@ -554,7 +566,7 @@ class FallbackRenderScenePainter extends CustomPainter {
           return 0.85;
       }
     }
-    return 1.0;
+    return 1.35;
   }
 
   (double, double) _projectedObjectDepthRange(
@@ -598,12 +610,16 @@ class FallbackRenderScenePainter extends CustomPainter {
     required String kind,
     required bool isSelected,
     required bool isHighlighted,
+    required bool denseModel,
   }) {
     if (projectionMode.isPlanar) {
       return true;
     }
     if (isSelected || isHighlighted) {
       return true;
+    }
+    if (denseModel) {
+      return kind == 'wall' || kind == 'door' || kind == 'window';
     }
     switch (kind) {
       case 'wall':
@@ -1135,6 +1151,35 @@ class FallbackRenderScenePainter extends CustomPainter {
     canvas.drawCircle(startScreen, 6.5, stroke);
     canvas.drawCircle(endScreen, 6.5, fill);
     canvas.drawCircle(endScreen, 6.5, stroke);
+  }
+
+  void _drawActiveObjectGizmo(
+    Canvas canvas,
+    RenderSceneProjection projection,
+  ) {
+    final id = activeElementId;
+    if (id == null || projectionMode == RenderSceneProjectionMode.topDown) {
+      return;
+    }
+    final object = scene.objectByStableId(id);
+    if (object == null) {
+      return;
+    }
+    final center = projection.project(object.bounds.center).screen;
+    const radius = 10.0;
+    final halo = Paint()
+      ..style = PaintingStyle.fill
+      ..color = const Color(0x332563EB);
+    final stroke = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.2
+      ..color = const Color(0xFF2563EB);
+    canvas.drawCircle(center, radius, halo);
+    canvas.drawCircle(center, radius, stroke);
+    canvas.drawLine(
+        center + const Offset(-16, 0), center + const Offset(16, 0), stroke);
+    canvas.drawLine(
+        center + const Offset(0, -16), center + const Offset(0, 16), stroke);
   }
 
   void _drawAxes(Canvas canvas, RenderSceneProjection projection) {

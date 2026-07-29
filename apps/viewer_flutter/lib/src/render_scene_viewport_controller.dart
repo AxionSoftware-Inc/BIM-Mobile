@@ -558,10 +558,12 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
       _sceneBounds.width,
       math.max(_sceneBounds.depth, _sceneBounds.height),
     );
-    final minimumDistance = math.max(maxExtent * 0.30, 1.75);
+    // Keep the camera outside the dense envelope. This trades a little
+    // extreme close-up zoom for stable depth precision and no storey slicing.
+    final minimumDistance = math.max(maxExtent * 0.42, 2.1);
     final maximumZoom = _orbitDistance / minimumDistance;
-    _orbitZoomScale = (_orbitZoomScale * scaleDelta)
-        .clamp(0.005, math.max(maximumZoom, 1.0));
+    _orbitZoomScale =
+        (_orbitZoomScale * scaleDelta).clamp(0.005, math.max(maximumZoom, 1.0));
     notifyListeners();
     _scheduleNativeCameraSync();
   }
