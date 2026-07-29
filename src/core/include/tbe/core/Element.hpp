@@ -322,6 +322,9 @@ struct FloorSystemData {
     ElementId level_id{};
     ElementId assembly_id{};
     std::vector<Point2> boundary_polygon{};
+    // Semantic holes hosted by stairs. The renderer can choose a cutaway
+    // representation without duplicating the stair itself.
+    std::vector<ElementId> stair_opening_ids{};
     double area_square_meters{};
     bool manual_profile{};
     bool dirty{true};
@@ -333,6 +336,7 @@ struct CeilingSystemData {
     ElementId level_id{};
     ElementId assembly_id{};
     std::vector<Point2> boundary_polygon{};
+    std::vector<ElementId> stair_opening_ids{};
     double area_square_meters{};
     double height_offset_meters{};
     bool manual_profile{};

@@ -1810,11 +1810,87 @@ void Document::auto_join_walls() {
         }
     }
 
+    auto_join_structural_elements();
     invalidate_dependency_graph_cache();
 }
 
 void Document::set_automatic_wall_join_enabled(bool enabled) noexcept {
     automatic_wall_join_enabled_ = enabled;
+}
+
+void Document::auto_join_structural_elements() {
+    // Relations are cheap semantic records. They deliberately do not boolean-
+    // union meshes, keeping edits and save/reload deterministic on mobile.
+    beam_column_joins_.clear();
+    for (const auto& beam_element : elements_) {
+        const auto* beam = beam_element.beam();
+        if (beam == nullptr) continue;
+        const auto dx = beam->end.x - beam->start.x;
+        const auto dy = beam->end.y - beam->start.y;
+        const auto length_squared = dx * dx + dy * dy;
+        if (length_squared <= epsilon) continue;
+        for (const auto& column_element : elements_) {
+            const auto* column = column_element.column();
+            if (column == nullptr || column->level_id != beam->level_id) continue;
+            const auto t = std::clamp(((column->position.x - beam->start.x) * dx +
+                (column->position.y - beam->start.y) * dy) / length_squared, 0.0, 1.0);
+            const auto px = beam->start.x + t * dx;
+            const auto py = beam->start.y + t * dy;
+            const auto distance = std::hypot(column->position.x - px, column->position.y - py);
+            const auto tolerance = (beam->width_meters + std::max(column->width_meters, column->depth_meters)) * 0.5 + 0.02;
+            if (distance <= tolerance) beam_column_joins_.emplace_back(beam_element.id(), column_element.id());
+        }
+    }
+
+    // Columns precisely embedded in a same-level wall are cut automatically.
+    // Beams retain Embed by default: an arbitrary beam crossing a wall is not
+    // enough evidence for a destructive structural opening.
+    for (const auto& column_element : elements_) {
+        const auto* column = column_element.column();
+        if (column == nullptr) continue;
+        for (const auto& wall_element : elements_) {
+            const auto* wall = wall_element.wall();
+            if (wall == nullptr || wall->level_id != column->level_id) continue;
+            const auto dx = wall->axis.end.x - wall->axis.start.x;
+            const auto dy = wall->axis.end.y - wall->axis.start.y;
+            const auto length_squared = dx * dx + dy * dy;
+            if (length_squared <= epsilon) continue;
+            const auto t = ((column->position.x - wall->axis.start.x) * dx +
+                (column->position.y - wall->axis.start.y) * dy) / length_squared;
+            if (t <= 0.0 || t >= 1.0) continue;
+            const auto px = wall->axis.start.x + t * dx;
+            const auto py = wall->axis.start.y + t * dy;
+            const auto distance = std::hypot(column->position.x - px, column->position.y - py);
+            if (distance <= wall->thickness_meters * 0.5 + 0.01) {
+                try { set_structural_wall_cut(wall_element.id(), column_element.id(), true); }
+                catch (const std::invalid_argument&) { /* conflicting authored opening: retain Embed */ }
+            }
+        }
+    }
+
+    for (auto& [system_id, system] : floor_systems_) {
+        system.stair_opening_ids.clear();
+        for (const auto& element : elements_) {
+            const auto* stair = element.stair();
+            if (stair != nullptr && stair->top_level_id != 0 && stair->top_level_id == system.level_id) {
+                system.stair_opening_ids.push_back(element.id());
+            }
+        }
+        system.dirty = true;
+        (void)system_id;
+    }
+    for (auto& [system_id, system] : ceiling_systems_) {
+        system.stair_opening_ids.clear();
+        for (const auto& element : elements_) {
+            const auto* stair = element.stair();
+            if (stair != nullptr && stair->top_level_id != 0 && stair->top_level_id == system.level_id) {
+                system.stair_opening_ids.push_back(element.id());
+            }
+        }
+        system.dirty = true;
+        (void)system_id;
+    }
+    invalidate_dependency_graph_cache();
 }
 
 std::vector<ElementId> Document::detect_rooms() {

@@ -819,7 +819,8 @@ RenderSceneDTO build_render_scene(
             system.dirty ? 0 : 1,
             std::move(mesh),
             material_category_name(ApiElementKind::FloorSystem),
-            {{"assembly_id", std::to_string(system.assembly_id)}}
+            {{"assembly_id", std::to_string(system.assembly_id)},
+             {"stair_opening_count", std::to_string(system.stair_opening_ids.size())}}
         ));
     }
 
@@ -833,7 +834,8 @@ RenderSceneDTO build_render_scene(
             system.dirty ? 0 : 1,
             std::move(mesh),
             material_category_name(ApiElementKind::CeilingSystem),
-            {{"assembly_id", std::to_string(system.assembly_id)}}
+            {{"assembly_id", std::to_string(system.assembly_id)},
+             {"stair_opening_count", std::to_string(system.stair_opening_ids.size())}}
         ));
     }
 

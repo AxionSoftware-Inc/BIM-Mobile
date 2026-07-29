@@ -806,6 +806,9 @@ std::string Document::to_json() const {
                 << ",\"area\":" << system.area_square_meters
                 << ",\"manual_profile\":" << (system.manual_profile ? "true" : "false")
                 << ",\"dirty\":" << (system.dirty ? "true" : "false")
+                << ",\"stair_opening_ids\":";
+            write_ids(out, system.stair_opening_ids);
+            out
                 << ",\"boundary_polygon\":";
             write_points(out, system.boundary_polygon);
             out << '}';
@@ -828,6 +831,9 @@ std::string Document::to_json() const {
                 << ",\"height_offset\":" << system.height_offset_meters
                 << ",\"manual_profile\":" << (system.manual_profile ? "true" : "false")
                 << ",\"dirty\":" << (system.dirty ? "true" : "false")
+                << ",\"stair_opening_ids\":";
+            write_ids(out, system.stair_opening_ids);
+            out
                 << ",\"boundary_polygon\":";
             write_points(out, system.boundary_polygon);
             out << '}';
@@ -1095,6 +1101,9 @@ Document Document::from_json(std::string_view json) {
             for (const auto& point_value : as_array(field(object, "boundary_polygon"))) {
                 system.boundary_polygon.push_back(parse_point(point_value));
             }
+            if (const auto openings = object.find("stair_opening_ids"); openings != object.end()) {
+                for (const auto& value : as_array(openings->second)) system.stair_opening_ids.push_back(as_id(value));
+            }
             document.floor_systems_[system.system_id] = std::move(system);
         }
     }
@@ -1114,6 +1123,9 @@ Document Document::from_json(std::string_view json) {
             };
             for (const auto& point_value : as_array(field(object, "boundary_polygon"))) {
                 system.boundary_polygon.push_back(parse_point(point_value));
+            }
+            if (const auto openings = object.find("stair_opening_ids"); openings != object.end()) {
+                for (const auto& value : as_array(openings->second)) system.stair_opening_ids.push_back(as_id(value));
             }
             document.ceiling_systems_[system.system_id] = std::move(system);
         }

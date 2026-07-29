@@ -143,6 +143,9 @@ public:
     void resize_window(ElementId window_id, double width_meters, double height_meters, double sill_height_meters);
 
     void auto_join_walls();
+    /// Rebuilds deterministic host relations: beam-to-column joins, safe
+    /// column-to-wall cuts and stair openings in matching floor/ceiling systems.
+    void auto_join_structural_elements();
     /// Bulk import/template construction can defer expensive join discovery
     /// until a deliberate authoring operation asks for it.
     void set_automatic_wall_join_enabled(bool enabled) noexcept;

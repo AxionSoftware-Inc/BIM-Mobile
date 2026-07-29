@@ -1905,10 +1905,14 @@ int main() {
         });
         const auto wall = compound.create_wall("Wall", {{0.0, 0.0}, {6.0, 0.0}}, 0.2, 3.2, level, wall_assembly);
         const auto column = compound.create_column(level, {3.0, 0.0}, 0.30, 0.30, 3.0, concrete);
+        const auto beam = compound.create_beam(level, {0.0, 0.0}, {6.0, 0.0}, 0.25, 0.4, concrete);
+        compound.auto_join_structural_elements();
+        assert(!compound.find_ptr(wall)->wall()->openings.empty());
         compound.set_structural_wall_cut(wall, column, true, 0.02);
         assert(compound.find_ptr(wall)->wall()->openings.size() == 1);
         compound.set_structural_wall_cut(wall, column, false);
         assert(compound.find_ptr(wall)->wall()->openings.empty());
+        compound.set_beam_column_join(beam, column, true);
         const auto roof = compound.create_roof(level, {{0.0, 0.0}, {6.0, 0.0}, {6.0, 4.0}, {0.0, 4.0}}, tbe::core::RoofType::SimpleGable, 0.18, concrete, roof_assembly, 25.0);
         assert(!compound.find_ptr(roof)->roof()->mesh.vertices.empty());
         const auto stair = compound.create_stair(level, level, {0.0, 0.5}, {1.0, 0.0}, 1.1, 3.0, 4.0, 18, 17, concrete, stair_assembly);
