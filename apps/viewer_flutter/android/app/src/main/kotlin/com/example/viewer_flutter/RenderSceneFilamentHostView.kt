@@ -88,6 +88,7 @@ private data class NativeVisualObject(
   val elementId: Long?,
   val kind: String,
   val points: List<ScenePoint>,
+  val triangles: List<IntArray>,
   val featureEdges: List<Pair<Int, Int>>,
 )
 
@@ -762,10 +763,9 @@ internal class RenderSceneFilamentHostView(
         scene.removeEntity(entry.entity)
         entry.attached = false
       }
-      // Let Filament depth-test Solid feature lines. The 2D canvas overlay is
-      // reserved for Wire and selection; otherwise it draws hidden/internal
-      // edges over the model and turns Solid into Wire.
-      val edgeVisible = (displayStyle == "wireframe" || displayStyle == "solid") &&
+      // Wire uses Filament's full feature-line pass. Solid gets a filtered,
+      // camera-facing authoring outline from the overlay below.
+      val edgeVisible = displayStyle == "wireframe" &&
         (visibleKinds.isEmpty() || visibleKinds.contains(normalizeKind(entry.objectData.kind)))
       val edgeEntity = entry.edgeEntity
       if (edgeEntity != null && edgeVisible && !entry.edgeAttached) {
@@ -1207,6 +1207,7 @@ internal class RenderSceneFilamentHostView(
       elementId = objectData.elementId,
       kind = normalizeKind(objectData.kind),
       points = points,
+      triangles = triangles,
       featureEdges = meshFeatureEdges(points, triangles),
     )
   }
@@ -1343,15 +1344,16 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
 
   fun setDisplayStyle(style: String) {
     wireframe = style == "wireframe"
-    // The canvas overlay cannot depth-test. It is Wire-only; Solid receives
-    // its visible edges from Filament's depth-tested line renderables.
-    showObjectEdges = style == "wireframe"
+    // Solid draws only camera-facing feature edges, while Wire keeps every
+    // feature edge. This gives Solid a thicker working outline without
+    // turning back edges into a wireframe.
+    showObjectEdges = style != "shaded"
     outline.color = when (style) {
       "wireframe" -> Color.argb(225, 18, 30, 42)
       "solid" -> Color.argb(170, 37, 51, 65)
       else -> Color.TRANSPARENT
     }
-    outline.strokeWidth = resources.displayMetrics.density * if (wireframe) 1.45f else 0.95f
+    outline.strokeWidth = resources.displayMetrics.density * if (wireframe) 1.45f else 1.35f
     invalidate()
   }
 
@@ -1393,6 +1395,7 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
       if (!showObjectEdges && !selected) continue
       val edgePaint = if (selected) selectedOutline else outline
       for ((firstIndex, secondIndex) in objectData.featureEdges) {
+        if (!wireframe && !selected && !isFrontFacingEdge(objectData, firstIndex, secondIndex)) continue
         val first = projected.getOrNull(firstIndex)
         val second = projected.getOrNull(secondIndex)
         if (first != null && second != null) {
@@ -1410,6 +1413,36 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
           canvas.drawLine(first.x, first.y, second.x, second.y, levelPaint)
           canvas.drawText(name, first.x + 6f, first.y - 5f, levelText)
         }
+      }
+    }
+  }
+
+  private fun isFrontFacingEdge(
+    objectData: NativeVisualObject,
+    firstIndex: Int,
+    secondIndex: Int,
+  ): Boolean {
+    if (topDown) return true
+    val cosPitch = cos(pitchRadians)
+    val eye = ScenePoint(
+      center.x + distance * cosPitch * cos(yawRadians),
+      center.y + distance * sin(pitchRadians),
+      center.z + distance * cosPitch * sin(yawRadians),
+    )
+    return objectData.triangles.any { triangle ->
+      if (!triangle.contains(firstIndex) || !triangle.contains(secondIndex)) {
+        false
+      } else {
+        val a = objectData.points[triangle[0]]
+        val b = objectData.points[triangle[1]]
+        val c = objectData.points[triangle[2]]
+        val normal = triangleNormal(a, b, c)
+        val centroidX = (a.x + b.x + c.x) / 3.0
+        val centroidY = (a.y + b.y + c.y) / 3.0
+        val centroidZ = (a.z + b.z + c.z) / 3.0
+        normal[0] * (eye.x - centroidX) +
+          normal[1] * (eye.y - centroidY) +
+          normal[2] * (eye.z - centroidZ) > 1e-5
       }
     }
   }
