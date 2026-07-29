@@ -618,43 +618,52 @@ MeshBuffer build_stair_mesh(const StairData& stair) {
         return {};
     }
     const auto unit = Point2{.x = stair.direction.x / direction_length, .y = stair.direction.y / direction_length};
-    // A staircase must be represented as steps, not as a single inclined box.
-    // Keeping each tread an independent small prism makes the mesh inexpensive,
-    // deterministic and clear in plan/wire/solid views.
+    // A staircase is one watertight stepped solid, rather than a stack of
+    // overlapping boxes.  The old approach left coplanar internal faces in
+    // Solid view (the visual "many boxes" effect) and spent O(n²) welding
+    // them.  This emits only exterior tread/riser/side faces in O(n).
     MeshBuffer mesh;
     const auto step_count = std::max(1, stair.tread_count);
     const auto tread = stair.total_run_meters / static_cast<double>(step_count);
     const auto rise = stair.total_rise_meters / static_cast<double>(step_count);
     const auto normal = scale(perpendicular_left(unit), stair.width_meters / 2.0);
-    for (int step = 0; step < step_count; ++step) {
-        const auto run_start = add(stair.start, scale(unit, tread * step));
-        const auto run_end = add(stair.start, scale(unit, tread * (step + 1)));
-        const std::vector<Point2> polygon{
-            add(run_start, normal), add(run_end, normal),
-            add(run_end, scale(normal, -1.0)), add(run_start, scale(normal, -1.0)),
-        };
-        auto step_mesh = extrude_polygon_mesh(polygon, rise * (step + 1), 0.0);
+    const auto point_at = [&](double run, double side, double height) {
+        const auto plan = add(add(stair.start, scale(unit, run)), scale(normal, side));
+        return Point3{.x = plan.x, .y = plan.y, .z = height};
+    };
+    const auto add_quad = [&](Point3 a, Point3 b, Point3 c, Point3 d) {
         const auto base = static_cast<std::uint32_t>(mesh.vertices.size());
-        mesh.vertices.insert(mesh.vertices.end(), step_mesh.vertices.begin(), step_mesh.vertices.end());
-        for (const auto index : step_mesh.indices) mesh.indices.push_back(base + index);
-    }
-    // The stair remains one MeshBuffer in the render snapshot. Weld only this
-    // small authored mesh; general slabs/walls retain their O(n) builder.
-    MeshBuffer welded;
-    welded.vertices.reserve(mesh.vertices.size());
-    for (const auto index : mesh.indices) {
-        const auto& vertex = mesh.vertices[index];
-        const auto found = std::find_if(welded.vertices.begin(), welded.vertices.end(), [&](const Point3& candidate) {
-            return near(candidate.x, vertex.x) && near(candidate.y, vertex.y) && near(candidate.z, vertex.z);
-        });
-        if (found == welded.vertices.end()) {
-            welded.vertices.push_back(vertex);
-            welded.indices.push_back(static_cast<std::uint32_t>(welded.vertices.size() - 1));
-        } else {
-            welded.indices.push_back(static_cast<std::uint32_t>(std::distance(welded.vertices.begin(), found)));
+        mesh.vertices.insert(mesh.vertices.end(), {a, b, c, d});
+        mesh.indices.insert(mesh.indices.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
+    };
+
+    // Underside, first riser and terminal face.
+    add_quad(point_at(0.0, 1.0, 0.0), point_at(stair.total_run_meters, 1.0, 0.0),
+             point_at(stair.total_run_meters, -1.0, 0.0), point_at(0.0, -1.0, 0.0));
+    add_quad(point_at(0.0, -1.0, 0.0), point_at(0.0, 1.0, 0.0),
+             point_at(0.0, 1.0, rise), point_at(0.0, -1.0, rise));
+    add_quad(point_at(stair.total_run_meters, 1.0, 0.0), point_at(stair.total_run_meters, -1.0, 0.0),
+             point_at(stair.total_run_meters, -1.0, stair.total_rise_meters), point_at(stair.total_run_meters, 1.0, stair.total_rise_meters));
+
+    for (int step = 0; step < step_count; ++step) {
+        const auto run_start = tread * static_cast<double>(step);
+        const auto run_end = tread * static_cast<double>(step + 1);
+        const auto lower = rise * static_cast<double>(step);
+        const auto upper = rise * static_cast<double>(step + 1);
+        // Tread and riser are the only horizontal/vertical exterior faces.
+        add_quad(point_at(run_start, -1.0, upper), point_at(run_start, 1.0, upper),
+                 point_at(run_end, 1.0, upper), point_at(run_end, -1.0, upper));
+        if (step > 0) {
+            add_quad(point_at(run_start, -1.0, lower), point_at(run_start, 1.0, lower),
+                     point_at(run_start, 1.0, upper), point_at(run_start, -1.0, upper));
         }
+        // Two non-overlapping side panels replace the overlapping box sides.
+        add_quad(point_at(run_start, 1.0, 0.0), point_at(run_end, 1.0, 0.0),
+                 point_at(run_end, 1.0, upper), point_at(run_start, 1.0, upper));
+        add_quad(point_at(run_end, -1.0, 0.0), point_at(run_start, -1.0, 0.0),
+                 point_at(run_start, -1.0, upper), point_at(run_end, -1.0, upper));
     }
-    return welded;
+    return mesh;
 }
 
 double roof_plan_area(const RoofData& roof) {
@@ -4636,7 +4645,12 @@ void Document::touch_related_rooms(ElementId wall_id) noexcept {
 }
 
 void Document::refresh_dependencies_for_wall(ElementId wall_id) {
-    auto_join_walls();
+    // Bulk imports/templates deliberately defer global joins.  Re-running the
+    // O(n²) join scan for each level-bound wall makes a 6×9 template behave
+    // like O(n³) work and can stall or crash a tablet before its first frame.
+    if (automatic_wall_join_enabled_) {
+        auto_join_walls();
+    }
     mark_rooms_dirty_for_wall(wall_id);
     touch_related_rooms(wall_id);
     invalidate_dependency_graph_cache();

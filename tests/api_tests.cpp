@@ -1319,5 +1319,28 @@ int main() {
         tbe_free_string(project_json);
         tbe_engine_destroy(template_handle);
     }
+
+    // Large-project gate: every engine change must keep both the single tower
+    // and the six-building campus on the native authoring/snapshot path. This
+    // is intentionally a correctness/crash gate, not a machine-dependent
+    // millisecond threshold; the CLI records timings for comparison.
+    for (const auto building_count : {1, 6}) {
+        auto* template_handle = tbe_engine_create();
+        assert(template_handle != nullptr);
+        std::uint64_t primary_level = 0;
+        assert(tbe_create_residential_template(template_handle, building_count, 9, &primary_level) == TBE_API_OK);
+        assert(primary_level != 0);
+        char* nearby_scene = nullptr;
+        assert(tbe_get_render_scene_json_near_level(template_handle, primary_level, 1, &nearby_scene) == TBE_API_OK);
+        assert(nearby_scene != nullptr);
+        assert(std::string(nearby_scene).find("\"objects\":[") != std::string::npos);
+        tbe_free_string(nearby_scene);
+        char* template_json = nullptr;
+        assert(tbe_project_save_json(template_handle, &template_json) == TBE_API_OK);
+        assert(template_json != nullptr);
+        assert(tbe_project_load_json(template_handle, template_json) == TBE_API_OK);
+        tbe_free_string(template_json);
+        tbe_engine_destroy(template_handle);
+    }
     return 0;
 }

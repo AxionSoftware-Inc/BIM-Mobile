@@ -12,6 +12,7 @@
 #include <numeric>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -765,23 +766,114 @@ int run_residential_benchmark(int stories) {
     return save_ok && reload_ok && spatial.ok() && query.ok() ? 0 : 1;
 }
 
+int run_residential_template_benchmark(int buildings, int stories, std::string_view device_class) {
+    const auto building_count = std::clamp(buildings, 1, 12);
+    const auto story_count = std::clamp(stories, 1, 30);
+    const std::string_view normalized_class = device_class == "flagship" ? "flagship" : "mid";
+    // These are acceptance budgets, not a claim that a desktop benchmark can
+    // reproduce a tablet's thermal behavior.  Real Android telemetry remains
+    // the final device check; this tool prevents algorithmic regressions on
+    // every engine change without rebuilding/installing the Flutter app.
+    const auto triangle_budget = normalized_class == "flagship" ? 1'500'000ULL : 750'000ULL;
+    const auto snapshot_budget_kib = normalized_class == "flagship" ? 48'000ULL : 24'000ULL;
+
+    auto session_result = tbe::api::create_session("Residential Template Benchmark");
+    if (!session_result.ok() || !session_result.value.has_value()) {
+        std::cerr << "Unable to create benchmark engine session\n";
+        return 1;
+    }
+    auto session = std::move(*session_result.value);
+    (void)session->set_performance_profile(tbe::api::PerformanceProfile::BatterySaver);
+    (void)session->set_compute_mode(tbe::api::ComputeMode::InteractivePreview);
+
+    tbe::api::ElementIdDTO primary_level{};
+    const auto create_ms = measure_ms([&]() {
+        const auto created = session->create_residential_template(building_count, story_count);
+        if (created.ok() && created.value.has_value()) primary_level = *created.value;
+    });
+    if (primary_level.value == 0) {
+        std::cerr << "Template creation failed\n";
+        return 1;
+    }
+
+    tbe::api::ApiResult<std::string> nearby;
+    const auto nearby_ms = measure_ms([&]() {
+        nearby = session->get_render_scene_json_near_level(primary_level.value, 1);
+    });
+    tbe::api::ApiResult<tbe::api::RenderSceneDTO> final_scene;
+    const auto final_compute_ms = measure_ms([&]() {
+        final_scene = session->get_render_scene();
+    });
+    tbe::api::ApiResult<std::string> saved;
+    const auto save_ms = measure_ms([&]() { saved = session->save_project_json(); });
+
+    bool reload_ok = false;
+    double reload_ms = 0.0;
+    if (saved.ok() && saved.value.has_value()) {
+        auto restored_result = tbe::api::create_session("Residential Template Benchmark Reload");
+        if (restored_result.ok() && restored_result.value.has_value()) {
+            auto restored = std::move(*restored_result.value);
+            reload_ms = measure_ms([&]() {
+                const auto loaded = restored->load_project_json_with_mode(*saved.value, tbe::api::LoadMode::Strict);
+                if (loaded.ok()) {
+                    reload_ok = restored->get_render_scene_json_near_level(primary_level.value, 1).ok();
+                }
+            });
+        }
+    }
+
+    const auto snapshot_ok = final_scene.ok() && final_scene.value.has_value();
+    const auto vertex_count = snapshot_ok ? final_scene.value->vertex_count : 0ULL;
+    const auto triangle_count = snapshot_ok ? final_scene.value->index_count / 3ULL : 0ULL;
+    const auto object_count = snapshot_ok ? final_scene.value->object_count : 0ULL;
+    const auto nearby_kib = nearby.ok() && nearby.value.has_value() ? nearby.value->size() / 1024ULL : 0ULL;
+    const auto contract_ok = primary_level.value != 0 && nearby.ok() && snapshot_ok && saved.ok() && reload_ok;
+    const auto device_budget_ok = triangle_count <= triangle_budget && nearby_kib <= snapshot_budget_kib;
+
+    std::cout << "Residential template benchmark\n";
+    std::cout << "Scenario: " << building_count << " buildings x " << story_count << " stories\n";
+    std::cout << "Host logical cores: " << std::max(1u, std::thread::hardware_concurrency()) << '\n';
+    std::cout << "Device class: " << normalized_class << " (triangle budget " << triangle_budget
+              << ", nearby snapshot budget " << snapshot_budget_kib << " KiB)\n";
+    std::cout << "Create ms: " << create_ms << '\n';
+    std::cout << "Nearby snapshot ms: " << nearby_ms << " (" << nearby_kib << " KiB)\n";
+    std::cout << "Final compute + full snapshot ms: " << final_compute_ms << '\n';
+    std::cout << "Save ms: " << save_ms << '\n';
+    std::cout << "Reload + nearby snapshot ms: " << reload_ms << '\n';
+    std::cout << "Objects: " << object_count << '\n';
+    std::cout << "Vertices: " << vertex_count << '\n';
+    std::cout << "Triangles: " << triangle_count << '\n';
+    std::cout << "Correctness gate: " << (contract_ok ? "PASS" : "FAIL") << '\n';
+    std::cout << "Device geometry budget: " << (device_budget_ok ? "PASS" : "REVIEW") << '\n';
+    return contract_ok ? 0 : 1;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
     int performance_grid_size = 10;
     int residential_stories = 3;
+    int template_buildings = 1;
+    std::string_view device_class = "mid";
     bool run_performance_mode = false;
     bool run_residential_benchmark_mode = false;
+    bool run_residential_template_benchmark_mode = false;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument = argv[index];
         if (argument == "--torture-performance") {
             run_performance_mode = true;
         } else if (argument == "--benchmark-residential") {
             run_residential_benchmark_mode = true;
+        } else if (argument == "--benchmark-template") {
+            run_residential_template_benchmark_mode = true;
         } else if (argument == "--grid-size" && index + 1 < argc) {
             performance_grid_size = std::max(1, std::stoi(argv[++index]));
+        } else if (argument == "--buildings" && index + 1 < argc) {
+            template_buildings = std::max(1, std::stoi(argv[++index]));
         } else if (argument == "--stories" && index + 1 < argc) {
             residential_stories = std::max(1, std::stoi(argv[++index]));
+        } else if (argument == "--device-class" && index + 1 < argc) {
+            device_class = argv[++index];
         }
     }
 
@@ -807,6 +899,14 @@ int main(int argc, char** argv) {
             return run_residential_benchmark(residential_stories);
         } catch (const std::exception& error) {
             std::cerr << "Residential benchmark failed: " << error.what() << '\n';
+            return 1;
+        }
+    }
+    if (run_residential_template_benchmark_mode) {
+        try {
+            return run_residential_template_benchmark(template_buildings, residential_stories, device_class);
+        } catch (const std::exception& error) {
+            std::cerr << "Residential template benchmark failed: " << error.what() << '\n';
             return 1;
         }
     }
