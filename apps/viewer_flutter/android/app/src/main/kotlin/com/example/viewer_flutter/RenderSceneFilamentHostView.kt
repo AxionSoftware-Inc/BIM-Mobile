@@ -771,9 +771,11 @@ internal class RenderSceneFilamentHostView(
         scene.removeEntity(entry.entity)
         entry.attached = false
       }
-      // Filament depth-tests the subtle Solid feature pass. Wire remains the
-      // stronger all-edge mode.
-      val edgeVisible = (displayStyle == "wireframe" || displayStyle == "solid") &&
+      // Solid outlines are rendered by the screen-space authoring overlay.
+      // Mobile drivers commonly clamp native line primitives to one physical
+      // pixel, while the overlay can stay legible at a device-independent dp
+      // width. Keep Filament line primitives exclusively for Wire.
+      val edgeVisible = displayStyle == "wireframe" &&
         (visibleKinds.isEmpty() || visibleKinds.contains(normalizeKind(entry.objectData.kind)))
       val edgeEntity = entry.edgeEntity
       if (edgeEntity != null && edgeVisible && !entry.edgeAttached) {
@@ -1221,18 +1223,41 @@ internal class RenderSceneFilamentHostView(
   }
 
   private fun meshFeatureEdges(points: List<ScenePoint>, triangles: List<IntArray>): List<Pair<Int, Int>> {
+    data class PointKey(val x: Long, val y: Long, val z: Long)
     data class Edge(val first: Int, val second: Int)
-    val normals = linkedMapOf<Edge, MutableList<DoubleArray>>()
+    data class EdgeUse(val normal: DoubleArray, val firstRaw: Int, val secondRaw: Int)
+    // Engine meshes intentionally duplicate vertices across face boundaries
+    // for simple, robust generation. For visual topology those duplicates are
+    // one vertex; without this weld every triangle diagonal becomes an edge
+    // and Solid degenerates into Wire.
+    fun key(point: ScenePoint) = PointKey(
+      kotlin.math.round(point.x * 100000.0).toLong(),
+      kotlin.math.round(point.y * 100000.0).toLong(),
+      kotlin.math.round(point.z * 100000.0).toLong(),
+    )
+    val canonicalByPoint = linkedMapOf<PointKey, Int>()
+    val canonicalIndices = IntArray(points.size)
+    points.forEachIndexed { index, point ->
+      canonicalIndices[index] = canonicalByPoint.getOrPut(key(point)) { canonicalByPoint.size }
+    }
+    val usesByEdge = linkedMapOf<Edge, MutableList<EdgeUse>>()
     for (triangle in triangles) {
       val normal = triangleNormal(points[triangle[0]], points[triangle[1]], points[triangle[2]])
       for ((first, second) in arrayOf(triangle[0] to triangle[1], triangle[1] to triangle[2], triangle[2] to triangle[0])) {
-        val edge = if (first < second) Edge(first, second) else Edge(second, first)
-        normals.getOrPut(edge) { mutableListOf() }.add(normal)
+        val canonicalFirst = canonicalIndices[first]
+        val canonicalSecond = canonicalIndices[second]
+        if (canonicalFirst == canonicalSecond) continue
+        val edge = if (canonicalFirst < canonicalSecond) Edge(canonicalFirst, canonicalSecond) else Edge(canonicalSecond, canonicalFirst)
+        usesByEdge.getOrPut(edge) { mutableListOf() }.add(EdgeUse(normal, first, second))
       }
     }
-    return normals.mapNotNull { (edge, uses) ->
-      val feature = uses.size == 1 || uses.zipWithNext().any { (first, second) -> normalDot(first, second) < 0.995 }
-      if (feature) edge.first to edge.second else null
+    return usesByEdge.values.mapNotNull { uses ->
+      // A crease must be visually meaningful. This suppresses triangulation
+      // seams and tiny tessellation changes while retaining real BIM corners.
+      val feature = uses.size == 1 || uses.zipWithNext().any { (first, second) ->
+        normalDot(first.normal, second.normal) < 0.90
+      }
+      if (feature) uses.first().firstRaw to uses.first().secondRaw else null
     }
   }
 
@@ -1352,14 +1377,15 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
 
   fun setDisplayStyle(style: String) {
     wireframe = style == "wireframe"
-    // Canvas is Wire-only. Solid keeps the depth-tested 1px native edge pass.
-    showObjectEdges = style == "wireframe"
+    // Solid uses only canonical, front-facing crease/silhouette lines. Canvas
+    // line width is density-aware, unlike GPU line primitives on Android.
+    showObjectEdges = style == "wireframe" || style == "solid"
     outline.color = when (style) {
       "wireframe" -> Color.argb(225, 18, 30, 42)
       "solid" -> Color.argb(170, 37, 51, 65)
       else -> Color.TRANSPARENT
     }
-    outline.strokeWidth = resources.displayMetrics.density * if (wireframe) 1.45f else 0.95f
+    outline.strokeWidth = resources.displayMetrics.density * if (wireframe) 1.45f else 1.6f
     invalidate()
   }
 
