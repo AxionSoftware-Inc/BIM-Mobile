@@ -4,7 +4,9 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.PointF
 import android.graphics.RectF
+import android.opengl.Matrix
 import android.view.MotionEvent
 import android.graphics.Typeface
 import android.os.Handler
@@ -61,6 +63,21 @@ void material(inout MaterialInputs material) {
 }
 """
 
+private const val WALL_BRICK_MAT = """
+void material(inout MaterialInputs material) {
+    prepareMaterial(material);
+    float3 world = getWorldPosition();
+    float row = floor(world.y / 0.075);
+    float jointY = step(fract(world.y / 0.075), 0.018);
+    float jointX = step(fract((world.x + mod(row, 2.0) * 0.12) / 0.24), 0.014);
+    // Keep this subtle enough for a working BIM view, but distinct on a
+    // tablet-sized wall face; the prior 16% contrast disappeared in Solid.
+    float mortar = max(jointY, jointX) * 0.34;
+    float3 brick = materialParams.baseColor.rgb * (1.0 - mortar);
+    material.baseColor = float4(brick, materialParams.baseColor.a);
+}
+"""
+
 private data class FilamentRenderableEntry(
   val objectData: SceneObject,
   val entity: Int,
@@ -88,6 +105,7 @@ private data class FilamentSceneMetrics(
 private data class NativeVisualObject(
   val elementId: Long?,
   val kind: String,
+  val selectable: Boolean,
   val points: List<ScenePoint>,
   val triangles: List<IntArray>,
   val featureEdges: List<NativeVisualEdge>,
@@ -105,6 +123,7 @@ private data class NativeVisualEdge(
 internal class RenderSceneFilamentHostView(
   context: Context,
   initialScene: SceneState? = null,
+  private val onObjectTapped: (Long?) -> Unit = {},
 ) : FrameLayout(context), UiHelper.RendererCallback, Choreographer.FrameCallback {
   companion object {
     init {
@@ -190,6 +209,8 @@ internal class RenderSceneFilamentHostView(
   private var surfaceReady = false
   private var materialBuilderReady = false
   private var material: Material? = null
+  private var wallMaterial: Material? = null
+  private var windowMaterial: Material? = null
   private val renderables = linkedMapOf<Long, FilamentRenderableEntry>()
   private val attachedEntities = linkedSetOf<Int>()
   private var statusMessage = DEFAULT_RENDERER_STATUS
@@ -204,6 +225,9 @@ internal class RenderSceneFilamentHostView(
   private var displayStyle = "solid"
   private var lastTouchX = 0f
   private var lastTouchY = 0f
+  private var touchDownX = 0f
+  private var touchDownY = 0f
+  private var touchMoved = false
   private var touching = false
 
   init {
@@ -230,8 +254,10 @@ internal class RenderSceneFilamentHostView(
 
     uiHelper.renderCallback = this
     uiHelper.attachTo(renderSurface)
-    renderSurface.isClickable = true
-    renderSurface.setOnTouchListener { _, event -> handleTouchEvent(event) }
+    // Flutter owns Android touch dispatch. In 3D it forwards a normalized
+    // viewport point through the channel, which we map back to this actual
+    // SurfaceView before ray-picking with Filament's live camera.
+    renderSurface.isClickable = false
 
     try {
       val filamentEngine = Engine.create(Engine.Backend.OPENGL)
@@ -239,6 +265,9 @@ internal class RenderSceneFilamentHostView(
       renderer = filamentEngine.createRenderer()
       scene = filamentEngine.createScene()
       filamentView = filamentEngine.createView()
+      // Windows use a transparent shaded material; include them in GPU picks
+      // so tapping glass selects the window rather than the wall behind it.
+      filamentView?.isTransparentPickingEnabled = true
       camera = filamentEngine.createCamera(EntityManager.get().create())
       filamentView?.scene = scene
       filamentView?.camera = camera
@@ -360,8 +389,12 @@ internal class RenderSceneFilamentHostView(
     if (projectionMode == "topDown" && planCenterPayload != null) {
       orbitCenter = toFilamentPoint(planCenterPayload)
       val planZoom = toDouble(payload?.get("planZoom"))
-      if (planZoom != null && planZoom > 0.0) {
-        topDownZoom = (96.0 / planZoom).coerceIn(0.5, 200.0)
+      val planViewportHeight = toDouble(payload?.get("planViewportHeight"))
+      if (planZoom != null && planZoom > 0.0 && planViewportHeight != null && planViewportHeight > 0.0) {
+        // Flutter owns the plan camera in logical pixels/metre.  Convert that
+        // directly to Filament's orthographic half-height in metres; using a
+        // fixed pixel reference made the native plan camera differ by device.
+        topDownZoom = (planViewportHeight / (2.0 * planZoom)).coerceIn(0.5, 200.0)
       }
     } else if (orbitCenterPayload != null) {
       orbitCenter = toFilamentPoint(orbitCenterPayload)
@@ -545,6 +578,8 @@ internal class RenderSceneFilamentHostView(
     material?.let { material ->
       engine?.destroyMaterial(material)
     }
+    wallMaterial?.let { material -> engine?.destroyMaterial(material) }
+    windowMaterial?.let { material -> engine?.destroyMaterial(material) }
     engine?.destroy()
     swapChain = null
     renderer = null
@@ -554,36 +589,22 @@ internal class RenderSceneFilamentHostView(
     colorGrading = null
     engine = null
     material = null
+    wallMaterial = null
+    windowMaterial = null
     materialBuilderReady = false
   }
 
   private fun buildRuntimeMaterial(): Boolean {
     val engine = engine ?: return false
     return try {
-      val packageData: MaterialPackage = MaterialBuilder()
-        .name("RenderSceneFlatColor")
-        .shading(MaterialBuilder.Shading.UNLIT)
-        .culling(MaterialBuilder.CullingMode.NONE)
-        .doubleSided(true)
-        .uniformParameter(MaterialBuilder.UniformType.FLOAT4, "baseColor")
-        .material(FLAT_COLOR_MAT)
-        .targetApi(MaterialBuilder.TargetApi.OPENGL)
-        .platform(MaterialBuilder.Platform.MOBILE)
-        .optimization(MaterialBuilder.Optimization.NONE)
-        .build(engine)
-
-      if (!packageData.isValid) {
+      material = buildMaterial(engine, "RenderSceneFlatColor", FLAT_COLOR_MAT)
+      wallMaterial = buildMaterial(engine, "RenderSceneWallBrick", WALL_BRICK_MAT)
+      windowMaterial = buildMaterial(engine, "RenderSceneWindowGlass", FLAT_COLOR_MAT, transparent = true)
+      if (material == null || wallMaterial == null || windowMaterial == null) {
         statusMessage = "Filament material build returned an invalid package."
-        Log.e(TAG, statusMessage)
         updateStatus()
         return false
       }
-
-      val packageBuffer = packageData.buffer.duplicate()
-      packageBuffer.rewind()
-      material = Material.Builder()
-        .payload(packageBuffer, packageBuffer.remaining())
-        .build(engine)
       true
     } catch (error: Throwable) {
       statusMessage = "Filament material build failed: ${error.message ?: error::class.java.simpleName}"
@@ -593,11 +614,41 @@ internal class RenderSceneFilamentHostView(
     }
   }
 
+  private fun buildMaterial(
+    engine: Engine,
+    name: String,
+    source: String,
+    transparent: Boolean = false,
+  ): Material? {
+      val builder = MaterialBuilder()
+        .name(name)
+        .shading(MaterialBuilder.Shading.UNLIT)
+        .culling(MaterialBuilder.CullingMode.NONE)
+        .doubleSided(true)
+        .uniformParameter(MaterialBuilder.UniformType.FLOAT4, "baseColor")
+        .material(source)
+        .targetApi(MaterialBuilder.TargetApi.OPENGL)
+        .platform(MaterialBuilder.Platform.MOBILE)
+        .optimization(MaterialBuilder.Optimization.NONE)
+      if (transparent) {
+        builder
+          .blending(MaterialBuilder.BlendingMode.TRANSPARENT)
+          .transparencyMode(MaterialBuilder.TransparencyMode.TWO_PASSES_TWO_SIDES)
+          .depthWrite(false)
+      }
+      val packageData: MaterialPackage = builder.build(engine)
+      if (!packageData.isValid) return null
+      val packageBuffer = packageData.buffer.duplicate().apply { rewind() }
+      return Material.Builder()
+        .payload(packageBuffer, packageBuffer.remaining())
+        .build(engine)
+  }
+
   private fun rebuildScene() {
     destroyRenderables()
     val scene = scene ?: return
     val sceneState = currentScene ?: return
-    if (material == null && materialBuilderReady) {
+    if ((material == null || wallMaterial == null || windowMaterial == null) && materialBuilderReady) {
       buildRuntimeMaterial()
     }
     val engine = engine ?: return
@@ -607,17 +658,46 @@ internal class RenderSceneFilamentHostView(
       updateStatus()
       return
     }
+    val wallMaterial = wallMaterial ?: material
+    val windowMaterial = windowMaterial ?: material
     val filteredObjects = sceneState.objects
       .filter { visibleKinds.isEmpty() || visibleKinds.contains(normalizeKind(it.kind)) }
     val objects = if (filteredObjects.isNotEmpty()) filteredObjects else sceneState.objects
     if (filteredObjects.isEmpty() && sceneState.objects.isNotEmpty()) {
       Log.w(TAG, "All RenderScene objects were filtered out by kind visibility; rendering fallback set.")
     }
+    // A ceiling normally sits below the wall's top constraint (for example
+    // 2.85 m below a 3.20 m level). Keep its actual elevation so walls can
+    // render the physical wall/ceiling junction, not merely their own top.
+    // Do not key these elevations by level ID. Imported/joined walls may have
+    // a missing or differently-normalized level reference even though their
+    // mesh is correctly positioned. The wall's own vertical bounds below
+    // select the relevant elevation, so the scene-wide set is both safer and
+    // just as precise.
+    val wallJunctionElevations = objects
+      .filter { normalizeKind(it.kind) == "ceiling" || normalizeKind(it.kind) == "floor" }
+      .flatMap { system ->
+        // Some valid surface systems are transported as bounds-only fallback
+        // geometry. Their faces still render, but relying on mesh positions
+        // alone loses their elevation and makes nearby wall borders random.
+        system.mesh.positions.map { it.z } + listOf(system.bounds.min.z, system.bounds.max.z)
+      }
+      .distinct()
 
     var failedObjects = 0
     for (objectData in objects) {
       try {
-        val entry = createRenderable(engine, material, objectData) ?: continue
+        val objectMaterial = when (normalizeKind(objectData.kind)) {
+          "wall" -> wallMaterial
+          "window" -> windowMaterial
+          else -> material
+        }
+        val entry = createRenderable(
+          engine,
+          objectMaterial,
+          objectData,
+          wallJunctionElevations,
+        ) ?: continue
         renderables[objectData.elementId ?: renderables.size.toLong() + 1L] = entry
         scene.addEntity(entry.entity)
         entry.attached = true
@@ -638,6 +718,7 @@ internal class RenderSceneFilamentHostView(
     engine: Engine,
     sharedMaterial: Material,
     objectData: SceneObject,
+    wallJunctionElevations: List<Double>,
   ): FilamentRenderableEntry? {
     val geometry = objectGeometry(objectData) ?: return null
     val vertexBuffer = VertexBuffer.Builder()
@@ -678,10 +759,17 @@ internal class RenderSceneFilamentHostView(
       .build(engine, entity)
 
     val visual = toVisualObject(objectData)
-    // GPU depth-tested architectural border pass. GLES line primitives are
-    // often clamped to one pixel on Android, therefore sharp semantic edges
-    // are batched as one very thin triangle mesh instead of PrimitiveType.LINES.
-    val edgeGeometry = edgeGeometry(visual.points, visual.featureEdges.filter { it.sharp })
+    // GPU depth-tested architectural border pass. Keep semantic feature
+    // edges (open boundaries and face creases), not every mesh triangle edge:
+    // this preserves room corners after an exterior wall is removed without
+    // turning the solid view into Wire.
+    val edgeGeometry = edgeGeometry(
+      visual.points,
+      visual.featureEdges,
+      visual.triangles,
+      wallJunctionEdges = normalizeKind(objectData.kind) == "wall",
+      wallJunctionElevations = wallJunctionElevations,
+    )
     val edgeVertexBuffer = edgeGeometry?.let { edge ->
       VertexBuffer.Builder()
         .bufferCount(1)
@@ -694,14 +782,21 @@ internal class RenderSceneFilamentHostView(
         .build(engine).also { it.setBuffer(engine, edge.indexData) }
     }
     val edgeEntity = if (edgeVertexBuffer != null && edgeIndexBuffer != null) EntityManager.get().create() else null
+    // Edges must remain a neutral, high-contrast pass. Reusing the wall
+    // brick shader makes a thin interior edge inherit the face pattern and
+    // disappear at grazing angles.
+    val edgeSharedMaterial = material ?: sharedMaterial
     val edgeMaterialInstance = edgeEntity?.let {
-      sharedMaterial.createInstance().also { instance ->
-        instance.setParameter("baseColor", Colors.RgbaType.LINEAR, 0.08f, 0.12f, 0.16f, 1.0f)
+      edgeSharedMaterial.createInstance().also { instance ->
+        instance.setParameter("baseColor", Colors.RgbaType.LINEAR, 0.015f, 0.025f, 0.040f, 1.0f)
       }
     }
     if (edgeEntity != null && edgeVertexBuffer != null && edgeIndexBuffer != null && edgeGeometry != null && edgeMaterialInstance != null) {
       RenderableManager.Builder(1)
-        .boundingBox(filamentBox(bounds))
+        // Edge prisms extend past the face mesh. Use their own bounds so a
+        // close interior orbit cannot cull an otherwise visible room edge.
+        .boundingBox(filamentBox(edgeGeometry.bounds))
+        .priority(7)
         .geometry(0, PrimitiveType.TRIANGLES, edgeVertexBuffer, edgeIndexBuffer, 0, edgeGeometry.indexCount)
         .material(0, edgeMaterialInstance)
         .build(engine, edgeEntity)
@@ -776,14 +871,114 @@ internal class RenderSceneFilamentHostView(
     )
   }
 
-  private fun edgeGeometry(points: List<ScenePoint>, edges: List<NativeVisualEdge>): GeometryData? {
+  private fun edgeGeometry(
+    points: List<ScenePoint>,
+    edges: List<NativeVisualEdge>,
+    triangles: List<IntArray>,
+    wallJunctionEdges: Boolean = false,
+    wallJunctionElevations: List<Double> = emptyList(),
+  ): GeometryData? {
     val validEdges = edges.filter { it.first in points.indices && it.second in points.indices }
-    if (validEdges.isEmpty()) return null
-    // 18 mm is intentionally visual-only: it is thick enough for a tablet
+    // 28 mm is intentionally visual-only: it is thick enough for a tablet
     // Solid view, but does not change the semantic BIM geometry or picking.
-    val radius = 0.009
-    val vertexData = ByteBuffer.allocateDirect(validEdges.size * 8 * 12).order(ByteOrder.nativeOrder())
-    val indexData = ByteBuffer.allocateDirect(validEdges.size * 36 * Int.SIZE_BYTES)
+    val normalRadius = 0.014
+    // Junction borders deliberately get a stronger visual treatment than
+    // ordinary silhouette edges. They are the only reliable room boundary
+    // after an exterior wall has been removed and an adjacent floor/ceiling
+    // occupies the same depth range.
+    val junctionRadius = 0.032
+    val sourceBounds = boundsForPoints(points)
+    data class EdgeKey(val first: Int, val second: Int)
+    fun edgeKey(first: Int, second: Int) = if (first < second) {
+      EdgeKey(first, second)
+    } else {
+      EdgeKey(second, first)
+    }
+    val junctionKeys = linkedSetOf<EdgeKey>()
+    if (wallJunctionEdges) {
+      // Do not depend solely on normal/crease classification here. A ceiling
+      // or floor can make an otherwise valid wall edge look coplanar after
+      // mesh welding. Extract the top/bottom triangle boundary segments
+      // directly, then draw them in the dedicated junction pass below.
+      val minimumY = sourceBounds.min.y
+      val maximumY = sourceBounds.max.y
+      fun isJunctionPoint(point: ScenePoint) =
+        kotlin.math.abs(point.y - minimumY) <= 1e-5 ||
+          kotlin.math.abs(point.y - maximumY) <= 1e-5
+      for (triangle in triangles) {
+        if (triangle.size != 3 || triangle.any { it !in points.indices }) continue
+        for ((firstIndex, secondIndex) in arrayOf(
+          triangle[0] to triangle[1],
+          triangle[1] to triangle[2],
+          triangle[2] to triangle[0],
+        )) {
+          val first = points[firstIndex]
+          val second = points[secondIndex]
+          if (kotlin.math.abs(first.y - second.y) <= 1e-6 &&
+            isJunctionPoint(first) && isJunctionPoint(second)) {
+            junctionKeys.add(edgeKey(firstIndex, secondIndex))
+          }
+        }
+      }
+    }
+    data class RenderEdge(
+      val first: ScenePoint,
+      val second: ScenePoint,
+      val junction: Boolean = false,
+    )
+    val allEdges = validEdges.map { it.first to it.second }.toMutableList()
+    for (key in junctionKeys) {
+      if (allEdges.none { edgeKey(it.first, it.second) == key }) {
+        allEdges.add(key.first to key.second)
+      }
+    }
+    val rawRenderEdges = allEdges.map { edge ->
+      RenderEdge(
+        points[edge.first],
+        points[edge.second],
+        wallJunctionEdges && junctionKeys.contains(edgeKey(edge.first, edge.second)),
+      )
+    }.toMutableList()
+    if (wallJunctionEdges) {
+      // A joined wall can legitimately have no (or incomplete) feature-edge
+      // list after vertex welding. Its physical outline must not disappear
+      // from Solid in that case: reconstruct the bottom/top sections and
+      // every vertical envelope corner directly from the engine mesh.
+      rawRenderEdges.addAll(
+        wallIntersectionSegments(
+          points,
+          triangles,
+          wallJunctionElevations + listOf(sourceBounds.min.y, sourceBounds.max.y),
+          sourceBounds,
+        )
+          .map { (first, second) -> RenderEdge(first, second, junction = true) },
+      )
+      rawRenderEdges.addAll(wallVerticalEnvelopeSegments(points, sourceBounds)
+        .map { (first, second) -> RenderEdge(first, second, junction = true) })
+    }
+    data class PointKey(val x: Long, val y: Long, val z: Long)
+    data class RenderEdgeKey(val first: PointKey, val second: PointKey)
+    fun pointKey(point: ScenePoint) = PointKey(
+      kotlin.math.round(point.x * 100000.0).toLong(),
+      kotlin.math.round(point.y * 100000.0).toLong(),
+      kotlin.math.round(point.z * 100000.0).toLong(),
+    )
+    fun renderEdgeKey(edge: RenderEdge): RenderEdgeKey {
+      val first = pointKey(edge.first)
+      val second = pointKey(edge.second)
+      return if (first.toString() <= second.toString()) RenderEdgeKey(first, second) else RenderEdgeKey(second, first)
+    }
+    // A plane can cross both triangles of one face. Draw one physical border,
+    // not two coincident dark prisms.
+    val renderEdges = linkedMapOf<RenderEdgeKey, RenderEdge>()
+    for (edge in rawRenderEdges) {
+      val key = renderEdgeKey(edge)
+      val previous = renderEdges[key]
+      renderEdges[key] = if (previous == null || edge.junction) edge else previous
+    }
+    if (renderEdges.isEmpty()) return null
+    val vertexData = ByteBuffer.allocateDirect(renderEdges.size * 8 * 12).order(ByteOrder.nativeOrder())
+    val indexData = ByteBuffer.allocateDirect(renderEdges.size * 36 * Int.SIZE_BYTES)
       .order(ByteOrder.nativeOrder()).asIntBuffer()
     val cubeIndices = intArrayOf(
       0, 1, 2, 0, 2, 3, 4, 6, 5, 4, 7, 6,
@@ -791,9 +986,55 @@ internal class RenderSceneFilamentHostView(
       2, 6, 7, 2, 7, 3, 3, 7, 4, 3, 4, 0,
     )
     var vertexOffset = 0
-    for (edge in validEdges) {
-      val first = points[edge.first]
-      val second = points[edge.second]
+    for (edge in renderEdges.values) {
+      val sourceFirst = edge.first
+      val sourceSecond = edge.second
+      // At a wall/floor or wall/ceiling contact the border prism can be
+      // coplanar with the adjacent system and lose the depth test. Move only
+      // those horizontal wall edges 18 mm onto the visible wall face: it
+      // preserves hidden-edge behavior while making an interior room read as
+      // bounded after an exterior wall is removed.
+      val averageY = (sourceFirst.y + sourceSecond.y) * 0.5
+      val isHorizontalWallBoundary = edge.junction
+      val radius = if (isHorizontalWallBoundary) junctionRadius else normalRadius
+      val junctionOffset = when {
+        isHorizontalWallBoundary && kotlin.math.abs(averageY - sourceBounds.min.y) <= 1e-5 -> 0.05
+        isHorizontalWallBoundary && kotlin.math.abs(averageY - sourceBounds.max.y) <= 1e-5 -> -0.05
+        // A ceiling intersection is intentionally just below the ceiling
+        // plane. Leaving the prism centred on that plane makes it coplanar
+        // with the ceiling surface, so depth testing hides it when looking
+        // into a room through a removed exterior wall.
+        isHorizontalWallBoundary -> -0.035
+        else -> 0.0
+      }
+      val isHorizontalJunction = isHorizontalWallBoundary &&
+        kotlin.math.abs(sourceFirst.y - sourceSecond.y) <= 1e-5
+      // The generated prism has thickness, but on mobile depth precision can
+      // still place its centre behind the wall face. Push a horizontal wall
+      // junction just outside its nearest face. Depth testing remains on, so
+      // an actually occluding wall still hides the border (unlike Wire).
+      val faceOffset = if (isHorizontalJunction) {
+        wallFaceOffset(
+          ScenePoint(
+            (sourceFirst.x + sourceSecond.x) * 0.5,
+            averageY,
+            (sourceFirst.z + sourceSecond.z) * 0.5,
+          ),
+          sourceBounds,
+        )
+      } else {
+        ScenePoint(0.0, 0.0, 0.0)
+      }
+      val first = sourceFirst.copy(
+        x = sourceFirst.x + faceOffset.x,
+        y = sourceFirst.y + junctionOffset,
+        z = sourceFirst.z + faceOffset.z,
+      )
+      val second = sourceSecond.copy(
+        x = sourceSecond.x + faceOffset.x,
+        y = sourceSecond.y + junctionOffset,
+        z = sourceSecond.z + faceOffset.z,
+      )
       val dx = second.x - first.x; val dy = second.y - first.y; val dz = second.z - first.z
       val length = kotlin.math.sqrt(dx * dx + dy * dy + dz * dz)
       if (length <= 1e-8) continue
@@ -826,7 +1067,95 @@ internal class RenderSceneFilamentHostView(
     }
     if (vertexOffset == 0) return null
     vertexData.flip(); indexData.flip()
-    return GeometryData(vertexOffset, (vertexOffset / 8) * 36, vertexData, indexData, boundsForPoints(points))
+    // The visual prisms intentionally extend beyond the source face. Include
+    // that thickness in the culling bounds, especially for interior views.
+    val bounds = SceneBounds(
+      ScenePoint(sourceBounds.min.x - 0.09, sourceBounds.min.y - 0.09, sourceBounds.min.z - 0.09),
+      ScenePoint(sourceBounds.max.x + 0.09, sourceBounds.max.y + 0.09, sourceBounds.max.z + 0.09),
+    )
+    return GeometryData(vertexOffset, (vertexOffset / 8) * 36, vertexData, indexData, bounds)
+  }
+
+  private fun wallFaceOffset(point: ScenePoint, bounds: SceneBounds): ScenePoint {
+    val offset = 0.05
+    val candidates = listOf(
+      kotlin.math.abs(point.x - bounds.min.x) to ScenePoint(-offset, 0.0, 0.0),
+      kotlin.math.abs(point.x - bounds.max.x) to ScenePoint(offset, 0.0, 0.0),
+      kotlin.math.abs(point.z - bounds.min.z) to ScenePoint(0.0, 0.0, -offset),
+      kotlin.math.abs(point.z - bounds.max.z) to ScenePoint(0.0, 0.0, offset),
+    )
+    return candidates.minByOrNull { it.first }?.second ?: ScenePoint(0.0, 0.0, 0.0)
+  }
+
+  private fun wallVerticalEnvelopeSegments(
+    points: List<ScenePoint>,
+    bounds: SceneBounds,
+  ): List<Pair<ScenePoint, ScenePoint>> {
+    val epsilon = 1e-5
+    data class HorizontalKey(val x: Long, val z: Long)
+    fun key(point: ScenePoint) = HorizontalKey(
+      kotlin.math.round(point.x * 100000.0).toLong(),
+      kotlin.math.round(point.z * 100000.0).toLong(),
+    )
+    val lower = linkedMapOf<HorizontalKey, ScenePoint>()
+    val upper = linkedMapOf<HorizontalKey, ScenePoint>()
+    for (point in points) {
+      if (kotlin.math.abs(point.y - bounds.min.y) <= epsilon) lower.putIfAbsent(key(point), point)
+      if (kotlin.math.abs(point.y - bounds.max.y) <= epsilon) upper.putIfAbsent(key(point), point)
+    }
+    return lower.mapNotNull { (horizontal, first) ->
+      upper[horizontal]?.let { second -> first to second }
+    }
+  }
+
+  private fun wallIntersectionSegments(
+    points: List<ScenePoint>,
+    triangles: List<IntArray>,
+    elevations: List<Double>,
+    bounds: SceneBounds,
+  ): List<Pair<ScenePoint, ScenePoint>> {
+    val result = linkedMapOf<String, Pair<ScenePoint, ScenePoint>>()
+    val epsilon = 1e-5
+    for (elevation in elevations.distinct()) {
+      if (elevation < bounds.min.y - epsilon || elevation > bounds.max.y + epsilon) continue
+      for (triangle in triangles) {
+        if (triangle.size != 3 || triangle.any { it !in points.indices }) continue
+        val trianglePoints = triangle.map { points[it] }
+        val hits = mutableListOf<ScenePoint>()
+        for ((first, second) in arrayOf(
+          trianglePoints[0] to trianglePoints[1],
+          trianglePoints[1] to trianglePoints[2],
+          trianglePoints[2] to trianglePoints[0],
+        )) {
+          val firstDelta = first.y - elevation
+          val secondDelta = second.y - elevation
+          if (kotlin.math.abs(firstDelta) <= epsilon && kotlin.math.abs(secondDelta) <= epsilon) continue
+          if ((firstDelta < -epsilon && secondDelta < -epsilon) ||
+            (firstDelta > epsilon && secondDelta > epsilon)) continue
+          val denominator = second.y - first.y
+          if (kotlin.math.abs(denominator) <= epsilon) continue
+          val t = ((elevation - first.y) / denominator).coerceIn(0.0, 1.0)
+          val hit = ScenePoint(
+            first.x + (second.x - first.x) * t,
+            elevation,
+            first.z + (second.z - first.z) * t,
+          )
+          if (hits.none { kotlin.math.abs(it.x - hit.x) <= epsilon && kotlin.math.abs(it.z - hit.z) <= epsilon }) {
+            hits.add(hit)
+          }
+        }
+        if (hits.size >= 2 && kotlin.math.abs(hits[0].x - hits[1].x) + kotlin.math.abs(hits[0].z - hits[1].z) > epsilon) {
+          val first = hits[0]
+          val second = hits[1]
+          fun key(point: ScenePoint) = "${kotlin.math.round(point.x * 100000.0)}:${kotlin.math.round(point.y * 100000.0)}:${kotlin.math.round(point.z * 100000.0)}"
+          val firstKey = key(first)
+          val secondKey = key(second)
+          val segmentKey = if (firstKey <= secondKey) "$firstKey|$secondKey" else "$secondKey|$firstKey"
+          result.putIfAbsent(segmentKey, first to second)
+        }
+      }
+    }
+    return result.values.toList()
   }
 
   private fun syncVisibility() {
@@ -1063,16 +1392,24 @@ internal class RenderSceneFilamentHostView(
       MotionEvent.ACTION_DOWN -> {
         lastTouchX = event.x
         lastTouchY = event.y
+        touchDownX = event.x
+        touchDownY = event.y
+        touchMoved = false
         touching = true
         return true
       }
       MotionEvent.ACTION_MOVE -> {
         if (scaleGestureDetector.isInProgress) {
+          touchMoved = true
           return true
         }
         if (touching) {
           val dx = event.x - lastTouchX
           val dy = event.y - lastTouchY
+          if (kotlin.math.hypot(event.x - touchDownX, event.y - touchDownY) >
+            resources.displayMetrics.density * 8f) {
+            touchMoved = true
+          }
           lastTouchX = event.x
           lastTouchY = event.y
           if (projectionMode == "topDown") {
@@ -1092,11 +1429,46 @@ internal class RenderSceneFilamentHostView(
         return true
       }
       MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+        if (event.actionMasked == MotionEvent.ACTION_UP && !touchMoved) {
+          pickVisibleObject(event.x, event.y)
+        }
         touching = false
         return true
       }
       else -> return true
     }
+  }
+
+  private fun pickVisibleObject(x: Float, y: Float) {
+    val view = filamentView
+    if (view == null) {
+      onObjectTapped(selectionOverlay.pickElementAt(x, y, visibleKinds))
+      return
+    }
+    // The ray is evaluated against Filament's live view/projection matrices,
+    // therefore it remains correct after a native orbit. On the connected
+    // MIUI tablet View.pick occasionally reported an unrelated renderable
+    // after rotation; only use it when the ray has no geometric hit.
+    val rayElementId = selectionOverlay.pickByLiveCameraRay(x, y, visibleKinds)
+    if (rayElementId != null) {
+      onObjectTapped(rayElementId)
+      return
+    }
+    // Do not fall back to Filament's asynchronous GPU pick here. On this
+    // MIUI device it can return a stale/nearby renderable after an orbit, so
+    // tapping empty space kept a wall selected instead of clearing it. The
+    // live-camera ray above is the single 3D selection authority; a miss is
+    // deliberately reported as null and clears the Flutter Inspector too.
+    onObjectTapped(null)
+  }
+
+  fun pickNormalized(normalizedX: Double, normalizedY: Double) {
+    val width = selectionOverlay.width
+    val height = selectionOverlay.height
+    if (width <= 1 || height <= 1) return
+    val x = (normalizedX.coerceIn(0.0, 1.0) * width).toFloat()
+    val y = (normalizedY.coerceIn(0.0, 1.0) * height).toFloat()
+    pickVisibleObject(x, y)
   }
 
   private fun updateOrbitCamera() {
@@ -1251,9 +1623,9 @@ internal class RenderSceneFilamentHostView(
 
   private fun kindColor(kind: String): FloatArray {
     return when (kind) {
-      "wall" -> floatArrayOf(0.52f, 0.63f, 0.56f, 1f)
+      "wall" -> floatArrayOf(0.62f, 0.38f, 0.25f, 1f)
       "door" -> floatArrayOf(0.64f, 0.47f, 0.37f, 1f)
-      "window" -> floatArrayOf(0.31f, 0.56f, 0.94f, 1f)
+      "window" -> floatArrayOf(0.34f, 0.72f, 0.96f, 0.38f)
       "slab" -> floatArrayOf(0.57f, 0.63f, 0.71f, 1f)
       "floor" -> floatArrayOf(0.47f, 0.66f, 0.55f, 1f)
       "ceiling" -> floatArrayOf(0.78f, 0.82f, 0.87f, 1f)
@@ -1286,6 +1658,7 @@ internal class RenderSceneFilamentHostView(
     return NativeVisualObject(
       elementId = objectData.elementId,
       kind = normalizeKind(objectData.kind),
+      selectable = objectData.selectable,
       points = points,
       triangles = triangles,
       featureEdges = meshFeatureEdges(points, triangles),
@@ -1442,6 +1815,243 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
     levels = levelValues
     sceneBounds = bounds
     invalidate()
+  }
+
+  /// Native navigation changes the Filament camera without a Flutter frame.
+  /// Pick in this same projection space so a single tap always targets the
+  /// visible object rather than a stale fallback-camera approximation.
+  fun pickElementAt(x: Float, y: Float, visibleKinds: Set<String>): Long? {
+    var bestId: Long? = null
+    var bestScore = Double.POSITIVE_INFINITY
+    val point = PointF(x, y)
+    val tolerance = resources.displayMetrics.density * 12f
+    for (objectData in allObjects) {
+      val id = objectData.elementId ?: continue
+      if (!objectData.selectable || (visibleKinds.isNotEmpty() && !visibleKinds.contains(objectData.kind))) continue
+      val projected = objectData.points.map(::project)
+      val validPoints = projected.filterNotNull()
+      if (validPoints.isEmpty()) continue
+      val left = validPoints.minOf { it.x } - tolerance
+      val top = validPoints.minOf { it.y } - tolerance
+      val right = validPoints.maxOf { it.x } + tolerance
+      val bottom = validPoints.maxOf { it.y } + tolerance
+      if (point.x !in left..right || point.y !in top..bottom) continue
+      var triangleHit = false
+      for (triangle in objectData.triangles) {
+        val a = projected.getOrNull(triangle[0]) ?: continue
+        val b = projected.getOrNull(triangle[1]) ?: continue
+        val c = projected.getOrNull(triangle[2]) ?: continue
+        if (pointInTriangle(point, a, b, c)) {
+          triangleHit = true
+          break
+        }
+      }
+      val centerX = (left + right) * 0.5f
+      val centerY = (top + bottom) * 0.5f
+      val area = (right - left) * (bottom - top)
+      val score = if (triangleHit) {
+        area.toDouble() * 0.001
+      } else {
+        kotlin.math.hypot(point.x - centerX, point.y - centerY).toDouble() + area * 0.00001
+      }
+      if (score < bestScore) {
+        bestScore = score
+        bestId = id
+      }
+    }
+    return bestId
+  }
+
+  fun pickByCameraRay(
+    camera: Camera?,
+    x: Float,
+    y: Float,
+    visibleKinds: Set<String>,
+  ): Long? {
+    if (camera == null || width <= 1 || height <= 1) return null
+    val projection = camera.getProjectionMatrix(DoubleArray(16)).map { it.toFloat() }.toFloatArray()
+    val view = camera.getViewMatrix(DoubleArray(16)).map { it.toFloat() }.toFloatArray()
+    val viewProjection = FloatArray(16)
+    val inverse = FloatArray(16)
+    Matrix.multiplyMM(viewProjection, 0, projection, 0, view, 0)
+    if (!Matrix.invertM(inverse, 0, viewProjection, 0)) return null
+    val clipX = x / width.toFloat() * 2f - 1f
+    val clipY = 1f - y / height.toFloat() * 2f
+    fun unproject(clipZ: Float): ScenePoint? {
+      val point = FloatArray(4)
+      Matrix.multiplyMV(point, 0, inverse, 0, floatArrayOf(clipX, clipY, clipZ, 1f), 0)
+      if (kotlin.math.abs(point[3]) < 1e-7f) return null
+      return ScenePoint(
+        (point[0] / point[3]).toDouble(),
+        (point[1] / point[3]).toDouble(),
+        (point[2] / point[3]).toDouble(),
+      )
+    }
+    // Filament camera matrices use the 0…1 device-depth convention on both
+    // mobile backends. Using OpenGL's legacy -1 near depth creates a ray
+    // behind the near plane on several Android drivers, so every real 3D
+    // touch misses even when its screen coordinate is correct.
+    val near = unproject(0f) ?: return null
+    val far = unproject(1f) ?: return null
+    val direction = normalize(ScenePoint(far.x - near.x, far.y - near.y, far.z - near.z))
+    var nearestDistance = Double.POSITIVE_INFINITY
+    var nearestId: Long? = null
+    var nearestOpeningDistance = Double.POSITIVE_INFINITY
+    var nearestOpeningId: Long? = null
+    for (objectData in allObjects) {
+      val id = objectData.elementId ?: continue
+      if (!objectData.selectable || (visibleKinds.isNotEmpty() && !visibleKinds.contains(objectData.kind))) continue
+      for (triangle in objectData.triangles) {
+        val first = objectData.points.getOrNull(triangle[0]) ?: continue
+        val second = objectData.points.getOrNull(triangle[1]) ?: continue
+        val third = objectData.points.getOrNull(triangle[2]) ?: continue
+        val distance = rayTriangleDistance(near, direction, first, second, third) ?: continue
+        if (objectData.kind == "door" || objectData.kind == "window") {
+          if (distance < nearestOpeningDistance) {
+            nearestOpeningDistance = distance
+            nearestOpeningId = id
+          }
+        } else if (distance < nearestDistance) {
+          nearestDistance = distance
+          nearestId = id
+        }
+      }
+    }
+    return preferredOpeningHit(
+      nearestId,
+      nearestDistance,
+      nearestOpeningId,
+      nearestOpeningDistance,
+    )
+  }
+
+  /// Builds the same ray as [RenderSceneFilamentHostView.updateOrbitCamera]
+  /// directly from the renderer's live orbit state. Some Android GLES drivers
+  /// expose camera matrices with a backend-specific depth transform, making
+  /// generic matrix unprojection miss every triangle despite a valid touch.
+  fun pickByLiveCameraRay(x: Float, y: Float, visibleKinds: Set<String>): Long? {
+    if (width <= 1 || height <= 1) return null
+    val cosPitch = kotlin.math.cos(pitchRadians)
+    val eye = ScenePoint(
+      center.x + distance * cosPitch * kotlin.math.cos(yawRadians),
+      center.y + distance * kotlin.math.sin(pitchRadians),
+      center.z + distance * cosPitch * kotlin.math.sin(yawRadians),
+    )
+    val forward = normalize(ScenePoint(center.x - eye.x, center.y - eye.y, center.z - eye.z))
+    val worldUp = ScenePoint(0.0, 1.0, 0.0)
+    val right = normalize(cross(forward, worldUp))
+    val up = normalize(cross(right, forward))
+    val normalizedX = (x / width.toFloat()).toDouble() * 2.0 - 1.0
+    val normalizedY = 1.0 - (y / height.toFloat()).toDouble() * 2.0
+    val aspect = width.toDouble() / height.toDouble()
+
+    val origin: ScenePoint
+    val direction: ScenePoint
+    if (perspective) {
+      val tangent = kotlin.math.tan(Math.toRadians(45.0) * 0.5)
+      origin = eye
+      direction = normalize(ScenePoint(
+        forward.x + right.x * normalizedX * tangent * aspect + up.x * normalizedY * tangent,
+        forward.y + right.y * normalizedX * tangent * aspect + up.y * normalizedY * tangent,
+        forward.z + right.z * normalizedX * tangent * aspect + up.z * normalizedY * tangent,
+      ))
+    } else {
+      val halfHeight = if (topDown) topDownZoom else kotlin.math.max(distance * 0.6, 2.0)
+      val halfWidth = halfHeight * aspect
+      origin = ScenePoint(
+        eye.x + right.x * normalizedX * halfWidth + up.x * normalizedY * halfHeight,
+        eye.y + right.y * normalizedX * halfWidth + up.y * normalizedY * halfHeight,
+        eye.z + right.z * normalizedX * halfWidth + up.z * normalizedY * halfHeight,
+      )
+      direction = forward
+    }
+    return nearestTriangleHit(origin, direction, visibleKinds)
+  }
+
+  private fun nearestTriangleHit(
+    origin: ScenePoint,
+    direction: ScenePoint,
+    visibleKinds: Set<String>,
+  ): Long? {
+    var nearestDistance = Double.POSITIVE_INFINITY
+    var nearestId: Long? = null
+    var nearestOpeningDistance = Double.POSITIVE_INFINITY
+    var nearestOpeningId: Long? = null
+    for (objectData in allObjects) {
+      val id = objectData.elementId ?: continue
+      if (!objectData.selectable || (visibleKinds.isNotEmpty() && !visibleKinds.contains(objectData.kind))) continue
+      for (triangle in objectData.triangles) {
+        val first = objectData.points.getOrNull(triangle[0]) ?: continue
+        val second = objectData.points.getOrNull(triangle[1]) ?: continue
+        val third = objectData.points.getOrNull(triangle[2]) ?: continue
+        val hitDistance = rayTriangleDistance(origin, direction, first, second, third) ?: continue
+        if (objectData.kind == "door" || objectData.kind == "window") {
+          if (hitDistance < nearestOpeningDistance) {
+            nearestOpeningDistance = hitDistance
+            nearestOpeningId = id
+          }
+        } else if (hitDistance < nearestDistance) {
+          nearestDistance = hitDistance
+          nearestId = id
+        }
+      }
+    }
+    return preferredOpeningHit(
+      nearestId,
+      nearestDistance,
+      nearestOpeningId,
+      nearestOpeningDistance,
+    )
+  }
+
+  private fun preferredOpeningHit(
+    nearestId: Long?,
+    nearestDistance: Double,
+    openingId: Long?,
+    openingDistance: Double,
+  ): Long? {
+    // Opening panels are intentionally slightly inset in their host wall.
+    // The simplified wall mesh retains its face for rendering robustness, so
+    // a literal nearest-triangle test would always return the wall. Prefer a
+    // door/window when it is on the same touched surface (within 35 cm along
+    // the ray), but never select an unrelated opening deep behind a wall.
+    if (openingId != null && openingDistance <= nearestDistance + 0.35) {
+      return openingId
+    }
+    return nearestId
+  }
+
+  private fun rayTriangleDistance(
+    origin: ScenePoint,
+    direction: ScenePoint,
+    first: ScenePoint,
+    second: ScenePoint,
+    third: ScenePoint,
+  ): Double? {
+    val edgeOne = ScenePoint(second.x - first.x, second.y - first.y, second.z - first.z)
+    val edgeTwo = ScenePoint(third.x - first.x, third.y - first.y, third.z - first.z)
+    val p = cross(direction, edgeTwo)
+    val determinant = dot(edgeOne, p)
+    if (kotlin.math.abs(determinant) < 1e-9) return null
+    val inverse = 1.0 / determinant
+    val originToFirst = ScenePoint(origin.x - first.x, origin.y - first.y, origin.z - first.z)
+    val u = dot(originToFirst, p) * inverse
+    if (u < -1e-7 || u > 1.0000001) return null
+    val q = cross(originToFirst, edgeOne)
+    val v = dot(direction, q) * inverse
+    if (v < -1e-7 || u + v > 1.0000001) return null
+    val distance = dot(edgeTwo, q) * inverse
+    return distance.takeIf { it > 1e-6 }
+  }
+
+  private fun pointInTriangle(point: PointF, a: PointF, b: PointF, c: PointF): Boolean {
+    fun sign(first: PointF, second: PointF, third: PointF): Float =
+      (first.x - third.x) * (second.y - third.y) - (second.x - third.x) * (first.y - third.y)
+    val first = sign(point, a, b)
+    val second = sign(point, b, c)
+    val third = sign(point, c, a)
+    return !((first < 0f || second < 0f || third < 0f) &&
+      (first > 0f || second > 0f || third > 0f))
   }
 
   fun clearVisualScene() {

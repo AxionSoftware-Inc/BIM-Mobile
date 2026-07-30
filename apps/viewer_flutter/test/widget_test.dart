@@ -62,6 +62,46 @@ void main() {
     expect(result.errors, isNotEmpty);
   });
 
+  test('plan view range excludes the storey below at a shared level elevation',
+      () {
+    final result = parseRenderSceneJson(r'''{
+      "scene_version": 1,
+      "units": "meters",
+      "coordinate_system": "X/Y plan, Z up",
+      "levels": [
+        {"level_id": 1, "name": "Level 1", "elevation_meters": 0},
+        {"level_id": 2, "name": "Level 2", "elevation_meters": 3.2}
+      ],
+      "objects": [
+        {"element_id": 11, "kind": "Wall", "level_id": 1, "bounds": {"min": {"x": 0, "y": 0, "z": 0}, "max": {"x": 4, "y": 0.2, "z": 3.2}}, "mesh": {"positions": [], "indices": []}},
+        {"element_id": 12, "kind": "Floor", "level_id": 1, "bounds": {"min": {"x": 0, "y": 0, "z": -0.15}, "max": {"x": 4, "y": 4, "z": 0}}, "mesh": {"positions": [], "indices": []}},
+        {"element_id": 13, "kind": "Ceiling", "level_id": 1, "bounds": {"min": {"x": 0, "y": 0, "z": 2.7}, "max": {"x": 4, "y": 4, "z": 2.8}}, "mesh": {"positions": [], "indices": []}},
+        {"element_id": 14, "kind": "Beam", "level_id": 1, "bounds": {"min": {"x": 0, "y": 0, "z": 0}, "max": {"x": 4, "y": 0.3, "z": 0.4}}, "mesh": {"positions": [], "indices": []}},
+        {"element_id": 21, "kind": "Wall", "level_id": 2, "bounds": {"min": {"x": 0, "y": 0, "z": 3.2}, "max": {"x": 4, "y": 0.2, "z": 6.4}}, "mesh": {"positions": [], "indices": []}}
+      ]
+    }''');
+    final scene = result.scene!;
+
+    final levelOne = scene.filteredByVerticalRange(
+      activeLevelId: 1,
+      bottomMeters: 0,
+      topMeters: 2,
+    );
+    expect(levelOne.objects.map((object) => object.elementId),
+        containsAll(<int>[11, 12]));
+    expect(levelOne.objectById(13), isNull);
+    expect(levelOne.objectById(14), isNull);
+    expect(levelOne.objectById(21), isNull);
+
+    final levelTwo = scene.filteredByVerticalRange(
+      activeLevelId: 2,
+      bottomMeters: 3.2,
+      topMeters: 5.2,
+    );
+    expect(levelTwo.objectById(21), isNotNull);
+    expect(levelTwo.objectById(11), isNull);
+  });
+
   test('native engine returns RenderScene without package export', () async {
     final api = TbeViewerApi.load();
     final repository = ViewerRepository(api);
@@ -432,6 +472,9 @@ void main() {
     final scene = result.scene!;
     final wallBefore =
         scene.objects.firstWhere((object) => object.kindKey == 'wall');
+    final wallMeshBefore = wallBefore.mesh.positions
+        .map((point) => point.toJson())
+        .toList(growable: false);
     expect(wallBefore.metadata['base_level_id'], isNotNull);
 
     final normalized = RenderSceneEditor.normalizeSceneGeometry(scene);
@@ -440,6 +483,12 @@ void main() {
         equals(wallBefore.metadata['base_level_id']));
     expect(wallAfter.metadata['top_level_id'], isNot(equals('0')));
     expect(wallAfter.metadata['height_mode'], equals('TopLevel'));
+    // Engine-produced meshes are already joined and cut. Normalization may
+    // enrich constraints but must never replace that authoritative topology.
+    expect(
+      wallAfter.mesh.positions.map((point) => point.toJson()).toList(),
+      equals(wallMeshBefore),
+    );
   });
 
   test('RenderScene editor can add wall, door, and window locally', () {

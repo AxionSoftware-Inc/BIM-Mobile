@@ -19,6 +19,10 @@ class PropertyEditor extends StatelessWidget {
     required this.commands,
     required this.onApplied,
     required this.onClearSelection,
+    required this.viewRangeMeters,
+    required this.onViewRangeChanged,
+    required this.showPlanViewRange,
+    required this.activePlanLevel,
   });
 
   final RenderScene scene;
@@ -26,10 +30,14 @@ class PropertyEditor extends StatelessWidget {
   final AuthoringCommandService commands;
   final ApplyInspectorResult onApplied;
   final VoidCallback onClearSelection;
+  final double viewRangeMeters;
+  final Future<void> Function(double value) onViewRangeChanged;
+  final bool showPlanViewRange;
+  final RenderSceneLevel? activePlanLevel;
 
   @override
   Widget build(BuildContext context) {
-    return switch (target.kind) {
+    final properties = switch (target.kind) {
       InspectorTargetKind.empty => const _InspectorCard(
           title: 'Properties',
           icon: Icons.tune,
@@ -58,6 +66,8 @@ class PropertyEditor extends StatelessWidget {
           level: target.level!,
           commands: commands,
           onApplied: onApplied,
+          viewRangeMeters: viewRangeMeters,
+          onViewRangeChanged: onViewRangeChanged,
         ),
       InspectorTargetKind.object => Column(
           key: ValueKey<String>('object-${target.object!.elementId}'),
@@ -76,9 +86,87 @@ class PropertyEditor extends StatelessWidget {
               onApplied: onApplied,
             ),
           ],
-        ),
+      ),
     };
+    if (!showPlanViewRange || target.kind == InspectorTargetKind.level) {
+      return properties;
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        _PlanViewRangeSection(
+          level: activePlanLevel,
+          value: viewRangeMeters,
+          onChanged: onViewRangeChanged,
+        ),
+        const SizedBox(height: 8),
+        properties,
+      ],
+    );
   }
+}
+
+class _PlanViewRangeSection extends StatefulWidget {
+  const _PlanViewRangeSection({
+    required this.level,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final RenderSceneLevel? level;
+  final double value;
+  final Future<void> Function(double value) onChanged;
+
+  @override
+  State<_PlanViewRangeSection> createState() => _PlanViewRangeSectionState();
+}
+
+class _PlanViewRangeSectionState extends State<_PlanViewRangeSection> {
+  late final TextEditingController _controller;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: _number(widget.value));
+  }
+
+  @override
+  void didUpdateWidget(covariant _PlanViewRangeSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!_busy && oldWidget.value != widget.value) {
+      _controller.text = _number(widget.value);
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _apply() async {
+    final value = double.tryParse(_controller.text.trim());
+    if (value == null || value <= 0.05) return;
+    setState(() => _busy = true);
+    try {
+      await widget.onChanged(value);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => _InspectorCard(
+        title: 'Plan view range',
+        icon: Icons.height,
+        children: <Widget>[
+          Text('${widget.level?.name ?? 'Active level'}: level elevationdan yuqoriga.'),
+          const SizedBox(height: 8),
+          _field('Cut height (m)', _controller, numeric: true),
+          _applyButton(_busy, _apply),
+        ],
+      );
 }
 
 class _LevelPropertiesSection extends StatefulWidget {
@@ -87,10 +175,14 @@ class _LevelPropertiesSection extends StatefulWidget {
     required this.level,
     required this.commands,
     required this.onApplied,
+    required this.viewRangeMeters,
+    required this.onViewRangeChanged,
   });
   final RenderSceneLevel level;
   final AuthoringCommandService commands;
   final ApplyInspectorResult onApplied;
+  final double viewRangeMeters;
+  final Future<void> Function(double value) onViewRangeChanged;
 
   @override
   State<_LevelPropertiesSection> createState() =>
@@ -101,6 +193,7 @@ class _LevelPropertiesSectionState extends State<_LevelPropertiesSection> {
   late final TextEditingController _name;
   late final TextEditingController _elevation;
   late final TextEditingController _height;
+  late final TextEditingController _viewRange;
   bool _busy = false;
 
   @override
@@ -111,6 +204,7 @@ class _LevelPropertiesSectionState extends State<_LevelPropertiesSection> {
         TextEditingController(text: _number(widget.level.elevationMeters));
     _height = TextEditingController(
         text: _number(widget.level.defaultWallHeightMeters));
+    _viewRange = TextEditingController(text: _number(widget.viewRangeMeters));
   }
 
   @override
@@ -118,15 +212,19 @@ class _LevelPropertiesSectionState extends State<_LevelPropertiesSection> {
     _name.dispose();
     _elevation.dispose();
     _height.dispose();
+    _viewRange.dispose();
     super.dispose();
   }
 
   Future<void> _apply() async {
     final elevation = double.tryParse(_elevation.text.trim());
     final height = double.tryParse(_height.text.trim());
+    final viewRange = double.tryParse(_viewRange.text.trim());
     if (elevation == null ||
         height == null ||
+        viewRange == null ||
         height <= 0 ||
+        viewRange <= 0.05 ||
         _name.text.trim().isEmpty) {
       return;
     }
@@ -139,6 +237,7 @@ class _LevelPropertiesSectionState extends State<_LevelPropertiesSection> {
         defaultWallHeightMeters: height,
       );
       await widget.onApplied(result, '${_name.text.trim()} updated.');
+      await widget.onViewRangeChanged(viewRange);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -152,6 +251,7 @@ class _LevelPropertiesSectionState extends State<_LevelPropertiesSection> {
           _field('Name', _name),
           _field('Elevation (m)', _elevation, numeric: true),
           _field('Default wall height (m)', _height, numeric: true),
+          _field('Plan view range / cut height (m)', _viewRange, numeric: true),
           _applyButton(_busy, _apply),
         ],
       );

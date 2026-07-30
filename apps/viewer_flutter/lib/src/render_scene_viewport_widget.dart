@@ -735,6 +735,17 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                 _clearPointerState();
                 return;
               }
+              // The native 3D renderer owns the exact live Filament camera.
+              // Its ray picker reports the front-most triangle through the
+              // platform channel. A second Flutter projection pick here can
+              // overwrite that result with an object behind the touched face.
+              if (widget.nativeRenderer && controller.projectionMode.is3D) {
+                if (moved < _tapDistanceThreshold(event)) {
+                  await controller.pickNativeAt(event.localPosition, size);
+                }
+                _clearPointerState();
+                return;
+              }
               if (moved < _tapDistanceThreshold(event)) {
                 final picked = pickObjectAt(
                   scene: scene,

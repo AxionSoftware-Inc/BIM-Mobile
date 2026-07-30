@@ -125,6 +125,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   bool _showDiagnostics = false;
   String? _engineLoadDiagnostic;
   int? _activeLevelId;
+  double _planViewRangeMeters = 2.0;
 
   RenderSceneProjectionMode _projectionMode = kDefaultPlanProjectionMode;
   RenderSceneOrbitProjectionStyle _orbitProjectionStyle =
@@ -557,6 +558,16 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   }
 
   RenderScene _sceneForViewport(RenderScene scene) {
+    if (_projectionMode == RenderSceneProjectionMode.topDown) {
+      final activeLevel = _activeLevel(scene);
+      if (activeLevel != null) {
+        return scene.filteredByVerticalRange(
+          activeLevelId: activeLevel.levelId,
+          bottomMeters: activeLevel.elevationMeters,
+          topMeters: activeLevel.elevationMeters + _planViewRangeMeters,
+        );
+      }
+    }
     return scene;
   }
 
@@ -3499,6 +3510,14 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       _visibleKinds = _ensurePlanCoreVisibility(_visibleKinds, nextScene);
     });
 
+    // A delete can remove the active renderable. Clear its native selection
+    // before rebuilding Filament so a frame never tries to tint/highlight an
+    // entity that has just been destroyed, which showed up as a tablet flash.
+    if (previousSelectedId != null && nextSelected == null) {
+      await _viewportController.selectElement(null);
+      await _viewportController.highlightElement(null);
+    }
+
     await _viewportController.updateRenderScene(nextViewportScene);
     await _viewportController.setVisibleKinds(_visibleKinds);
 
@@ -4495,6 +4514,11 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
                         scene: scene,
                         target: inspectorTarget,
                         commands: _authoringCommands,
+                        viewRangeMeters: _planViewRangeMeters,
+                        onViewRangeChanged: _setPlanViewRangeMeters,
+                        showPlanViewRange:
+                            _projectionMode == RenderSceneProjectionMode.topDown,
+                        activePlanLevel: _activeLevel(scene),
                         onApplied: (result, message) =>
                             _applyEngineSceneResult(result, message: message),
                         onClearSelection: _clearSelection,
@@ -4505,6 +4529,22 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         ],
       ),
     );
+  }
+
+  Future<void> _setPlanViewRangeMeters(double value) async {
+    if (!value.isFinite || value <= 0.05) {
+      return;
+    }
+    setState(() {
+      _planViewRangeMeters = value.clamp(0.1, 20.0);
+      _statusMessage =
+          'Plan view range: ${_planViewRangeMeters.toStringAsFixed(2)} m';
+    });
+    final scene = _scene;
+    if (scene != null && _projectionMode == RenderSceneProjectionMode.topDown) {
+      await _viewportController.updateRenderScene(_sceneForViewport(scene));
+      await _viewportController.setVisibleKinds(_visibleKinds);
+    }
   }
 
   Future<void> _handleSceneSecondaryTap(RenderSceneTapDetails details) async {

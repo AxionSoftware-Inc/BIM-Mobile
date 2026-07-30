@@ -165,7 +165,6 @@ class RenderSceneBounds {
       ),
     );
   }
-
 }
 
 @immutable
@@ -544,10 +543,10 @@ class RenderScene {
               (includeUnassigned && object.levelId == null),
         )
         .toList(growable: false);
-    final vertexCount =
-        filteredObjects.fold<int>(0, (sum, object) => sum + object.mesh.positions.length);
-    final indexCount =
-        filteredObjects.fold<int>(0, (sum, object) => sum + object.mesh.indices.length);
+    final vertexCount = filteredObjects.fold<int>(
+        0, (sum, object) => sum + object.mesh.positions.length);
+    final indexCount = filteredObjects.fold<int>(
+        0, (sum, object) => sum + object.mesh.indices.length);
     final result = parseRenderSceneJson(
       jsonEncode(
         <String, Object?>{
@@ -559,6 +558,60 @@ class RenderScene {
         },
       ),
       source: '$source @ level $levelId',
+    );
+    return result.scene ?? this;
+  }
+
+  /// Non-destructive plan view range. The semantic project remains complete;
+  /// this only restricts the viewport to objects crossing the active level's
+  /// cut band, so upper-storey content cannot leak into a floor plan.
+  RenderScene filteredByVerticalRange({
+    required int activeLevelId,
+    required double bottomMeters,
+    required double topMeters,
+  }) {
+    const tolerance = 1e-6;
+    final filteredObjects = objects
+        .where(
+          (object) {
+            // Beams are overhead framing in the floor-plan convention. Their
+            // legacy meshes can be authored at local Z=0, so bounds alone
+            // would incorrectly draw them through a 2 m plan cut.
+            if (object.kindKey == 'beam') return false;
+            // Use an open interval at the next level. A Level 1 wall ending
+            // at 3.20 m must not be shown again in the Level 2 plan merely
+            // because its top coincides with that level's elevation.
+            final crossesCutBand =
+                object.bounds.max.z > bottomMeters + tolerance &&
+                    object.bounds.min.z < topMeters - tolerance;
+            // Slabs/floors may sit exactly at their owning level elevation;
+            // retain those base-level objects without admitting geometry
+            // owned by the storey below.
+            final isActiveLevelBaseObject =
+                object.levelId == activeLevelId &&
+                    object.bounds.min.z <= bottomMeters + tolerance &&
+                    object.bounds.max.z >= bottomMeters - tolerance;
+            return crossesCutBand || isActiveLevelBaseObject;
+          },
+        )
+        .toList(growable: false);
+    final vertexCount = filteredObjects.fold<int>(
+      0,
+      (sum, object) => sum + object.mesh.positions.length,
+    );
+    final indexCount = filteredObjects.fold<int>(
+      0,
+      (sum, object) => sum + object.mesh.indices.length,
+    );
+    final result = parseRenderSceneJson(
+      jsonEncode(<String, Object?>{
+        ...toJson(),
+        'object_count': filteredObjects.length,
+        'vertex_count': vertexCount,
+        'index_count': indexCount,
+        'objects': filteredObjects.map((object) => object.toJson()).toList(),
+      }),
+      source: '$source @ view range',
     );
     return result.scene ?? this;
   }
@@ -735,7 +788,8 @@ RenderSceneLoadResult parseRenderSceneJson(
       bounds: derivedBounds,
       objects: objects,
       levels: levels.isNotEmpty
-          ? (levels.toList()..sort((a, b) => a.elevationMeters.compareTo(b.elevationMeters)))
+          ? (levels.toList()
+            ..sort((a, b) => a.elevationMeters.compareTo(b.elevationMeters)))
           : _inferLevelsFromObjects(objects),
       source: source,
       diagnostics: diagnostics,
@@ -745,7 +799,8 @@ RenderSceneLoadResult parseRenderSceneJson(
   );
 }
 
-List<RenderSceneLevel> _inferLevelsFromObjects(List<RenderSceneObject> objects) {
+List<RenderSceneLevel> _inferLevelsFromObjects(
+    List<RenderSceneObject> objects) {
   final levelIds = <int>{};
   for (final object in objects) {
     if (object.levelId != null) {

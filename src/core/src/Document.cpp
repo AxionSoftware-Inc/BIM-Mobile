@@ -1646,7 +1646,13 @@ void Document::delete_element(ElementId element_id) {
     if (const auto* wall = element->wall()) {
         std::vector<ElementId> hosted_ids;
         for (const auto& opening : wall->openings) {
-            hosted_ids.push_back(opening.element_id);
+            // Doors and windows are owned by their host wall. Structural
+            // voids are only derived cut relations: their column/beam cutter
+            // remains an independent semantic element and must survive when
+            // the wall is deleted.
+            if (opening.kind == OpeningKind::Door || opening.kind == OpeningKind::Window) {
+                hosted_ids.push_back(opening.element_id);
+            }
         }
         for (const auto hosted_id : hosted_ids) {
             remove_element(hosted_id);
@@ -1674,7 +1680,13 @@ void Document::delete_element(ElementId element_id) {
         return;
     }
 
+    const auto is_structural = element->column() != nullptr || element->beam() != nullptr;
     remove_element(element_id);
+    if (is_structural) {
+        // Structural cuts and joins are derived, never owned by the deleted
+        // element. Re-resolve immediately so no wall retains a stale void.
+        auto_join_structural_elements();
+    }
     if (is_level) {
         detect_rooms();
     }

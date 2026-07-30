@@ -305,10 +305,40 @@ class RenderSceneEditor {
       return scene;
     }
     RenderSceneLevelBinding.normalizeObjects(objects, _levelsFromSceneMap(map));
-    _rebuildAllWallObjects(objects);
-    _rebuildDetectedRooms(objects);
+    // RenderScene from the native engine already contains the authoritative
+    // joined wall meshes (including mitres and opening cuts). Rebuilding it
+    // here from a bounds approximation used to overwrite that topology on
+    // every load, which made connected walls look overlapped in plan and
+    // removed meaningful interior edge loops in 3D. Local/legacy scenes that
+    // lack a usable wall mesh still take the repair path below.
+    if (_needsWallGeometryRepair(objects)) {
+      _rebuildAllWallObjects(objects);
+      _rebuildDetectedRooms(objects);
+    }
     map['objects'] = objects;
     return _parseSceneMap(map, source: scene.source);
+  }
+
+  static bool _needsWallGeometryRepair(List<Map<String, Object?>> objects) {
+    for (final object in objects) {
+      final kind = (object['kind']?.toString() ?? '').toLowerCase();
+      if (kind != 'wall') {
+        continue;
+      }
+      final mesh = object['mesh'];
+      if (mesh is! Map) {
+        return true;
+      }
+      final positions = mesh['positions'];
+      final indices = mesh['indices'];
+      if (positions is! List ||
+          positions.length < 4 ||
+          indices is! List ||
+          indices.length < 3) {
+        return true;
+      }
+    }
+    return false;
   }
 
   static RenderScene addDoor({
@@ -1224,7 +1254,8 @@ class RenderSceneEditor {
     required String materialCategory,
   }) {
     final geometry = _wallGeometry(hostWall);
-    final resolvedLevelId = hostWall.levelId ?? levelId ?? _primaryLevelId(scene);
+    final resolvedLevelId =
+        hostWall.levelId ?? levelId ?? _primaryLevelId(scene);
     if (geometry == null || resolvedLevelId == null || resolvedLevelId <= 0) {
       return scene;
     }
@@ -2689,17 +2720,14 @@ class RenderSceneEditor {
       final joinPoint = sharedAtStart ? wall.geometry.start : wall.geometry.end;
       final otherDirection = _directionAwayFrom(joinPoint, other.geometry);
       final turn = _cross2(direction, otherDirection);
-      final alignment = _dot2(direction, otherDirection).abs();
       if (turn.abs() <= 1e-9) {
         continue;
       }
-      // Restrict miter extension to roughly orthogonal joins.
-      // Diagonal/acute joins looked visually "fatter" in top view because
-      // the simple profile extender over-expanded the footprint.
-      if (alignment > 0.35) {
-        continue;
-      }
 
+      // Match the core geometry service: every non-collinear endpoint join
+      // gets a miter extension.  Limiting this to near-90° walls left acute
+      // and obtuse corners looking like two overlapping, unjoined solids in
+      // both plan and the native 3D viewport.
       if (sharedAtEnd) {
         if (turn > 0.0) {
           endUpperX += halfThickness;
@@ -2734,7 +2762,13 @@ class RenderSceneEditor {
   }
 
   static bool _samePoint2(RenderScenePoint a, RenderScenePoint b) {
-    return (a.x - b.x).abs() <= 1e-6 && (a.y - b.y).abs() <= 1e-6;
+    // Authoring points come through touch coordinates and JSON round-trips;
+    // an exact floating-point comparison leaves visually connected walls as
+    // two overlapping solids. Keep the tolerance well below normal wall
+    // thickness while allowing endpoint joins to receive their miter profile.
+    const joinToleranceMeters = 0.005;
+    return (a.x - b.x).abs() <= joinToleranceMeters &&
+        (a.y - b.y).abs() <= joinToleranceMeters;
   }
 
   static RenderScenePoint _directionAwayFrom(
@@ -2751,10 +2785,6 @@ class RenderSceneEditor {
 
   static double _cross2(RenderScenePoint a, RenderScenePoint b) {
     return (a.x * b.y) - (a.y * b.x);
-  }
-
-  static double _dot2(RenderScenePoint a, RenderScenePoint b) {
-    return (a.x * b.x) + (a.y * b.y);
   }
 
   static RenderScenePoint _unit2(RenderScenePoint vector) {
@@ -2804,6 +2834,26 @@ class RenderSceneEditor {
     if (axisStart != null && axisEnd != null && thickness != null) {
       return _WallGeometry(
           start: axisStart, end: axisEnd, thickness: thickness);
+    }
+
+    // Native EngineApi serializes wall axes as scalar fields. Respecting them
+    // is essential whenever a legacy scene needs repair: deriving an axis
+    // from a mitered wall's bounds turns diagonal/connected walls into a
+    // different, axis-aligned wall.
+    final startX = _toDouble(metadataMap?['start_x'] ?? metadataMap?['startX']);
+    final startY = _toDouble(metadataMap?['start_y'] ?? metadataMap?['startY']);
+    final endX = _toDouble(metadataMap?['end_x'] ?? metadataMap?['endX']);
+    final endY = _toDouble(metadataMap?['end_y'] ?? metadataMap?['endY']);
+    if (startX != null &&
+        startY != null &&
+        endX != null &&
+        endY != null &&
+        thickness != null) {
+      return _WallGeometry(
+        start: RenderScenePoint(x: startX, y: startY, z: 0.0),
+        end: RenderScenePoint(x: endX, y: endY, z: 0.0),
+        thickness: thickness,
+      );
     }
 
     final bounds = _boundsFromMap(wallObject);

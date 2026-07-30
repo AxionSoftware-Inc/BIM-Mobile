@@ -156,6 +156,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
 
   Future<void> attachNativeBridge(int viewId) async {
     _channel = MethodChannel('tbe/render_scene_view_$viewId');
+    _channel!.setMethodCallHandler(_handleNativeCallback);
     await _syncNativeBridge();
 
     unawaited(
@@ -166,7 +167,23 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
   }
 
   void detachNativeBridge() {
+    _channel?.setMethodCallHandler(null);
     _channel = null;
+  }
+
+  /// Android Filament owns its live orbit camera, so its hit-test is the only
+  /// picker that exactly matches what the user sees after native navigation.
+  /// Keep the resulting selection in this controller so Flutter, Inspector
+  /// and the renderer continue to share one selection authority.
+  Future<Object?> _handleNativeCallback(MethodCall call) async {
+    if (call.method != 'objectTapped') {
+      return null;
+    }
+    final payload = call.arguments as Map<Object?, Object?>?;
+    final elementId = payload?['elementId']?.toString();
+    await selectElement(elementId);
+    await highlightElement(elementId);
+    return null;
   }
 
   @override
@@ -653,6 +670,18 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     await _invoke('highlightElement', elementId);
   }
 
+  /// Delegates a 3D tap to Filament after keeping its coordinates independent
+  /// of Android's physical-pixel and rotation transforms.
+  Future<void> pickNativeAt(Offset localPosition, Size viewportSize) async {
+    if (_projectionMode.is3D == false || viewportSize.isEmpty) {
+      return;
+    }
+    await _invoke('pickNormalized', <String, double>{
+      'x': (localPosition.dx / viewportSize.width).clamp(0.0, 1.0),
+      'y': (localPosition.dy / viewportSize.height).clamp(0.0, 1.0),
+    });
+  }
+
   Future<void> _syncNativeBridge() async {
     final currentScene = _scene;
     if (currentScene != null) {
@@ -702,6 +731,10 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
         'z': planCenter.z,
       },
       'planZoom': _planCamera.zoom,
+      // `planZoom` is expressed in Flutter logical pixels per metre.  The
+      // Android PlatformView is measured in physical pixels, so it must not
+      // infer a world-space orthographic size from a fixed pixel constant.
+      'planViewportHeight': _viewportSize.height,
     };
   }
 

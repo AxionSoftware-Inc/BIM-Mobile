@@ -294,7 +294,9 @@ internal class RenderScenePlatformView(
   initialScene: SceneState?,
 ) : PlatformView, MethodChannel.MethodCallHandler {
   private val channel = MethodChannel(messenger, "tbe/render_scene_view_$viewId")
-  private val view = RenderSceneFilamentHostView(context, initialScene)
+  private val view = RenderSceneFilamentHostView(context, initialScene) { elementId ->
+    channel.invokeMethod("objectTapped", mapOf("elementId" to elementId))
+  }
 
   init {
     channel.setMethodCallHandler(this)
@@ -369,6 +371,15 @@ internal class RenderScenePlatformView(
 
       "highlightElement" -> {
         view.highlightElement(call.arguments)
+        result.success(null)
+      }
+
+      "pickNormalized" -> {
+        val point = call.arguments as? Map<*, *>
+        view.pickNormalized(
+          toDouble(point?.get("x")) ?: 0.5,
+          toDouble(point?.get("y")) ?: 0.5,
+        )
         result.success(null)
       }
 

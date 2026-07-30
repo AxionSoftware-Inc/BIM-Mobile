@@ -1935,6 +1935,23 @@ int main() {
         assert(restored.find_ptr(stair)->stair()->assembly_id == stair_assembly);
         assert(restored.find_ptr(roof)->roof()->generated_geometry_dirty);
         assert(!restored.host_relations().empty());
+
+        // A wall owns door/window openings only. A column/beam wall cut is a
+        // derived relation, so deleting either side must not delete the other
+        // semantic element or leave a stale structural void behind.
+        compound.delete_element(wall);
+        assert(compound.find_ptr(column) != nullptr);
+        assert(compound.find_ptr(column)->column() != nullptr);
+        assert(compound.find_ptr(beam) != nullptr);
+        assert(compound.find_ptr(beam)->beam() != nullptr);
+
+        const auto replacement_wall = compound.create_wall(
+            "Replacement wall", {{0.0, 0.0}, {6.0, 0.0}}, 0.2, 3.2, level, wall_assembly);
+        compound.auto_join_structural_elements();
+        assert(!compound.find_ptr(replacement_wall)->wall()->openings.empty());
+        compound.delete_element(column);
+        assert(compound.find_ptr(replacement_wall)->wall()->openings.empty());
+        assert(compound.find_ptr(beam) != nullptr);
     }
 
     return 0;
