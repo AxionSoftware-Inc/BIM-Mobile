@@ -1307,7 +1307,8 @@ int main() {
         char* scene_json = nullptr;
         assert(tbe_get_render_scene_json(template_handle, &scene_json) == TBE_API_OK);
         assert(scene_json != nullptr);
-        assert(std::string(scene_json).find("\"roof_type\":\"Flat\"") != std::string::npos);
+        assert(std::string(scene_json).find("\"roof_type\":\"SimpleGable\"") != std::string::npos);
+        assert(std::string(scene_json).find("\"slope_degrees\":\"25.000000\"") != std::string::npos);
         tbe_free_string(scene_json);
         char* project_json = nullptr;
         assert(tbe_project_save_json(template_handle, &project_json) == TBE_API_OK);

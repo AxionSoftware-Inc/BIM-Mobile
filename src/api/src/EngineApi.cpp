@@ -233,10 +233,10 @@ Project make_residential_template(int building_count, int story_count) {
                 top_perimeter = perimeter;
             }
         }
-        // Keep the large benchmark/template on the conservative flat-roof
-        // renderer path. Gable authoring remains available for a selected
-        // roof, but must not make a performance template fail to open.
-        document.create_roof(levels.back(), footprint, tbe::core::RoofType::Flat, 0.20, concrete, roof_assembly, std::nullopt, std::nullopt, std::move(top_perimeter));
+        // The starter model should demonstrate a proper residential roof,
+        // not a flat cap. Its rectangular footprint is handled by the
+        // engine's watertight sloped-gable generator.
+        document.create_roof(levels.back(), footprint, tbe::core::RoofType::SimpleGable, 0.20, concrete, roof_assembly, 25.0, 0.35, std::move(top_perimeter));
     }
     document.set_automatic_wall_join_enabled(true);
     document.clear_dirty_room_requests();
