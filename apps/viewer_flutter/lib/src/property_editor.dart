@@ -86,7 +86,7 @@ class PropertyEditor extends StatelessWidget {
               onApplied: onApplied,
             ),
           ],
-      ),
+        ),
     };
     if (!showPlanViewRange || target.kind == InspectorTargetKind.level) {
       return properties;
@@ -161,7 +161,8 @@ class _PlanViewRangeSectionState extends State<_PlanViewRangeSection> {
         title: 'Plan view range',
         icon: Icons.height,
         children: <Widget>[
-          Text('${widget.level?.name ?? 'Active level'}: level elevationdan yuqoriga.'),
+          Text(
+              '${widget.level?.name ?? 'Active level'}: level elevationdan yuqoriga.'),
           const SizedBox(height: 8),
           _field('Cut height (m)', _controller, numeric: true),
           _applyButton(_busy, _apply),
@@ -382,6 +383,17 @@ class _WallPropertiesSectionState extends State<_WallPropertiesSection> {
           title: 'Wall properties',
           icon: Icons.view_week_outlined,
           children: <Widget>[
+            _row('Wall type', _meta(widget.object, 'wall_type_category')),
+            _row('Wall type ID', _meta(widget.object, 'wall_type_id')),
+            _row(
+                'Layer count',
+                widget.object.metadata['layer_profile']
+                        ?.toString()
+                        .split(';')
+                        .where((value) => value.isNotEmpty)
+                        .length
+                        .toString() ??
+                    '0'),
             _row('Thickness', '${_meta(widget.object, 'thickness_meters')} m'),
             _row('Length', '${_meta(widget.object, 'length_meters')} m'),
             _levelDrop(
@@ -396,10 +408,11 @@ class _WallPropertiesSectionState extends State<_WallPropertiesSection> {
                   'Top level',
                   _top == 0 ? widget.levels.last.levelId : _top,
                   (value) => setState(() => _top = value)),
-            _applyButton(_busy, _apply),
+            _applyButton(_busy, _apply, label: 'Apply wall levels'),
           ]);
   Widget _levelDrop(String label, int value, ValueChanged<int> onChanged) =>
       DropdownButtonFormField<int>(
+          isExpanded: true,
           initialValue: widget.levels.any((level) => level.levelId == value)
               ? value
               : widget.levels.first.levelId,
@@ -563,7 +576,7 @@ class _RoofPropertiesSection extends StatefulWidget {
 }
 
 class _RoofPropertiesSectionState extends State<_RoofPropertiesSection> {
-  late bool _gable;
+  late int _roofType;
   late final TextEditingController _slope;
   late final TextEditingController _overhang;
   bool _busy = false;
@@ -571,7 +584,12 @@ class _RoofPropertiesSectionState extends State<_RoofPropertiesSection> {
   @override
   void initState() {
     super.initState();
-    _gable = _meta(widget.object, 'roof_type') == 'SimpleGable';
+    final roofType = _meta(widget.object, 'roof_type');
+    _roofType = roofType == 'SimpleGable'
+        ? 1
+        : roofType == 'AutoFootprint'
+            ? 2
+            : 0;
     _slope = TextEditingController(
         text: _meta(widget.object, 'slope_degrees') == '-'
             ? '25'
@@ -595,15 +613,15 @@ class _RoofPropertiesSectionState extends State<_RoofPropertiesSection> {
     final overhang = double.tryParse(_overhang.text.trim());
     if (id == null ||
         overhang == null ||
-        (_gable && (slope == null || slope <= 0 || slope >= 75))) {
+        (_roofType != 0 && (slope == null || slope <= 0 || slope >= 75))) {
       return;
     }
     setState(() => _busy = true);
     try {
       final result = await widget.commands.updateRoofProperties(
         roofId: id,
-        roofType: _gable ? 1 : 0,
-        slopeDegrees: _gable ? slope : null,
+        roofType: _roofType,
+        slopeDegrees: _roofType == 0 ? null : slope,
         overhangMeters: overhang,
       );
       await widget.onApplied(result, 'Roof properties updated.');
@@ -618,13 +636,19 @@ class _RoofPropertiesSectionState extends State<_RoofPropertiesSection> {
         icon: Icons.roofing_outlined,
         children: <Widget>[
           _row('Assembly', _meta(widget.object, 'assembly_id')),
-          SwitchListTile.adaptive(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('Simple gable'),
-            value: _gable,
-            onChanged: (value) => setState(() => _gable = value),
+          DropdownButtonFormField<int>(
+            initialValue: _roofType,
+            decoration: const InputDecoration(labelText: 'Roof shape'),
+            items: const <DropdownMenuItem<int>>[
+              DropdownMenuItem(value: 0, child: Text('Flat')),
+              DropdownMenuItem(value: 1, child: Text('Simple gable')),
+              DropdownMenuItem(value: 2, child: Text('Auto footprint (L/U)')),
+            ],
+            onChanged: (value) {
+              if (value != null) setState(() => _roofType = value);
+            },
           ),
-          if (_gable) _field('Slope (degrees)', _slope, numeric: true),
+          if (_roofType != 0) _field('Slope (degrees)', _slope, numeric: true),
           _field('Overhang (m)', _overhang, numeric: true),
           _applyButton(_busy, _apply),
         ],
@@ -738,13 +762,15 @@ Widget _row(String label, String value) => Padding(
       Expanded(child: Text(label)),
       Text(value, style: const TextStyle(fontWeight: FontWeight.w600))
     ]));
-Widget _applyButton(bool busy, VoidCallback onPressed) => FilledButton.icon(
-    onPressed: busy ? null : onPressed,
-    icon: busy
-        ? const SizedBox.square(
-            dimension: 16, child: CircularProgressIndicator(strokeWidth: 2))
-        : const Icon(Icons.check),
-    label: const Text('Apply'));
+Widget _applyButton(bool busy, VoidCallback onPressed,
+        {String label = 'Apply'}) =>
+    FilledButton.icon(
+        onPressed: busy ? null : onPressed,
+        icon: busy
+            ? const SizedBox.square(
+                dimension: 16, child: CircularProgressIndicator(strokeWidth: 2))
+            : const Icon(Icons.check),
+        label: Text(label));
 String _number(double value) => value.toStringAsFixed(2);
 String _meta(RenderSceneObject object, String key) =>
     object.metadata[key]?.toString() ?? '-';

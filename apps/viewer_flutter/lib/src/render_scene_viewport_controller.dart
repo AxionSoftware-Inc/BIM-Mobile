@@ -45,6 +45,8 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
       RenderSceneInteractionMode.select;
 
   RenderSceneBounds _sceneBounds = RenderSceneBounds.zero();
+  RenderSceneBounds? _sectionBox;
+  RenderSceneSection? _sectionView;
   Size _viewportSize = Size.zero;
   bool _viewportRefitScheduled = false;
 
@@ -142,6 +144,11 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
 
   bool get hasNativeBridge => _channel != null;
 
+  RenderSceneBounds get sceneBounds => _scene?.bounds ?? _sceneBounds;
+  RenderSceneBounds? get sectionBox => _sectionBox;
+  bool get hasSectionBox => _sectionBox != null;
+  bool get hasSectionView => _sectionView != null;
+
   Future<Map<Object?, Object?>?> nativeDiagnostics() async {
     final channel = _channel;
     if (channel == null) return null;
@@ -203,6 +210,8 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     if (resetView) {
       _resetCameraForBounds(scene.bounds);
       _resetPlanForBounds(scene.bounds);
+      _sectionBox = null;
+      _sectionView = null;
     }
 
     notifyListeners();
@@ -219,6 +228,8 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     _selectedLevelId = null;
     _highlightedElementId = null;
     _sceneBounds = RenderSceneBounds.zero();
+    _sectionBox = null;
+    _sectionView = null;
     _sceneRevision += 1;
     _fitRevision += 1;
     _planCamera = const RenderScenePlanCameraState(
@@ -352,6 +363,32 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     _displayStyle = style;
     notifyListeners();
     await _invoke('setDisplayStyle', style.name);
+  }
+
+  /// Native ClipVolume for the live 3D viewport. It clips render triangles
+  /// only; the document and quantity model remain whole and authoritative.
+  Future<void> setSectionBox(RenderSceneBounds? bounds) async {
+    _sectionBox = bounds;
+    if (bounds != null) _sectionView = null;
+    notifyListeners();
+    await _invoke('setSectionBox', <String, Object?>{
+      'enabled': bounds != null,
+      if (bounds != null) 'min': bounds.min.toJson(),
+      if (bounds != null) 'max': bounds.max.toJson(),
+    });
+  }
+
+  /// Activates an architectural section on the authoritative full scene.
+  /// Android uses the same native ClipVolume implementation as Section Box.
+  Future<void> setSectionView(RenderSceneSection? section) async {
+    _sectionView = section;
+    if (section != null) _sectionBox = null;
+    notifyListeners();
+    await _invoke('setSectionView', <String, Object?>{
+      'enabled': section != null,
+      if (section != null) 'start': section.start.toJson(),
+      if (section != null) 'end': section.end.toJson(),
+    });
   }
 
   @override
@@ -647,6 +684,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
         (levelId != null || _selectedElementIds.isEmpty)) {
       return;
     }
+    final nativeHighlightMustClear = _highlightedElementId != null;
     _selectedLevelId = levelId;
     _selectedElementIds = <String>{};
     _activeElementId = null;
@@ -657,6 +695,12 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
       'activeId': null,
       'levelId': levelId,
     });
+    // `setSelection` clears the selection tint but intentionally does not
+    // own hover/preview tint. Clear that native state explicitly before the
+    // local null value makes [highlightElement] a no-op.
+    if (nativeHighlightMustClear) {
+      await _invoke('highlightElement', null);
+    }
   }
 
   @override
@@ -689,10 +733,22 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     }
 
     await _invoke('setVisibleKinds', _visibleKinds.toList());
+    final sectionBox = _sectionBox;
+    await _invoke('setSectionBox', <String, Object?>{
+      'enabled': sectionBox != null,
+      if (sectionBox != null) 'min': sectionBox.min.toJson(),
+      if (sectionBox != null) 'max': sectionBox.max.toJson(),
+    });
     await _invoke('setDisplayStyle', _displayStyle.name);
     await _invoke('setProjectionMode', _projectionMode.name);
     await _invoke('setOrbitProjectionStyle', _orbitProjectionStyle.name);
     await _invoke('setCamera', _nativeCameraPayload());
+    final sectionView = _sectionView;
+    await _invoke('setSectionView', <String, Object?>{
+      'enabled': sectionView != null,
+      if (sectionView != null) 'start': sectionView.start.toJson(),
+      if (sectionView != null) 'end': sectionView.end.toJson(),
+    });
     await _invoke('setSelection', <String, Object?>{
       'ids': _selectedElementIds.toList(),
       'activeId': _activeElementId,

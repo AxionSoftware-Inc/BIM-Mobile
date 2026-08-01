@@ -345,6 +345,21 @@ std::string wall_layer_function_to_string(WallLayerFunction function) {
     return "Generic";
 }
 
+std::string wall_type_category_to_string(WallTypeCategory category) {
+    switch (category) {
+    case WallTypeCategory::Interior: return "Interior";
+    case WallTypeCategory::Exterior: return "Exterior";
+    case WallTypeCategory::Generic: return "Generic";
+    }
+    return "Generic";
+}
+
+WallTypeCategory string_to_wall_type_category(const std::string& value) {
+    if (value == "Interior") return WallTypeCategory::Interior;
+    if (value == "Exterior") return WallTypeCategory::Exterior;
+    return WallTypeCategory::Generic;
+}
+
 WallLayerFunction string_to_wall_layer_function(const std::string& value) {
     if (value == "Core") return WallLayerFunction::Core;
     if (value == "InteriorFinish") return WallLayerFunction::InteriorFinish;
@@ -379,6 +394,7 @@ std::string roof_type_to_string(RoofType roof_type) {
     switch (roof_type) {
     case RoofType::Flat: return "Flat";
     case RoofType::SimpleGable: return "SimpleGable";
+    case RoofType::AutoFootprint: return "AutoFootprint";
     }
     return "Flat";
 }
@@ -386,6 +402,9 @@ std::string roof_type_to_string(RoofType roof_type) {
 RoofType string_to_roof_type(const std::string& value) {
     if (value == "SimpleGable") {
         return RoofType::SimpleGable;
+    }
+    if (value == "AutoFootprint") {
+        return RoofType::AutoFootprint;
     }
     return RoofType::Flat;
 }
@@ -720,6 +739,7 @@ std::string Document::to_json() const {
             if (material.unit_cost.has_value()) {
                 out << ",\"unit_cost\":" << *material.unit_cost;
             }
+            out << ",\"display_color\":\"" << escape_json(material.display_color) << "\"";
             out << ",\"metadata\":{";
             auto first_meta = true;
             for (const auto& [key, value] : material.metadata) {
@@ -742,7 +762,8 @@ std::string Document::to_json() const {
             }
             first = false;
             out << "{\"wall_type_id\":" << wall_type_id
-                << ",\"name\":\"" << escape_json(wall_type.name) << "\",\"layers\":[";
+                << ",\"name\":\"" << escape_json(wall_type.name) << "\""
+                << ",\"category\":\"" << wall_type_category_to_string(wall_type.category) << "\",\"layers\":[";
             for (std::size_t index = 0; index < wall_type.layers.size(); ++index) {
                 if (index != 0) {
                     out << ',';
@@ -1050,6 +1071,9 @@ Document Document::from_json(std::string_view json) {
             if (const auto unit_cost = object.find("unit_cost"); unit_cost != object.end()) {
                 material.unit_cost = as_number(unit_cost->second);
             }
+            if (const auto display_color = object.find("display_color"); display_color != object.end()) {
+                material.display_color = as_string(display_color->second);
+            }
             if (const auto metadata = object.find("metadata"); metadata != object.end()) {
                 for (const auto& [key, value] : as_object(metadata->second)) {
                     material.metadata[key] = as_string(value);
@@ -1065,6 +1089,9 @@ Document Document::from_json(std::string_view json) {
             WallTypeData wall_type{
                 .wall_type_id = as_id(field(object, "wall_type_id")),
                 .name = as_string(field(object, "name")),
+                .category = object.find("category") == object.end()
+                    ? WallTypeCategory::Generic
+                    : string_to_wall_type_category(as_string(field(object, "category"))),
             };
             for (const auto& layer_value : as_array(field(object, "layers"))) {
                 const auto& layer = as_object(layer_value);

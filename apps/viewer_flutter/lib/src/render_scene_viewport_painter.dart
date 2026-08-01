@@ -77,6 +77,9 @@ class FallbackRenderScenePainter extends CustomPainter {
     _drawGrid(canvas, projection);
     _drawAxes(canvas, projection);
     _drawLevels(canvas, projection);
+    if (projectionMode == RenderSceneProjectionMode.topDown) {
+      _drawSectionGuides(canvas, projection);
+    }
 
     final packets = <_RenderPacket>[];
     final filteredObjects = scene.objectsForKinds(visibleKinds);
@@ -147,6 +150,11 @@ class FallbackRenderScenePainter extends CustomPainter {
               depthWeight,
             ),
             strokeWidth: strokeWidth,
+            materialColors: {
+              for (final material in scene.materials)
+                material.id: _materialColor(material.displayColor),
+            },
+            honorMaterialColors: !isSelected && !isHighlighted,
           ),
           outlines: displayStyle == RenderSceneDisplayStyle.solid &&
                   _shouldDrawSolidOutline(
@@ -217,6 +225,13 @@ class FallbackRenderScenePainter extends CustomPainter {
       }
     }
 
+    if (projectionMode.isElevation) {
+      _drawSectionLayerSeparators(canvas, projection, filteredObjects);
+    }
+    if (displayStyle == RenderSceneDisplayStyle.solid) {
+      _drawRoofSlopeLines(canvas, projection, filteredObjects);
+    }
+
     _drawLabels(canvas, projection, filteredObjects);
     _drawActiveObjectGizmo(canvas, projection);
     _drawSelectedWallHandles(canvas, projection);
@@ -242,12 +257,123 @@ class FallbackRenderScenePainter extends CustomPainter {
     );
   }
 
+  void _drawSectionLayerSeparators(
+    Canvas canvas,
+    RenderSceneProjection projection,
+    Iterable<RenderSceneObject> objects,
+  ) {
+    // Section scenes emit one wall object per assembly layer. Outline each
+    // emitted layer so the cut remains readable even when two adjacent
+    // materials have similar colours or the display is set to solid.
+    final sectionWalls = objects.where(
+      (object) =>
+          object.kindKey == 'wall' &&
+          object.metadata['section_kind'] != null &&
+          object.metadata['section_layer_index'] != null,
+    );
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.0
+      ..color = const Color(0xFF475569).withValues(alpha: 0.72);
+    for (final wall in sectionWalls) {
+      final rect = projectBoundsRect(wall.bounds, projection);
+      final layerIndex = int.tryParse(
+            '${wall.metadata['section_layer_index'] ?? 0}',
+          ) ??
+          0;
+      _drawHatchPattern(
+        canvas,
+        Path()..addRect(rect),
+        rect,
+        layerIndex,
+        const Color(0xFF475569).withValues(alpha: 0.18),
+      );
+      for (final segment in _buildProjectedBoundsRectOutlineSegments(
+        wall.bounds,
+        projection,
+      )) {
+        canvas.drawLine(segment.a, segment.b, paint);
+      }
+    }
+  }
+
+  void _drawRoofSlopeLines(
+    Canvas canvas,
+    RenderSceneProjection projection,
+    Iterable<RenderSceneObject> objects,
+  ) {
+    // A footprint roof is a set of slope planes.  Draw the non-horizontal
+    // shared edges explicitly: generic mesh-outline suppression otherwise
+    // hides the hip/valley lines that connect every eave corner to its raised
+    // ridge loop.  This works for L, U and arbitrary simple footprints; it
+    // deliberately does not assume a single centre apex.
+    for (final roof in objects.where(
+      (object) =>
+          object.kindKey == 'roof' &&
+          object.metadata['roof_type'] == 'AutoFootprint',
+    )) {
+      final positions = roof.mesh.positions;
+      final indices = roof.mesh.indices;
+      if (positions.length < 4 || indices.length < 3) continue;
+
+      final paint = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.35
+        ..strokeCap = StrokeCap.round
+        ..color = const Color(0xFF7C2D12).withValues(alpha: 0.82);
+      final baseZ = positions.map((point) => point.z).reduce(math.min);
+      final ridgeZ = positions.map((point) => point.z).reduce(math.max);
+      final drawnEdges = <String>{};
+      for (var index = 0; index + 2 < indices.length; index += 3) {
+        final triangle = <int>[
+          indices[index],
+          indices[index + 1],
+          indices[index + 2],
+        ];
+        for (final edge in <(int, int)>[
+          (triangle[0], triangle[1]),
+          (triangle[1], triangle[2]),
+          (triangle[2], triangle[0]),
+        ]) {
+          final firstIndex = edge.$1;
+          final secondIndex = edge.$2;
+          if (firstIndex < 0 ||
+              secondIndex < 0 ||
+              firstIndex >= positions.length ||
+              secondIndex >= positions.length) {
+            continue;
+          }
+          final first = positions[firstIndex];
+          final second = positions[secondIndex];
+          final isRidgeEdge =
+              (first.z - ridgeZ).abs() <= 1e-6 &&
+              (second.z - ridgeZ).abs() <= 1e-6;
+          if (first.z <= baseZ + 1e-6 ||
+              second.z <= baseZ + 1e-6 ||
+              ((first.z - second.z).abs() <= 1e-6 && !isRidgeEdge)) {
+            continue;
+          }
+          final low = math.min(firstIndex, secondIndex);
+          final high = math.max(firstIndex, secondIndex);
+          if (!drawnEdges.add('$low:$high')) continue;
+          canvas.drawLine(
+            projection.project(first).screen,
+            projection.project(second).screen,
+            paint,
+          );
+        }
+      }
+    }
+  }
+
   List<_TriangleRender> _buildObjectTriangles({
     required RenderSceneObject object,
     required RenderSceneProjection projection,
     required Color fillColor,
     required Color strokeColor,
     required double strokeWidth,
+    required Map<int, Color> materialColors,
+    required bool honorMaterialColors,
   }) {
     final rawTriangles = <List<RenderScenePoint>>[];
     final mesh = object.mesh;
@@ -267,7 +393,10 @@ class FallbackRenderScenePainter extends CustomPainter {
     }
 
     final rendered = <_TriangleRender>[];
-    for (final triangle in rawTriangles) {
+    for (var triangleIndex = 0;
+        triangleIndex < rawTriangles.length;
+        triangleIndex += 1) {
+      final triangle = rawTriangles[triangleIndex];
       if (displayStyle == RenderSceneDisplayStyle.solid &&
           !_isTriangleVisible(triangle, projection)) {
         continue;
@@ -282,6 +411,12 @@ class FallbackRenderScenePainter extends CustomPainter {
         continue;
       }
 
+      final materialId = triangleIndex < mesh.triangleMaterialIds.length
+          ? mesh.triangleMaterialIds[triangleIndex]
+          : null;
+      final materialColor = honorMaterialColors && materialId != null
+          ? materialColors[materialId]
+          : null;
       rendered.add(
         _TriangleRender(
           a: a.screen,
@@ -289,11 +424,13 @@ class FallbackRenderScenePainter extends CustomPainter {
           c: c.screen,
           depth: (a.depth + b.depth + c.depth) / 3.0,
           fillColor: _shadeTriangleColor(
-            baseColor: fillColor,
+            baseColor:
+                materialColor?.withValues(alpha: fillColor.a) ?? fillColor,
             triangle: triangle,
           ),
           strokeColor: _shadeTriangleColor(
-            baseColor: strokeColor,
+            baseColor:
+                materialColor?.withValues(alpha: strokeColor.a) ?? strokeColor,
             triangle: triangle,
             minShade: 0.82,
             maxShade: 1.0,
@@ -311,7 +448,10 @@ class FallbackRenderScenePainter extends CustomPainter {
     RenderSceneProjection projection,
     Iterable<RenderSceneObject> objects,
   ) {
-    for (final wall in objects.where((object) => object.kindKey == 'wall')) {
+    final wallObjects = objects.where((object) => object.kindKey == 'wall');
+    final wallCount = wallObjects.length;
+    final showLayerSeparators = wallCount <= 2000;
+    for (final wall in wallObjects) {
       final start = RenderSceneEditor.wallStartPoint(wall);
       final end = RenderSceneEditor.wallEndPoint(wall);
       final thickness = RenderSceneEditor.wallThickness(wall);
@@ -362,7 +502,257 @@ class FallbackRenderScenePainter extends CustomPainter {
           ..strokeWidth = selected || highlighted ? 2.4 : 1.6
           ..color = color,
       );
+
+      // Assemblies stay semantic in the scene. In floor plan, show their
+      // cut convention as a few lightweight separator lines instead of
+      // rendering every layer as a 3-D mesh. At dense city/building scale a
+      // single center mark preserves responsiveness while the assembly data
+      // remains available for schedules and reports.
+      final profile = _parseLayerProfile(wall.metadata['layer_profile']);
+      if (profile.isNotEmpty && showLayerSeparators) {
+        final profileThickness = profile.fold<double>(
+          0.0,
+          (sum, layer) => sum + layer.thicknessMeters,
+        );
+        if (profileThickness > 1e-8) {
+          var offset = -half;
+          final normalUnit = RenderScenePoint(
+            x: -axis.y / length,
+            y: axis.x / length,
+            z: 0,
+          );
+          for (var layerIndex = 0;
+              layerIndex < profile.length;
+              layerIndex += 1) {
+            final layer = profile[layerIndex];
+            final previousOffset = offset;
+            offset += (layer.thicknessMeters / profileThickness) * thickness;
+            final layerStart = start +
+                RenderScenePoint(
+                  x: normalUnit.x * previousOffset,
+                  y: normalUnit.y * previousOffset,
+                  z: 0,
+                );
+            final layerEnd = end +
+                RenderScenePoint(
+                  x: normalUnit.x * previousOffset,
+                  y: normalUnit.y * previousOffset,
+                  z: 0,
+                );
+            final nextStart = start +
+                RenderScenePoint(
+                  x: normalUnit.x * offset,
+                  y: normalUnit.y * offset,
+                  z: 0,
+                );
+            final nextEnd = end +
+                RenderScenePoint(
+                  x: normalUnit.x * offset,
+                  y: normalUnit.y * offset,
+                  z: 0,
+                );
+            final layerPath = Path()
+              ..moveTo(projection.project(layerStart).screen.dx,
+                  projection.project(layerStart).screen.dy)
+              ..lineTo(projection.project(layerEnd).screen.dx,
+                  projection.project(layerEnd).screen.dy)
+              ..lineTo(projection.project(nextEnd).screen.dx,
+                  projection.project(nextEnd).screen.dy)
+              ..lineTo(projection.project(nextStart).screen.dx,
+                  projection.project(nextStart).screen.dy)
+              ..close();
+            final layerPoints = <Offset>[
+              projection.project(layerStart).screen,
+              projection.project(layerEnd).screen,
+              projection.project(nextEnd).screen,
+              projection.project(nextStart).screen,
+            ];
+            final layerColor = selected || highlighted
+                ? color
+                : (_materialColorForId(layer.materialId) ?? color);
+            canvas.drawPath(
+              layerPath,
+              Paint()
+                ..style = PaintingStyle.fill
+                ..color = layerColor.withValues(alpha: 0.34),
+            );
+            _drawHatchPattern(
+              canvas,
+              layerPath,
+              _boundsOfOffsets(layerPoints),
+              layerIndex,
+              layerColor.withValues(alpha: 0.42),
+            );
+            if (offset >= thickness - 1e-6) continue;
+            final lineStart = nextStart;
+            final lineEnd = nextEnd;
+            canvas.drawLine(
+              projection.project(lineStart).screen,
+              projection.project(lineEnd).screen,
+              Paint()
+                ..style = PaintingStyle.stroke
+                ..strokeWidth = 1.8
+                ..strokeCap = StrokeCap.square
+                ..color = layerColor.withValues(alpha: 0.95),
+            );
+          }
+        }
+      }
     }
+  }
+
+  Rect _boundsOfOffsets(List<Offset> points) {
+    var minX = double.infinity;
+    var minY = double.infinity;
+    var maxX = double.negativeInfinity;
+    var maxY = double.negativeInfinity;
+    for (final point in points) {
+      minX = math.min(minX, point.dx);
+      minY = math.min(minY, point.dy);
+      maxX = math.max(maxX, point.dx);
+      maxY = math.max(maxY, point.dy);
+    }
+    return Rect.fromLTRB(minX, minY, maxX, maxY);
+  }
+
+  void _drawHatchPattern(
+    Canvas canvas,
+    Path clipPath,
+    Rect bounds,
+    int patternIndex,
+    Color color,
+  ) {
+    if (bounds.width <= 0.5 || bounds.height <= 0.5) return;
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 0.7
+      ..color = color;
+    canvas.save();
+    canvas.clipPath(clipPath);
+    const spacing = 7.0;
+    switch (patternIndex % 4) {
+      case 0:
+        for (var x = bounds.left - bounds.height;
+            x <= bounds.right + bounds.height;
+            x += spacing) {
+          canvas.drawLine(Offset(x, bounds.bottom),
+              Offset(x + bounds.height, bounds.top), paint);
+        }
+      case 1:
+        for (var x = bounds.left - bounds.height;
+            x <= bounds.right + bounds.height;
+            x += spacing) {
+          canvas.drawLine(Offset(x, bounds.top),
+              Offset(x + bounds.height, bounds.bottom), paint);
+        }
+      case 2:
+        for (var y = bounds.top; y <= bounds.bottom; y += spacing) {
+          canvas.drawLine(
+              Offset(bounds.left, y), Offset(bounds.right, y), paint);
+        }
+      case 3:
+        for (var x = bounds.left; x <= bounds.right; x += spacing) {
+          canvas.drawLine(
+              Offset(x, bounds.top), Offset(x, bounds.bottom), paint);
+        }
+    }
+    canvas.restore();
+  }
+
+  void _drawSectionGuides(
+    Canvas canvas,
+    RenderSceneProjection projection,
+  ) {
+    final z = scene.levelById(selectedLevelId)?.elevationMeters ?? 0.0;
+    final sections = scene.sections.isNotEmpty
+        ? scene.sections
+        : <RenderSceneSection>[
+            RenderSceneSection(
+              name: 'Section A',
+              start: RenderScenePoint(
+                x: scene.bounds.min.x,
+                y: (scene.bounds.min.y + scene.bounds.max.y) * 0.5,
+                z: 0,
+              ),
+              end: RenderScenePoint(
+                x: scene.bounds.max.x,
+                y: (scene.bounds.min.y + scene.bounds.max.y) * 0.5,
+                z: 0,
+              ),
+            ),
+            RenderSceneSection(
+              name: 'Section B',
+              start: RenderScenePoint(
+                x: (scene.bounds.min.x + scene.bounds.max.x) * 0.5,
+                y: scene.bounds.min.y,
+                z: 0,
+              ),
+              end: RenderScenePoint(
+                x: (scene.bounds.min.x + scene.bounds.max.x) * 0.5,
+                y: scene.bounds.max.y,
+                z: 0,
+              ),
+            ),
+          ];
+    for (final section in sections) {
+      final start = RenderScenePoint(
+        x: section.start.x,
+        y: section.start.y,
+        z: z,
+      );
+      final end = RenderScenePoint(x: section.end.x, y: section.end.y, z: z);
+      final delta = end - start;
+      final length = delta.distanceTo(RenderScenePoint.zero());
+      if (length <= 1e-8) continue;
+      final paint = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.2
+        ..color = const Color(0xFFB42318).withValues(alpha: 0.92);
+      const dash = 0.45;
+      const gap = 0.22;
+      for (var cursor = 0.0; cursor < length; cursor += dash + gap) {
+        final from = cursor / length;
+        final to = math.min(cursor + dash, length) / length;
+        final a = start +
+            RenderScenePoint(
+              x: delta.x * from,
+              y: delta.y * from,
+              z: 0,
+            );
+        final b = start +
+            RenderScenePoint(
+              x: delta.x * to,
+              y: delta.y * to,
+              z: 0,
+            );
+        canvas.drawLine(
+          projection.project(a).screen,
+          projection.project(b).screen,
+          paint,
+        );
+      }
+    }
+  }
+
+  List<_LayerProfileEntry> _parseLayerProfile(Object? raw) {
+    if (raw is! String || raw.isEmpty) return const <_LayerProfileEntry>[];
+    final result = <_LayerProfileEntry>[];
+    for (final entry in raw.split(';')) {
+      final parts = entry.split(':');
+      if (parts.length != 2) continue;
+      final materialId = int.tryParse(parts[0]);
+      final thickness = double.tryParse(parts[1]);
+      if (materialId == null || thickness == null || thickness <= 0) continue;
+      result.add(
+        _LayerProfileEntry(materialId: materialId, thicknessMeters: thickness),
+      );
+    }
+    return result;
+  }
+
+  Color? _materialColorForId(int materialId) {
+    final material = scene.materialById(materialId);
+    return material == null ? null : _materialColor(material.displayColor);
   }
 
   Color _shadeTriangleColor({
@@ -854,6 +1244,28 @@ class FallbackRenderScenePainter extends CustomPainter {
         for (final point in projected) {
           canvas.drawCircle(point, 4.5, Paint()..color = strokeColor);
         }
+
+        // A roof direction/ridge preview is defined for the whole boundary.
+        // Keep every picked/polyline point connected to the common centre so
+        // concave and six-point footprints do not leave half of the roof
+        // guidance missing.
+        if (surface.kind == 'roof' && projected.length >= 3) {
+          final center = Offset(
+            projected.fold<double>(0.0, (sum, point) => sum + point.dx) /
+                projected.length,
+            projected.fold<double>(0.0, (sum, point) => sum + point.dy) /
+                projected.length,
+          );
+          final directionPaint = Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.6
+            ..strokeCap = StrokeCap.round
+            ..color = strokeColor.withValues(alpha: 0.9);
+          for (final point in projected) {
+            canvas.drawLine(point, center, directionPaint);
+          }
+          canvas.drawCircle(center, 4.0, Paint()..color = strokeColor);
+        }
       }
     }
 
@@ -1286,6 +1698,15 @@ class FallbackRenderScenePainter extends CustomPainter {
     }
   }
 
+  Color _materialColor(String value) {
+    final normalized = value.trim().replaceFirst('#', '');
+    final parsed = int.tryParse(normalized, radix: 16);
+    if (parsed == null) return const Color(0xFFB0B7C3);
+    if (normalized.length == 6) return Color(0xFF000000 | parsed);
+    if (normalized.length == 8) return Color(parsed);
+    return const Color(0xFFB0B7C3);
+  }
+
   Color _kindColor(String kind) {
     switch (kind) {
       case 'wall':
@@ -1335,6 +1756,16 @@ class FallbackRenderScenePainter extends CustomPainter {
         oldDelegate.draftWallThicknessMeters != draftWallThicknessMeters ||
         oldDelegate.draftWallHeightMeters != draftWallHeightMeters;
   }
+}
+
+class _LayerProfileEntry {
+  const _LayerProfileEntry({
+    required this.materialId,
+    required this.thicknessMeters,
+  });
+
+  final int materialId;
+  final double thicknessMeters;
 }
 
 class _RenderPacket {

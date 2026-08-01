@@ -10,7 +10,11 @@ class GeometryService {
 public:
     [[nodiscard]] std::string backend_name() const;
     [[nodiscard]] WallProfile2D build_wall_profile(const WallData& wall) const;
-    [[nodiscard]] GeneratedGeometry build_wall_geometry(const WallData& wall, Revision source_revision) const;
+    [[nodiscard]] GeneratedGeometry build_wall_geometry(
+        const WallData& wall,
+        Revision source_revision,
+        const std::vector<WallAssemblyLayer>& layers = {}
+    ) const;
 };
 
 } // namespace tbe::core

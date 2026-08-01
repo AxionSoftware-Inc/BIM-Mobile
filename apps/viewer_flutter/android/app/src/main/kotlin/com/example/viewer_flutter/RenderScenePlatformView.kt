@@ -334,6 +334,16 @@ internal class RenderScenePlatformView(
         result.success(null)
       }
 
+      "setSectionBox" -> {
+        view.setSectionBox(call.arguments as? Map<*, *>)
+        result.success(null)
+      }
+
+      "setSectionView" -> {
+        view.setSectionView(call.arguments as? Map<*, *>)
+        result.success(null)
+      }
+
       "setProjectionMode" -> {
         view.setProjectionMode(call.arguments as? String ?: "topDown")
         result.success(null)

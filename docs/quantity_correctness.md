@@ -10,6 +10,9 @@ This note records the quantity formulas currently used by the engine MVP so test
 - Net wall area is `max(0, gross - openings)`.
 - Wall volume is based on the wall thickness and net wall area.
 - Wall assembly layer volume is `net_area * layer_thickness`.
+- Assemblies remain the ordered semantic source of truth. Interactive viewport
+  geometry uses one lightweight wall envelope; explicit layered mesh detail is
+  available to core authoring/tests without being required for quantities.
 
 ## Opening quantities
 
@@ -31,6 +34,9 @@ This note records the quantity formulas currently used by the engine MVP so test
 ## Slabs, roofs, columns, beams, stairs
 
 - Slab volume is `boundary_area * thickness`.
+- Layered slab volume is aggregated per material as
+  `boundary_area * layer_thickness`; the first assembly layer is the bottom
+  layer and the last is the top layer.
 - Flat roof volume is `roof_area * thickness`.
 - Column volume is `width * depth * height`.
 - Beam volume is `length * width * height`.
@@ -46,7 +52,24 @@ This note records the quantity formulas currently used by the engine MVP so test
 
 - Material takeoff rows are grouped by material id and quantity type.
 - Area and volume rows are kept separate.
+- Slab layer volumes are included in material takeoff alongside walls, floors,
+  ceilings and roofs.
+- The residential template creates one foundation slab per building and one
+  full layered floor slab per storey; it does not also create a duplicate
+  floor-system takeoff for the same footprint.
 - Estimated cost, when present, is derived from row quantity and material unit cost.
+- Report DTOs expose both the material `unit_cost` and the resulting
+  `estimated_cost`; missing prices remain missing rather than silently becoming
+  zero.
+
+## Deferred computation
+
+- Interactive preview regenerates envelope geometry only and leaves room,
+  schedule, validation and material-takeoff data dirty/stale.
+- Normal editing may refresh room metrics when requested by the session, but
+  schedules and cost takeoff are not part of viewport rendering.
+- `FinalExact`/documentation/report APIs perform the exact room, schedule,
+  validation and material-cost calculations on demand.
 
 ## Known simplifications
 

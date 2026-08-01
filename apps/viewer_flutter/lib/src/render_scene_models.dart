@@ -173,12 +173,14 @@ class RenderSceneMesh {
     required this.positions,
     required this.indices,
     required this.normals,
+    this.triangleMaterialIds = const <int>[],
     this.invalidIndexCount = 0,
   });
 
   final List<RenderScenePoint> positions;
   final List<int> indices;
   final List<RenderScenePoint>? normals;
+  final List<int> triangleMaterialIds;
   final int invalidIndexCount;
 
   int get triangleCount => indices.length ~/ 3;
@@ -188,6 +190,8 @@ class RenderSceneMesh {
   Map<String, Object?> toJson() => <String, Object?>{
         'positions': positions.map((point) => point.toJson()).toList(),
         'indices': indices,
+        if (triangleMaterialIds.isNotEmpty)
+          'triangle_material_ids': triangleMaterialIds,
         if (invalidIndexCount > 0) 'invalid_index_count': invalidIndexCount,
         if (normals != null)
           'normals': normals!.map((point) => point.toJson()).toList(),
@@ -197,6 +201,7 @@ class RenderSceneMesh {
         positions: <RenderScenePoint>[],
         indices: <int>[],
         normals: null,
+        triangleMaterialIds: <int>[],
         invalidIndexCount: 0,
       );
 
@@ -246,10 +251,21 @@ class RenderSceneMesh {
       }
       normals = parsedNormals.isEmpty ? null : parsedNormals;
     }
+    final triangleMaterialIds = <int>[];
+    final rawMaterialIds = value['triangle_material_ids'];
+    if (rawMaterialIds is List) {
+      for (final entry in rawMaterialIds) {
+        final parsed = _toFiniteDouble(entry);
+        if (parsed != null) {
+          triangleMaterialIds.add(parsed.floor());
+        }
+      }
+    }
     return RenderSceneMesh(
       positions: positions,
       indices: indices,
       normals: normals,
+      triangleMaterialIds: triangleMaterialIds,
       invalidIndexCount: invalidIndexCount,
     );
   }
@@ -299,6 +315,37 @@ class RenderSceneLevel {
                 value['defaultWallHeightMeters'],
           ) ??
           3.0,
+    );
+  }
+}
+
+@immutable
+class RenderSceneSection {
+  const RenderSceneSection({
+    required this.name,
+    required this.start,
+    required this.end,
+  });
+
+  final String name;
+  final RenderScenePoint start;
+  final RenderScenePoint end;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+        'name': name,
+        'start': start.toJson(),
+        'end': end.toJson(),
+      };
+
+  static RenderSceneSection? fromJson(Object? value) {
+    if (value is! Map) return null;
+    final start = RenderScenePoint.fromJson(value['start']);
+    final end = RenderScenePoint.fromJson(value['end']);
+    if (start == null || end == null) return null;
+    return RenderSceneSection(
+      name: toSceneString(value['name'], fallback: 'Section'),
+      start: start,
+      end: end,
     );
   }
 }
@@ -401,6 +448,40 @@ class RenderSceneObject {
 }
 
 @immutable
+class RenderSceneMaterial {
+  const RenderSceneMaterial({
+    required this.id,
+    required this.name,
+    required this.category,
+    required this.displayColor,
+  });
+
+  final int id;
+  final String name;
+  final String category;
+  final String displayColor;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+        'id': id,
+        'name': name,
+        'category': category,
+        'display_color': displayColor,
+      };
+
+  static RenderSceneMaterial? fromJson(Object? value) {
+    if (value is! Map) return null;
+    final id = _toNullableInt(value['id'] ?? value['material_id']);
+    if (id == null || id == 0) return null;
+    return RenderSceneMaterial(
+      id: id,
+      name: toSceneString(value['name'], fallback: 'Material $id'),
+      category: toSceneString(value['category'], fallback: 'generic'),
+      displayColor: toSceneString(value['display_color'], fallback: '#B0B7C3'),
+    );
+  }
+}
+
+@immutable
 class RenderSceneDiagnostics {
   const RenderSceneDiagnostics({
     required this.source,
@@ -464,6 +545,8 @@ class RenderScene {
     required this.bounds,
     required this.objects,
     required this.levels,
+    required this.materials,
+    required this.sections,
     required this.source,
     required this.diagnostics,
   });
@@ -477,6 +560,8 @@ class RenderScene {
   final RenderSceneBounds bounds;
   final List<RenderSceneObject> objects;
   final List<RenderSceneLevel> levels;
+  final List<RenderSceneMaterial> materials;
+  final List<RenderSceneSection> sections;
   final String source;
   final RenderSceneDiagnostics diagnostics;
 
@@ -513,6 +598,14 @@ class RenderScene {
       if (object.elementId?.toString() == elementId) {
         return object;
       }
+    }
+    return null;
+  }
+
+  RenderSceneMaterial? materialById(int? materialId) {
+    if (materialId == null) return null;
+    for (final material in materials) {
+      if (material.id == materialId) return material;
     }
     return null;
   }
@@ -571,30 +664,26 @@ class RenderScene {
     required double topMeters,
   }) {
     const tolerance = 1e-6;
-    final filteredObjects = objects
-        .where(
-          (object) {
-            // Beams are overhead framing in the floor-plan convention. Their
-            // legacy meshes can be authored at local Z=0, so bounds alone
-            // would incorrectly draw them through a 2 m plan cut.
-            if (object.kindKey == 'beam') return false;
-            // Use an open interval at the next level. A Level 1 wall ending
-            // at 3.20 m must not be shown again in the Level 2 plan merely
-            // because its top coincides with that level's elevation.
-            final crossesCutBand =
-                object.bounds.max.z > bottomMeters + tolerance &&
-                    object.bounds.min.z < topMeters - tolerance;
-            // Slabs/floors may sit exactly at their owning level elevation;
-            // retain those base-level objects without admitting geometry
-            // owned by the storey below.
-            final isActiveLevelBaseObject =
-                object.levelId == activeLevelId &&
-                    object.bounds.min.z <= bottomMeters + tolerance &&
-                    object.bounds.max.z >= bottomMeters - tolerance;
-            return crossesCutBand || isActiveLevelBaseObject;
-          },
-        )
-        .toList(growable: false);
+    final filteredObjects = objects.where(
+      (object) {
+        // Beams are overhead framing in the floor-plan convention. Their
+        // legacy meshes can be authored at local Z=0, so bounds alone
+        // would incorrectly draw them through a 2 m plan cut.
+        if (object.kindKey == 'beam') return false;
+        // Use an open interval at the next level. A Level 1 wall ending
+        // at 3.20 m must not be shown again in the Level 2 plan merely
+        // because its top coincides with that level's elevation.
+        final crossesCutBand = object.bounds.max.z > bottomMeters + tolerance &&
+            object.bounds.min.z < topMeters - tolerance;
+        // Slabs/floors may sit exactly at their owning level elevation;
+        // retain those base-level objects without admitting geometry
+        // owned by the storey below.
+        final isActiveLevelBaseObject = object.levelId == activeLevelId &&
+            object.bounds.min.z <= bottomMeters + tolerance &&
+            object.bounds.max.z >= bottomMeters - tolerance;
+        return crossesCutBand || isActiveLevelBaseObject;
+      },
+    ).toList(growable: false);
     final vertexCount = filteredObjects.fold<int>(
       0,
       (sum, object) => sum + object.mesh.positions.length,
@@ -625,6 +714,8 @@ class RenderScene {
         'index_count': indexCount,
         'bounds': bounds.toJson(),
         'levels': levels.map((level) => level.toJson()).toList(),
+        'materials': materials.map((material) => material.toJson()).toList(),
+        'sections': sections.map((section) => section.toJson()).toList(),
         'objects': objects.map((object) => object.toJson()).toList(),
       };
 }
@@ -688,6 +779,24 @@ RenderSceneLoadResult parseRenderSceneJson(
       if (level != null) {
         levels.add(level);
       }
+    }
+  }
+
+  final materials = <RenderSceneMaterial>[];
+  final rawMaterials = decoded['materials'];
+  if (rawMaterials is List) {
+    for (final entry in rawMaterials) {
+      final material = RenderSceneMaterial.fromJson(entry);
+      if (material != null) materials.add(material);
+    }
+  }
+
+  final sections = <RenderSceneSection>[];
+  final rawSections = decoded['sections'];
+  if (rawSections is List) {
+    for (final entry in rawSections) {
+      final section = RenderSceneSection.fromJson(entry);
+      if (section != null) sections.add(section);
     }
   }
 
@@ -791,6 +900,8 @@ RenderSceneLoadResult parseRenderSceneJson(
           ? (levels.toList()
             ..sort((a, b) => a.elevationMeters.compareTo(b.elevationMeters)))
           : _inferLevelsFromObjects(objects),
+      materials: materials,
+      sections: sections,
       source: source,
       diagnostics: diagnostics,
     ),

@@ -152,6 +152,7 @@ TbeApiStatusCode tbe_import_project_package(TbeEngineHandle* handle, const char*
 TbeApiStatusCode tbe_export_render_scene_json(TbeEngineHandle* handle, const char* path);
 TbeApiStatusCode tbe_get_render_scene_json(TbeEngineHandle* handle, char** out_json);
 TbeApiStatusCode tbe_get_render_scene_json_near_level(TbeEngineHandle* handle, uint64_t active_level_id, int adjacent_level_count, char** out_json);
+TbeApiStatusCode tbe_get_section_scene_json(TbeEngineHandle* handle, TbeVec2 start, TbeVec2 end, char** out_json);
 TbeApiStatusCode tbe_set_performance_profile(TbeEngineHandle* handle, int profile);
 TbeApiStatusCode tbe_set_compute_mode(TbeEngineHandle* handle, int mode);
 TbeApiStatusCode tbe_create_residential_template(TbeEngineHandle* handle, int building_count, int story_count, uint64_t* out_primary_level_id);
@@ -197,6 +198,13 @@ TbeApiStatusCode tbe_set_wall_axis(
     uint64_t wall_id,
     TbeVec2 start,
     TbeVec2 end
+);
+TbeApiStatusCode tbe_trim_extend_walls(
+    TbeEngineHandle* handle,
+    uint64_t first_wall_id,
+    int first_uses_start,
+    uint64_t second_wall_id,
+    int second_uses_start
 );
 TbeApiStatusCode tbe_set_element_assembly(TbeEngineHandle* handle, uint64_t element_id, uint64_t assembly_id);
 TbeApiStatusCode tbe_update_roof_properties(

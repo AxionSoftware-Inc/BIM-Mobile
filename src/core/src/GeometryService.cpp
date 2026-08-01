@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numeric>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 
@@ -27,6 +29,27 @@ double dot(Point2 left, Point2 right) {
 
 double cross(Point2 left, Point2 right) {
     return (left.x * right.y) - (left.y * right.x);
+}
+
+// The distance from an endpoint to a true mitre intersection.  Extending a
+// wall by half of its thickness only happens to be correct for a 90 degree
+// corner; every other angle needs the half-angle relation below.  Keeping a
+// finite limit prevents an almost reversed pair of lines from generating a
+// kilometre-long spike while the user is still sketching a wall.
+std::optional<double> miter_extension(double half_thickness, Point2 first, Point2 second) {
+    const auto sine = cross(first, second);
+    const auto cosine = dot(first, second);
+    const auto denominator = 1.0 + cosine;
+    if (std::abs(sine) <= epsilon || denominator <= epsilon) {
+        return std::nullopt;
+    }
+
+    const auto extension = half_thickness * std::abs(sine) / denominator;
+    constexpr auto miter_limit = 4.0;
+    if (!std::isfinite(extension) || extension > half_thickness * miter_limit) {
+        return std::nullopt;
+    }
+    return extension;
 }
 
 Point2 unit_direction(const Line2& axis) {
@@ -83,16 +106,28 @@ void validate_opening_rectangles(const std::vector<OpeningRectangle>& openings, 
     }
 }
 
-void append_quad(MeshBuffer& mesh, std::uint32_t a, std::uint32_t b, std::uint32_t c, std::uint32_t d) {
+void append_triangle(MeshBuffer& mesh, std::uint32_t a, std::uint32_t b, std::uint32_t c, ElementId material_id = 0) {
     mesh.indices.push_back(a);
     mesh.indices.push_back(b);
     mesh.indices.push_back(c);
-    mesh.indices.push_back(a);
-    mesh.indices.push_back(c);
-    mesh.indices.push_back(d);
+    if (!mesh.triangle_material_ids.empty() || material_id != 0) {
+        mesh.triangle_material_ids.push_back(material_id);
+    }
 }
 
-void append_opening_reveal(MeshBuffer& mesh, const OpeningRectangle& opening) {
+void append_quad(MeshBuffer& mesh, std::uint32_t a, std::uint32_t b, std::uint32_t c, std::uint32_t d, ElementId material_id = 0) {
+    append_triangle(mesh, a, b, c, material_id);
+    append_triangle(mesh, a, c, d, material_id);
+}
+
+void ensure_material_tracking(MeshBuffer& mesh) {
+    if (mesh.triangle_material_ids.empty() && !mesh.indices.empty()) {
+        mesh.triangle_material_ids.assign(mesh.indices.size() / 3, 0);
+    }
+}
+
+void append_opening_reveal(MeshBuffer& mesh, const OpeningRectangle& opening, ElementId material_id = 0) {
+    ensure_material_tracking(mesh);
     const auto base = static_cast<std::uint32_t>(mesh.vertices.size());
     mesh.vertices.push_back(Point3{.x = opening.x_min, .y = opening.y_min, .z = opening.z_min});
     mesh.vertices.push_back(Point3{.x = opening.x_max, .y = opening.y_min, .z = opening.z_min});
@@ -103,10 +138,143 @@ void append_opening_reveal(MeshBuffer& mesh, const OpeningRectangle& opening) {
     mesh.vertices.push_back(Point3{.x = opening.x_max, .y = opening.y_max, .z = opening.z_max});
     mesh.vertices.push_back(Point3{.x = opening.x_min, .y = opening.y_max, .z = opening.z_max});
 
-    append_quad(mesh, base + 0, base + 4, base + 7, base + 3);
-    append_quad(mesh, base + 1, base + 2, base + 6, base + 5);
-    append_quad(mesh, base + 3, base + 7, base + 6, base + 2);
-    append_quad(mesh, base + 0, base + 1, base + 5, base + 4);
+    append_quad(mesh, base + 0, base + 4, base + 7, base + 3, material_id);
+    append_quad(mesh, base + 1, base + 2, base + 6, base + 5, material_id);
+    append_quad(mesh, base + 3, base + 7, base + 6, base + 2, material_id);
+    append_quad(mesh, base + 0, base + 1, base + 5, base + 4, material_id);
+}
+
+void append_layer_face_with_openings(
+    MeshBuffer& mesh,
+    double y,
+    double x_min,
+    double x_max,
+    double height,
+    const std::vector<OpeningRectangle>& openings,
+    ElementId material_id
+) {
+    auto cursor = x_min;
+    for (const auto& opening : openings) {
+        if (opening.x_min > cursor + epsilon) {
+            const auto base = static_cast<std::uint32_t>(mesh.vertices.size());
+            mesh.vertices.push_back(Point3{.x = cursor, .y = y, .z = 0.0});
+            mesh.vertices.push_back(Point3{.x = opening.x_min, .y = y, .z = 0.0});
+            mesh.vertices.push_back(Point3{.x = opening.x_min, .y = y, .z = height});
+            mesh.vertices.push_back(Point3{.x = cursor, .y = y, .z = height});
+            append_quad(mesh, base + 0, base + 1, base + 2, base + 3, material_id);
+        }
+        if (opening.z_min > epsilon) {
+            const auto base = static_cast<std::uint32_t>(mesh.vertices.size());
+            mesh.vertices.push_back(Point3{.x = opening.x_min, .y = y, .z = 0.0});
+            mesh.vertices.push_back(Point3{.x = opening.x_max, .y = y, .z = 0.0});
+            mesh.vertices.push_back(Point3{.x = opening.x_max, .y = y, .z = opening.z_min});
+            mesh.vertices.push_back(Point3{.x = opening.x_min, .y = y, .z = opening.z_min});
+            append_quad(mesh, base + 0, base + 1, base + 2, base + 3, material_id);
+        }
+        if (opening.z_max < height - epsilon) {
+            const auto base = static_cast<std::uint32_t>(mesh.vertices.size());
+            mesh.vertices.push_back(Point3{.x = opening.x_min, .y = y, .z = opening.z_max});
+            mesh.vertices.push_back(Point3{.x = opening.x_max, .y = y, .z = opening.z_max});
+            mesh.vertices.push_back(Point3{.x = opening.x_max, .y = y, .z = height});
+            mesh.vertices.push_back(Point3{.x = opening.x_min, .y = y, .z = height});
+            append_quad(mesh, base + 0, base + 1, base + 2, base + 3, material_id);
+        }
+        cursor = std::max(cursor, opening.x_max);
+    }
+    if (cursor < x_max - epsilon) {
+        const auto base = static_cast<std::uint32_t>(mesh.vertices.size());
+        mesh.vertices.push_back(Point3{.x = cursor, .y = y, .z = 0.0});
+        mesh.vertices.push_back(Point3{.x = x_max, .y = y, .z = 0.0});
+        mesh.vertices.push_back(Point3{.x = x_max, .y = y, .z = height});
+        mesh.vertices.push_back(Point3{.x = cursor, .y = y, .z = height});
+        append_quad(mesh, base + 0, base + 1, base + 2, base + 3, material_id);
+    }
+}
+
+void append_layer_prism(
+    MeshBuffer& mesh,
+    double x_min_at_y_min,
+    double x_max_at_y_min,
+    double x_min_at_y_max,
+    double x_max_at_y_max,
+    double y_min,
+    double y_max,
+    double height,
+    const std::vector<OpeningRectangle>& openings,
+    ElementId material_id
+) {
+    append_layer_face_with_openings(mesh, y_min, x_min_at_y_min, x_max_at_y_min, height, openings, material_id);
+    append_layer_face_with_openings(mesh, y_max, x_min_at_y_max, x_max_at_y_max, height, openings, material_id);
+
+    const auto append_rect = [&](Point3 a, Point3 b, Point3 c, Point3 d) {
+        const auto base = static_cast<std::uint32_t>(mesh.vertices.size());
+        mesh.vertices.push_back(a);
+        mesh.vertices.push_back(b);
+        mesh.vertices.push_back(c);
+        mesh.vertices.push_back(d);
+        append_quad(mesh, base + 0, base + 1, base + 2, base + 3, material_id);
+    };
+    append_rect(
+        {x_min_at_y_min, y_min, 0.0}, {x_min_at_y_max, y_max, 0.0},
+        {x_min_at_y_max, y_max, height}, {x_min_at_y_min, y_min, height}
+    );
+    append_rect(
+        {x_max_at_y_min, y_min, 0.0}, {x_max_at_y_min, y_min, height},
+        {x_max_at_y_max, y_max, height}, {x_max_at_y_max, y_max, 0.0}
+    );
+    append_rect(
+        {x_min_at_y_min, y_min, 0.0}, {x_min_at_y_min, y_min, height},
+        {x_max_at_y_min, y_min, height}, {x_max_at_y_min, y_min, 0.0}
+    );
+    append_rect(
+        {x_min_at_y_max, y_max, 0.0}, {x_max_at_y_max, y_max, 0.0},
+        {x_max_at_y_max, y_max, height}, {x_min_at_y_max, y_max, height}
+    );
+
+    // Every layer terminates at the opening, while finish layers become the
+    // visible jamb/head/sill return surfaces at their own material depth.
+    for (const auto& opening : openings) {
+        append_rect({opening.x_min, y_min, opening.z_min}, {opening.x_min, y_max, opening.z_min}, {opening.x_min, y_max, opening.z_max}, {opening.x_min, y_min, opening.z_max});
+        append_rect({opening.x_max, y_min, opening.z_min}, {opening.x_max, y_min, opening.z_max}, {opening.x_max, y_max, opening.z_max}, {opening.x_max, y_max, opening.z_min});
+        append_rect({opening.x_min, y_min, opening.z_min}, {opening.x_max, y_min, opening.z_min}, {opening.x_max, y_max, opening.z_min}, {opening.x_min, y_max, opening.z_min});
+        append_rect({opening.x_min, y_min, opening.z_max}, {opening.x_min, y_max, opening.z_max}, {opening.x_max, y_max, opening.z_max}, {opening.x_max, y_min, opening.z_max});
+    }
+}
+
+MeshBuffer build_layered_wall_mesh(
+    const WallProfile2D& profile,
+    double height_meters,
+    const std::vector<WallAssemblyLayer>& layers,
+    double total_thickness
+) {
+    MeshBuffer mesh;
+    if (layers.empty()) {
+        return mesh;
+    }
+    const auto interpolate_endpoint = [&](Point2 lower, Point2 upper, double y) {
+        const auto denominator = upper.y - lower.y;
+        if (std::abs(denominator) <= epsilon) {
+            return lower.x;
+        }
+        const auto t = std::clamp((y - lower.y) / denominator, 0.0, 1.0);
+        return lower.x + ((upper.x - lower.x) * t);
+    };
+    auto y = -total_thickness / 2.0;
+    for (const auto& layer : layers) {
+        const auto next_y = y + layer.thickness_meters;
+        const auto start_at_y = interpolate_endpoint(profile.polygon[0], profile.polygon[3], y);
+        const auto end_at_y = interpolate_endpoint(profile.polygon[1], profile.polygon[2], y);
+        const auto start_at_next_y = interpolate_endpoint(profile.polygon[0], profile.polygon[3], next_y);
+        const auto end_at_next_y = interpolate_endpoint(profile.polygon[1], profile.polygon[2], next_y);
+        append_layer_prism(
+            mesh,
+            start_at_y, end_at_y,
+            start_at_next_y, end_at_next_y,
+            y, next_y, height_meters, profile.openings, layer.material_id
+        );
+        y = next_y;
+    }
+    return mesh;
 }
 
 MeshBuffer extrude_profile(const WallProfile2D& profile, double height_meters) {
@@ -195,7 +363,12 @@ WallProfile2D GeometryService::build_wall_profile(const WallData& wall) const {
     };
 
     const auto direction = unit_direction(wall.axis);
-    const auto miter_extension = half_thickness;
+    struct EndpointMiter {
+        double extension{};
+        double turn{};
+    };
+    std::optional<EndpointMiter> start_miter;
+    std::optional<EndpointMiter> end_miter;
 
     for (const auto& join : wall.joins) {
         if (join.kind == WallJoinKind::Tee || join.kind == WallJoinKind::Cross) {
@@ -213,25 +386,36 @@ WallProfile2D GeometryService::build_wall_profile(const WallData& wall) const {
 
         const auto other_direction = direction_away_from(join.point, join.other_axis);
         const auto turn = cross(direction, other_direction);
-        if (std::abs(turn) <= epsilon) {
+        const auto extension = miter_extension(half_thickness, direction, other_direction);
+        if (!extension.has_value()) {
             continue;
         }
 
-        profile.has_miter_join = true;
-        if (at_end) {
-            if (turn > 0.0) {
-                profile.polygon[2].x += miter_extension;
-            } else {
-                profile.polygon[1].x += miter_extension;
-            }
-        } else {
-            if (turn > 0.0) {
-                profile.polygon[0].x -= miter_extension;
-            } else {
-                profile.polygon[3].x -= miter_extension;
-            }
+        auto& target = at_end ? end_miter : start_miter;
+        // A fan of walls can share one endpoint.  A wall can only have one
+        // cap there, so retain the widest valid mitre instead of summing all
+        // joins into a visibly exploded corner.
+        if (!target.has_value() || extension.value() > target->extension) {
+            target = EndpointMiter{.extension = extension.value(), .turn = turn};
         }
     }
+
+    const auto apply_miter = [&](const EndpointMiter& miter, bool at_end) {
+        profile.has_miter_join = true;
+        const auto signed_extension = miter.turn > 0.0 ? miter.extension : -miter.extension;
+        if (at_end) {
+            // A mitre is a shared cap, not a one-sided overhang.  Moving both
+            // faces in opposite directions gives the neighbouring wall the
+            // exact same cap line and removes the overlap seam in plan.
+            profile.polygon[1].x += signed_extension;
+            profile.polygon[2].x -= signed_extension;
+        } else {
+            profile.polygon[0].x -= signed_extension;
+            profile.polygon[3].x += signed_extension;
+        }
+    };
+    if (start_miter.has_value()) apply_miter(*start_miter, false);
+    if (end_miter.has_value()) apply_miter(*end_miter, true);
 
     for (const auto& opening : wall.openings) {
         const auto x_min = opening.offset_meters - (opening.width_meters / 2.0);
@@ -250,23 +434,37 @@ WallProfile2D GeometryService::build_wall_profile(const WallData& wall) const {
         });
     }
 
+    std::sort(profile.openings.begin(), profile.openings.end(), [](const auto& left, const auto& right) {
+        return left.x_min < right.x_min;
+    });
+
     validate_opening_rectangles(profile.openings, length, wall.height_meters);
     return profile;
 }
 
-GeneratedGeometry GeometryService::build_wall_geometry(const WallData& wall, Revision source_revision) const {
+GeneratedGeometry GeometryService::build_wall_geometry(
+    const WallData& wall,
+    Revision source_revision,
+    const std::vector<WallAssemblyLayer>& layers
+) const {
     auto profile = build_wall_profile(wall);
-    auto mesh = extrude_profile(profile, wall.height_meters);
+    const auto layer_thickness = std::accumulate(layers.begin(), layers.end(), 0.0, [](double total, const auto& layer) {
+        return total + layer.thickness_meters;
+    });
+    auto mesh = layers.empty() || layer_thickness <= epsilon
+        ? extrude_profile(profile, wall.height_meters)
+        : build_layered_wall_mesh(profile, wall.height_meters, layers, layer_thickness);
 
     for (auto& vertex : mesh.vertices) {
         vertex = to_world_point(vertex, wall.axis);
     }
 
-    const auto gross_volume = wall_length(wall.axis) * wall.height_meters * wall.thickness_meters;
+    const auto resolved_thickness = layer_thickness > epsilon ? layer_thickness : wall.thickness_meters;
+    const auto gross_volume = wall_length(wall.axis) * wall.height_meters * resolved_thickness;
 
     auto opening_volume = 0.0;
     for (const auto& opening : profile.openings) {
-        opening_volume += (opening.x_max - opening.x_min) * (opening.z_max - opening.z_min) * wall.thickness_meters;
+        opening_volume += (opening.x_max - opening.x_min) * (opening.z_max - opening.z_min) * resolved_thickness;
     }
 
     return GeneratedGeometry{

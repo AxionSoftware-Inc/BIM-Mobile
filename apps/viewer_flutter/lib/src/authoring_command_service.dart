@@ -1,16 +1,17 @@
 import 'render_scene_models.dart';
-import 'tbe_ffi.dart';
+import 'viewer_authoring_gateway.dart';
+import 'viewer_engine_contracts.dart';
 
 /// Engine-first Inspector mutations. A command either returns a new
 /// authoritative snapshot or an error; widgets never mutate local geometry.
 class AuthoringCommandService {
   AuthoringCommandService({
-    required ViewerRepository? Function() repository,
+    required ViewerAuthoringGateway? Function() repository,
     required bool Function() engineEnabled,
   })  : _repository = repository,
         _engineEnabled = engineEnabled;
 
-  final ViewerRepository? Function() _repository;
+  final ViewerAuthoringGateway? Function() _repository;
   final bool Function() _engineEnabled;
 
   Future<RenderSceneLoadResult> updateLevel({
@@ -41,6 +42,19 @@ class AuthoringCommandService {
         heightMode: heightMode,
         baseOffsetMeters: baseOffsetMeters,
         topOffsetMeters: topOffsetMeters,
+      );
+
+  Future<RenderSceneLoadResult> trimExtendWalls({
+    required int firstWallId,
+    required bool firstUsesStart,
+    required int secondWallId,
+    required bool secondUsesStart,
+  }) =>
+      _requireRepository().trimExtendWalls(
+        firstWallId: firstWallId,
+        firstUsesStart: firstUsesStart,
+        secondWallId: secondWallId,
+        secondUsesStart: secondUsesStart,
       );
 
   Future<RenderSceneLoadResult> updateOpening({
@@ -100,7 +114,7 @@ class AuthoringCommandService {
   Future<RenderSceneLoadResult> deleteElement(int elementId) =>
       _requireRepository().deleteElement(elementId: elementId);
 
-  ViewerRepository _requireRepository() {
+  ViewerAuthoringGateway _requireRepository() {
     final repository = _repository();
     if (!_engineEnabled() || repository == null) {
       throw TbeApiException('Authoritative engine is required for this edit');

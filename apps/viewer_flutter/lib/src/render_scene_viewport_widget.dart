@@ -106,7 +106,10 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
         draftWallHeightMeters: widget.draftWallHeightMeters,
         nativeRenderer: true,
         rendererChild: IgnorePointer(
-          ignoring: true,
+          // ClipVolume handles and native orbit must share the exact Filament
+          // camera while a Section Box is active. Outside that mode Flutter
+          // keeps its existing authoring/navigation gesture authority.
+          ignoring: !widget.controller.hasSectionBox,
           child: _AndroidRenderSceneView(controller: widget.controller),
         ),
       );
@@ -146,6 +149,13 @@ class _AndroidRenderSceneView extends StatelessWidget {
       // deeply nested mesh arrays on several Android devices.
       creationParams: const <String, Object?>{},
       creationParamsCodec: const StandardMessageCodec(),
+      gestureRecognizers: controller.hasSectionBox
+          ? <Factory<OneSequenceGestureRecognizer>>{
+              Factory<OneSequenceGestureRecognizer>(
+                () => EagerGestureRecognizer(),
+              ),
+            }
+          : const <Factory<OneSequenceGestureRecognizer>>{},
       onPlatformViewCreated: controller.attachNativeBridge,
     );
   }
@@ -331,6 +341,7 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
         final size = constraints.biggest;
+        final nativeClipInteraction = controller.hasSectionBox;
         controller.setViewportSize(size);
         RenderSceneLevel? inlineLevel;
         Offset? inlineLevelOrigin;
@@ -361,10 +372,12 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
         return GestureDetector(
           behavior: HitTestBehavior.opaque,
           onScaleStart: (ScaleStartDetails details) {
+            if (nativeClipInteraction) return;
             _gesturePreviousScale = 1.0;
             _gesturePreviousFocalPoint = details.localFocalPoint;
           },
           onScaleUpdate: (ScaleUpdateDetails details) {
+            if (nativeClipInteraction) return;
             if (details.pointerCount < 2) {
               return;
             }
@@ -399,12 +412,14 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
             _gesturePreviousFocalPoint = details.localFocalPoint;
           },
           onScaleEnd: (_) {
+            if (nativeClipInteraction) return;
             _gesturePreviousScale = 1.0;
             _gesturePreviousFocalPoint = null;
           },
           child: Listener(
             behavior: HitTestBehavior.opaque,
             onPointerSignal: (PointerSignalEvent event) {
+              if (nativeClipInteraction) return;
               if (event is! PointerScrollEvent) {
                 return;
               }
@@ -421,6 +436,7 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
               }
             },
             onPointerDown: (PointerDownEvent event) {
+              if (nativeClipInteraction) return;
               _activePointerCount += 1;
               _activePointer = event.pointer;
               _pointerDownPosition = event.localPosition;
@@ -485,9 +501,11 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
               }
             },
             onPointerPanZoomStart: (_) {
+              if (nativeClipInteraction) return;
               _trackpadPreviousScale = 1.0;
             },
             onPointerPanZoomUpdate: (PointerPanZoomUpdateEvent event) {
+              if (nativeClipInteraction) return;
               if (controller.projectionMode.isPlanar) {
                 if (event.panDelta.distanceSquared > 0.0) {
                   controller.panPlanBy(event.panDelta);
@@ -515,12 +533,14 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
               _trackpadPreviousScale = event.scale;
             },
             onPointerPanZoomEnd: (_) {
+              if (nativeClipInteraction) return;
               _trackpadPreviousScale = 1.0;
             },
             onPointerHover: (PointerHoverEvent event) {
               _emitHover(scene, size, event.localPosition, event.position);
             },
             onPointerMove: (PointerMoveEvent event) {
+              if (nativeClipInteraction) return;
               if (_activePointer != event.pointer) {
                 return;
               }
@@ -639,6 +659,10 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
               _lastPointerPosition = event.localPosition;
             },
             onPointerUp: (PointerUpEvent event) async {
+              if (nativeClipInteraction) {
+                _clearPointerState();
+                return;
+              }
               if (_activePointerCount > 0) {
                 _activePointerCount -= 1;
               }
@@ -844,14 +868,15 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                       onSubmitted: widget.onLevelElevationSubmitted,
                     ),
                   ),
-                Positioned(
-                  right: 12,
-                  top: 12,
-                  child: _ViewportStatsCard(
-                    scene: scene,
-                    native: widget.nativeRenderer,
+                if (kDebugMode)
+                  Positioned(
+                    right: 12,
+                    top: 12,
+                    child: _ViewportStatsCard(
+                      scene: scene,
+                      native: widget.nativeRenderer,
+                    ),
                   ),
-                ),
               ],
             ),
           ),

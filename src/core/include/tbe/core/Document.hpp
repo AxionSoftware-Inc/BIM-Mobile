@@ -11,6 +11,14 @@
 
 namespace tbe::core {
 
+enum class GeometryDetail {
+    // Fast analytical envelope used by interactive viewport rendering.
+    Envelope,
+    // Per-layer mesh used by core-level authoring/tests and explicit detail
+    // exports. Quantities never require this mesh: assemblies are semantic.
+    Layered,
+};
+
 class Document {
 public:
     explicit Document(std::string name);
@@ -23,11 +31,12 @@ public:
         MaterialCategory category,
         std::optional<double> density_kg_per_m3 = std::nullopt,
         std::optional<double> unit_cost = std::nullopt,
-        std::map<std::string, std::string> metadata = {}
+        std::map<std::string, std::string> metadata = {},
+        std::string display_color = "#B0B7C3"
     );
     [[nodiscard]] const MaterialDefinition* get_material(ElementId material_id) const noexcept;
     void update_material(MaterialDefinition material);
-    ElementId create_wall_type(std::string name, std::vector<WallAssemblyLayer> layers);
+    ElementId create_wall_type(std::string name, std::vector<WallAssemblyLayer> layers, WallTypeCategory category = WallTypeCategory::Generic);
     [[nodiscard]] const WallTypeData* get_wall_type(ElementId wall_type_id) const noexcept;
     void update_wall_type(WallTypeData wall_type);
     ElementId create_layered_assembly(LayeredAssemblyKind kind, std::string name, std::vector<WallAssemblyLayer> layers);
@@ -137,6 +146,14 @@ public:
     void set_beam_column_join(ElementId beam_id, ElementId column_id, bool enabled);
     void set_wall_properties(ElementId wall_id, double thickness_meters, double height_meters, ElementId wall_type_id = 0);
     void set_wall_axis(ElementId wall_id, Line2 axis);
+    /// Atomically trims or extends the explicitly chosen endpoint of two
+    /// same-storey wall axes to their infinite-line intersection.
+    void trim_extend_walls(
+        ElementId first_wall_id,
+        bool first_uses_start,
+        ElementId second_wall_id,
+        bool second_uses_start
+    );
     ElementId split_wall(ElementId wall_id, double offset_meters);
     void delete_element(ElementId element_id);
     void move_hosted_opening(ElementId opening_id, double offset_meters);
@@ -152,7 +169,7 @@ public:
     /// until a deliberate authoring operation asks for it.
     void set_automatic_wall_join_enabled(bool enabled) noexcept;
     std::vector<ElementId> detect_rooms();
-    void regenerate_dirty_geometry();
+    void regenerate_dirty_geometry(GeometryDetail detail = GeometryDetail::Layered);
     [[nodiscard]] DependencyGraph build_dependency_graph() const;
     [[nodiscard]] const DependencyGraph& dependency_graph() const;
     [[nodiscard]] Revision dependency_graph_version() const noexcept;
@@ -212,6 +229,7 @@ private:
     [[nodiscard]] double level_elevation(ElementId level_id) const;
     [[nodiscard]] double resolved_wall_base_elevation(const WallData& wall) const;
     [[nodiscard]] double resolved_wall_height(const WallData& wall) const;
+    [[nodiscard]] double resolved_roof_surface_area(const RoofData& roof) const;
     [[nodiscard]] std::vector<Point2> normalized_profile_polygon(const ProfileDraft& draft) const;
     void add_opening_to_wall(ElementId host_wall_id, HostedOpening opening);
     void validate_opening(const WallData& wall, double offset_meters, double width_meters, double height_meters) const;

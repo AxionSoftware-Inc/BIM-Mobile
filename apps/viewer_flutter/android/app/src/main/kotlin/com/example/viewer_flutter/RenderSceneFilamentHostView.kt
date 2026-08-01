@@ -120,6 +120,35 @@ private data class NativeVisualEdge(
   val sharp: Boolean,
 )
 
+/** A convex clipping volume shared by the interactive box and section views. */
+private data class ClipPlane(
+  val normal: ScenePoint,
+  val offset: Double,
+) {
+  fun distance(point: ScenePoint): Double =
+    normal.x * point.x + normal.y * point.y + normal.z * point.z + offset
+}
+
+private enum class ClipVolumeMode { NONE, SECTION_BOX, SECTION_VIEW }
+
+/** Single authority for every clipping consumer: faces, borders and views. */
+private data class ClipVolumeState(
+  val mode: ClipVolumeMode = ClipVolumeMode.NONE,
+  val planes: List<ClipPlane> = emptyList(),
+  val boxMin: ScenePoint = ScenePoint(-100000.0, -100000.0, -100000.0),
+  val boxMax: ScenePoint = ScenePoint(100000.0, 100000.0, 100000.0),
+  val sectionDirection: ScenePoint? = null,
+  val sectionCenter: ScenePoint = ScenePoint(0.0, 0.0, 0.0),
+  val sectionLength: Double = 1.0,
+) {
+  val active: Boolean get() = mode != ClipVolumeMode.NONE
+  val isSectionBox: Boolean get() = mode == ClipVolumeMode.SECTION_BOX
+
+  companion object {
+    fun none() = ClipVolumeState()
+  }
+}
+
 internal class RenderSceneFilamentHostView(
   context: Context,
   initialScene: SceneState? = null,
@@ -138,20 +167,43 @@ internal class RenderSceneFilamentHostView(
   private val choreographer = Choreographer.getInstance()
   private val uiHelper = UiHelper(UiHelper.ContextErrorPolicy.DONT_CHECK)
   private val displayHelper = DisplayHelper(context, Handler(Looper.getMainLooper()))
+  private val sectionBoxHandler = Handler(Looper.getMainLooper())
+  private var fitSectionBoxOnNextRebuild = false
+  private var fitSectionViewOnNextRebuild = false
+  private val sectionBoxRebuild = Runnable {
+    rebuildScene()
+    syncVisibility()
+    refreshTintState()
+    if (fitSectionBoxOnNextRebuild) {
+      fitSectionBoxOnNextRebuild = false
+      fitCameraToSectionBox()
+    }
+    if (fitSectionViewOnNextRebuild) {
+      fitSectionViewOnNextRebuild = false
+      fitCameraToSectionView()
+    }
+    invalidate()
+  }
   private val scaleGestureDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
     override fun onScale(detector: ScaleGestureDetector): Boolean {
-      if (projectionMode == "topDown") {
-        topDownZoom = (topDownZoom / detector.scaleFactor.toDouble()).coerceIn(0.5, 200.0)
-        configureCameraProjection()
+      if (isPlanarProjection()) {
+        if (projectionMode == "topDown") {
+          topDownZoom = (topDownZoom / detector.scaleFactor.toDouble()).coerceIn(0.5, 200.0)
+        } else {
+          orbitDistance = (orbitDistance / detector.scaleFactor.toDouble())
+            .coerceIn(minimumOrbitDistance(), 250.0)
+        }
       } else {
         val nextDistance = orbitDistance / detector.scaleFactor.toDouble()
         orbitDistance = nextDistance.coerceIn(minimumOrbitDistance(), 250.0)
-        configureCameraProjection()
       }
+      configureCameraProjection()
       updateOrbitCamera()
       updateStatus(
         if (projectionMode == "topDown") {
           "Plan zoom ${topDownZoom.format(2)}m"
+        } else if (isPlanarProjection()) {
+          "Elevation zoom ${orbitDistance.format(2)}m"
         } else {
           "Orbit zoom ${orbitDistance.format(2)}m"
         }
@@ -223,6 +275,14 @@ internal class RenderSceneFilamentHostView(
   private var projectionMode = "topDown"
   private var orbitProjectionStyle = "orthographic"
   private var displayStyle = "solid"
+  private var clipVolume = ClipVolumeState.none()
+  private val sectionBoxEnabled get() = clipVolume.isSectionBox
+  private val sectionBoxMin get() = clipVolume.boxMin
+  private val sectionBoxMax get() = clipVolume.boxMax
+  private val clipPlanes get() = clipVolume.planes
+  private var sectionSceneMin = ScenePoint(-100000.0, -100000.0, -100000.0)
+  private var sectionSceneMax = ScenePoint(100000.0, 100000.0, 100000.0)
+  private var activeSectionHandle: String? = null
   private var lastTouchX = 0f
   private var lastTouchY = 0f
   private var touchDownX = 0f
@@ -236,10 +296,12 @@ internal class RenderSceneFilamentHostView(
       renderSurface,
       LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT),
     )
+    renderSurface.setOnTouchListener { _, event -> handleTouchEvent(event) }
     addView(
       selectionOverlay,
       LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT),
     )
+    selectionOverlay.setOnTouchListener { _, event -> handleSectionOverlayTouch(event) }
     addView(
       statusView,
       LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.START or Gravity.TOP),
@@ -251,6 +313,10 @@ internal class RenderSceneFilamentHostView(
     statusView.textSize = 12f
     statusView.maxLines = 2
     statusView.text = DEFAULT_RENDERER_STATUS
+    // Native telemetry remains available through the diagnostics channel, but
+    // it is never an on-canvas BIM workspace overlay. The visible UI belongs
+    // to Flutter's intentionally scoped debug tools instead.
+    statusView.visibility = android.view.View.GONE
 
     uiHelper.renderCallback = this
     uiHelper.attachTo(renderSurface)
@@ -296,6 +362,11 @@ internal class RenderSceneFilamentHostView(
       clearScene("RenderScene load failed or scene cleared.")
       return
     }
+    // A RenderScene snapshot is always authoritative and uncut. The Flutter
+    // controller reapplies its current ClipVolume after loading; clearing it
+    // here prevents a stale box/section from deleting a differently-bounded
+    // building during the intermediate rebuild.
+    resetClipVolumeState()
     currentScene = newScene
     rebuildScene()
     selectionOverlay.setVisualScene(
@@ -318,6 +389,7 @@ internal class RenderSceneFilamentHostView(
   }
 
   private fun clearScene(message: String) {
+    resetClipVolumeState()
     currentScene = null
     selectedElementId = null
     selectedElementIds = emptySet()
@@ -331,6 +403,15 @@ internal class RenderSceneFilamentHostView(
     invalidate()
   }
 
+  private fun resetClipVolumeState() {
+    clipVolume = ClipVolumeState.none()
+    sectionSceneMin = ScenePoint(-100000.0, -100000.0, -100000.0)
+    sectionSceneMax = ScenePoint(100000.0, 100000.0, 100000.0)
+    fitSectionBoxOnNextRebuild = false
+    fitSectionViewOnNextRebuild = false
+    selectionOverlay.setSectionBox(false, clipVolume.boxMin, clipVolume.boxMax)
+  }
+
   fun fitCamera() {
     val camera = camera ?: return
     val metrics = sceneMetrics
@@ -338,16 +419,34 @@ internal class RenderSceneFilamentHostView(
     // Transforming it again moves the fitted camera away from the mesh.
     val bounds = metrics.bounds
     val width = max(bounds.max.x - bounds.min.x, 0.001)
-    val depth = max(bounds.max.y - bounds.min.y, 0.001)
-    val height = max(bounds.max.z - bounds.min.z, 0.001)
+    // Filament uses Y as vertical.  Section scenes are intentionally very
+    // shallow in Z, so treating Z as elevation here fitted a 9-storey cut to
+    // its 6 cm section depth and clipped its first/last storeys.
+    val height = max(bounds.max.y - bounds.min.y, 0.001)
+    val depth = max(bounds.max.z - bounds.min.z, 0.001)
     val centerX = (bounds.min.x + bounds.max.x) * 0.5
     val centerY = (bounds.min.y + bounds.max.y) * 0.5
     val centerZ = (bounds.min.z + bounds.max.z) * 0.5
     val radius = max(width, max(depth, height)) * 0.75 + 1.0
     orbitCenter = ScenePoint(centerX, centerY, centerZ)
-    orbitDistance = max(radius * 2.0, 3.0)
-    orbitYawRadians = Math.toRadians(45.0)
-    orbitPitchRadians = Math.toRadians(24.0)
+    orbitDistance = if (isElevationProjection()) {
+      val horizontalExtent = when (projectionMode) {
+        "northElevation", "southElevation" -> width
+        "eastElevation", "westElevation" -> depth
+        else -> width
+      }
+      // `configureCameraProjection` derives orthographic half-height from
+      // orbitDistance. Size that value from the actual elevation axes, not
+      // the largest 3D extent, so a whole building fills the view naturally.
+      val halfHeight = max(
+        height * 0.5,
+        horizontalExtent / (2.0 * max(aspectRatio(), 0.1)),
+      ) * 1.12
+      max(halfHeight / 0.6, 3.0)
+    } else {
+      max(radius * 2.0, 3.0)
+    }
+    resetCameraOrientationForProjection()
     topDownZoom = max(radius * 1.2, 2.0)
     configureCameraProjection()
     updateOrbitCamera()
@@ -359,12 +458,7 @@ internal class RenderSceneFilamentHostView(
 
   fun setProjectionMode(mode: String) {
     projectionMode = mode
-    when (mode) {
-      "northElevation" -> { orbitYawRadians = Math.PI / 2.0; orbitPitchRadians = 0.0 }
-      "southElevation" -> { orbitYawRadians = -Math.PI / 2.0; orbitPitchRadians = 0.0 }
-      "eastElevation" -> { orbitYawRadians = Math.PI; orbitPitchRadians = 0.0 }
-      "westElevation" -> { orbitYawRadians = 0.0; orbitPitchRadians = 0.0 }
-    }
+    resetCameraOrientationForProjection()
     configureCameraProjection()
     updateOrbitCamera()
     syncVisualOverlay()
@@ -422,6 +516,7 @@ internal class RenderSceneFilamentHostView(
   fun setDisplayStyle(style: String) {
     displayStyle = style
     selectionOverlay.setDisplayStyle(style)
+    rebuildScene()
     syncVisibility()
     refreshTintState()
     updateStatus(if (style == "wireframe") "Wireframe: faces hidden, mesh edges shown." else null)
@@ -434,6 +529,159 @@ internal class RenderSceneFilamentHostView(
     syncVisibility()
     updateStatus()
     invalidate()
+  }
+
+  /** One universal ClipVolume drives the native box and triangle clipping. */
+  fun setSectionBox(payload: Map<*, *>?) {
+    val enabled = payload?.get("enabled") as? Boolean ?: false
+    val minPoint = parsePoint(payload?.get("min"))
+    val maxPoint = parsePoint(payload?.get("max"))
+    // Flutter may replay its last bridge snapshot after a native gesture.
+    // Once active, the native ClipVolume owns the six live planes; accepting
+    // that stale replay would snap both the border and camera back to their
+    // initial bounds in the middle of a drag.
+    if (enabled && sectionBoxEnabled && minPoint != null && maxPoint != null) {
+      return
+    }
+    if (enabled && minPoint != null && maxPoint != null) {
+      sectionSceneMin = minPoint
+      sectionSceneMax = maxPoint
+      val corners = listOf(
+        ScenePoint(minPoint.x, minPoint.y, minPoint.z), ScenePoint(minPoint.x, minPoint.y, maxPoint.z),
+        ScenePoint(minPoint.x, maxPoint.y, minPoint.z), ScenePoint(minPoint.x, maxPoint.y, maxPoint.z),
+        ScenePoint(maxPoint.x, minPoint.y, minPoint.z), ScenePoint(maxPoint.x, minPoint.y, maxPoint.z),
+        ScenePoint(maxPoint.x, maxPoint.y, minPoint.z), ScenePoint(maxPoint.x, maxPoint.y, maxPoint.z),
+      ).map(::toFilamentPoint)
+      val bounds = boundsForPoints(corners)
+      // Scene bounds are derived from doubles while Filament stores float
+      // vertices. Keep a small outward tolerance so an untouched box never
+      // discards a face solely because of float rounding at its boundary.
+      val tolerance = 0.05
+      val boxMin = ScenePoint(bounds.min.x - tolerance, bounds.min.y - tolerance, bounds.min.z - tolerance)
+      val boxMax = ScenePoint(bounds.max.x + tolerance, bounds.max.y + tolerance, bounds.max.z + tolerance)
+      clipVolume = ClipVolumeState(
+        mode = ClipVolumeMode.SECTION_BOX,
+        planes = boxClipPlanes(boxMin, boxMax),
+        boxMin = boxMin,
+        boxMax = boxMax,
+      )
+      fitSectionBoxOnNextRebuild = true
+    } else {
+      resetClipVolumeState()
+    }
+    applySectionBoxState()
+    selectionOverlay.setSectionBox(sectionBoxEnabled, sectionBoxMin, sectionBoxMax)
+    sectionBoxHandler.removeCallbacks(sectionBoxRebuild)
+    sectionBoxHandler.post(sectionBoxRebuild)
+    invalidate()
+  }
+
+  /**
+   * Uses the same ClipVolume as Section Box, but presents it as an
+   * architectural section: the cut line is the near plane and the camera
+   * looks into the retained half of the real, full RenderScene.
+   */
+  fun setSectionView(payload: Map<*, *>?) {
+    val enabled = payload?.get("enabled") as? Boolean ?: false
+    val start = parsePoint(payload?.get("start"))
+    val end = parsePoint(payload?.get("end"))
+    if (!enabled || start == null || end == null) {
+      if (clipVolume.mode == ClipVolumeMode.SECTION_VIEW) resetClipVolumeState()
+      sectionBoxHandler.removeCallbacks(sectionBoxRebuild)
+      sectionBoxHandler.post(sectionBoxRebuild)
+      return
+    }
+    selectionOverlay.setSectionBox(false, sectionBoxMin, sectionBoxMax)
+    val first = toFilamentPoint(start.copy(z = 0.0))
+    val second = toFilamentPoint(end.copy(z = 0.0))
+    val length = kotlin.math.hypot(second.x - first.x, second.z - first.z)
+    if (length <= 1.0e-6) return
+    val along = ScenePoint((second.x - first.x) / length, 0.0, (second.z - first.z) / length)
+    // Left side of the authored line is retained. The camera sits on the
+    // removed side and looks through the exact same plane used for clipping.
+    val inward = ScenePoint(-along.z, 0.0, along.x)
+    val lineMargin = 0.05
+    clipVolume = ClipVolumeState(
+      mode = ClipVolumeMode.SECTION_VIEW,
+      planes = listOf(
+        planeThrough(first, along, lineMargin),
+        planeThrough(second, ScenePoint(-along.x, 0.0, -along.z), lineMargin),
+        planeThrough(first, inward, 0.001),
+      ),
+      sectionDirection = inward,
+      sectionCenter = ScenePoint(
+        (first.x + second.x) * 0.5,
+        (sceneMetrics.bounds.min.y + sceneMetrics.bounds.max.y) * 0.5,
+        (first.z + second.z) * 0.5,
+      ),
+      sectionLength = length,
+    )
+    projectionMode = "section"
+    fitSectionViewOnNextRebuild = true
+    sectionBoxHandler.removeCallbacks(sectionBoxRebuild)
+    sectionBoxHandler.post(sectionBoxRebuild)
+    invalidate()
+  }
+
+  private fun planeThrough(point: ScenePoint, normal: ScenePoint, allowance: Double = 0.0): ClipPlane =
+    ClipPlane(normal, -(normal.x * point.x + normal.y * point.y + normal.z * point.z) + allowance)
+
+  private fun boxClipPlanes(minPoint: ScenePoint, maxPoint: ScenePoint): List<ClipPlane> = listOf(
+    ClipPlane(ScenePoint(1.0, 0.0, 0.0), -minPoint.x),
+    ClipPlane(ScenePoint(-1.0, 0.0, 0.0), maxPoint.x),
+    ClipPlane(ScenePoint(0.0, 1.0, 0.0), -minPoint.y),
+    ClipPlane(ScenePoint(0.0, -1.0, 0.0), maxPoint.y),
+    ClipPlane(ScenePoint(0.0, 0.0, 1.0), -minPoint.z),
+    ClipPlane(ScenePoint(0.0, 0.0, -1.0), maxPoint.z),
+  )
+
+  private fun fitCameraToSectionBox() {
+    if (!sectionBoxEnabled || projectionMode != "isometric") return
+    val width = sectionBoxMax.x - sectionBoxMin.x
+    val height = sectionBoxMax.y - sectionBoxMin.y
+    val depth = sectionBoxMax.z - sectionBoxMin.z
+    val span = max(width, max(height, depth))
+    orbitCenter = ScenePoint(
+      (sectionBoxMin.x + sectionBoxMax.x) * 0.5,
+      (sectionBoxMin.y + sectionBoxMax.y) * 0.5,
+      (sectionBoxMin.z + sectionBoxMax.z) * 0.5,
+    )
+    orbitDistance = max(span * 2.00, 8.0)
+    configureCameraProjection()
+    updateOrbitCamera()
+    syncVisualOverlay()
+  }
+
+  private fun fitCameraToSectionView() {
+    val inward = clipVolume.sectionDirection ?: return
+    val bounds = sceneMetrics.bounds
+    val height = max(bounds.max.y - bounds.min.y, 0.001)
+    val halfHeight = max(
+      height * 0.5,
+      clipVolume.sectionLength / (2.0 * max(aspectRatio(), 0.1)),
+    ) * 1.10
+    orbitCenter = clipVolume.sectionCenter.copy(
+      y = (bounds.min.y + bounds.max.y) * 0.5,
+    )
+    orbitDistance = max(halfHeight / 0.6, 3.0)
+    orbitYawRadians = kotlin.math.atan2(-inward.z, -inward.x)
+    orbitPitchRadians = 0.0
+    configureCameraProjection()
+    updateOrbitCamera()
+    syncVisualOverlay()
+  }
+
+  private fun applySectionBoxState() {
+    for (entry in renderables.values) {
+      applySectionBoxState(entry.materialInstance)
+      entry.edgeMaterialInstance?.let(::applySectionBoxState)
+    }
+  }
+
+  private fun applySectionBoxState(instance: MaterialInstance) {
+    instance.setParameter("sectionBoxEnabled", if (sectionBoxEnabled) 1.0f else 0.0f)
+    instance.setParameter("sectionBoxMin", sectionBoxMin.x.toFloat(), sectionBoxMin.y.toFloat(), sectionBoxMin.z.toFloat(), 0.0f)
+    instance.setParameter("sectionBoxMax", sectionBoxMax.x.toFloat(), sectionBoxMax.y.toFloat(), sectionBoxMax.z.toFloat(), 0.0f)
   }
 
   fun selectElement(elementId: Any?) {
@@ -552,6 +800,7 @@ internal class RenderSceneFilamentHostView(
       return
     }
     disposed = true
+    sectionBoxHandler.removeCallbacks(sectionBoxRebuild)
     cancelFrame()
     uiHelper.detach()
     displayHelper.detach()
@@ -625,7 +874,10 @@ internal class RenderSceneFilamentHostView(
         .shading(MaterialBuilder.Shading.UNLIT)
         .culling(MaterialBuilder.CullingMode.NONE)
         .doubleSided(true)
-        .uniformParameter(MaterialBuilder.UniformType.FLOAT4, "baseColor")
+      .uniformParameter(MaterialBuilder.UniformType.FLOAT4, "baseColor")
+        .uniformParameter(MaterialBuilder.UniformType.FLOAT, "sectionBoxEnabled")
+        .uniformParameter(MaterialBuilder.UniformType.FLOAT4, "sectionBoxMin")
+        .uniformParameter(MaterialBuilder.UniformType.FLOAT4, "sectionBoxMax")
         .material(source)
         .targetApi(MaterialBuilder.TargetApi.OPENGL)
         .platform(MaterialBuilder.Platform.MOBILE)
@@ -688,7 +940,7 @@ internal class RenderSceneFilamentHostView(
     for (objectData in objects) {
       try {
         val objectMaterial = when (normalizeKind(objectData.kind)) {
-          "wall" -> wallMaterial
+          "wall" -> if (displayStyle == "solid") material else wallMaterial
           "window" -> windowMaterial
           else -> material
         }
@@ -736,6 +988,7 @@ internal class RenderSceneFilamentHostView(
 
     val entity = EntityManager.get().create()
     val materialInstance = sharedMaterial.createInstance()
+    applySectionBoxState(materialInstance)
     val baseColor = kindColor(normalizeKind(objectData.kind))
     materialInstance.setParameter(
       "baseColor",
@@ -759,14 +1012,21 @@ internal class RenderSceneFilamentHostView(
       .build(engine, entity)
 
     val visual = toVisualObject(objectData)
+    val edgePoints = if (clipVolume.active) geometry.points else visual.points
+    val edgeTriangles = if (clipVolume.active) geometry.triangles else visual.triangles
+    val visualEdges = if (clipVolume.active) {
+      clippedFeatureEdges(edgePoints, edgeTriangles)
+    } else {
+      visual.featureEdges
+    }
     // GPU depth-tested architectural border pass. Keep semantic feature
     // edges (open boundaries and face creases), not every mesh triangle edge:
     // this preserves room corners after an exterior wall is removed without
     // turning the solid view into Wire.
     val edgeGeometry = edgeGeometry(
-      visual.points,
-      visual.featureEdges,
-      visual.triangles,
+      edgePoints,
+      visualEdges,
+      edgeTriangles,
       wallJunctionEdges = normalizeKind(objectData.kind) == "wall",
       wallJunctionElevations = wallJunctionElevations,
     )
@@ -789,6 +1049,7 @@ internal class RenderSceneFilamentHostView(
     val edgeMaterialInstance = edgeEntity?.let {
       edgeSharedMaterial.createInstance().also { instance ->
         instance.setParameter("baseColor", Colors.RgbaType.LINEAR, 0.015f, 0.025f, 0.040f, 1.0f)
+        applySectionBoxState(instance)
       }
     }
     if (edgeEntity != null && edgeVertexBuffer != null && edgeIndexBuffer != null && edgeGeometry != null && edgeMaterialInstance != null) {
@@ -819,15 +1080,15 @@ internal class RenderSceneFilamentHostView(
   }
 
   private fun objectGeometry(objectData: SceneObject): GeometryData? {
-    val meshPoints = if (objectData.mesh.positions.isNotEmpty() && objectData.mesh.indices.size >= 3) {
+    val sourcePoints = if (objectData.mesh.positions.isNotEmpty() && objectData.mesh.indices.size >= 3) {
       objectData.mesh.positions.map(::toFilamentPoint)
     } else {
       boxCorners(objectData.bounds).map(::toFilamentPoint)
     }
-    if (meshPoints.isEmpty()) {
+    if (sourcePoints.isEmpty()) {
       return null
     }
-    val triangles = if (objectData.mesh.positions.isNotEmpty() && objectData.mesh.indices.size >= 3) {
+    val sourceTriangles = if (objectData.mesh.positions.isNotEmpty() && objectData.mesh.indices.size >= 3) {
       objectData.mesh.indices.chunked(3).mapNotNull { group ->
         if (group.size == 3) {
           intArrayOf(group[0], group[1], group[2])
@@ -845,6 +1106,48 @@ internal class RenderSceneFilamentHostView(
         intArrayOf(3, 7, 4), intArrayOf(3, 4, 0),
       )
     }
+    val meshPoints = mutableListOf<ScenePoint>()
+    val triangles = mutableListOf<IntArray>()
+    if (clipPlanes.isEmpty()) {
+      meshPoints.addAll(sourcePoints)
+      triangles.addAll(sourceTriangles)
+    } else {
+      for (triangle in sourceTriangles) {
+        if (triangle.any { it !in sourcePoints.indices }) continue
+        var polygon = listOf(sourcePoints[triangle[0]], sourcePoints[triangle[1]], sourcePoints[triangle[2]])
+        for (plane in clipPlanes) {
+          if (polygon.isEmpty()) break
+          val clipped = mutableListOf<ScenePoint>()
+          for (index in polygon.indices) {
+            val first = polygon[index]
+            val second = polygon[(index + 1) % polygon.size]
+            val firstDistance = plane.distance(first)
+            val secondDistance = plane.distance(second)
+            val firstInside = firstDistance >= -1.0e-6
+            val secondInside = secondDistance >= -1.0e-6
+            if (firstInside != secondInside) {
+              val denominator = firstDistance - secondDistance
+              val ratio = if (kotlin.math.abs(denominator) <= 1.0e-12) 0.0 else firstDistance / denominator
+              clipped.add(ScenePoint(
+                first.x + (second.x - first.x) * ratio,
+                first.y + (second.y - first.y) * ratio,
+                first.z + (second.z - first.z) * ratio,
+              ))
+            }
+            if (secondInside) clipped.add(second)
+          }
+          polygon = clipped
+        }
+        if (polygon.size >= 3) {
+          val base = meshPoints.size
+          meshPoints.addAll(polygon)
+          for (index in 1 until polygon.size - 1) {
+            triangles.add(intArrayOf(base, base + index, base + index + 1))
+          }
+        }
+      }
+    }
+    if (meshPoints.isEmpty() || triangles.isEmpty()) return null
     val vertexData = ByteBuffer.allocateDirect(meshPoints.size * 12).order(ByteOrder.nativeOrder())
     for (point in meshPoints) {
       vertexData.putFloat(point.x.toFloat())
@@ -868,7 +1171,77 @@ internal class RenderSceneFilamentHostView(
       vertexData = vertexData,
       indexData = indexData,
       bounds = boundsForPoints(meshPoints),
+      points = meshPoints,
+      triangles = triangles,
     )
+  }
+
+  /**
+   * Reconstructs only physical outlines from the already-clipped triangle
+   * soup. Cut-plane contours are included, while coplanar triangulation seams
+   * remain hidden.
+   */
+  private fun clippedFeatureEdges(
+    points: List<ScenePoint>,
+    triangles: List<IntArray>,
+  ): List<NativeVisualEdge> {
+    data class PointKey(val x: Long, val y: Long, val z: Long)
+    data class EdgeUse(
+      val first: Int,
+      val second: Int,
+      val triangleIndices: MutableList<Int> = mutableListOf(),
+      val normals: MutableList<DoubleArray> = mutableListOf(),
+    )
+    fun pointKey(point: ScenePoint) = PointKey(
+      kotlin.math.round(point.x * 100000.0).toLong(),
+      kotlin.math.round(point.y * 100000.0).toLong(),
+      kotlin.math.round(point.z * 100000.0).toLong(),
+    )
+    fun orderedKey(first: PointKey, second: PointKey): String {
+      val a = "${first.x}:${first.y}:${first.z}"
+      val b = "${second.x}:${second.y}:${second.z}"
+      return if (a <= b) "$a|$b" else "$b|$a"
+    }
+    val uses = linkedMapOf<String, EdgeUse>()
+    for ((triangleIndex, triangle) in triangles.withIndex()) {
+      if (triangle.size != 3 || triangle.any { it !in points.indices }) continue
+      val normal = triangleNormal(
+        points[triangle[0]], points[triangle[1]], points[triangle[2]],
+      )
+      for ((first, second) in arrayOf(
+        triangle[0] to triangle[1],
+        triangle[1] to triangle[2],
+        triangle[2] to triangle[0],
+      )) {
+        val key = orderedKey(pointKey(points[first]), pointKey(points[second]))
+        val use = uses.getOrPut(key) { EdgeUse(first, second) }
+        use.triangleIndices.add(triangleIndex)
+        use.normals.add(normal)
+      }
+    }
+    return uses.values.mapNotNull { use ->
+      val first = points[use.first]
+      val second = points[use.second]
+      val onCutPlane = clipPlanes.any { plane ->
+        kotlin.math.abs(plane.distance(first)) <= 1.0e-5 &&
+          kotlin.math.abs(plane.distance(second)) <= 1.0e-5
+      }
+      val sharp = use.normals.indices.any { left ->
+        (left + 1 until use.normals.size).any { right ->
+          normalDot(use.normals[left], use.normals[right]) < 0.82
+        }
+      }
+      if (use.triangleIndices.size == 1 || onCutPlane || sharp) {
+        NativeVisualEdge(
+          first = use.first,
+          second = use.second,
+          triangleIndices = use.triangleIndices.toIntArray(),
+          sharp = sharp || onCutPlane,
+        )
+      } else {
+        null
+      }
+    }
   }
 
   private fun edgeGeometry(
@@ -1173,7 +1546,8 @@ internal class RenderSceneFilamentHostView(
       // Shaded uses the same depth-tested architectural border pass as Solid;
       // only its face tint differs. Without this it reads as flat category
       // colour blocks and loses BIM form readability.
-      val edgeVisible = (displayStyle == "solid" || displayStyle == "shaded") &&
+      val edgeVisible =
+        (displayStyle == "solid" || displayStyle == "shaded") &&
         (visibleKinds.isEmpty() || visibleKinds.contains(normalizeKind(entry.objectData.kind)))
       val edgeEntity = entry.edgeEntity
       if (edgeEntity != null && edgeVisible && !entry.edgeAttached) {
@@ -1191,7 +1565,8 @@ internal class RenderSceneFilamentHostView(
       val selected = entry.objectData.elementId != null && selectedElementIds.contains(entry.objectData.elementId)
       val active = entry.objectData.elementId != null && entry.objectData.elementId == selectedElementId
       val highlighted = entry.objectData.elementId != null && entry.objectData.elementId == highlightedElementId
-      val solidColor = if (displayStyle == "solid") {
+      val isWindow = normalizeKind(entry.objectData.kind) == "window"
+      val solidColor = if (displayStyle == "solid" && !isWindow) {
         // Revit-like working view: neutral paper-white surfaces with graphite
         // edges. Material/category colors remain available in Shaded.
         floatArrayOf(
@@ -1204,8 +1579,8 @@ internal class RenderSceneFilamentHostView(
         entry.baseColor
       }
       val color = when {
-        active -> floatArrayOf(0.08f, 0.28f, 0.82f, 1f)
-        selected -> floatArrayOf(0.18f, 0.45f, 0.95f, 1f)
+        active -> floatArrayOf(0.08f, 0.28f, 0.82f, if (isWindow) 0.12f else 1f)
+        selected -> floatArrayOf(0.18f, 0.45f, 0.95f, if (isWindow) 0.16f else 1f)
         highlighted -> floatArrayOf(0.92f, 0.34f, 0.16f, 1f)
         else -> solidColor
       }
@@ -1396,6 +1771,7 @@ internal class RenderSceneFilamentHostView(
         touchDownY = event.y
         touchMoved = false
         touching = true
+        activeSectionHandle = selectionOverlay.hitSectionHandle(event.x, event.y)
         return true
       }
       MotionEvent.ACTION_MOVE -> {
@@ -1412,12 +1788,11 @@ internal class RenderSceneFilamentHostView(
           }
           lastTouchX = event.x
           lastTouchY = event.y
-          if (projectionMode == "topDown") {
-            val metersPerPixel = (topDownZoom * 2.0) / max(renderSurface.height.toDouble(), 1.0)
-            orbitCenter = orbitCenter.copy(
-              x = orbitCenter.x - dx * metersPerPixel,
-              z = orbitCenter.z + dy * metersPerPixel,
-            )
+          val sectionHandle = activeSectionHandle
+          if (sectionHandle != null) {
+            moveSectionHandle(sectionHandle, selectionOverlay.sectionAxisDelta(sectionHandle, dx, dy))
+          } else if (isPlanarProjection()) {
+            panPlanarCamera(dx, dy)
           } else {
             orbitYawRadians -= dx * 0.01
             orbitPitchRadians = (orbitPitchRadians + dy * 0.01).coerceIn(Math.toRadians(0.1), Math.toRadians(88.0))
@@ -1429,14 +1804,76 @@ internal class RenderSceneFilamentHostView(
         return true
       }
       MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-        if (event.actionMasked == MotionEvent.ACTION_UP && !touchMoved) {
+        if (event.actionMasked == MotionEvent.ACTION_UP && !touchMoved && activeSectionHandle == null) {
           pickVisibleObject(event.x, event.y)
         }
+        activeSectionHandle = null
         touching = false
         return true
       }
       else -> return true
     }
+  }
+
+  private fun handleSectionOverlayTouch(event: MotionEvent): Boolean {
+    when (event.actionMasked) {
+      MotionEvent.ACTION_DOWN -> {
+        val handle = selectionOverlay.hitSectionHandle(event.x, event.y) ?: return false
+        activeSectionHandle = handle
+        lastTouchX = event.x
+        lastTouchY = event.y
+        parent?.requestDisallowInterceptTouchEvent(true)
+        return true
+      }
+      MotionEvent.ACTION_MOVE -> {
+        val handle = activeSectionHandle ?: return false
+        val dx = event.x - lastTouchX
+        val dy = event.y - lastTouchY
+        lastTouchX = event.x
+        lastTouchY = event.y
+        moveSectionHandle(handle, selectionOverlay.sectionAxisDelta(handle, dx, dy))
+        return true
+      }
+      MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+        if (activeSectionHandle == null) return false
+        activeSectionHandle = null
+        parent?.requestDisallowInterceptTouchEvent(false)
+        return true
+      }
+      else -> return activeSectionHandle != null
+    }
+  }
+
+  private fun moveSectionHandle(handle: String, delta: Double) {
+    if (!sectionBoxEnabled || !delta.isFinite()) return
+    val minimumSpan = 0.02
+    var minPoint = sectionBoxMin
+    var maxPoint = sectionBoxMax
+    when (handle) {
+      "xMin" -> minPoint = minPoint.copy(x = (minPoint.x + delta).coerceAtMost(maxPoint.x - minimumSpan))
+      "xMax" -> maxPoint = maxPoint.copy(x = (maxPoint.x + delta).coerceAtLeast(minPoint.x + minimumSpan))
+      "yMin" -> minPoint = minPoint.copy(y = (minPoint.y + delta).coerceAtMost(maxPoint.y - minimumSpan))
+      "yMax" -> maxPoint = maxPoint.copy(y = (maxPoint.y + delta).coerceAtLeast(minPoint.y + minimumSpan))
+      "zMin" -> minPoint = minPoint.copy(z = (minPoint.z + delta).coerceAtMost(maxPoint.z - minimumSpan))
+      "zMax" -> maxPoint = maxPoint.copy(z = (maxPoint.z + delta).coerceAtLeast(minPoint.z + minimumSpan))
+    }
+    // Border, handles and clipping triangles must consume the same bounds.
+    // Rebuilding these planes here removes the former one-gesture lag where
+    // the wire box moved but geometry still used its initial six planes.
+    clipVolume = clipVolume.copy(
+      planes = boxClipPlanes(minPoint, maxPoint),
+      boxMin = minPoint,
+      boxMax = maxPoint,
+    )
+    val sceneBounds = boundsForPoints(boxCorners(SceneBounds(minPoint, maxPoint)).map(::fromFilamentPoint))
+    sectionSceneMin = sceneBounds.min
+    sectionSceneMax = sceneBounds.max
+    applySectionBoxState()
+    selectionOverlay.setSectionBox(true, minPoint, maxPoint)
+    sectionBoxHandler.removeCallbacks(sectionBoxRebuild)
+    sectionBoxHandler.postDelayed(sectionBoxRebuild, 55L)
+    interactiveUntilMs = SystemClock.uptimeMillis() + 500L
+    invalidate()
   }
 
   private fun pickVisibleObject(x: Float, y: Float) {
@@ -1506,6 +1943,59 @@ internal class RenderSceneFilamentHostView(
       0.0,
     )
     syncVisualOverlay()
+  }
+
+  /// Every non-isometric view is an architectural planar view. A Fit must
+  /// preserve that camera direction instead of restoring the 3D default.
+  private fun isPlanarProjection(): Boolean = projectionMode != "isometric"
+
+  private fun isElevationProjection(): Boolean =
+    projectionMode == "northElevation" || projectionMode == "southElevation" ||
+      projectionMode == "eastElevation" || projectionMode == "westElevation"
+
+  private fun resetCameraOrientationForProjection() {
+    when (projectionMode) {
+      "northElevation" -> {
+        orbitYawRadians = Math.PI / 2.0
+        orbitPitchRadians = 0.0
+      }
+      "southElevation" -> {
+        orbitYawRadians = -Math.PI / 2.0
+        orbitPitchRadians = 0.0
+      }
+      "eastElevation" -> {
+        orbitYawRadians = Math.PI
+        orbitPitchRadians = 0.0
+      }
+      "westElevation" -> {
+        orbitYawRadians = 0.0
+        orbitPitchRadians = 0.0
+      }
+      else -> {
+        orbitYawRadians = Math.toRadians(45.0)
+        orbitPitchRadians = Math.toRadians(24.0)
+      }
+    }
+  }
+
+  private fun panPlanarCamera(dx: Float, dy: Float) {
+    val halfHeight = if (projectionMode == "topDown") topDownZoom else max(orbitDistance * 0.6, 2.0)
+    val metersPerPixel = (halfHeight * 2.0) / max(renderSurface.height.toDouble(), 1.0)
+    orbitCenter = when (projectionMode) {
+      "topDown" -> orbitCenter.copy(
+        x = orbitCenter.x - dx * metersPerPixel,
+        z = orbitCenter.z + dy * metersPerPixel,
+      )
+      "northElevation", "southElevation" -> orbitCenter.copy(
+        x = orbitCenter.x - dx * metersPerPixel,
+        y = orbitCenter.y + dy * metersPerPixel,
+      )
+      "eastElevation", "westElevation" -> orbitCenter.copy(
+        z = orbitCenter.z + dx * metersPerPixel,
+        y = orbitCenter.y + dy * metersPerPixel,
+      )
+      else -> orbitCenter
+    }
   }
 
   private fun syncVisualOverlay() {
@@ -1597,6 +2087,10 @@ internal class RenderSceneFilamentHostView(
     return ScenePoint(point.x, point.z, -point.y)
   }
 
+  private fun fromFilamentPoint(point: ScenePoint): ScenePoint {
+    return ScenePoint(point.x, -point.z, point.y)
+  }
+
   private fun boundsForPoints(points: List<ScenePoint>): SceneBounds {
     if (points.isEmpty()) {
       return SceneBounds(ScenePoint(0.0, 0.0, 0.0), ScenePoint(0.0, 0.0, 0.0))
@@ -1625,7 +2119,7 @@ internal class RenderSceneFilamentHostView(
     return when (kind) {
       "wall" -> floatArrayOf(0.62f, 0.38f, 0.25f, 1f)
       "door" -> floatArrayOf(0.64f, 0.47f, 0.37f, 1f)
-      "window" -> floatArrayOf(0.34f, 0.72f, 0.96f, 0.38f)
+      "window" -> floatArrayOf(0.34f, 0.72f, 0.96f, 0.10f)
       "slab" -> floatArrayOf(0.57f, 0.63f, 0.71f, 1f)
       "floor" -> floatArrayOf(0.47f, 0.66f, 0.55f, 1f)
       "ceiling" -> floatArrayOf(0.78f, 0.82f, 0.87f, 1f)
@@ -1661,11 +2155,19 @@ internal class RenderSceneFilamentHostView(
       selectable = objectData.selectable,
       points = points,
       triangles = triangles,
-      featureEdges = meshFeatureEdges(points, triangles),
+      featureEdges = meshFeatureEdges(
+        points,
+        triangles,
+        creaseDotThreshold = if (normalizeKind(objectData.kind) == "roof") 0.995 else 0.90,
+      ),
     )
   }
 
-  private fun meshFeatureEdges(points: List<ScenePoint>, triangles: List<IntArray>): List<NativeVisualEdge> {
+  private fun meshFeatureEdges(
+    points: List<ScenePoint>,
+    triangles: List<IntArray>,
+    creaseDotThreshold: Double = 0.90,
+  ): List<NativeVisualEdge> {
     data class PointKey(val x: Long, val y: Long, val z: Long)
     data class Edge(val first: Int, val second: Int)
     data class EdgeUse(
@@ -1703,7 +2205,7 @@ internal class RenderSceneFilamentHostView(
       // A crease must be visually meaningful. This suppresses triangulation
       // seams and tiny tessellation changes while retaining real BIM corners.
       val feature = uses.size == 1 || uses.zipWithNext().any { (first, second) ->
-        normalDot(first.normal, second.normal) < 0.90
+        normalDot(first.normal, second.normal) < creaseDotThreshold
       }
       if (!feature) return@mapNotNull null
       val sharp = uses.size == 1 || uses.zipWithNext().any { (first, second) ->
@@ -1737,6 +2239,8 @@ internal class RenderSceneFilamentHostView(
     val vertexData: ByteBuffer,
     val indexData: IntBuffer,
     val bounds: SceneBounds,
+    val points: List<ScenePoint> = emptyList(),
+    val triangles: List<IntArray> = emptyList(),
   )
 }
 
@@ -1765,6 +2269,22 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
   private var perspective = false
   private var wireframe = false
   private var showObjectEdges = true
+  private var sectionBoxEnabled = false
+  private var sectionBoxMin = ScenePoint(0.0, 0.0, 0.0)
+  private var sectionBoxMax = ScenePoint(0.0, 0.0, 0.0)
+  private val sectionFill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    style = Paint.Style.FILL
+    color = Color.argb(5, 0, 137, 123)
+  }
+  private val sectionStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    style = Paint.Style.STROKE
+    color = Color.rgb(0, 121, 107)
+    strokeWidth = context.resources.displayMetrics.density * 1.6f
+  }
+  private val sectionHandle = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    style = Paint.Style.FILL
+    color = Color.rgb(0, 121, 107)
+  }
   private val outline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
     style = Paint.Style.STROKE
     color = Color.argb(155, 24, 39, 52)
@@ -1800,6 +2320,53 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
     if (rectangle == null) return
     rectangle = null
     invalidate()
+  }
+
+  fun setSectionBox(enabled: Boolean, minPoint: ScenePoint, maxPoint: ScenePoint) {
+    sectionBoxEnabled = enabled
+    sectionBoxMin = minPoint
+    sectionBoxMax = maxPoint
+    invalidate()
+  }
+
+  fun hitSectionHandle(x: Float, y: Float): String? {
+    if (!sectionBoxEnabled || topDown) return null
+    val touch = PointF(x, y)
+    val radius = resources.displayMetrics.density * 48f
+    return sectionFaceCenters().mapNotNull { (name, point) ->
+      val projected = project(point) ?: return@mapNotNull null
+      name to kotlin.math.hypot((projected.x - touch.x).toDouble(), (projected.y - touch.y).toDouble())
+    }.filter { it.second <= radius }.minByOrNull { it.second }?.first
+  }
+
+  fun sectionAxisDelta(handle: String, dx: Float, dy: Float): Double {
+    val centerPoint = sectionFaceCenters()[handle] ?: return 0.0
+    val axis = when (handle.firstOrNull()) {
+      'x' -> ScenePoint(1.0, 0.0, 0.0)
+      'y' -> ScenePoint(0.0, 1.0, 0.0)
+      else -> ScenePoint(0.0, 0.0, 1.0)
+    }
+    val first = project(centerPoint) ?: return 0.0
+    val second = project(ScenePoint(centerPoint.x + axis.x, centerPoint.y + axis.y, centerPoint.z + axis.z)) ?: return 0.0
+    val sx = (second.x - first.x).toDouble()
+    val sy = (second.y - first.y).toDouble()
+    val lengthSquared = sx * sx + sy * sy
+    if (lengthSquared < 1.0e-6) return 0.0
+    return (dx * sx + dy * sy) / lengthSquared
+  }
+
+  private fun sectionFaceCenters(): Map<String, ScenePoint> {
+    val midX = (sectionBoxMin.x + sectionBoxMax.x) * 0.5
+    val midY = (sectionBoxMin.y + sectionBoxMax.y) * 0.5
+    val midZ = (sectionBoxMin.z + sectionBoxMax.z) * 0.5
+    return mapOf(
+      "xMin" to ScenePoint(sectionBoxMin.x, midY, midZ),
+      "xMax" to ScenePoint(sectionBoxMax.x, midY, midZ),
+      "yMin" to ScenePoint(midX, sectionBoxMin.y, midZ),
+      "yMax" to ScenePoint(midX, sectionBoxMax.y, midZ),
+      "zMin" to ScenePoint(midX, midY, sectionBoxMin.z),
+      "zMax" to ScenePoint(midX, midY, sectionBoxMax.z),
+    )
   }
 
   fun setVisualScene(
@@ -2107,12 +2674,52 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
   override fun onDraw(canvas: Canvas) {
     super.onDraw(canvas)
     drawAuthoringEdges(canvas)
+    drawSectionBox(canvas)
     val rect = rectangle ?: return
     val color = if (crossing) Color.rgb(245, 158, 11) else Color.rgb(37, 99, 235)
     fill.color = Color.argb(40, Color.red(color), Color.green(color), Color.blue(color))
     stroke.color = color
     canvas.drawRect(rect, fill)
     canvas.drawRect(rect, stroke)
+  }
+
+  private fun drawSectionBox(canvas: Canvas) {
+    if (!sectionBoxEnabled || topDown) return
+    val corners = listOf(
+      ScenePoint(sectionBoxMin.x, sectionBoxMin.y, sectionBoxMin.z),
+      ScenePoint(sectionBoxMax.x, sectionBoxMin.y, sectionBoxMin.z),
+      ScenePoint(sectionBoxMax.x, sectionBoxMax.y, sectionBoxMin.z),
+      ScenePoint(sectionBoxMin.x, sectionBoxMax.y, sectionBoxMin.z),
+      ScenePoint(sectionBoxMin.x, sectionBoxMin.y, sectionBoxMax.z),
+      ScenePoint(sectionBoxMax.x, sectionBoxMin.y, sectionBoxMax.z),
+      ScenePoint(sectionBoxMax.x, sectionBoxMax.y, sectionBoxMax.z),
+      ScenePoint(sectionBoxMin.x, sectionBoxMax.y, sectionBoxMax.z),
+    ).map(::project)
+    if (corners.any { it == null }) return
+    val points = corners.filterNotNull()
+    val faces = listOf(
+      intArrayOf(0, 1, 2, 3), intArrayOf(4, 5, 6, 7),
+      intArrayOf(0, 1, 5, 4), intArrayOf(1, 2, 6, 5),
+      intArrayOf(2, 3, 7, 6), intArrayOf(3, 0, 4, 7),
+    )
+    for (face in faces) {
+      val path = android.graphics.Path()
+      path.moveTo(points[face[0]].x, points[face[0]].y)
+      for (index in 1 until face.size) path.lineTo(points[face[index]].x, points[face[index]].y)
+      path.close()
+      canvas.drawPath(path, sectionFill)
+    }
+    val edges = listOf(
+      0 to 1, 1 to 2, 2 to 3, 3 to 0, 4 to 5, 5 to 6, 6 to 7, 7 to 4,
+      0 to 4, 1 to 5, 2 to 6, 3 to 7,
+    )
+    for ((first, second) in edges) {
+      canvas.drawLine(points[first].x, points[first].y, points[second].x, points[second].y, sectionStroke)
+    }
+    val radius = resources.displayMetrics.density * 6.5f
+    for (point in sectionFaceCenters().values.mapNotNull(::project)) {
+      canvas.drawCircle(point.x, point.y, radius, sectionHandle)
+    }
   }
 
   private fun drawAuthoringEdges(canvas: Canvas) {

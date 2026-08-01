@@ -6,7 +6,8 @@ Bu hujjat kontekst limiti yoki agent almashganda loyihani uzmasdan davom ettiris
 
 Maqsad **"Revitning planshetdagi nusxasi"** emas. Maqsad — 12–14" Android/iPad planshet, stylus va ixtiyoriy klaviaturada ishlaydigan, offline-first, yengil arxitektura BIM authoring:
 
-- ko‘p qavatli arxitektura modeli: level, wall, door, window, stair, floor, ceiling, flat roof;
+- ko‘p qavatli arxitektura modeli: level, wall, door, window, stair, floor,
+  ceiling, flat roof va slope bilan ishlaydigan AutoFootprint roof;
 - professional level constraint va authoritative save/reload;
 - plan/elevation/3D, touch/stylus selection, drag, pan/orbit/zoom;
 - keyinchalik IFC va PDF/documentation eksporti.

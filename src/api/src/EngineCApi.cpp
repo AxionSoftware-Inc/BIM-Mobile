@@ -359,6 +359,24 @@ TbeApiStatusCode tbe_set_wall_axis(
     ));
 }
 
+TbeApiStatusCode tbe_trim_extend_walls(
+    TbeEngineHandle* handle,
+    uint64_t first_wall_id,
+    int first_uses_start,
+    uint64_t second_wall_id,
+    int second_uses_start
+) {
+    if (handle == nullptr || handle->session == nullptr) {
+        return null_handle_error(handle);
+    }
+    return apply_result(handle, handle->session->trim_extend_walls(
+        first_wall_id,
+        first_uses_start != 0,
+        second_wall_id,
+        second_uses_start != 0
+    ));
+}
+
 TbeApiStatusCode tbe_set_element_assembly(TbeEngineHandle* handle, uint64_t element_id, uint64_t assembly_id) {
     if (handle == nullptr || handle->session == nullptr) return null_handle_error(handle);
     return apply_result(handle, handle->session->set_element_assembly(element_id, assembly_id));
@@ -951,6 +969,20 @@ TbeApiStatusCode tbe_get_render_scene_json_near_level(
     return copy_string_result(
         handle,
         handle->session->get_render_scene_json_near_level(active_level_id, adjacent_level_count),
+        out_json
+    );
+}
+
+TbeApiStatusCode tbe_get_section_scene_json(TbeEngineHandle* handle, TbeVec2 start, TbeVec2 end, char** out_json) {
+    if (handle == nullptr || handle->session == nullptr || out_json == nullptr) {
+        return null_handle_error(handle);
+    }
+    return copy_string_result(
+        handle,
+        handle->session->get_section_scene_json(
+            tbe::api::Vec2{.x = start.x, .y = start.y},
+            tbe::api::Vec2{.x = end.x, .y = end.y}
+        ),
         out_json
     );
 }

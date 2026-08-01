@@ -1,6 +1,6 @@
 import 'dart:io';
-import 'dart:ui';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:viewer_flutter/src/render_scene_editor.dart';
@@ -9,6 +9,10 @@ import 'package:viewer_flutter/src/render_scene_level_overlay.dart';
 import 'package:viewer_flutter/src/render_scene_models.dart';
 import 'package:viewer_flutter/src/render_scene_repository.dart';
 import 'package:viewer_flutter/src/scene_mutation_service.dart';
+import 'package:viewer_flutter/src/scene_view_service.dart';
+import 'package:viewer_flutter/src/project_persistence_service.dart';
+import 'package:viewer_flutter/src/project_lifecycle_service.dart';
+import 'package:viewer_flutter/src/project_session_controller.dart';
 import 'package:viewer_flutter/src/render_scene_viewport_controller.dart';
 import 'package:viewer_flutter/src/render_scene_viewport_planar.dart';
 import 'package:viewer_flutter/src/render_scene_viewport_projection.dart';
@@ -17,12 +21,145 @@ import 'package:viewer_flutter/src/selection_controller.dart';
 import 'package:viewer_flutter/src/inspector_controller.dart';
 import 'package:viewer_flutter/src/authoring_command_service.dart';
 import 'package:viewer_flutter/src/tbe_ffi.dart';
+import 'package:viewer_flutter/src/viewer_engine_contracts.dart';
+import 'package:viewer_flutter/src/viewer_project_gateway.dart';
+import 'package:viewer_flutter/src/viewer_project_session.dart';
+import 'package:viewer_flutter/src/viewer_scene_gateway.dart';
 import 'package:viewer_flutter/src/tools/level_tool_controller.dart';
 import 'package:viewer_flutter/src/tools/opening_tool_controller.dart';
+import 'package:viewer_flutter/src/tools/plan_sketch_geometry.dart';
 import 'package:viewer_flutter/src/tools/surface_tool_controller.dart';
 import 'package:viewer_flutter/src/tools/wall_tool_controller.dart';
 import 'package:viewer_flutter/src/viewer_app.dart';
 import 'package:viewer_flutter/src/viewport_interaction.dart';
+
+class _RecordingSceneGateway implements ViewerSceneGateway {
+  int? activeLevelId;
+  bool? fullSceneEnabled;
+
+  static const RenderSceneLoadResult result = RenderSceneLoadResult(
+    scene: null,
+    warnings: <String>[],
+    errors: <String>[],
+  );
+
+  @override
+  Future<RenderSceneLoadResult> currentRenderScene() async => result;
+
+  @override
+  Future<RenderSceneLoadResult> setActiveLevel(int levelId) async {
+    activeLevelId = levelId;
+    return result;
+  }
+
+  @override
+  Future<RenderSceneLoadResult> setFullSceneRenderScope(bool enabled) async {
+    fullSceneEnabled = enabled;
+    return result;
+  }
+}
+
+class _RecordingProjectGateway implements ViewerProjectGateway {
+  String? receivedProjectName;
+  String? receivedJson;
+
+  @override
+  Future<ViewerLoadResult> loadFromJson({
+    required String projectName,
+    required String json,
+    String? sourcePath,
+  }) async {
+    receivedProjectName = projectName;
+    receivedJson = json;
+    return _emptyLoadResult();
+  }
+
+  @override
+  Future<ViewerLoadResult> loadFromPackage({
+    required String packagePath,
+  }) async =>
+      _emptyLoadResult();
+
+  @override
+  Future<ViewerLoadResult> reloadCurrent() async => _emptyLoadResult();
+
+  @override
+  Future<String> saveProjectJson() async => '{"schema_version": 1}';
+
+  @override
+  Future<File> saveProjectToDefaultLocation() async =>
+      File('/tmp/example.tbe.json');
+
+  ViewerLoadResult _emptyLoadResult() => ViewerLoadResult(
+        snapshot: ViewerSnapshot(
+          projectName: 'Test project',
+          engineVersion: 'test',
+          apiVersion: 'test',
+          schemaVersion: 1,
+          levelId: 0,
+          validation: ValidationSummary(
+            issueCount: 0,
+            warningCount: 0,
+            errorCount: 0,
+          ),
+          schedule: ScheduleSummary(
+            wallRows: 0,
+            openingRows: 0,
+            roomRows: 0,
+            slabRows: 0,
+            roofRows: 0,
+            columnRows: 0,
+            beamRows: 0,
+            stairRows: 0,
+            floorRows: 0,
+            ceilingRows: 0,
+            materialTakeoffRows: 0,
+          ),
+          svgPath: '',
+          packagePath: '',
+          validationMessages: const <String>[],
+        ),
+        hitCandidates: const <HitCandidateView>[],
+      );
+}
+
+class _RecordingProjectSession extends _RecordingProjectGateway
+    implements ViewerProjectSession {
+  int? buildingCount;
+  int? storyCount;
+  bool disposed = false;
+
+  @override
+  Future<RenderSceneLoadResult> createResidentialTemplate({
+    required int buildingCount,
+    required int storyCount,
+  }) async {
+    this.buildingCount = buildingCount;
+    this.storyCount = storyCount;
+    return const RenderSceneLoadResult(
+      scene: null,
+      warnings: <String>[],
+      errors: <String>[],
+    );
+  }
+
+  @override
+  void dispose() => disposed = true;
+}
+
+class _RecordingSessionFactory
+    implements ViewerSessionFactory<_RecordingProjectSession> {
+  _RecordingSessionFactory(this.session);
+
+  final _RecordingProjectSession session;
+  int createCount = 0;
+
+  @override
+  Future<_RecordingProjectSession> create() async {
+    createCount += 1;
+    return session;
+  }
+}
 
 void main() {
   test('RenderScene parser loads the bundled sample and keeps finite bounds',
@@ -60,6 +197,114 @@ void main() {
     );
     expect(result.scene, isNull);
     expect(result.errors, isNotEmpty);
+  });
+
+  test('Scene view service owns engine-backed navigation queries', () async {
+    final gateway = _RecordingSceneGateway();
+    final service = SceneViewService(
+      repository: () => gateway,
+      engineEnabled: () => true,
+    );
+
+    expect(await service.refresh(), same(_RecordingSceneGateway.result));
+    await service.activateLevel(42);
+    await service.setFullSceneRenderScope(true);
+
+    expect(gateway.activeLevelId, 42);
+    expect(gateway.fullSceneEnabled, isTrue);
+  });
+
+  test('section box and section view are mutually exclusive clip modes',
+      () async {
+    final controller = RenderSceneViewportController();
+    const bounds = RenderSceneBounds(
+      min: RenderScenePoint(x: -5, y: -5, z: -5),
+      max: RenderScenePoint(x: 5, y: 5, z: 5),
+    );
+    const section = RenderSceneSection(
+      name: 'Section A',
+      start: RenderScenePoint(x: -6, y: 0, z: 0),
+      end: RenderScenePoint(x: 6, y: 0, z: 0),
+    );
+
+    await controller.setSectionBox(bounds);
+    expect(controller.hasSectionBox, isTrue);
+    expect(controller.hasSectionView, isFalse);
+
+    await controller.setSectionView(section);
+    expect(controller.hasSectionBox, isFalse);
+    expect(controller.hasSectionView, isTrue);
+
+    await controller.setSectionView(null);
+    expect(controller.hasSectionBox, isFalse);
+    expect(controller.hasSectionView, isFalse);
+    controller.dispose();
+  });
+
+  test('Project persistence service owns JSON checkpoints and replacement',
+      () async {
+    final gateway = _RecordingProjectGateway();
+    final service = ProjectPersistenceService(
+      repository: () => gateway,
+      engineEnabled: () => true,
+    );
+
+    expect(await service.exportJson(), '{"schema_version": 1}');
+    expect(
+        (await service.saveToDefaultLocation()).path, '/tmp/example.tbe.json');
+    await service.replaceFromJson(
+      projectName: 'Layer edit',
+      json: '{"materials": []}',
+    );
+
+    expect(gateway.receivedProjectName, 'Layer edit');
+    expect(gateway.receivedJson, '{"materials": []}');
+  });
+
+  test('Project lifecycle service owns template session creation and reuse',
+      () async {
+    final createdSession = _RecordingProjectSession();
+    final factory = _RecordingSessionFactory(createdSession);
+    final service = ProjectLifecycleService<_RecordingProjectSession>(
+      sessionFactory: factory,
+    );
+
+    final created = await service.createResidentialTemplate(
+      buildingCount: 1,
+      storyCount: 3,
+    );
+    final reused = await service.createResidentialTemplate(
+      existingSession: createdSession,
+      buildingCount: 6,
+      storyCount: 9,
+    );
+
+    expect(created.session, same(createdSession));
+    expect(created.createdSession, isTrue);
+    expect(reused.createdSession, isFalse);
+    expect(factory.createCount, 1);
+    expect(createdSession.buildingCount, 6);
+    expect(createdSession.storyCount, 9);
+    expect(createdSession.disposed, isFalse);
+  });
+
+  test('Project session controller replaces and disposes native sessions', () {
+    final first = _RecordingProjectSession();
+    final second = _RecordingProjectSession();
+    final controller = ProjectSessionController<_RecordingProjectSession>();
+
+    controller.activate(first);
+    controller.activate(first);
+    controller.activate(second);
+
+    expect(controller.session, same(second));
+    expect(controller.isEngineBacked, isTrue);
+    expect(first.disposed, isTrue);
+    expect(second.disposed, isFalse);
+
+    controller.dispose();
+    expect(second.disposed, isTrue);
+    expect(controller.session, isNull);
   });
 
   test('plan view range excludes the storey below at a shared level elevation',
@@ -128,7 +373,7 @@ void main() {
     );
     final scene = result.scene!;
     expect(result.errors, isEmpty);
-    expect(scene.levels, hasLength(9));
+    expect(scene.levels, hasLength(10));
     expect(scene.kindCounts['wall'], greaterThanOrEqualTo(10));
     final topLevelScene =
         (await repository.setActiveLevel(scene.levels.last.levelId)).scene!;
@@ -150,7 +395,7 @@ void main() {
       buildingCount: 6,
       storyCount: 9,
     );
-    expect(result.scene!.levels, hasLength(9));
+    expect(result.scene!.levels, hasLength(10));
     final saved = await repository.saveProjectJson();
     expect(saved, contains('Residential Campus'));
     expect(saved, contains('Building 6 exterior wall'));
@@ -1066,6 +1311,38 @@ void main() {
     expect(controller.selectionRectangleCrossing, isFalse);
   });
 
+  testWidgets('clearing selection clears the native highlight mirror',
+      (WidgetTester tester) async {
+    const channel = MethodChannel('tbe/render_scene_view_77');
+    final calls = <MethodCall>[];
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      return null;
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+
+    final controller = RenderSceneViewportController(
+      backend: RenderSceneViewportBackend.native,
+    );
+    addTearDown(controller.dispose);
+    await controller.attachNativeBridge(77);
+    await tester.pump(const Duration(milliseconds: 300));
+    calls.clear();
+
+    await controller.selectElement('27');
+    await controller.highlightElement('27');
+    calls.clear();
+
+    await controller.selectLevel(null);
+
+    expect(
+      calls.where((call) => call.method == 'highlightElement'),
+      contains(predicate<MethodCall>((call) => call.arguments == null)),
+    );
+  });
+
   test('touch selection window requires a hold before it starts', () {
     final interaction = ViewportInteractionController();
     interaction.begin(
@@ -1160,6 +1437,64 @@ void main() {
     expect(tool.heightMeters, closeTo(3.6, 1e-9));
   });
 
+  test('plan sketch kernel shares snap, ortho and rectangle rules', () {
+    const start = RenderScenePoint(x: 0, y: 0, z: 3.2);
+    const raw = RenderScenePoint(x: 2.10, y: 2.84, z: 3.2);
+    const wallEnd = RenderScenePoint(x: 2.0, y: 3.0, z: 0);
+    final endpoint = PlanSketchGeometry.resolveLineEndpoint(
+      rawPoint: raw,
+      referenceStart: start,
+      candidatePoints: const <RenderScenePoint>[wallEnd],
+    );
+    expect(endpoint.x, closeTo(0, 1e-9));
+    expect(endpoint.y, closeTo(3, 1e-9));
+    expect(endpoint.z, closeTo(3.2, 1e-9));
+
+    final rectangle = PlanSketchGeometry.rectangle(
+      const RenderScenePoint(x: 4, y: 6, z: 1),
+      const RenderScenePoint(x: 1, y: 2, z: 2),
+    );
+    expect(rectangle, hasLength(4));
+    expect(rectangle.first.x, closeTo(1, 1e-9));
+    expect(rectangle.first.y, closeTo(2, 1e-9));
+    expect(rectangle[2].x, closeTo(4, 1e-9));
+    expect(rectangle[2].y, closeTo(6, 1e-9));
+    expect(rectangle.every((point) => point.z == 2), isTrue);
+  });
+
+  test('plan sketch Trim/Extend respects explicitly selected endpoints', () {
+    const first = PlanSketchLine(
+      start: RenderScenePoint(x: 0, y: 0, z: 0),
+      end: RenderScenePoint(x: 3, y: 0, z: 0),
+    );
+    const second = PlanSketchLine(
+      start: RenderScenePoint(x: 4, y: 1, z: 0),
+      end: RenderScenePoint(x: 4, y: 4, z: 0),
+    );
+    final result = PlanSketchGeometry.trimExtend(
+      first: first,
+      firstEndpoint: PlanSketchEndpoint.end,
+      second: second,
+      secondEndpoint: PlanSketchEndpoint.start,
+    );
+    expect(result, isNotNull);
+    expect(result!.first.end.x, closeTo(4, 1e-9));
+    expect(result.first.end.y, closeTo(0, 1e-9));
+    expect(result.second.start.x, closeTo(4, 1e-9));
+    expect(result.second.start.y, closeTo(0, 1e-9));
+
+    final parallel = PlanSketchGeometry.trimExtend(
+      first: first,
+      firstEndpoint: PlanSketchEndpoint.end,
+      second: const PlanSketchLine(
+        start: RenderScenePoint(x: 0, y: 1, z: 0),
+        end: RenderScenePoint(x: 3, y: 1, z: 0),
+      ),
+      secondEndpoint: PlanSketchEndpoint.start,
+    );
+    expect(parallel, isNull);
+  });
+
   test('Switching from elevation to 3D preserves directional meaning',
       () async {
     final controller = RenderSceneViewportController(
@@ -1201,8 +1536,33 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Tablet BIM'), findsOneWidget);
-    expect(find.text('2D'), findsOneWidget);
-    expect(find.text('3D'), findsOneWidget);
+    expect(find.byTooltip('Floor plan'), findsOneWidget);
+    expect(find.byTooltip('3D view'), findsOneWidget);
+    expect(find.byTooltip('Wall'), findsOneWidget);
+  });
+
+  testWidgets('Roof tool exposes contextual boundary and Trim controls',
+      (WidgetTester tester) async {
+    final json = File('assets/render_scene.json').readAsStringSync();
+    await tester.binding.setSurfaceSize(const Size(1600, 1000));
+    await tester.pumpWidget(
+      ViewerApp(
+        source:
+            MemoryRenderSceneSource(json, source: 'assets/render_scene.json'),
+        preferEngineBackedBundledSample: false,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Roof'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Draw Roof'), findsOneWidget);
+    expect(find.text('Boundary'), findsOneWidget);
+    expect(find.text('Rectangle'), findsOneWidget);
+    expect(find.text('Pick Walls'), findsOneWidget);
+    expect(find.text('Trim / Extend'), findsOneWidget);
+    expect(find.text('Auto Room'), findsNothing);
   });
 
   testWidgets('Selecting a wall shows inline wall level controls',
@@ -1220,13 +1580,14 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('Show object list').first);
+    await tester.tap(find.byTooltip('Show project browser').first);
     await tester.pumpAndSettle();
 
+    expect(find.text('Sections (2)'), findsOneWidget);
     await tester.tap(find.text('Wall #11'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Wall levels'), findsWidgets);
+    expect(find.text('Wall properties'), findsOneWidget);
     expect(find.text('Apply wall levels'), findsOneWidget);
     expect(find.text('Base level'), findsWidgets);
     expect(find.text('Top level'), findsWidgets);

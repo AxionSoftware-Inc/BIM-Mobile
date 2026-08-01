@@ -3,10 +3,13 @@ import 'dart:ffi' as ffi;
 import 'dart:io';
 
 import 'package:ffi/ffi.dart';
-import 'package:flutter/services.dart';
-
 import 'app_project_storage.dart';
+import 'native_engine_library_loader.dart';
 import 'render_scene_models.dart';
+import 'viewer_authoring_gateway.dart';
+import 'viewer_engine_contracts.dart';
+import 'viewer_project_session.dart';
+import 'viewer_scene_gateway.dart';
 
 final class TbeScheduleSummary extends ffi.Struct {
   @ffi.Size()
@@ -85,106 +88,6 @@ final class TbeHitTestCandidatesResult extends ffi.Struct {
   external ffi.Pointer<TbeHitTestCandidate> candidates;
 }
 
-final class TbeApiException implements Exception {
-  TbeApiException(this.message);
-  final String message;
-
-  @override
-  String toString() => 'TbeApiException: $message';
-}
-
-final class ViewerSnapshot {
-  ViewerSnapshot({
-    required this.projectName,
-    required this.engineVersion,
-    required this.apiVersion,
-    required this.schemaVersion,
-    required this.levelId,
-    required this.validation,
-    required this.schedule,
-    required this.svgPath,
-    required this.packagePath,
-    required this.validationMessages,
-  });
-
-  final String projectName;
-  final String engineVersion;
-  final String apiVersion;
-  final int schemaVersion;
-  final int levelId;
-  final ValidationSummary validation;
-  final ScheduleSummary schedule;
-  final String svgPath;
-  final String packagePath;
-  final List<String> validationMessages;
-}
-
-final class ScheduleSummary {
-  ScheduleSummary({
-    required this.wallRows,
-    required this.openingRows,
-    required this.roomRows,
-    required this.slabRows,
-    required this.roofRows,
-    required this.columnRows,
-    required this.beamRows,
-    required this.stairRows,
-    required this.floorRows,
-    required this.ceilingRows,
-    required this.materialTakeoffRows,
-  });
-
-  final int wallRows;
-  final int openingRows;
-  final int roomRows;
-  final int slabRows;
-  final int roofRows;
-  final int columnRows;
-  final int beamRows;
-  final int stairRows;
-  final int floorRows;
-  final int ceilingRows;
-  final int materialTakeoffRows;
-}
-
-final class ValidationSummary {
-  ValidationSummary({
-    required this.issueCount,
-    required this.warningCount,
-    required this.errorCount,
-  });
-
-  final int issueCount;
-  final int warningCount;
-  final int errorCount;
-}
-
-final class HitCandidateView {
-  HitCandidateView({
-    required this.elementId,
-    required this.elementKind,
-    required this.hitKind,
-    required this.distanceMeters,
-    required this.priority,
-  });
-
-  final int elementId;
-  final int elementKind;
-  final int hitKind;
-  final double distanceMeters;
-  final int priority;
-}
-
-final class ViewerLoadResult {
-  ViewerLoadResult({
-    required this.snapshot,
-    required this.hitCandidates,
-  });
-
-  final ViewerSnapshot snapshot;
-  final List<HitCandidateView> hitCandidates;
-}
-
 typedef _EngineCreateNative = ffi.Pointer<ffi.Void> Function();
 typedef _EngineCreateDart = ffi.Pointer<ffi.Void> Function();
 typedef _EngineDestroyNative = ffi.Void Function(ffi.Pointer<ffi.Void>);
@@ -207,6 +110,18 @@ typedef _NearbyRenderSceneDart = int Function(
   ffi.Pointer<ffi.Void>,
   int,
   int,
+  ffi.Pointer<ffi.Pointer<Utf8>>,
+);
+typedef _SectionRenderSceneNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  TbeVec2,
+  TbeVec2,
+  ffi.Pointer<ffi.Pointer<Utf8>>,
+);
+typedef _SectionRenderSceneDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  TbeVec2,
+  TbeVec2,
   ffi.Pointer<ffi.Pointer<Utf8>>,
 );
 typedef _SetIntOptionNative = ffi.Int32 Function(
@@ -305,6 +220,20 @@ typedef _SetWallAxisDart = int Function(
   int,
   TbeVec2,
   TbeVec2,
+);
+typedef _TrimExtendWallsNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Uint64,
+  ffi.Int32,
+  ffi.Uint64,
+  ffi.Int32,
+);
+typedef _TrimExtendWallsDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  int,
+  int,
+  int,
+  int,
 );
 typedef _SetElementAssemblyNative = ffi.Int32 Function(
   ffi.Pointer<ffi.Void>,
@@ -661,6 +590,8 @@ class TbeViewerApi {
         _getRenderSceneJsonNearLevel = library.lookupFunction<
             _NearbyRenderSceneNative,
             _NearbyRenderSceneDart>('tbe_get_render_scene_json_near_level'),
+        _getSectionSceneJson = library.lookupFunction<_SectionRenderSceneNative,
+            _SectionRenderSceneDart>('tbe_get_section_scene_json'),
         _setPerformanceProfile =
             library.lookupFunction<_SetIntOptionNative, _SetIntOptionDart>(
                 'tbe_set_performance_profile'),
@@ -692,6 +623,8 @@ class TbeViewerApi {
         _setWallAxis =
             library.lookupFunction<_SetWallAxisNative, _SetWallAxisDart>(
                 'tbe_set_wall_axis'),
+        _trimExtendWalls = library.lookupFunction<_TrimExtendWallsNative,
+            _TrimExtendWallsDart>('tbe_trim_extend_walls'),
         _setElementAssembly = library.lookupFunction<_SetElementAssemblyNative,
             _SetElementAssemblyDart>('tbe_set_element_assembly'),
         _updateRoofProperties = library.lookupFunction<
@@ -769,84 +702,11 @@ class TbeViewerApi {
                 'tbe_free_memory');
 
   factory TbeViewerApi.load() {
-    return TbeViewerApi._(_openLibrary());
+    return TbeViewerApi._(NativeEngineLibraryLoader.open());
   }
 
-  static String? _androidLibraryPath;
-
-  /// Android's classloader knows the ABI-specific extracted location. Passing
-  /// that exact path to FFI avoids vendor-dependent bare-name dlopen lookup.
-  static Future<void> prepareForCurrentPlatform() async {
-    if (!Platform.isAndroid || _androidLibraryPath != null) return;
-    const channel = MethodChannel('tbe/native_engine');
-    final info =
-        await channel.invokeMapMethod<String, dynamic>('getLibraryInfo');
-    final path = info?['path']?.toString();
-    final loaded = info?['loaded'] == true;
-    if (!loaded || path == null || path.isEmpty) {
-      throw TbeApiException(
-        'Android C++ engine did not load: ${info?['error'] ?? 'native library path unavailable'}',
-      );
-    }
-    _androidLibraryPath = path;
-  }
-
-  static ffi.DynamicLibrary _openLibrary() {
-    final overridePath = Platform.environment['TBE_CAPI_PATH'];
-    final current = Directory.current.absolute;
-    final executableDir = File(Platform.resolvedExecutable).parent.absolute;
-
-    Iterable<Directory> climbRoots(Directory start, int depth) sync* {
-      var cursor = start;
-      for (var index = 0; index < depth; index += 1) {
-        yield cursor;
-        final parent = cursor.parent;
-        if (parent.path == cursor.path) {
-          break;
-        }
-        cursor = parent;
-      }
-    }
-
-    final repoLikeRoots = <Directory>{
-      ...climbRoots(current, 8),
-      ...climbRoots(executableDir, 12),
-    };
-    final candidates = <String>[
-      if (overridePath != null && overridePath.isNotEmpty) overridePath,
-      if (_androidLibraryPath != null) _androidLibraryPath!,
-      if (Platform.isAndroid) 'libtbe_capi.so',
-      if (Platform.isLinux) 'libtbe_capi.so',
-      if (Platform.isWindows) 'tbe_capi.dll',
-      if (Platform.isMacOS || Platform.isIOS) ...<String>[
-        '${executableDir.path}/../Frameworks/libtbe_capi.dylib',
-        '${executableDir.path}/../Resources/libtbe_capi.dylib',
-      ],
-      for (final root in repoLikeRoots) ...<String>[
-        '${root.path}/build/src/api/libtbe_capi.dylib',
-        '${root.path}/build/dev/src/api/libtbe_capi.dylib',
-        '${root.path}/build/dev/src/api/Debug/libtbe_capi.dylib',
-        '${root.path}/build/dev/src/api/Release/libtbe_capi.dylib',
-      ],
-      if (Platform.isMacOS || Platform.isIOS) 'libtbe_capi.dylib',
-    ];
-    final attempted = <String>[];
-    for (final candidate in candidates) {
-      final file = File(candidate);
-      if (candidate == 'libtbe_capi.dylib' || file.existsSync()) {
-        try {
-          return ffi.DynamicLibrary.open(candidate);
-        } catch (_) {
-          attempted.add(candidate);
-          continue;
-        }
-      }
-    }
-    throw TbeApiException(
-      'Unable to locate the TBE native library. Build `tbe_capi_shared`, set TBE_CAPI_PATH, '
-      'or package libtbe_capi for this platform. Attempted: ${attempted.join(', ')}',
-    );
-  }
+  static Future<void> prepareForCurrentPlatform() =>
+      NativeEngineLibraryLoader.prepareForCurrentPlatform();
 
   final _EngineCreateDart _engineCreate;
   final _EngineDestroyDart _engineDestroy;
@@ -854,6 +714,7 @@ class TbeViewerApi {
   final _StringGetterDart _getApiVersion;
   final _StringGetterDart _getRenderSceneJson;
   final _NearbyRenderSceneDart _getRenderSceneJsonNearLevel;
+  final _SectionRenderSceneDart _getSectionSceneJson;
   final _SetIntOptionDart _setPerformanceProfile;
   final _SetIntOptionDart _setComputeMode;
   final _CreateResidentialTemplateDart _createResidentialTemplate;
@@ -865,6 +726,7 @@ class TbeViewerApi {
   final _MoveLevelElevationDart _moveLevelElevation;
   final _SetWallLevelConstraintsDart _setWallLevelConstraints;
   final _SetWallAxisDart _setWallAxis;
+  final _TrimExtendWallsDart _trimExtendWalls;
   final _SetElementAssemblyDart _setElementAssembly;
   final _UpdateRoofPropertiesDart _updateRoofProperties;
   final _SetStructuralWallCutDart _setStructuralWallCut;
@@ -946,6 +808,40 @@ class TbeViewerApi {
       return value;
     } finally {
       calloc.free(out);
+    }
+  }
+
+  String getSectionSceneJson(
+    ffi.Pointer<ffi.Void> handle,
+    RenderScenePoint start,
+    RenderScenePoint end,
+  ) {
+    final out = calloc<ffi.Pointer<Utf8>>();
+    final startValue = calloc<TbeVec2>();
+    final endValue = calloc<TbeVec2>();
+    try {
+      startValue.ref
+        ..x = start.x
+        ..y = start.y;
+      endValue.ref
+        ..x = end.x
+        ..y = end.y;
+      _check(
+        handle,
+        _getSectionSceneJson(
+          handle,
+          startValue.ref,
+          endValue.ref,
+          out,
+        ),
+      );
+      final value = out.value.toDartString();
+      _freeString(out.value);
+      return value;
+    } finally {
+      calloc.free(out);
+      calloc.free(startValue);
+      calloc.free(endValue);
     }
   }
 
@@ -1099,6 +995,25 @@ class TbeViewerApi {
       calloc.free(start);
       calloc.free(end);
     }
+  }
+
+  void trimExtendWalls(
+    ffi.Pointer<ffi.Void> handle, {
+    required int firstWallId,
+    required bool firstUsesStart,
+    required int secondWallId,
+    required bool secondUsesStart,
+  }) {
+    _check(
+      handle,
+      _trimExtendWalls(
+        handle,
+        firstWallId,
+        firstUsesStart ? 1 : 0,
+        secondWallId,
+        secondUsesStart ? 1 : 0,
+      ),
+    );
   }
 
   void setElementAssembly(
@@ -1601,7 +1516,11 @@ class TbeViewerApi {
   }
 }
 
-class ViewerRepository {
+class ViewerRepository
+    implements
+        ViewerAuthoringGateway,
+        ViewerProjectSession,
+        ViewerSceneGateway {
   ViewerRepository(this._api);
 
   final TbeViewerApi _api;
@@ -1614,8 +1533,10 @@ class ViewerRepository {
   String? _currentPackagePath;
   int? _lastCreatedElementId;
 
+  @override
   int? get lastCreatedElementId => _lastCreatedElementId;
 
+  @override
   Future<ViewerLoadResult> loadFromJson({
     required String projectName,
     required String json,
@@ -1637,6 +1558,7 @@ class ViewerRepository {
     );
   }
 
+  @override
   Future<ViewerLoadResult> loadFromPackage({
     required String packagePath,
   }) async {
@@ -1660,6 +1582,7 @@ class ViewerRepository {
   /// Replaces the session with a complete engine-authored residential model.
   /// Template geometry is created in one native transaction; Flutter only
   /// receives the final authoritative snapshot.
+  @override
   Future<RenderSceneLoadResult> createResidentialTemplate({
     required int buildingCount,
     required int storyCount,
@@ -1685,6 +1608,7 @@ class ViewerRepository {
     return currentRenderScene();
   }
 
+  @override
   Future<ViewerLoadResult> reloadCurrent() async {
     if (_currentJsonPath != null) {
       final json = await File(_currentJsonPath!).readAsString();
@@ -1707,6 +1631,7 @@ class ViewerRepository {
 
   /// Captures the authoritative C++ document as project JSON. Subsequent
   /// [reloadCurrent] calls use this checkpoint, never the pre-edit source.
+  @override
   Future<String> saveProjectJson() async {
     final handle = _handle;
     if (handle == null) {
@@ -1722,6 +1647,7 @@ class ViewerRepository {
 
   /// Saves the authoritative engine document in the app documents directory.
   /// The generated file becomes the source used by [reloadCurrent].
+  @override
   Future<File> saveProjectToDefaultLocation() async {
     final json = await saveProjectJson();
     final directory = await AppProjectStorage.projectDirectory();
@@ -1769,6 +1695,7 @@ class ViewerRepository {
     );
   }
 
+  @override
   Future<RenderSceneLoadResult> currentRenderScene() async {
     final handle = _handle;
     if (handle == null) {
@@ -1787,13 +1714,25 @@ class ViewerRepository {
     return parseRenderSceneJson(json, source: source);
   }
 
+  Future<RenderSceneLoadResult> sectionScene(
+    RenderScenePoint start,
+    RenderScenePoint end,
+  ) async {
+    final handle = _handle;
+    if (handle == null) throw TbeApiException('No loaded project');
+    final json = _api.getSectionSceneJson(handle, start, end);
+    return parseRenderSceneJson(json, source: 'engine:section');
+  }
+
+  @override
   Future<RenderSceneLoadResult> setActiveLevel(int levelId) async {
     _activeLevelId = levelId;
     return currentRenderScene();
   }
 
-  /// Plan/elevation retain the nearby-level window. A single tower is cheap
-  /// enough to show whole in 3D, while very large scenes keep their window.
+  /// The caller chooses scope per view: plans retain a nearby-level window,
+  /// while elevations request a full-building snapshot for reliable framing.
+  @override
   Future<RenderSceneLoadResult> setFullSceneRenderScope(bool enabled) async {
     _fullSceneRenderScope = enabled;
     return currentRenderScene();
@@ -1876,6 +1815,7 @@ class ViewerRepository {
     return currentRenderScene();
   }
 
+  @override
   Future<RenderSceneLoadResult> moveLevelElevation({
     required int levelId,
     required double elevationMeters,
@@ -1893,6 +1833,7 @@ class ViewerRepository {
     return currentRenderScene();
   }
 
+  @override
   Future<RenderSceneLoadResult> updateLevel({
     required int levelId,
     String? name,
@@ -1914,6 +1855,7 @@ class ViewerRepository {
     return currentRenderScene();
   }
 
+  @override
   Future<RenderSceneLoadResult> createWall({
     required String name,
     required int levelId,
@@ -1972,6 +1914,7 @@ class ViewerRepository {
     return currentRenderScene();
   }
 
+  @override
   Future<RenderSceneLoadResult> setWallLevelConstraints({
     required int wallId,
     required int baseLevelId,
@@ -1997,6 +1940,7 @@ class ViewerRepository {
     return currentRenderScene();
   }
 
+  @override
   Future<RenderSceneLoadResult> setWallAxis({
     required int wallId,
     required RenderScenePoint start,
@@ -2013,6 +1957,28 @@ class ViewerRepository {
       startY: start.y,
       endX: end.x,
       endY: end.y,
+    );
+    await _buildSnapshot(handle, _projectName ?? 'Project');
+    return currentRenderScene();
+  }
+
+  @override
+  Future<RenderSceneLoadResult> trimExtendWalls({
+    required int firstWallId,
+    required bool firstUsesStart,
+    required int secondWallId,
+    required bool secondUsesStart,
+  }) async {
+    final handle = _handle;
+    if (handle == null) {
+      throw TbeApiException('No loaded project');
+    }
+    _api.trimExtendWalls(
+      handle,
+      firstWallId: firstWallId,
+      firstUsesStart: firstUsesStart,
+      secondWallId: secondWallId,
+      secondUsesStart: secondUsesStart,
     );
     await _buildSnapshot(handle, _projectName ?? 'Project');
     return currentRenderScene();
@@ -2053,6 +2019,7 @@ class ViewerRepository {
     return currentRenderScene();
   }
 
+  @override
   Future<RenderSceneLoadResult> setOpeningLevelLock({
     required int openingId,
     required bool locked,
@@ -2079,6 +2046,7 @@ class ViewerRepository {
     return currentRenderScene();
   }
 
+  @override
   Future<RenderSceneLoadResult> setOpeningLevelConstraint({
     required int openingId,
     required int levelId,
@@ -2098,6 +2066,7 @@ class ViewerRepository {
     return currentRenderScene();
   }
 
+  @override
   Future<RenderSceneLoadResult> moveHostedOpening({
     required int openingId,
     required double offsetMeters,
@@ -2111,6 +2080,7 @@ class ViewerRepository {
     return currentRenderScene();
   }
 
+  @override
   Future<RenderSceneLoadResult> resizeOpening({
     required int openingId,
     required String kind,
@@ -2219,6 +2189,7 @@ class ViewerRepository {
     return currentRenderScene();
   }
 
+  @override
   Future<RenderSceneLoadResult> updateRoofProperties({
     required int roofId,
     required int roofType,
@@ -2266,6 +2237,7 @@ class ViewerRepository {
     return currentRenderScene();
   }
 
+  @override
   Future<RenderSceneLoadResult> deleteElement({
     required int elementId,
   }) async {
@@ -2361,6 +2333,7 @@ class ViewerRepository {
     return null;
   }
 
+  @override
   void dispose() {
     if (_handle != null) {
       _api.destroySession(_handle!);

@@ -2,7 +2,7 @@ import 'package:flutter/foundation.dart';
 
 import 'render_scene_editor.dart';
 import 'render_scene_models.dart';
-import 'tbe_ffi.dart';
+import 'viewer_authoring_gateway.dart';
 
 /// A completed model mutation. UI code may render [scene] only after [success]
 /// is true; this prevents a draft preview from being mistaken for a committed
@@ -51,7 +51,7 @@ class CreateWallRequest {
 class SceneMutationService {
   const SceneMutationService({this.engineRepository});
 
-  final ViewerRepository? engineRepository;
+  final ViewerAuthoringGateway? engineRepository;
 
   Future<SceneMutationOutcome> createWall(CreateWallRequest request) async {
     final trace = <String>[

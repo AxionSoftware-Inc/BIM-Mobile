@@ -1222,6 +1222,8 @@ class RenderSceneEditor {
               defaultWallHeightMeters: defaultWallHeightMeters,
             ),
           ],
+          materials: const <RenderSceneMaterial>[],
+          sections: const <RenderSceneSection>[],
           source: source,
           diagnostics: const RenderSceneDiagnostics(
             source: 'editor',
@@ -2702,6 +2704,10 @@ class RenderSceneEditor {
     var endLowerX = length;
     var endUpperX = length;
     final direction = _unit2(wall.geometry.end - wall.geometry.start);
+    double? startMiterExtension;
+    double? startMiterTurn;
+    double? endMiterExtension;
+    double? endMiterTurn;
 
     for (final other in allWalls) {
       if (other.objectId == wall.objectId) {
@@ -2720,27 +2726,44 @@ class RenderSceneEditor {
       final joinPoint = sharedAtStart ? wall.geometry.start : wall.geometry.end;
       final otherDirection = _directionAwayFrom(joinPoint, other.geometry);
       final turn = _cross2(direction, otherDirection);
-      if (turn.abs() <= 1e-9) {
+      final cosine = _dot2(direction, otherDirection);
+      final denominator = 1.0 + cosine;
+      if (turn.abs() <= 1e-9 || denominator <= 1e-9) {
+        continue;
+      }
+      final extension = halfThickness * turn.abs() / denominator;
+      // Do not turn a nearly reversed pair of sketch lines into a very long
+      // spike while its endpoint is still being edited.
+      if (!extension.isFinite || extension > halfThickness * 4.0) {
         continue;
       }
 
-      // Match the core geometry service: every non-collinear endpoint join
-      // gets a miter extension.  Limiting this to near-90° walls left acute
-      // and obtuse corners looking like two overlapping, unjoined solids in
-      // both plan and the native 3D viewport.
+      // One endpoint has one cap.  Keeping the widest valid candidate avoids
+      // adding several mitres together when a fan of walls shares a point.
       if (sharedAtEnd) {
-        if (turn > 0.0) {
-          endUpperX += halfThickness;
-        } else {
-          endLowerX += halfThickness;
+        if (endMiterExtension == null || extension > endMiterExtension) {
+          endMiterExtension = extension;
+          endMiterTurn = turn;
         }
       } else {
-        if (turn > 0.0) {
-          startLowerX -= halfThickness;
-        } else {
-          startUpperX -= halfThickness;
+        if (startMiterExtension == null || extension > startMiterExtension) {
+          startMiterExtension = extension;
+          startMiterTurn = turn;
         }
       }
+    }
+
+    if (startMiterExtension != null && startMiterTurn != null) {
+      final signedExtension =
+          startMiterTurn > 0.0 ? startMiterExtension : -startMiterExtension;
+      startLowerX -= signedExtension;
+      startUpperX += signedExtension;
+    }
+    if (endMiterExtension != null && endMiterTurn != null) {
+      final signedExtension =
+          endMiterTurn > 0.0 ? endMiterExtension : -endMiterExtension;
+      endLowerX += signedExtension;
+      endUpperX -= signedExtension;
     }
 
     final axisUnit = _unit3(wall.geometry.end - wall.geometry.start);
@@ -2785,6 +2808,10 @@ class RenderSceneEditor {
 
   static double _cross2(RenderScenePoint a, RenderScenePoint b) {
     return (a.x * b.y) - (a.y * b.x);
+  }
+
+  static double _dot2(RenderScenePoint a, RenderScenePoint b) {
+    return (a.x * b.x) + (a.y * b.y);
   }
 
   static RenderScenePoint _unit2(RenderScenePoint vector) {

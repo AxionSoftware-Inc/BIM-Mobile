@@ -3,6 +3,7 @@
 // ignore_for_file: unused_element, unused_element_parameter
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
@@ -11,19 +12,29 @@ import 'package:flutter/services.dart';
 
 import 'authoring_command_service.dart';
 import 'inspector_controller.dart';
+import 'material_layer_editor.dart';
+import 'native_viewer_session_factory.dart';
 import 'property_editor.dart';
+import 'project_lifecycle_service.dart';
+import 'project_persistence_service.dart';
+import 'project_session_controller.dart';
+import 'project_browser_panel.dart';
 import 'render_scene_editor.dart';
 import 'render_scene_estimator.dart';
 import 'render_scene_models.dart';
 import 'render_scene_repository.dart';
 import 'scene_mutation_service.dart';
+import 'scene_view_service.dart';
 import 'selection_controller.dart';
 import 'tbe_ffi.dart';
 import 'tools/level_tool_controller.dart';
 import 'tools/opening_tool_controller.dart';
+import 'tools/plan_sketch_geometry.dart';
 import 'tools/surface_tool_controller.dart';
 import 'tools/stair_tool_controller.dart';
+import 'tools/trim_extend_tool_controller.dart';
 import 'tools/wall_tool_controller.dart';
+import 'workspace_chrome.dart';
 import 'render_scene_viewport.dart';
 import 'render_scene_viewport_planar.dart';
 
@@ -110,11 +121,17 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   final OpeningToolController _openingTool = OpeningToolController();
   final SurfaceToolController _surfaceTool = SurfaceToolController();
   final StairToolController _stairTool = StairToolController();
+  final TrimExtendToolController _trimTool = TrimExtendToolController();
   late final SelectionController _selectionController;
   late final InspectorController _inspectorController;
   late final AuthoringCommandService _authoringCommands;
-  ViewerRepository? _engineRepository;
-  bool _engineBackedMode = false;
+  late final ProjectLifecycleService<ViewerRepository> _projectLifecycle;
+  late final ProjectPersistenceService _projectPersistence;
+  late final ProjectSessionController<ViewerRepository> _projectSession;
+  late final SceneViewService _sceneViews;
+
+  ViewerRepository? get _engineRepository => _projectSession.session;
+  bool get _engineBackedMode => _projectSession.isEngineBacked;
 
   RenderScene? _scene;
   String? _statusMessage;
@@ -125,6 +142,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   bool _showDiagnostics = false;
   String? _engineLoadDiagnostic;
   int? _activeLevelId;
+  RenderSceneSection? _activeSectionView;
   double _planViewRangeMeters = 2.0;
 
   RenderSceneProjectionMode _projectionMode = kDefaultPlanProjectionMode;
@@ -182,6 +200,11 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   set _draftCeilingHeightOffsetMeters(double value) =>
       _surfaceTool.ceilingOffsetMeters = value;
 
+  bool get _isSurfaceAuthoring =>
+      _interactionMode == RenderSceneInteractionMode.addFloor ||
+      _interactionMode == RenderSceneInteractionMode.addCeiling ||
+      _interactionMode == RenderSceneInteractionMode.addRoof;
+
   void _traceAndroidMutation(String message) {
     if (!kDebugMode) return;
     final timestamp = DateTime.now().toIso8601String().split('T').last;
@@ -207,6 +230,18 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       repository: () => _engineRepository,
       engineEnabled: () => _engineBackedMode,
     );
+    _projectSession = ProjectSessionController<ViewerRepository>();
+    _projectLifecycle = ProjectLifecycleService<ViewerRepository>(
+      sessionFactory: NativeViewerSessionFactory(),
+    );
+    _projectPersistence = ProjectPersistenceService(
+      repository: () => _engineRepository,
+      engineEnabled: () => _engineBackedMode,
+    );
+    _sceneViews = SceneViewService(
+      repository: () => _engineRepository,
+      engineEnabled: () => _engineBackedMode,
+    );
     _viewportController.addListener(_onViewportChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) {
@@ -225,9 +260,10 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     _openingTool.dispose();
     _surfaceTool.dispose();
     _stairTool.dispose();
+    _trimTool.dispose();
     _inspectorController.dispose();
     _selectionController.dispose();
-    _engineRepository?.dispose();
+    _projectSession.dispose();
     super.dispose();
   }
 
@@ -284,6 +320,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     setState(() {
       _isBusy = true;
       _loadError = null;
+      _activeSectionView = null;
       _statusMessage = 'Loading bundled RenderScene sample...';
     });
 
@@ -303,7 +340,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       final result = await widget.source.loadBundledSample();
       await _applyLoadResult(
         result,
-        sourceLabel: 'assets/render_scene.json',
+        sourceLabel: 'Sample model',
       );
       if (!_engineBackedMode) {
         setState(() {
@@ -333,25 +370,26 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     setState(() {
       _isBusy = true;
       _loadError = null;
+      _activeSectionView = null;
       _statusMessage = '$label engine’da yaratilmoqda...';
     });
 
-    ViewerRepository? createdRepository;
     try {
-      await TbeViewerApi.prepareForCurrentPlatform();
-      final repository = _engineRepository ??
-          (createdRepository = ViewerRepository(TbeViewerApi.load()));
-      final result = await repository.createResidentialTemplate(
+      final previousRepository = _engineRepository;
+      final launch = await _projectLifecycle.createResidentialTemplate(
+        existingSession: previousRepository,
         buildingCount: buildingCount,
         storyCount: storyCount,
       );
-      if (!mounted) return;
-      _engineRepository = repository;
-      _engineBackedMode = true;
+      if (!mounted) {
+        if (launch.createdSession) launch.session.dispose();
+        return;
+      }
+      _projectSession.activate(launch.session);
       _engineLoadDiagnostic = null;
       await _applyLoadResult(
-        result,
-        sourceLabel: 'engine template: $label',
+        launch.renderScene!,
+        sourceLabel: '$label template',
       );
       if (buildingCount == 1) {
         // A tower is most useful as a whole-building visual test on first
@@ -359,7 +397,6 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         await _setProjectionMode(RenderSceneProjectionMode.isometric);
       }
     } catch (error) {
-      createdRepository?.dispose();
       if (!mounted) return;
       setState(() {
         _loadError = error.toString();
@@ -371,24 +408,24 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
 
   Future<bool> _tryLoadBundledEngineSample() async {
     try {
-      await TbeViewerApi.prepareForCurrentPlatform();
-      final api = TbeViewerApi.load();
-      final repository = ViewerRepository(api);
-      final result = await repository.createResidentialTemplate(
+      final launch = await _projectLifecycle.createResidentialTemplate(
         buildingCount: 1,
         storyCount: 3,
       );
-      _engineRepository?.dispose();
-      _engineRepository = repository;
-      _engineBackedMode = true;
+      _projectSession.activate(launch.session);
       _engineLoadDiagnostic = null;
       await _applyLoadResult(
-        result,
-        sourceLabel: 'engine:3-storey layered house',
+        launch.renderScene!,
+        sourceLabel: 'Layered house',
       );
+      // The bundled engine sample is the first visual proof of the complete
+      // building path. Open it in 3D so the top-level roof and monolithic
+      // stair are visible immediately instead of being hidden by the default
+      // top-down level filter.
+      await _setProjectionMode(RenderSceneProjectionMode.isometric);
       return true;
     } catch (error) {
-      _engineBackedMode = false;
+      _projectSession.markUnavailable();
       _engineLoadDiagnostic = 'Engine-backed sample failed: $error';
       return false;
     }
@@ -399,14 +436,22 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       setState(() {
         _isBusy = true;
         _loadError = null;
-        _statusMessage = 'Refreshing engine-backed scene...';
+        _statusMessage = _activeSectionView == null
+            ? 'Refreshing engine-backed scene...'
+            : 'Refreshing ${_activeSectionView!.name}...';
       });
       try {
-        final result = await _engineRepository!.currentRenderScene();
-        await _applyLoadResult(
-          result,
-          sourceLabel: 'engine:current',
-        );
+        final activeSection = _activeSectionView;
+        if (activeSection != null) {
+          final result = await _sceneViews.setFullSceneRenderScope(true);
+          await _activateSectionView(activeSection, result);
+        } else {
+          final result = await _sceneViews.refresh();
+          await _applyLoadResult(
+            result,
+            sourceLabel: 'Current project',
+          );
+        }
       } catch (error) {
         setState(() {
           _loadError = error.toString();
@@ -433,7 +478,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       _statusMessage = 'Saving project...';
     });
     try {
-      final file = await repository.saveProjectToDefaultLocation();
+      final file = await _projectPersistence.saveToDefaultLocation();
       if (!mounted) return;
       setState(() {
         _isBusy = false;
@@ -477,7 +522,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       _loadError = result.errors.isNotEmpty ? result.errors.join('\n') : null;
       _statusMessage = scene == null
           ? 'RenderScene load failed.'
-          : 'Loaded ${scene.objectCount} objects from $sourceLabel';
+          : '$sourceLabel · ${scene.objectCount} objects';
       _isBusy = false;
 
       if (scene != null) {
@@ -518,7 +563,8 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     await _viewportController.setInteractionMode(_interactionMode);
     _viewportController.clearDraft();
     await _viewportController.fitCamera();
-    if (_viewportController.backend == RenderSceneViewportBackend.native) {
+    if (kDebugMode &&
+        _viewportController.backend == RenderSceneViewportBackend.native) {
       final diagnostics = await _viewportController.nativeDiagnostics();
       if (diagnostics != null && mounted) {
         final input = diagnostics['inputObjects'] ?? 0;
@@ -582,6 +628,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         'column',
         'beam',
         'stair',
+        'roof',
       };
       final visible = preferred.intersection(available);
       if (visible.isNotEmpty) {
@@ -745,12 +792,21 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
 
   Future<void> _setActiveLevel(int? levelId) async {
     var scene = _scene;
-    if (scene == null || levelId == null || _activeLevelId == levelId) {
+    final wasGeneratedSection = _activeSectionView != null;
+    if (scene == null ||
+        levelId == null ||
+        (_activeLevelId == levelId && !wasGeneratedSection)) {
       return;
+    }
+    if (wasGeneratedSection) {
+      // Selecting a plan level is an explicit navigation away from the
+      // generated cut scene. The engine call below reloads the authoritative
+      // model snapshot for that level.
+      setState(() => _activeSectionView = null);
     }
     final repository = _engineRepository;
     if (_engineBackedMode && repository != null) {
-      final result = await repository.setActiveLevel(levelId);
+      final result = await _sceneViews.activateLevel(levelId);
       if (!mounted) {
         return;
       }
@@ -796,7 +852,11 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   }
 
   Future<void> _setProjectionMode(RenderSceneProjectionMode mode) async {
-    if (_projectionMode == mode) {
+    final wasGeneratedSection = _activeSectionView != null;
+    if (wasGeneratedSection) {
+      await _viewportController.setSectionView(null);
+    }
+    if (_projectionMode == mode && !wasGeneratedSection) {
       // Project Browser can be used after a renderer reload. Reassert the
       // controller state even when the Flutter state already has this mode.
       await _viewportController.setProjectionMode(mode);
@@ -805,6 +865,9 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
 
     final scene = _scene;
     setState(() {
+      // A normal plan, elevation, or 3D navigation intentionally leaves the
+      // generated section snapshot and reloads the authoritative model view.
+      _activeSectionView = null;
       _projectionMode = mode;
       _statusMessage = mode.statusLabel;
       if (scene != null && _usesProjectionDefaultVisibility) {
@@ -825,18 +888,19 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
 
     final repository = _engineRepository;
     if (_engineBackedMode && repository != null) {
-      // Full geometry fixes 3D fit/orbit for a normal tower. A campus has
-      // hundreds of independent renderables, so preserve nearby-level
-      // streaming instead of turning a navigation gesture into a thermal hit.
+      // Elevations must frame every storey of the building. Plan views retain
+      // nearby-level streaming, and a large 3D campus keeps its streamed
+      // scope so ordinary navigation remains smooth on a tablet.
       final is3d = mode == RenderSceneProjectionMode.isometric;
       final isLargeScene = (scene?.objectCount ?? 0) > 120;
-      final result =
-          await repository.setFullSceneRenderScope(is3d && !isLargeScene);
+      final useFullScene =
+          mode.isElevation || (is3d && !isLargeScene && !wasGeneratedSection);
+      final result = await _sceneViews.setFullSceneRenderScope(useFullScene);
       await _applyLoadResult(
         result,
-        sourceLabel: is3d && !isLargeScene
-            ? 'engine:full tower 3D'
-            : 'engine:nearby-level streaming',
+        sourceLabel: useFullScene
+            ? (mode.isElevation ? 'Full building elevation' : 'Full tower 3D')
+            : 'Nearby levels',
       );
       return;
     }
@@ -848,6 +912,33 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     await _viewportController.setProjectionMode(mode);
     await _viewportController.setDisplayStyle(_displayStyle);
     await _viewportController.fitCamera();
+  }
+
+  Future<void> _activateSectionView(
+    RenderSceneSection section,
+    RenderSceneLoadResult result,
+  ) async {
+    if (result.scene == null) {
+      setState(() {
+        _activeSectionView = null;
+      });
+      await _applyLoadResult(result, sourceLabel: section.name);
+      return;
+    }
+
+    // A section snapshot has its own X/Z coordinate system. Set the
+    // projection first, then apply the scene once; calling the normal
+    // elevation navigation here would reload and overwrite this cut view.
+    setState(() {
+      _activeSectionView = section;
+      _projectionMode = RenderSceneProjectionMode.northElevation;
+      _statusMessage = 'Opening ${section.name} cut...';
+      if (_usesProjectionDefaultDisplayStyle) {
+        _displayStyle = _defaultDisplayStyleForProjection();
+      }
+    });
+    await _applyLoadResult(result, sourceLabel: '${section.name} cut');
+    await _viewportController.setSectionView(section);
   }
 
   Future<void> _setOrbitProjectionStyle(
@@ -884,6 +975,37 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     });
 
     await _viewportController.setDisplayStyle(style);
+  }
+
+  Future<void> _showSectionBoxDialog() async {
+    final bounds = _viewportController.sceneBounds;
+    if (!bounds.isFinite || _projectionMode.is3D == false) return;
+    // Keep the box visibly outside the model, like Revit's Section Box, while
+    // padding each axis independently so a tall building does not make the
+    // whole cube unnecessarily huge in orbit.
+    const marginX = 5.0;
+    const marginY = 5.0;
+    const marginZ = 5.0;
+    final next = _viewportController.hasSectionBox
+        ? null
+        : RenderSceneBounds(
+            min: RenderScenePoint(
+              x: bounds.min.x - marginX,
+              y: bounds.min.y - marginY,
+              z: bounds.min.z - marginZ,
+            ),
+            max: RenderScenePoint(
+              x: bounds.max.x + marginX,
+              y: bounds.max.y + marginY,
+              z: bounds.max.z + marginZ,
+            ),
+          );
+    await _viewportController.setSectionBox(next);
+    if (mounted) {
+      setState(() => _statusMessage = next == null
+          ? '3D Section Box cleared'
+          : '3D Section Box active — drag viewport handles');
+    }
   }
 
   Future<void> _showCreateLevelDialog() async {
@@ -1541,13 +1663,26 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       return;
     }
 
+    // A projection switch reloads the engine scene and intentionally resets
+    // transient authoring state. Do that first, then activate the requested
+    // tool so Floor/Ceiling/Roof stays active when it brings the user to plan.
+    if (mode.requiresPlanProjection &&
+        _projectionMode != kDefaultPlanProjectionMode) {
+      await _setProjectionMode(kDefaultPlanProjectionMode);
+    }
+
+    if (mode.prefersElevationProjection &&
+        _projectionMode == RenderSceneProjectionMode.isometric) {
+      await _setProjectionMode(kDefaultElevationProjectionMode);
+    }
+
     final selected = _selectedObject(_scene);
 
     setState(() {
       _interactionMode = mode;
       _editStatusMessage = mode == RenderSceneInteractionMode.select
           ? 'Selection mode'
-          : 'Editing mode: ${mode.name}';
+          : 'Editing mode: ${mode.authoringLabel}';
       _statusMessage = _editStatusMessage;
     });
 
@@ -1562,16 +1697,6 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       setState(() {
         _primeOpeningDraftFromObject(selected);
       });
-    }
-
-    if (mode.requiresPlanProjection &&
-        _projectionMode != kDefaultPlanProjectionMode) {
-      await _setProjectionMode(kDefaultPlanProjectionMode);
-    }
-
-    if (mode.prefersElevationProjection &&
-        _projectionMode == RenderSceneProjectionMode.isometric) {
-      await _setProjectionMode(kDefaultElevationProjectionMode);
     }
 
     if (mode == RenderSceneInteractionMode.addRoof) {
@@ -1651,11 +1776,35 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     setState(() {
       _activeLevelId = roofLevelId;
       _editStatusMessage =
-          'Automatic flat roof footprint ready: ${boundWalls.length} wall, ${scene.levelById(roofLevelId)?.name ?? 'Level'}. Confirm bosing.';
+          'Automatic roof footprint ready: ${boundWalls.length} wall, ${scene.levelById(roofLevelId)?.name ?? 'Level'}. Confirm bosing.';
     });
     _viewportController.setSurfaceDraft(
       RenderSceneSurfaceDraft(kind: 'roof', points: polygon, closed: true),
     );
+  }
+
+  void _setSurfaceDrawMode(RenderSceneSurfaceDrawMode value) {
+    if (_surfaceDrawMode == value) {
+      return;
+    }
+    setState(() {
+      _surfaceDrawMode = value;
+      _draftSurfaceStart = null;
+      _draftSurfaceEnd = null;
+      _draftSurfacePoints.clear();
+      _draftSurfaceWallIds.clear();
+      _editStatusMessage = switch (value) {
+        RenderSceneSurfaceDrawMode.polyline =>
+          'Boundary sketch: tap each corner, then Finish.',
+        RenderSceneSurfaceDrawMode.rectangle =>
+          'Rectangle sketch: tap two opposite corners.',
+        RenderSceneSurfaceDrawMode.pickWalls =>
+          'Pick Walls: tap enclosing walls, then Finish.',
+        RenderSceneSurfaceDrawMode.autoRoom =>
+          'Auto Room: tap a room to create the system.',
+      };
+    });
+    _viewportController.setSurfaceDraft(null);
   }
 
   Future<void> _clearDraft() async {
@@ -1669,6 +1818,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
           activeLevel?.defaultWallHeightMeters ?? _defaultWallHeightMeters,
     );
     _stairTool.reset();
+    _trimTool.reset();
     setState(() {
       _draftWallStart = null;
       _draftWallEnd = null;
@@ -1758,6 +1908,9 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         return;
       case RenderSceneInteractionMode.moveOpening:
         await _handleMoveOpeningTap(scene, tappedObject, modelPoint);
+        return;
+      case RenderSceneInteractionMode.trimExtend:
+        await _handleTrimExtendTap(tappedObject, modelPoint);
         return;
       case RenderSceneInteractionMode.addFloor:
       case RenderSceneInteractionMode.addCeiling:
@@ -1867,6 +2020,8 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
           opening: target,
           point: modelPoint,
         );
+        return;
+      case RenderSceneInteractionMode.trimExtend:
         return;
       case RenderSceneInteractionMode.addFloor:
       case RenderSceneInteractionMode.addCeiling:
@@ -2536,6 +2691,88 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     );
   }
 
+  Future<void> _handleTrimExtendTap(
+    RenderSceneObject? tappedObject,
+    RenderScenePoint? modelPoint,
+  ) async {
+    if (tappedObject == null || tappedObject.kindKey != 'wall') {
+      setState(() {
+        _editStatusMessage =
+            'Trim / Extend uchun wallni, o‘zgartirmoqchi bo‘lgan uchiga yaqin joyidan bosing.';
+      });
+      return;
+    }
+    final start = RenderSceneEditor.wallStartPoint(tappedObject);
+    final end = RenderSceneEditor.wallEndPoint(tappedObject);
+    if (start == null || end == null || tappedObject.elementId == null) {
+      setState(() {
+        _editStatusMessage =
+            'Tanlangan wallning tahrir qilinadigan axis geometriyasi yo‘q.';
+      });
+      return;
+    }
+    final touchPoint =
+        modelPoint ?? RenderSceneEditor.wallCenterPoint(tappedObject) ?? start;
+    _trimTool.selectWall(
+      wall: tappedObject,
+      axis: PlanSketchLine(start: start, end: end),
+      touchPoint: touchPoint,
+    );
+    await _selectObject(tappedObject);
+    await _viewportController
+        .highlightElement(tappedObject.elementId!.toString());
+    if (!mounted) return;
+    setState(() {
+      _editStatusMessage = _trimTool.message;
+      _statusMessage = _trimTool.message;
+    });
+  }
+
+  Future<void> _commitTrimExtend() async {
+    final first = _trimTool.first;
+    final second = _trimTool.second;
+    final preview = _trimTool.preview;
+    final firstId = first?.wall.elementId;
+    final secondId = second?.wall.elementId;
+    if (first == null ||
+        second == null ||
+        preview == null ||
+        firstId == null ||
+        secondId == null) {
+      setState(() {
+        _editStatusMessage =
+            'Avval ikkita wallni ularning trim/extend qilinadigan uchidan tanlang.';
+      });
+      return;
+    }
+    if (!_engineBackedMode || _engineRepository == null) {
+      setState(() {
+        _editStatusMessage =
+            'Trim / Extend productionda engine-backed transaction talab qiladi.';
+      });
+      return;
+    }
+    try {
+      final result = await _authoringCommands.trimExtendWalls(
+        firstWallId: firstId,
+        firstUsesStart: first.endpoint == PlanSketchEndpoint.start,
+        secondWallId: secondId,
+        secondUsesStart: second.endpoint == PlanSketchEndpoint.start,
+      );
+      await _applyEngineSceneResult(
+        result,
+        message: 'Walls trimmed/extended and auto-joined.',
+      );
+      await _clearDraft();
+      await _viewportController.selectElement(firstId.toString());
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _editStatusMessage = 'Trim / Extend failed: $error';
+      });
+    }
+  }
+
   Future<void> _handleSurfaceTap(
     RenderScene scene,
     RenderSceneObject? tappedObject,
@@ -2726,28 +2963,10 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       _viewportController.setSurfaceDraft(
         RenderSceneSurfaceDraft(
           kind: kind,
-          points: <RenderScenePoint>[
-            RenderScenePoint(
-              x: math.min(_draftSurfaceStart!.x, _draftSurfaceEnd!.x),
-              y: math.min(_draftSurfaceStart!.y, _draftSurfaceEnd!.y),
-              z: math.max(_draftSurfaceStart!.z, _draftSurfaceEnd!.z),
-            ),
-            RenderScenePoint(
-              x: math.max(_draftSurfaceStart!.x, _draftSurfaceEnd!.x),
-              y: math.min(_draftSurfaceStart!.y, _draftSurfaceEnd!.y),
-              z: math.max(_draftSurfaceStart!.z, _draftSurfaceEnd!.z),
-            ),
-            RenderScenePoint(
-              x: math.max(_draftSurfaceStart!.x, _draftSurfaceEnd!.x),
-              y: math.max(_draftSurfaceStart!.y, _draftSurfaceEnd!.y),
-              z: math.max(_draftSurfaceStart!.z, _draftSurfaceEnd!.z),
-            ),
-            RenderScenePoint(
-              x: math.min(_draftSurfaceStart!.x, _draftSurfaceEnd!.x),
-              y: math.max(_draftSurfaceStart!.y, _draftSurfaceEnd!.y),
-              z: math.max(_draftSurfaceStart!.z, _draftSurfaceEnd!.z),
-            ),
-          ],
+          points: PlanSketchGeometry.rectangle(
+            _draftSurfaceStart!,
+            _draftSurfaceEnd!,
+          ),
         ),
       );
       return;
@@ -2755,20 +2974,13 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     if (_surfaceDrawMode == RenderSceneSurfaceDrawMode.rectangle &&
         _draftSurfaceStart != null &&
         _draftSurfaceEnd != null) {
-      final minX = math.min(_draftSurfaceStart!.x, _draftSurfaceEnd!.x);
-      final maxX = math.max(_draftSurfaceStart!.x, _draftSurfaceEnd!.x);
-      final minY = math.min(_draftSurfaceStart!.y, _draftSurfaceEnd!.y);
-      final maxY = math.max(_draftSurfaceStart!.y, _draftSurfaceEnd!.y);
-      final z = math.max(_draftSurfaceStart!.z, _draftSurfaceEnd!.z);
       _viewportController.setSurfaceDraft(
         RenderSceneSurfaceDraft(
           kind: kind,
-          points: <RenderScenePoint>[
-            RenderScenePoint(x: minX, y: minY, z: z),
-            RenderScenePoint(x: maxX, y: minY, z: z),
-            RenderScenePoint(x: maxX, y: maxY, z: z),
-            RenderScenePoint(x: minX, y: maxY, z: z),
-          ],
+          points: PlanSketchGeometry.rectangle(
+            _draftSurfaceStart!,
+            _draftSurfaceEnd!,
+          ),
         ),
       );
       return;
@@ -2824,68 +3036,24 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     if (!_snapDraftToGrid || step <= 0) {
       return point;
     }
-
-    double snap(double value) => (value / step).roundToDouble() * step;
-    return RenderScenePoint(
-      x: snap(point.x),
-      y: snap(point.y),
-      z: snap(point.z),
-    );
+    return PlanSketchGeometry.snapToGrid(point, stepMeters: step);
   }
 
   RenderScenePoint _draftLinePoint({
     required RenderScenePoint rawPoint,
     required RenderScenePoint? referenceStart,
   }) {
-    final nearScenePoint = _snapToNearbyScenePoint(rawPoint);
-    var point = _snapDraftToGrid ? _snapPoint(nearScenePoint) : nearScenePoint;
-    final start = referenceStart;
-    if (start == null) {
-      return point;
-    }
-
-    final dx = point.x - start.x;
-    final dy = point.y - start.y;
-    if (dx.abs() < 1e-6 && dy.abs() < 1e-6) {
-      return point;
-    }
-
-    if (_projectionMode.isElevation) {
-      point = RenderScenePoint(
-        x: point.x,
-        y: point.y,
-        z: start.z,
-      );
-      return point;
-    }
-
-    if (dx.abs() > dy.abs() * 1.35) {
-      point = RenderScenePoint(x: point.x, y: start.y, z: point.z);
-    } else if (dy.abs() > dx.abs() * 1.35) {
-      point = RenderScenePoint(x: start.x, y: point.y, z: point.z);
-    }
-    return point;
-  }
-
-  RenderScenePoint _snapToNearbyScenePoint(
-    RenderScenePoint point, {
-    double toleranceMeters = 0.45,
-  }) {
     final scene = _scene;
-    if (scene == null) {
-      return point;
-    }
-
-    RenderScenePoint bestPoint = point;
-    var bestDistance = toleranceMeters;
-    for (final candidate in RenderSceneEditor.wallSnapPoints(scene)) {
-      final distance = candidate.distanceTo(point);
-      if (distance < bestDistance) {
-        bestDistance = distance;
-        bestPoint = candidate;
-      }
-    }
-    return bestPoint;
+    return PlanSketchGeometry.resolveLineEndpoint(
+      rawPoint: rawPoint,
+      referenceStart: referenceStart,
+      candidatePoints: scene == null
+          ? const <RenderScenePoint>[]
+          : RenderSceneEditor.wallSnapPoints(scene),
+      useGridSnap: _snapDraftToGrid,
+      lockElevationAxis: _projectionMode.isElevation,
+      snapVertical: _projectionMode.isElevation,
+    );
   }
 
   RenderScenePoint _snapMovedWallPoint(
@@ -2955,6 +3123,8 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         final end = _draftWallEnd;
         final target = _draftMoveTarget ?? _selectedObject(_scene);
         return target?.kindKey == 'wall' && start != null && end != null;
+      case RenderSceneInteractionMode.trimExtend:
+        return _trimTool.isReady;
       case RenderSceneInteractionMode.addFloor:
       case RenderSceneInteractionMode.addCeiling:
       case RenderSceneInteractionMode.addRoof:
@@ -3123,6 +3293,9 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
           );
         }
         await _clearDraft();
+        return;
+      case RenderSceneInteractionMode.trimExtend:
+        await _commitTrimExtend();
         return;
       case RenderSceneInteractionMode.addFloor:
       case RenderSceneInteractionMode.addCeiling:
@@ -3295,6 +3468,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     await _clearDraft();
     setState(() {
       _editStatusMessage = 'Draft canceled.';
+      _statusMessage = _editStatusMessage;
     });
   }
 
@@ -3491,6 +3665,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     setState(() {
       _scene = nextScene;
       _activeLevelId = resolvedLevelId;
+      _activeSectionView = null;
       _statusMessage = message;
       _editStatusMessage = message;
       _loadError = null;
@@ -3627,6 +3802,11 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
                   child: Row(
                     children: <Widget>[
                       _buildLeftRail(context, scene),
+                      AuthoringToolPalette(
+                        mode: _interactionMode,
+                        enabled: scene != null && !_isBusy,
+                        onModeChanged: _setInteractionMode,
+                      ),
                       Expanded(
                         child: _buildViewportPanel(context),
                       ),
@@ -3653,135 +3833,38 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     RenderScene? fullScene,
     RenderScene? viewportScene,
   ) {
-    return AppBar(
-      titleSpacing: 16,
-      title: Semantics(
-        label: _statusMessage ?? 'Tablet BIM ready',
-        child: const Text('Tablet BIM'),
+    return WorkspaceAppBar(
+      statusMessage: _statusMessage,
+      busy: _isBusy,
+      engineBacked: _engineBackedMode,
+      hasScene: fullScene != null,
+      hasSelection: _viewportController.selectedElementId != null,
+      browserVisible: _showObjectList,
+      inspectorVisible: _showInspector,
+      activeSectionName: _activeSectionView?.name,
+      onExitSection: _activeSectionView == null
+          ? null
+          : () => _setProjectionMode(RenderSceneProjectionMode.isometric),
+      onCreateTemplate: (template) => _createResidentialTemplate(
+        template == WorkspaceTemplate.tower9
+            ? _ResidentialTemplateKind.tower9
+            : _ResidentialTemplateKind.campus6x9,
       ),
-      actions: <Widget>[
-        PopupMenuButton<String>(
-          tooltip: 'View display',
-          icon: const Icon(Icons.visibility_outlined),
-          onSelected: (value) async {
-            switch (value) {
-              case '3d':
-                await _setProjectionMode(RenderSceneProjectionMode.isometric);
-                return;
-              case 'shaded':
-                await _setDisplayStyle(RenderSceneDisplayStyle.shaded);
-                return;
-              case 'solid':
-                await _setDisplayStyle(RenderSceneDisplayStyle.solid);
-                return;
-              case 'wire':
-                await _setDisplayStyle(RenderSceneDisplayStyle.wireframe);
-                return;
-              case 'ortho':
-                await _setOrbitProjectionStyle(
-                    RenderSceneOrbitProjectionStyle.orthographic);
-                return;
-              case 'perspective':
-                await _setOrbitProjectionStyle(
-                    RenderSceneOrbitProjectionStyle.perspective);
-                return;
-            }
-          },
-          itemBuilder: (context) => <PopupMenuEntry<String>>[
-            const PopupMenuItem(value: '3d', child: Text('3D view')),
-            const PopupMenuDivider(),
-            const PopupMenuItem(value: 'shaded', child: Text('Shaded')),
-            const PopupMenuItem(value: 'solid', child: Text('Solid')),
-            const PopupMenuItem(value: 'wire', child: Text('Wireframe')),
-            const PopupMenuDivider(),
-            const PopupMenuItem(value: 'ortho', child: Text('Orthographic')),
-            const PopupMenuItem(
-                value: 'perspective', child: Text('Perspective')),
-          ],
-        ),
-        PopupMenuButton<_ResidentialTemplateKind>(
-          tooltip: 'Create engine template',
-          enabled: !_isBusy,
-          icon: const Icon(Icons.apartment_outlined),
-          onSelected: _createResidentialTemplate,
-          itemBuilder: (context) =>
-              const <PopupMenuEntry<_ResidentialTemplateKind>>[
-            PopupMenuItem<_ResidentialTemplateKind>(
-              value: _ResidentialTemplateKind.tower9,
-              child: Text('9-qavatli bino template'),
-            ),
-            PopupMenuItem<_ResidentialTemplateKind>(
-              value: _ResidentialTemplateKind.campus6x9,
-              child: Text('6 × 9-qavatli shaharcha template'),
-            ),
-          ],
-        ),
-        if (defaultTargetPlatform == TargetPlatform.android)
-          IconButton(
-            tooltip:
-                _viewportController.backend == RenderSceneViewportBackend.native
-                    ? 'Use Flutter fallback renderer'
-                    : 'Use Filament renderer',
-            onPressed: _isBusy ? null : _toggleAndroidRenderer,
-            icon: Icon(
-              _viewportController.backend == RenderSceneViewportBackend.native
-                  ? Icons.layers
-                  : Icons.memory,
-            ),
-          ),
-        IconButton(
-          tooltip: 'Save project',
-          onPressed: _isBusy || !_engineBackedMode ? null : _saveCurrentProject,
-          icon: const Icon(Icons.save_outlined),
-        ),
-        IconButton(
-          tooltip: 'Reload bundled RenderScene',
-          onPressed: _isBusy ? null : _reloadCurrentScene,
-          icon: const Icon(Icons.refresh),
-        ),
-        IconButton(
-          tooltip: 'Fit view',
-          onPressed: viewportScene == null || _isBusy ? null : _fitCamera,
-          icon: const Icon(Icons.center_focus_strong),
-        ),
-        IconButton(
-          tooltip: 'Clear selection',
-          onPressed: _viewportController.selectedElementId == null
-              ? null
-              : _clearSelection,
-          icon: const Icon(Icons.deselect),
-        ),
-        IconButton(
-          tooltip:
-              _showObjectList ? 'Hide project browser' : 'Show project browser',
-          onPressed: () {
-            setState(() {
-              _showObjectList = !_showObjectList;
-            });
-          },
-          icon: Icon(
-            _showObjectList ? Icons.view_list : Icons.view_list_outlined,
-          ),
-        ),
-        IconButton(
-          tooltip: _showInspector ? 'Hide inspector' : 'Show inspector',
-          onPressed: () {
-            setState(() {
-              _showInspector = !_showInspector;
-            });
-          },
-          icon: Icon(
-            _showInspector
-                ? Icons.keyboard_double_arrow_right
-                : Icons.keyboard_double_arrow_left,
-          ),
-        ),
-        const SizedBox(width: 8),
-      ],
-      bottom: PreferredSize(
-        preferredSize: const Size.fromHeight(126),
-        child: _buildToolbar(context, fullScene),
-      ),
+      onSave: _saveCurrentProject,
+      onOpenMaterials: _showMaterialLayerEditor,
+      onCreateSection: _showSectionDialog,
+      onReload: _reloadCurrentScene,
+      onClearSelection: _clearSelection,
+      onToggleBrowser: () => setState(() {
+        _showObjectList = !_showObjectList;
+      }),
+      onToggleInspector: () => setState(() {
+        _showInspector = !_showInspector;
+      }),
+      rendererToggleVisible: defaultTargetPlatform == TargetPlatform.android,
+      rendererIsNative:
+          _viewportController.backend == RenderSceneViewportBackend.native,
+      onToggleRenderer: _toggleAndroidRenderer,
     );
   }
 
@@ -3865,6 +3948,15 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
                         : () => _setOrbitProjectionStyle(
                               RenderSceneOrbitProjectionStyle.perspective,
                             ),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton.tonalIcon(
+                    onPressed:
+                        scene == null || _isBusy ? null : _showSectionBoxDialog,
+                    icon: const Icon(Icons.crop_free_outlined, size: 18),
+                    label: Text(_viewportController.hasSectionBox
+                        ? 'Section Box on'
+                        : 'Section Box'),
                   ),
                 ],
                 const SizedBox(width: 10),
@@ -4113,182 +4205,50 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
           },
           icon: const Icon(Icons.view_list),
         ),
-        IconButton(
-          tooltip: 'Reload sample',
-          onPressed: _isBusy ? null : _reloadCurrentScene,
-          icon: const Icon(Icons.refresh),
-        ),
-        IconButton(
-          tooltip: 'Fit view',
-          onPressed: _scene == null ? null : _fitCamera,
-          icon: const Icon(Icons.center_focus_strong),
-        ),
       ],
     );
   }
 
   Widget _buildObjectListPanel(BuildContext context, RenderScene? scene) {
-    final theme = Theme.of(context);
-    final availableKinds = _availableKinds(scene);
-    final objects = scene == null
-        ? <RenderSceneObject>[]
-        : scene.objectsForKinds(_visibleKinds);
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: <Widget>[
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 14, 8, 8),
-          child: Row(
-            children: <Widget>[
-              Expanded(
-                child: Text(
-                  'Project Browser',
-                  style: theme.textTheme.titleMedium,
-                ),
-              ),
-              IconButton(
-                tooltip: 'Collapse project browser',
-                onPressed: () {
-                  setState(() {
-                    _showObjectList = false;
-                  });
-                },
-                icon: const Icon(Icons.chevron_left),
-              ),
-            ],
-          ),
-        ),
-        if (scene != null) ...<Widget>[
-          _buildProjectBrowserViews(context, scene),
-          const Divider(height: 20),
-        ],
-        if (scene != null)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Text('Categories', style: theme.textTheme.labelLarge),
-                const SizedBox(height: 6),
-                _KindFilterWrap(
-                  availableKinds: availableKinds,
-                  selectedKinds: _visibleKinds,
-                  kindCounts: scene.kindCounts,
-                  onChanged: _setVisibleKinds,
-                ),
-              ],
-            ),
-          ),
-        const Divider(height: 20),
-        Expanded(
-          child: scene == null
-              ? const _EmptyPanelMessage(
-                  icon: Icons.data_object,
-                  title: 'No scene loaded',
-                  message: 'Load a RenderScene sample to inspect objects.',
-                )
-              : objects.isEmpty
-                  ? const _EmptyPanelMessage(
-                      icon: Icons.filter_alt_off,
-                      title: 'No visible objects',
-                      message: 'Change category filters to show objects.',
-                    )
-                  : ListView.separated(
-                      padding: const EdgeInsets.fromLTRB(8, 0, 8, 12),
-                      itemCount: objects.length,
-                      separatorBuilder: (_, __) => const SizedBox(height: 4),
-                      itemBuilder: (BuildContext context, int index) {
-                        final object = objects[index];
-                        return _ObjectListTile(
-                          object: object,
-                          selected: object.elementId?.toString() ==
-                              _viewportController.selectedElementId,
-                          onTap: () => _selectObject(object),
-                        );
-                      },
-                    ),
-        ),
-      ],
+    return ProjectBrowserPanel(
+      scene: scene,
+      availableKinds: _availableKinds(scene),
+      visibleKinds: _visibleKinds,
+      selectedElementId: _viewportController.selectedElementId,
+      projectionMode: _projectionMode,
+      activeLevelId: _activeLevelId,
+      activeSectionName: _activeSectionView?.name,
+      onClose: () => setState(() => _showObjectList = false),
+      onVisibleKindsChanged: _setVisibleKinds,
+      onSelectObject: _selectObject,
+      onOpen3d: () => _setProjectionMode(RenderSceneProjectionMode.isometric),
+      onOpenFloorPlan: (levelId) async {
+        await _setActiveLevel(levelId);
+        await _setProjectionMode(RenderSceneProjectionMode.topDown);
+      },
+      onOpenElevation: _setProjectionMode,
+      onOpenSection: _openProjectSection,
     );
   }
 
-  Widget _buildProjectBrowserViews(BuildContext context, RenderScene scene) {
-    final theme = Theme.of(context);
-    Widget viewRow({
-      required String label,
-      required bool selected,
-      required IconData icon,
-      required Future<void> Function() onTap,
-    }) =>
-        ListTile(
-          dense: true,
-          minLeadingWidth: 24,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 12),
-          leading: Icon(icon, size: 18),
-          selected: selected,
-          title: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
-          onTap: () => onTap(),
-        );
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 4),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: <Widget>[
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Text('Views', style: theme.textTheme.labelLarge),
-          ),
-          viewRow(
-            label: '3D View',
-            icon: Icons.view_in_ar_outlined,
-            selected: _projectionMode == RenderSceneProjectionMode.isometric,
-            onTap: () =>
-                _setProjectionMode(RenderSceneProjectionMode.isometric),
-          ),
-          ExpansionTile(
-            dense: true,
-            initiallyExpanded: true,
-            leading: const Icon(Icons.map_outlined, size: 18),
-            title: const Text('Floor Plans'),
-            children: <Widget>[
-              for (final level in scene.levels)
-                viewRow(
-                  label: '${level.name} plan',
-                  icon: Icons.grid_4x4_outlined,
-                  selected:
-                      _projectionMode == RenderSceneProjectionMode.topDown &&
-                          _activeLevelId == level.levelId,
-                  onTap: () async {
-                    await _setActiveLevel(level.levelId);
-                    await _setProjectionMode(RenderSceneProjectionMode.topDown);
-                  },
-                ),
-            ],
-          ),
-          ExpansionTile(
-            dense: true,
-            leading: const Icon(Icons.stacked_line_chart_outlined, size: 18),
-            title: const Text('Elevations'),
-            children: <Widget>[
-              for (final mode in <RenderSceneProjectionMode>[
-                RenderSceneProjectionMode.northElevation,
-                RenderSceneProjectionMode.southElevation,
-                RenderSceneProjectionMode.eastElevation,
-                RenderSceneProjectionMode.westElevation,
-              ])
-                viewRow(
-                  label: mode.shortLabel,
-                  icon: Icons.straighten,
-                  selected: _projectionMode == mode,
-                  onTap: () => _setProjectionMode(mode),
-                ),
-            ],
-          ),
-        ],
-      ),
-    );
+  Future<void> _openProjectSection(RenderSceneSection section) async {
+    if (_engineRepository == null || !_engineBackedMode || !mounted) return;
+    setState(() {
+      _isBusy = true;
+      _statusMessage = 'Opening ${section.name}...';
+      _loadError = null;
+    });
+    try {
+      final result = await _sceneViews.setFullSceneRenderScope(true);
+      await _activateSectionView(section, result);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _isBusy = false;
+        _loadError = error.toString();
+        _statusMessage = 'Section failed.';
+      });
+    }
   }
 
   Widget _buildViewportPanel(BuildContext context) {
@@ -4311,6 +4271,24 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
             draftWallHeightMeters: _defaultWallHeightMeters,
           ),
         ),
+        if (_isSurfaceAuthoring)
+          Positioned(
+            left: 16,
+            right: 16,
+            top: 16,
+            child: SurfaceDrawingContextBar(
+              mode: _interactionMode,
+              drawMode: _surfaceDrawMode,
+              enabled: _scene != null && !_isBusy,
+              canFinish: _draftCanConfirm,
+              onDrawModeChanged: _setSurfaceDrawMode,
+              onTrimExtend: () {
+                _setInteractionMode(RenderSceneInteractionMode.trimExtend);
+              },
+              onFinish: _confirmDraft,
+              onCancel: _cancelDraft,
+            ),
+          ),
         if (kDebugMode && _androidMutationTrace.isNotEmpty)
           Positioned(
             left: 8,
@@ -4318,6 +4296,24 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
             top: 8,
             child: _AndroidMutationTrace(entries: _androidMutationTrace),
           ),
+        // The Section Box is drawn and manipulated in the native Filament
+        // overlay so its border and clipping planes share one camera matrix.
+        Positioned(
+          right: 16,
+          bottom: 16,
+          child: ViewportControlDeck(
+            hasScene: _scene != null && !_isBusy,
+            projectionMode: _projectionMode,
+            displayStyle: _displayStyle,
+            orbitStyle: _orbitProjectionStyle,
+            onProjectionChanged: _setProjectionMode,
+            onDisplayStyleChanged: _setDisplayStyle,
+            onOrbitStyleChanged: _setOrbitProjectionStyle,
+            onFit: _fitCamera,
+            hasSectionBox: _viewportController.hasSectionBox,
+            onSectionBox: _showSectionBoxDialog,
+          ),
+        ),
         if (_isBusy)
           Positioned.fill(
             child: ColoredBox(
@@ -4428,6 +4424,9 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
                           openingHeightMeters: _draftOpeningHeightMeters,
                           openingSillHeightMeters:
                               _draftOpeningSillHeightMeters,
+                          trimFirstWall: _trimTool.first,
+                          trimSecondWall: _trimTool.second,
+                          trimPreview: _trimTool.preview,
                           editStatusMessage: _editStatusMessage,
                           snapEnabled: _snapDraftToGrid,
                           canConfirm: _draftCanConfirm,
@@ -4490,16 +4489,6 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
                               _draftFloorTopElevationMeters = value;
                             });
                           },
-                          onSurfaceDrawModeChanged: (value) {
-                            setState(() {
-                              _surfaceDrawMode = value;
-                              _draftSurfaceStart = null;
-                              _draftSurfaceEnd = null;
-                              _draftSurfacePoints.clear();
-                              _draftSurfaceWallIds.clear();
-                            });
-                            _syncSurfaceDraftPreview();
-                          },
                           onStairWidthChanged: _stairTool.setWidth,
                           onConfirm: _confirmDraft,
                           onCancel: _cancelDraft,
@@ -4516,8 +4505,8 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
                         commands: _authoringCommands,
                         viewRangeMeters: _planViewRangeMeters,
                         onViewRangeChanged: _setPlanViewRangeMeters,
-                        showPlanViewRange:
-                            _projectionMode == RenderSceneProjectionMode.topDown,
+                        showPlanViewRange: _projectionMode ==
+                            RenderSceneProjectionMode.topDown,
                         activePlanLevel: _activeLevel(scene),
                         onApplied: (result, message) =>
                             _applyEngineSceneResult(result, message: message),
@@ -4545,6 +4534,85 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       await _viewportController.updateRenderScene(_sceneForViewport(scene));
       await _viewportController.setVisibleKinds(_visibleKinds);
     }
+  }
+
+  Future<void> _showMaterialLayerEditor() async {
+    final repository = _engineRepository;
+    if (repository == null || !_engineBackedMode || !mounted) return;
+    try {
+      final json = await _projectPersistence.exportJson();
+      final decoded = jsonDecode(json);
+      if (decoded is! Map) return;
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (context) => MaterialLayerEditor(
+          projectJson: decoded.cast<String, dynamic>(),
+          onApply: (updatedProject) async {
+            final updatedJson = jsonEncode(updatedProject);
+            await _projectPersistence.replaceFromJson(
+              projectName: 'Material Layer Project',
+              json: updatedJson,
+            );
+            final result = await _sceneViews.refresh();
+            if (mounted) {
+              await _applyLoadResult(result, sourceLabel: 'Material layers');
+            }
+          },
+        ),
+      );
+    } catch (error) {
+      if (mounted) {
+        setState(() => _editStatusMessage = 'Material editor failed: $error');
+      }
+    }
+  }
+
+  Future<void> _showSectionDialog() async {
+    final scene = _scene;
+    if (_engineRepository == null ||
+        scene == null ||
+        !_engineBackedMode ||
+        !mounted) {
+      return;
+    }
+    // Section placement is a plan-view command: create the default section
+    // through the building centre without exposing coordinate fields. The
+    // Project Browser still owns Section A/B, while this command gives the
+    // same predictable horizontal cut as Revit's first section marker.
+    final margin =
+        math.max(scene.bounds.width, scene.bounds.depth) * 0.08 + 0.5;
+    final section = RenderSceneSection(
+      name: 'Section',
+      start: RenderScenePoint(
+        x: scene.bounds.min.x - margin,
+        y: (scene.bounds.min.y + scene.bounds.max.y) * 0.5,
+        z: 0,
+      ),
+      end: RenderScenePoint(
+        x: scene.bounds.max.x + margin,
+        y: (scene.bounds.min.y + scene.bounds.max.y) * 0.5,
+        z: 0,
+      ),
+    );
+    setState(() {
+      _isBusy = true;
+      _statusMessage = 'Creating section...';
+      _loadError = null;
+    });
+    try {
+      final result = await _sceneViews.setFullSceneRenderScope(true);
+      await _activateSectionView(section, result);
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _isBusy = false;
+          _loadError = error.toString();
+          _statusMessage = 'Section failed.';
+        });
+      }
+    }
+    return;
   }
 
   Future<void> _handleSceneSecondaryTap(RenderSceneTapDetails details) async {
@@ -4843,64 +4911,6 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   }
 }
 
-class _KindFilterWrap extends StatelessWidget {
-  const _KindFilterWrap({
-    required this.availableKinds,
-    required this.selectedKinds,
-    required this.kindCounts,
-    required this.onChanged,
-  });
-
-  final List<String> availableKinds;
-  final Set<String> selectedKinds;
-  final Map<String, int> kindCounts;
-  final ValueChanged<Set<String>> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    if (availableKinds.isEmpty) {
-      return const SizedBox.shrink();
-    }
-
-    final allSelected = selectedKinds.isEmpty;
-
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: <Widget>[
-        FilterChip(
-          label: const Text('All'),
-          selected: allSelected,
-          onSelected: (_) {
-            onChanged(<String>{});
-          },
-        ),
-        for (final kind in availableKinds)
-          FilterChip(
-            label: Text('${prettySceneKind(kind)} ${kindCounts[kind] ?? 0}'),
-            selected: allSelected || selectedKinds.contains(kind),
-            onSelected: (bool selected) {
-              final next =
-                  allSelected ? availableKinds.toSet() : selectedKinds.toSet();
-
-              if (selected) {
-                next.add(kind);
-              } else {
-                next.remove(kind);
-              }
-
-              if (next.length == availableKinds.length) {
-                onChanged(<String>{});
-              } else {
-                onChanged(next);
-              }
-            },
-          ),
-      ],
-    );
-  }
-}
-
 class _LevelToolbarControl extends StatelessWidget {
   const _LevelToolbarControl({
     required this.levels,
@@ -5054,6 +5064,9 @@ class _DraftEditorCard extends StatefulWidget {
     required this.openingWidthMeters,
     required this.openingHeightMeters,
     required this.openingSillHeightMeters,
+    required this.trimFirstWall,
+    required this.trimSecondWall,
+    required this.trimPreview,
     required this.editStatusMessage,
     required this.snapEnabled,
     required this.canConfirm,
@@ -5065,7 +5078,6 @@ class _DraftEditorCard extends StatefulWidget {
     required this.onSurfaceThicknessChanged,
     required this.onSurfaceHeightChanged,
     required this.onFloorTopElevationChanged,
-    required this.onSurfaceDrawModeChanged,
     required this.onStairWidthChanged,
     required this.onConfirm,
     required this.onCancel,
@@ -5090,6 +5102,9 @@ class _DraftEditorCard extends StatefulWidget {
   final double openingWidthMeters;
   final double openingHeightMeters;
   final double openingSillHeightMeters;
+  final TrimExtendWallSelection? trimFirstWall;
+  final TrimExtendWallSelection? trimSecondWall;
+  final PlanSketchTrimResult? trimPreview;
   final String? editStatusMessage;
   final bool snapEnabled;
   final bool canConfirm;
@@ -5101,7 +5116,6 @@ class _DraftEditorCard extends StatefulWidget {
   final ValueChanged<double> onSurfaceThicknessChanged;
   final ValueChanged<double> onSurfaceHeightChanged;
   final ValueChanged<double> onFloorTopElevationChanged;
-  final ValueChanged<RenderSceneSurfaceDrawMode> onSurfaceDrawModeChanged;
   final ValueChanged<double> onStairWidthChanged;
   final VoidCallback onConfirm;
   final VoidCallback onCancel;
@@ -5217,15 +5231,16 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
       title: 'Edit',
       icon: Icons.build_outlined,
       children: <Widget>[
-        _InfoRow(label: 'Mode', value: mode.name),
-        _InfoRow(
-          label: 'Snap',
-          value: widget.snapEnabled ? 'On' : 'Off',
-          trailing: Switch.adaptive(
-            value: widget.snapEnabled,
-            onChanged: widget.onSnapToggled,
+        _InfoRow(label: 'Mode', value: mode.authoringLabel),
+        if (mode != RenderSceneInteractionMode.trimExtend)
+          _InfoRow(
+            label: 'Snap',
+            value: widget.snapEnabled ? 'On' : 'Off',
+            trailing: Switch.adaptive(
+              value: widget.snapEnabled,
+              onChanged: widget.onSnapToggled,
+            ),
           ),
-        ),
         if (widget.editStatusMessage != null)
           Text(
             widget.editStatusMessage!,
@@ -5278,31 +5293,18 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
             start: widget.draftWallStart,
             end: widget.draftWallEnd,
           )
+        else if (mode == RenderSceneInteractionMode.trimExtend)
+          _TrimExtendDraftSummary(
+            first: widget.trimFirstWall,
+            second: widget.trimSecondWall,
+            preview: widget.trimPreview,
+          )
         else if (mode == RenderSceneInteractionMode.addFloor ||
             mode == RenderSceneInteractionMode.addCeiling ||
             mode == RenderSceneInteractionMode.addRoof)
           Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
-              Wrap(
-                spacing: 6,
-                runSpacing: 6,
-                children: <Widget>[
-                  for (final drawMode in RenderSceneSurfaceDrawMode.values)
-                    ChoiceChip(
-                      label: Text(switch (drawMode) {
-                        RenderSceneSurfaceDrawMode.rectangle => 'Rect',
-                        RenderSceneSurfaceDrawMode.polyline => 'Polyline',
-                        RenderSceneSurfaceDrawMode.pickWalls => 'Pick walls',
-                        RenderSceneSurfaceDrawMode.autoRoom => 'Auto room',
-                      }),
-                      selected: widget.surfaceDrawMode == drawMode,
-                      onSelected: (_) =>
-                          widget.onSurfaceDrawModeChanged(drawMode),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 8),
               _SurfaceDraftSummary(
                 mode: mode,
                 start: widget.draftSurfaceStart,
@@ -5346,7 +5348,7 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
                 )
               else
                 const Text(
-                  'Roof uses the same boundary draft kernel. Thickness is enough for flat-roof demo flow.',
+                  'Roof uses the same boundary sketch. Shape, slope and overhang stay editable in Properties.',
                 ),
             ],
           )
@@ -5413,7 +5415,11 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
             Expanded(
               child: FilledButton(
                 onPressed: widget.canConfirm ? widget.onConfirm : null,
-                child: const Text('Confirm'),
+                child: Text(
+                  mode == RenderSceneInteractionMode.trimExtend
+                      ? 'Trim / Extend'
+                      : 'Confirm',
+                ),
               ),
             ),
             const SizedBox(width: 8),
@@ -5469,6 +5475,67 @@ class _WallDraftSummary extends StatelessWidget {
           label: 'Length',
           value: '${length.toStringAsFixed(2)} m',
         ),
+      ],
+    );
+  }
+}
+
+class _TrimExtendDraftSummary extends StatelessWidget {
+  const _TrimExtendDraftSummary({
+    required this.first,
+    required this.second,
+    required this.preview,
+  });
+
+  final TrimExtendWallSelection? first;
+  final TrimExtendWallSelection? second;
+  final PlanSketchTrimResult? preview;
+
+  String _endpointLabel(PlanSketchEndpoint endpoint) =>
+      endpoint == PlanSketchEndpoint.start ? 'Start' : 'End';
+
+  @override
+  Widget build(BuildContext context) {
+    if (first == null) {
+      return const Text(
+        'Birinchi wallni o‘zgartirmoqchi bo‘lgan uchiga yaqin joyidan bosing.',
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        _InfoRow(
+          label: 'First wall',
+          value:
+              '#${first!.wall.elementId} · ${_endpointLabel(first!.endpoint)}',
+        ),
+        if (second == null)
+          const Padding(
+            padding: EdgeInsets.only(top: 6),
+            child: Text(
+              'Endi ikkinchi wallni uning trim/extend qilinadigan uchiga yaqin joyidan bosing.',
+            ),
+          )
+        else ...<Widget>[
+          _InfoRow(
+            label: 'Second wall',
+            value:
+                '#${second!.wall.elementId} · ${_endpointLabel(second!.endpoint)}',
+          ),
+          if (preview != null)
+            _InfoRow(
+              label: 'Join point',
+              value:
+                  '(${preview!.intersection.x.toStringAsFixed(2)}, ${preview!.intersection.y.toStringAsFixed(2)})',
+            )
+          else
+            const Padding(
+              padding: EdgeInsets.only(top: 6),
+              child: Text(
+                'Bu uchlar parallel yoki juda qisqa natija beradi. Boshqa uchni tanlang.',
+              ),
+            ),
+        ],
       ],
     );
   }
@@ -5622,55 +5689,6 @@ class _NumericField extends StatelessWidget {
           border: const OutlineInputBorder(),
         ),
         onChanged: onChanged,
-      ),
-    );
-  }
-}
-
-class _ObjectListTile extends StatelessWidget {
-  const _ObjectListTile({
-    required this.object,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final RenderSceneObject object;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final kind = prettySceneKind(object.kind);
-    final id = object.elementId?.toString() ?? 'no-id';
-
-    return Material(
-      color: selected ? theme.colorScheme.primaryContainer : Colors.transparent,
-      borderRadius: BorderRadius.circular(12),
-      child: ListTile(
-        dense: true,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        onTap: onTap,
-        leading: CircleAvatar(
-          radius: 17,
-          backgroundColor: _kindUiColor(object.kindKey).withValues(alpha: 0.15),
-          child: Icon(
-            _kindIcon(object.kindKey),
-            size: 18,
-            color: _kindUiColor(object.kindKey),
-          ),
-        ),
-        title: Text(
-          '$kind #$id',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        subtitle: Text(
-          '${object.mesh.positions.length} vertices · ${object.mesh.triangleCount} tris',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        trailing: selected ? const Icon(Icons.check_circle) : null,
       ),
     );
   }

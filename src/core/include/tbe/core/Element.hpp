@@ -97,6 +97,12 @@ enum class WallLayerFunction {
     Generic
 };
 
+enum class WallTypeCategory {
+    Interior,
+    Exterior,
+    Generic,
+};
+
 enum class QuantityType {
     Area,
     Volume,
@@ -114,7 +120,10 @@ enum class LayeredAssemblyKind {
 
 enum class RoofType {
     Flat,
-    SimpleGable
+    SimpleGable,
+    // Revit-like roof by footprint: ridge, hip and valley geometry is
+    // generated from an arbitrary simple closed wall/profile loop.
+    AutoFootprint
 };
 
 enum class WallHeightMode {
@@ -174,6 +183,9 @@ struct WallProfile2D {
 struct MeshBuffer {
     std::vector<Point3> vertices{};
     std::vector<std::uint32_t> indices{};
+    // One material id per triangle. An empty vector means legacy/default
+    // material assignment and is valid for older generated meshes.
+    std::vector<ElementId> triangle_material_ids{};
 };
 
 struct GeneratedGeometry {
@@ -379,6 +391,7 @@ struct MaterialDefinition {
     MaterialCategory category{MaterialCategory::Generic};
     std::optional<double> density_kg_per_m3{};
     std::optional<double> unit_cost{};
+    std::string display_color{"#B0B7C3"};
     std::map<std::string, std::string> metadata{};
 };
 
@@ -400,6 +413,7 @@ struct LayeredAssemblyData {
 struct WallTypeData {
     ElementId wall_type_id{};
     std::string name{};
+    WallTypeCategory category{WallTypeCategory::Generic};
     std::vector<WallAssemblyLayer> layers{};
 };
 
@@ -469,6 +483,7 @@ struct WallScheduleRow {
     double interior_finish_area_square_meters{};
     double exterior_finish_area_square_meters{};
     std::map<ElementId, double> material_volume_by_id{};
+    std::map<ElementId, double> material_cost_by_id{};
 };
 
 struct SlabScheduleRow {
@@ -478,6 +493,8 @@ struct SlabScheduleRow {
     double thickness_meters{};
     double volume_cubic_meters{};
     std::string material_or_assembly_name{};
+    std::map<ElementId, double> material_volume_by_id{};
+    std::map<ElementId, double> material_cost_by_id{};
 };
 
 struct FloorFinishScheduleRow {

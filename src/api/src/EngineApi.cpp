@@ -11,7 +11,9 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iomanip>
 #include <map>
+#include <numeric>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -34,6 +36,8 @@ using tbe::core::Line2;
 using tbe::core::Point2;
 using tbe::core::Point3;
 using tbe::core::Project;
+
+ApiMaterialCategory to_api_material_category(tbe::core::MaterialCategory category);
 
 struct SessionTransaction {
     std::string name{};
@@ -100,21 +104,43 @@ Project make_residential_template(int building_count, int story_count) {
     // deferred until the user asks for final analysis.
     document.set_automatic_wall_join_enabled(false);
 
-    const auto concrete = document.create_material("Template Concrete", tbe::core::MaterialCategory::Structural, 2400.0, 110.0);
-    const auto masonry = document.create_material("Template Masonry", tbe::core::MaterialCategory::Structural, 1800.0, 90.0);
-    const auto gypsum = document.create_material("Template Gypsum", tbe::core::MaterialCategory::Finish, 850.0, 28.0);
-    const auto insulation = document.create_material("Template Insulation", tbe::core::MaterialCategory::Insulation, 35.0, 18.0);
-    const auto tile = document.create_material("Template Tile", tbe::core::MaterialCategory::Finish, 2100.0, 36.0);
+    const auto concrete = document.create_material("Template Concrete", tbe::core::MaterialCategory::Structural, 2400.0, 110.0, {}, "#8796A5");
+    const auto masonry = document.create_material("Template Brick", tbe::core::MaterialCategory::Structural, 1800.0, 90.0, {}, "#B86B4B");
+    const auto gypsum = document.create_material("Template Gypsum", tbe::core::MaterialCategory::Finish, 850.0, 28.0, {}, "#F0E6D2");
+    const auto insulation = document.create_material("Template Insulation", tbe::core::MaterialCategory::Insulation, 35.0, 18.0, {}, "#F1C453");
+    const auto screed = document.create_material("Template Screed", tbe::core::MaterialCategory::Structural, 2100.0, 36.0, {}, "#C8B79B");
+    const auto laminate = document.create_material("Template Laminate", tbe::core::MaterialCategory::Finish, 700.0, 42.0, {}, "#A8733E");
+    const auto tile = document.create_material("Template Stair Tile", tbe::core::MaterialCategory::Finish, 2100.0, 36.0, {}, "#D6A84A");
     const auto wall_assembly = document.create_layered_assembly(tbe::core::LayeredAssemblyKind::Wall, "Residential Wall", {
-        tbe::core::WallAssemblyLayer{.material_id = masonry, .thickness_meters = 0.20, .function = tbe::core::WallLayerFunction::Core, .priority = 100, .structural = true},
-        tbe::core::WallAssemblyLayer{.material_id = insulation, .thickness_meters = 0.08, .function = tbe::core::WallLayerFunction::Insulation, .priority = 70},
-        tbe::core::WallAssemblyLayer{.material_id = gypsum, .thickness_meters = 0.015, .function = tbe::core::WallLayerFunction::InteriorFinish, .priority = 10},
         tbe::core::WallAssemblyLayer{.material_id = masonry, .thickness_meters = 0.012, .function = tbe::core::WallLayerFunction::ExteriorFinish, .priority = 5},
+        tbe::core::WallAssemblyLayer{.material_id = insulation, .thickness_meters = 0.08, .function = tbe::core::WallLayerFunction::Insulation, .priority = 70},
+        tbe::core::WallAssemblyLayer{.material_id = masonry, .thickness_meters = 0.20, .function = tbe::core::WallLayerFunction::Core, .priority = 100, .structural = true},
+        tbe::core::WallAssemblyLayer{.material_id = gypsum, .thickness_meters = 0.015, .function = tbe::core::WallLayerFunction::InteriorFinish, .priority = 10},
     });
+    const auto exterior_wall_type = document.create_wall_type("Exterior Wall", {
+        tbe::core::WallAssemblyLayer{.material_id = masonry, .thickness_meters = 0.012, .function = tbe::core::WallLayerFunction::ExteriorFinish, .priority = 5},
+        tbe::core::WallAssemblyLayer{.material_id = insulation, .thickness_meters = 0.08, .function = tbe::core::WallLayerFunction::Insulation, .priority = 70},
+        tbe::core::WallAssemblyLayer{.material_id = masonry, .thickness_meters = 0.20, .function = tbe::core::WallLayerFunction::Core, .priority = 100, .structural = true},
+        tbe::core::WallAssemblyLayer{.material_id = gypsum, .thickness_meters = 0.015, .function = tbe::core::WallLayerFunction::InteriorFinish, .priority = 10},
+    }, tbe::core::WallTypeCategory::Exterior);
+    const auto interior_wall_type = document.create_wall_type("Interior Wall", {
+        tbe::core::WallAssemblyLayer{.material_id = gypsum, .thickness_meters = 0.015, .function = tbe::core::WallLayerFunction::InteriorFinish, .priority = 10},
+        tbe::core::WallAssemblyLayer{.material_id = insulation, .thickness_meters = 0.05, .function = tbe::core::WallLayerFunction::Insulation, .priority = 70},
+        tbe::core::WallAssemblyLayer{.material_id = gypsum, .thickness_meters = 0.015, .function = tbe::core::WallLayerFunction::InteriorFinish, .priority = 10},
+    }, tbe::core::WallTypeCategory::Interior);
+    const auto generic_wall_type = document.create_wall_type("Generic Wall", {
+        tbe::core::WallAssemblyLayer{.material_id = masonry, .thickness_meters = 0.12, .function = tbe::core::WallLayerFunction::Generic, .priority = 50, .structural = true},
+    }, tbe::core::WallTypeCategory::Generic);
+    (void)wall_assembly;
+    (void)generic_wall_type;
     const auto floor_assembly = document.create_layered_assembly(tbe::core::LayeredAssemblyKind::Floor, "Residential Floor", {
         tbe::core::WallAssemblyLayer{.material_id = concrete, .thickness_meters = 0.18, .function = tbe::core::WallLayerFunction::Core},
-        tbe::core::WallAssemblyLayer{.material_id = tile, .thickness_meters = 0.015, .function = tbe::core::WallLayerFunction::InteriorFinish},
-        tbe::core::WallAssemblyLayer{.material_id = gypsum, .thickness_meters = 0.015, .function = tbe::core::WallLayerFunction::InteriorFinish},
+        tbe::core::WallAssemblyLayer{.material_id = screed, .thickness_meters = 0.05, .function = tbe::core::WallLayerFunction::Core},
+        tbe::core::WallAssemblyLayer{.material_id = laminate, .thickness_meters = 0.012, .function = tbe::core::WallLayerFunction::InteriorFinish},
+    });
+    const auto foundation_assembly = document.create_layered_assembly(tbe::core::LayeredAssemblyKind::Floor, "Foundation Slab", {
+        tbe::core::WallAssemblyLayer{.material_id = concrete, .thickness_meters = 0.25, .function = tbe::core::WallLayerFunction::Core, .priority = 100, .structural = true},
+        tbe::core::WallAssemblyLayer{.material_id = insulation, .thickness_meters = 0.08, .function = tbe::core::WallLayerFunction::Insulation, .priority = 70},
     });
     const auto ceiling_assembly = document.create_layered_assembly(tbe::core::LayeredAssemblyKind::Ceiling, "Residential Ceiling", {
         tbe::core::WallAssemblyLayer{.material_id = gypsum, .thickness_meters = 0.015, .function = tbe::core::WallLayerFunction::InteriorFinish},
@@ -131,10 +157,17 @@ Project make_residential_template(int building_count, int story_count) {
     });
 
     std::vector<ElementId> levels;
-    levels.reserve(static_cast<std::size_t>(story_count));
+    // Storeys are semantic building levels; the roof has its own level above
+    // the last storey so it is visible and editable as Level N+1.
+    levels.reserve(static_cast<std::size_t>(story_count + 1));
     for (int story = 0; story < story_count; ++story) {
         levels.push_back(document.create_level("Level " + std::to_string(story + 1), story * 3.2, 3.2));
     }
+    const auto roof_level_id = document.create_level(
+        "Level " + std::to_string(story_count + 1) + " (Roof)",
+        story_count * 3.2,
+        3.2
+    );
 
     constexpr double width = 12.0;
     constexpr double depth = 8.0;
@@ -143,17 +176,34 @@ Project make_residential_template(int building_count, int story_count) {
     for (int building = 0; building < building_count; ++building) {
         const auto origin_x = static_cast<double>(building % 3) * building_pitch_x;
         const auto origin_y = static_cast<double>(building / 3) * building_pitch_y;
+        // Deliberately use an orthogonal L-shaped residential footprint in
+        // the bundled engine template. This exercises wall-loop ordering,
+        // rooms, layered floors/ceilings and the automatic footprint roof on
+        // the first screen instead of hiding those paths behind a rectangle.
         const std::vector<Point2> footprint{
             {.x = origin_x, .y = origin_y},
             {.x = origin_x + width, .y = origin_y},
-            {.x = origin_x + width, .y = origin_y + depth},
+            {.x = origin_x + width, .y = origin_y + depth * 0.5},
+            {.x = origin_x + width * 0.58, .y = origin_y + depth * 0.5},
+            {.x = origin_x + width * 0.58, .y = origin_y + depth},
             {.x = origin_x, .y = origin_y + depth},
         };
+        // One foundation belongs to the building, not to every storey. Its
+        // top is aligned with Level 1; ordinary storeys get their own floor
+        // slab below.
+        document.create_slab(
+            levels.front(),
+            footprint,
+            0.33,
+            concrete,
+            foundation_assembly,
+            -0.33
+        );
         std::vector<ElementId> top_perimeter;
         for (int story = 0; story < story_count; ++story) {
             const auto level_id = levels[static_cast<std::size_t>(story)];
             std::vector<ElementId> perimeter;
-            perimeter.reserve(4);
+            perimeter.reserve(footprint.size());
             for (std::size_t edge = 0; edge < footprint.size(); ++edge) {
                 const auto wall_id = document.create_wall(
                     "Building " + std::to_string(building + 1) + " exterior wall",
@@ -162,7 +212,7 @@ Project make_residential_template(int building_count, int story_count) {
                     3.2,
                     level_id
                 );
-                document.set_element_assembly(wall_id, wall_assembly);
+                document.set_wall_type(wall_id, exterior_wall_type);
                 if (story + 1 < story_count) {
                     document.set_wall_level_constraints(wall_id, level_id, levels[static_cast<std::size_t>(story + 1)], 0.0, 0.0, tbe::core::WallHeightMode::TopLevel);
                 }
@@ -175,7 +225,7 @@ Project make_residential_template(int building_count, int story_count) {
                 3.2,
                 level_id
             );
-            document.set_element_assembly(partition_id, wall_assembly);
+            document.set_wall_type(partition_id, interior_wall_type);
             if (story + 1 < story_count) {
                 document.set_wall_level_constraints(partition_id, level_id, levels[static_cast<std::size_t>(story + 1)], 0.0, 0.0, tbe::core::WallHeightMode::TopLevel);
             }
@@ -191,7 +241,7 @@ Project make_residential_template(int building_count, int story_count) {
                     3.2,
                     level_id
                 );
-                document.set_element_assembly(horizontal, wall_assembly);
+                document.set_wall_type(horizontal, interior_wall_type);
                 if (story + 1 < story_count) {
                     document.set_wall_level_constraints(horizontal, level_id, levels[static_cast<std::size_t>(story + 1)], 0.0, 0.0, tbe::core::WallHeightMode::TopLevel);
                 }
@@ -204,7 +254,7 @@ Project make_residential_template(int building_count, int story_count) {
                     3.2,
                     level_id
                 );
-                document.set_element_assembly(vertical, wall_assembly);
+                document.set_wall_type(vertical, interior_wall_type);
                 if (story + 1 < story_count) {
                     document.set_wall_level_constraints(vertical, level_id, levels[static_cast<std::size_t>(story + 1)], 0.0, 0.0, tbe::core::WallHeightMode::TopLevel);
                 }
@@ -221,26 +271,37 @@ Project make_residential_template(int building_count, int story_count) {
             }
             document.create_door("Apartment entry A", perimeter.front(), 2.0, 0.9, 2.1);
             document.create_door("Apartment entry B", perimeter[2], 2.0, 0.9, 2.1);
-            document.create_window("Living window A", perimeter[1], 1.8, 1.4, 1.2, 0.9);
-            document.create_window("Living window B", perimeter[1], 5.0, 1.4, 1.2, 0.9);
-            document.create_window("Living window C", perimeter[3], 1.8, 1.4, 1.2, 0.9);
-            document.create_window("Living window D", perimeter[3], 5.0, 1.4, 1.2, 0.9);
+            document.create_window("Living window A", perimeter[1], 1.2, 1.0, 1.2, 0.9);
+            document.create_window("Living window B", perimeter[1], 2.8, 1.0, 1.2, 0.9);
+            document.create_window("Living window C", perimeter[3], 1.2, 1.0, 1.2, 0.9);
+            document.create_window("Living window D", perimeter[3], 2.8, 1.0, 1.2, 0.9);
             document.create_window("Bedroom window A", perimeter[0], 4.0, 1.0, 1.2, 1.0);
             document.create_window("Bedroom window B", perimeter[2], 4.0, 1.0, 1.2, 1.0);
-            document.create_floor_system_from_profile(level_id, footprint, floor_assembly, 0.18);
+            document.create_slab(
+                level_id,
+                footprint,
+                0.242,
+                concrete,
+                floor_assembly,
+                0.0
+            );
             document.create_ceiling_system_from_profile(level_id, footprint, ceiling_assembly, 2.85);
             if (story + 1 == story_count) {
                 top_perimeter = perimeter;
             }
         }
-        // The starter model should demonstrate a proper residential roof,
-        // not a flat cap. Its rectangular footprint is handled by the
-        // engine's watertight sloped-gable generator.
-        document.create_roof(levels.back(), footprint, tbe::core::RoofType::SimpleGable, 0.20, concrete, roof_assembly, 25.0, 0.35, std::move(top_perimeter));
+        // The starter model demonstrates the same automatic footprint path
+        // used by authoring: an L-shaped boundary, slope and overhang are
+        // resolved in the C++ engine and remain linked to source walls.
+        document.create_roof(roof_level_id, footprint, tbe::core::RoofType::AutoFootprint, 0.20, concrete, roof_assembly, 25.0, 0.50, std::move(top_perimeter));
     }
+    // Resolve the template's perimeter and partition intersections once all
+    // walls exist.  This gives the starter buildings real mitered/corner
+    // joins while avoiding repeated work during creation of each wall.
+    document.auto_join_walls();
     document.set_automatic_wall_join_enabled(true);
     document.clear_dirty_room_requests();
-    document.regenerate_dirty_geometry();
+    document.regenerate_dirty_geometry(tbe::core::GeometryDetail::Envelope);
     return project;
 }
 
@@ -503,6 +564,7 @@ RenderSceneMeshDTO mesh_dto_from_mesh_buffer(const tbe::core::MeshBuffer& mesh, 
         }
     }
     dto.indices = mesh.indices;
+    dto.triangle_material_ids = mesh.triangle_material_ids;
     return dto;
 }
 
@@ -631,6 +693,542 @@ RenderSceneObjectDTO make_object_dto(
     return object;
 }
 
+// Layer assemblies are deliberately sent as compact semantic metadata. The
+// viewport can draw a plan cut/pattern from this profile without receiving a
+// separate mesh for every layer and without duplicating the profile for each
+// triangle.
+std::string layer_profile(const std::vector<tbe::core::WallAssemblyLayer>& layers) {
+    std::ostringstream profile;
+    profile << std::setprecision(12);
+    for (std::size_t index = 0; index < layers.size(); ++index) {
+        if (index != 0) {
+            profile << ';';
+        }
+        const auto& layer = layers[index];
+        profile << layer.material_id << ':' << layer.thickness_meters;
+    }
+    return profile.str();
+}
+
+std::string wall_layer_profile(const Document& document, const tbe::core::WallData& wall) {
+    if (wall.assembly_id != 0) {
+        const auto* assembly = document.get_layered_assembly(wall.assembly_id);
+        return assembly == nullptr ? std::string{} : layer_profile(assembly->layers);
+    }
+    if (wall.wall_type_id != 0) {
+        const auto* wall_type = document.get_wall_type(wall.wall_type_id);
+        return wall_type == nullptr ? std::string{} : layer_profile(wall_type->layers);
+    }
+    return {};
+}
+
+std::string wall_type_category_name(tbe::core::WallTypeCategory category) {
+    switch (category) {
+    case tbe::core::WallTypeCategory::Interior: return "Interior";
+    case tbe::core::WallTypeCategory::Exterior: return "Exterior";
+    case tbe::core::WallTypeCategory::Generic: return "Generic";
+    }
+    return "Generic";
+}
+
+double section_cross(Point2 left, Point2 right) {
+    return left.x * right.y - left.y * right.x;
+}
+
+double section_dot(Point2 left, Point2 right) {
+    return left.x * right.x + left.y * right.y;
+}
+
+RenderSceneMeshDTO make_section_box(double x_min, double x_max, double y_min, double y_max, double z_min, double z_max, std::uint64_t material_id) {
+    RenderSceneMeshDTO mesh;
+    mesh.positions = {
+        {.x = x_min, .y = y_min, .z = z_min}, {.x = x_max, .y = y_min, .z = z_min},
+        {.x = x_max, .y = y_max, .z = z_min}, {.x = x_min, .y = y_max, .z = z_min},
+        {.x = x_min, .y = y_min, .z = z_max}, {.x = x_max, .y = y_min, .z = z_max},
+        {.x = x_max, .y = y_max, .z = z_max}, {.x = x_min, .y = y_max, .z = z_max},
+    };
+    const std::array<std::uint32_t, 36> indices{
+        0, 1, 2, 0, 2, 3, 4, 6, 5, 4, 7, 6,
+        0, 4, 5, 0, 5, 1, 1, 5, 6, 1, 6, 2,
+        2, 6, 7, 2, 7, 3, 4, 0, 3, 4, 3, 7,
+    };
+    mesh.indices.assign(indices.begin(), indices.end());
+    mesh.triangle_material_ids.assign(mesh.indices.size() / 3, material_id);
+    return mesh;
+}
+
+RenderSceneMeshDTO make_section_ribbon(
+    double start_x,
+    double start_z,
+    double end_x,
+    double end_z,
+    std::uint64_t material_id,
+    double half_width = 0.025,
+    double half_depth = 0.03
+) {
+    const auto dx = end_x - start_x;
+    const auto dz = end_z - start_z;
+    const auto length = std::sqrt((dx * dx) + (dz * dz));
+    if (length <= 1.0e-8) return {};
+    const auto normal_x = -dz / length * half_width;
+    const auto normal_z = dx / length * half_width;
+    const auto first_a = Vec3{.x = start_x + normal_x, .y = -half_depth, .z = start_z + normal_z};
+    const auto first_b = Vec3{.x = start_x - normal_x, .y = -half_depth, .z = start_z - normal_z};
+    const auto second_a = Vec3{.x = end_x + normal_x, .y = -half_depth, .z = end_z + normal_z};
+    const auto second_b = Vec3{.x = end_x - normal_x, .y = -half_depth, .z = end_z - normal_z};
+    RenderSceneMeshDTO mesh;
+    mesh.positions = {
+        first_a, second_a, second_b, first_b,
+        Vec3{.x = first_a.x, .y = half_depth, .z = first_a.z},
+        Vec3{.x = second_a.x, .y = half_depth, .z = second_a.z},
+        Vec3{.x = second_b.x, .y = half_depth, .z = second_b.z},
+        Vec3{.x = first_b.x, .y = half_depth, .z = first_b.z},
+    };
+    const std::array<std::uint32_t, 36> indices{
+        0, 1, 2, 0, 2, 3, 4, 6, 5, 4, 7, 6,
+        0, 4, 5, 0, 5, 1, 1, 5, 6, 1, 6, 2,
+        2, 6, 7, 2, 7, 3, 4, 0, 3, 4, 3, 7,
+    };
+    mesh.indices.assign(indices.begin(), indices.end());
+    mesh.triangle_material_ids.assign(mesh.indices.size() / 3, material_id);
+    return mesh;
+}
+
+void append_section_object(
+    RenderSceneDTO& scene,
+    ElementId source_id,
+    ApiElementKind kind,
+    ElementId level_id,
+    std::size_t layer_index,
+    RenderSceneMeshDTO mesh,
+    std::map<std::string, std::string> metadata,
+    std::size_t fragment_index = 0
+) {
+    metadata["section_source_id"] = std::to_string(source_id);
+    metadata["section_layer_index"] = std::to_string(layer_index);
+    metadata["section_fragment_index"] = std::to_string(fragment_index);
+    auto object = make_object_dto(
+        9000000000000000ULL + (source_id * 10000ULL) +
+            (static_cast<ElementId>(layer_index) * 100ULL) +
+            static_cast<ElementId>(fragment_index),
+        kind,
+        level_id,
+        1,
+        std::move(mesh),
+        kind == ApiElementKind::Wall ? "wall" : "structural",
+        std::move(metadata),
+        false,
+        true
+    );
+    scene.vertex_count += object.mesh.positions.size();
+    scene.index_count += object.mesh.indices.size();
+    scene.objects.push_back(std::move(object));
+}
+
+bool section_line_intersection(Point2 section_start, Point2 section_direction, Point2 wall_start, Point2 wall_direction, double& section_parameter, double& wall_parameter) {
+    const auto denominator = section_cross(section_direction, wall_direction);
+    if (std::abs(denominator) <= 1.0e-9) return false;
+    const auto delta = Point2{.x = wall_start.x - section_start.x, .y = wall_start.y - section_start.y};
+    section_parameter = section_cross(delta, wall_direction) / denominator;
+    wall_parameter = section_cross(delta, section_direction) / denominator;
+    return true;
+}
+
+std::vector<tbe::core::WallAssemblyLayer> section_wall_layers(const Document& document, const tbe::core::WallData& wall) {
+    if (wall.assembly_id != 0) {
+        if (const auto* assembly = document.get_layered_assembly(wall.assembly_id)) return assembly->layers;
+    }
+    if (wall.wall_type_id != 0) {
+        if (const auto* wall_type = document.get_wall_type(wall.wall_type_id)) return wall_type->layers;
+    }
+    return {tbe::core::WallAssemblyLayer{.material_id = 0, .thickness_meters = wall.thickness_meters}};
+}
+
+RenderSceneDTO build_section_scene(const Document& document, Vec2 start, Vec2 end) {
+    const auto section_start = Point2{.x = start.x, .y = start.y};
+    const auto section_end = Point2{.x = end.x, .y = end.y};
+    const auto direction = Point2{.x = section_end.x - section_start.x, .y = section_end.y - section_start.y};
+    const auto section_length = std::sqrt(section_dot(direction, direction));
+    if (section_length <= 1.0e-9) throw std::invalid_argument("section line must have positive length");
+    const auto unit = Point2{.x = direction.x / section_length, .y = direction.y / section_length};
+    const auto levels = level_elevation_map(document);
+    RenderSceneDTO scene;
+    scene.scene_version = 1;
+    scene.units = "meters";
+    scene.coordinate_system = "Section distance X, Z elevation";
+    // Keep the section definition in the returned scene as well. This lets
+    // the Project Browser continue to expose the active section after the
+    // viewport has switched from the plan scene to the generated cut scene.
+    scene.sections.push_back(RenderSceneSectionDTO{
+        .name = "Current Section",
+        .start = start,
+        .end = end,
+    });
+    for (const auto& element : document.elements()) {
+        if (const auto* level = element.level()) {
+            scene.levels.push_back(RenderSceneLevelDTO{.level_id = to_id(element.id()), .name = level->name, .elevation_meters = level->elevation_meters, .default_wall_height_meters = level->default_wall_height_meters});
+        }
+    }
+    for (const auto& [material_id, material] : document.materials()) {
+        scene.materials.push_back(RenderSceneMaterialDTO{.id = to_id(material_id), .name = material.name, .category = to_api_material_category(material.category), .display_color = material.display_color});
+    }
+
+    // A concave L/U footprint can cross the section line in several disjoint
+    // spans. Pair sorted crossings instead of filling from the first to the
+    // last one, otherwise a section incorrectly bridges a courtyard/notch.
+    const auto polygon_intervals = [&](const std::vector<Point2>& polygon) {
+        std::vector<double> intersections;
+        for (std::size_t index = 0; index < polygon.size(); ++index) {
+            const auto edge_start = polygon[index];
+            const auto edge_end = polygon[(index + 1) % polygon.size()];
+            double section_parameter = 0.0;
+            double edge_parameter = 0.0;
+            if (section_line_intersection(section_start, direction, edge_start,
+                                          Point2{.x = edge_end.x - edge_start.x,
+                                                 .y = edge_end.y - edge_start.y},
+                                          section_parameter, edge_parameter) &&
+                section_parameter >= -1.0e-6 && section_parameter <= 1.0 + 1.0e-6 &&
+                edge_parameter >= -1.0e-6 && edge_parameter <= 1.0 + 1.0e-6) {
+                intersections.push_back(section_parameter * section_length);
+            }
+        }
+        std::sort(intersections.begin(), intersections.end());
+        intersections.erase(
+            std::unique(intersections.begin(), intersections.end(), [](double left, double right) {
+                return std::abs(left - right) <= 1.0e-6;
+            }),
+            intersections.end()
+        );
+        std::vector<std::pair<double, double>> intervals;
+        for (std::size_t index = 0; index + 1 < intersections.size(); index += 2) {
+            if (intersections[index + 1] - intersections[index] > 1.0e-6) {
+                intervals.emplace_back(intersections[index], intersections[index + 1]);
+            }
+        }
+        return intervals;
+    };
+
+    auto append_horizontal_layers = [&](const std::vector<Point2>& polygon,
+                                        ElementId source_id,
+                                        ApiElementKind kind,
+                                        ElementId level_id,
+                                        double base_z,
+                                        ElementId assembly_id,
+                                        ElementId fallback_material_id,
+                                        std::string section_kind) {
+        const auto intervals = polygon_intervals(polygon);
+        if (intervals.empty()) return;
+
+        std::vector<tbe::core::WallAssemblyLayer> layers;
+        if (assembly_id != 0) {
+            if (const auto* assembly = document.get_layered_assembly(assembly_id)) {
+                layers = assembly->layers;
+            }
+        }
+        if (layers.empty()) {
+            layers.push_back(tbe::core::WallAssemblyLayer{
+                .material_id = fallback_material_id,
+                .thickness_meters = 0.02,
+            });
+        }
+        auto z = base_z;
+        for (std::size_t index = 0; index < layers.size(); ++index) {
+            const auto thickness = std::max(0.005, layers[index].thickness_meters);
+            const auto next_z = z + thickness;
+            for (std::size_t interval_index = 0;
+                 interval_index < intervals.size(); ++interval_index) {
+                const auto [section_start_x, section_end_x] = intervals[interval_index];
+                append_section_object(
+                    scene, source_id, kind, level_id, index,
+                    make_section_box(section_start_x, section_end_x, -0.03, 0.03,
+                                     z, next_z, layers[index].material_id),
+                    {{"section_kind", section_kind},
+                     {"layer_thickness_meters", std::to_string(thickness)},
+                     {"assembly_id", std::to_string(assembly_id)}},
+                    interval_index);
+            }
+            z = next_z;
+        }
+    };
+
+    // Sloped roof meshes are already authoritative geometry. Intersect their
+    // triangles with the vertical section plane so a section shows the real
+    // pitched profile instead of a flat proxy at the roof level.
+    const auto append_sloped_roof_cut = [&](const tbe::core::RoofData& roof,
+                                            ElementId source_id) {
+        if (roof.mesh.indices.empty() || roof.mesh.vertices.empty()) return false;
+        const auto base_z = level_elevation(levels, roof.level_id, 0.0);
+        auto fallback_material = roof.material_id;
+        if (fallback_material == 0 && roof.assembly_id != 0) {
+            if (const auto* assembly = document.get_layered_assembly(roof.assembly_id);
+                assembly != nullptr && !assembly->layers.empty()) {
+                fallback_material = assembly->layers.front().material_id;
+            }
+        }
+        struct Segment {
+            double start_x{};
+            double start_z{};
+            double end_x{};
+            double end_z{};
+            ElementId material_id{};
+        };
+        std::vector<Segment> segments;
+        const auto add_segment = [&](Point3 first, Point3 second,
+                                     ElementId material_id) {
+            const auto first_x = section_dot(
+                Point2{.x = first.x - section_start.x,
+                       .y = first.y - section_start.y}, unit);
+            const auto second_x = section_dot(
+                Point2{.x = second.x - section_start.x,
+                       .y = second.y - section_start.y}, unit);
+            if (std::hypot(second_x - first_x, second.z - first.z) <= 1.0e-6) {
+                return;
+            }
+            Segment candidate{
+                .start_x = first_x,
+                .start_z = first.z,
+                .end_x = second_x,
+                .end_z = second.z,
+                .material_id = material_id,
+            };
+            if (candidate.end_x < candidate.start_x ||
+                (std::abs(candidate.end_x - candidate.start_x) <= 1.0e-6 &&
+                 candidate.end_z < candidate.start_z)) {
+                std::swap(candidate.start_x, candidate.end_x);
+                std::swap(candidate.start_z, candidate.end_z);
+            }
+            const auto duplicate = std::any_of(
+                segments.begin(), segments.end(), [&](const Segment& existing) {
+                    return existing.material_id == candidate.material_id &&
+                        std::abs(existing.start_x - candidate.start_x) <= 1.0e-5 &&
+                        std::abs(existing.start_z - candidate.start_z) <= 1.0e-5 &&
+                        std::abs(existing.end_x - candidate.end_x) <= 1.0e-5 &&
+                        std::abs(existing.end_z - candidate.end_z) <= 1.0e-5;
+                });
+            if (!duplicate) segments.push_back(candidate);
+        };
+
+        for (std::size_t index = 0; index + 2 < roof.mesh.indices.size(); index += 3) {
+            const auto first_index = roof.mesh.indices[index];
+            const auto second_index = roof.mesh.indices[index + 1];
+            const auto third_index = roof.mesh.indices[index + 2];
+            if (first_index >= roof.mesh.vertices.size() ||
+                second_index >= roof.mesh.vertices.size() ||
+                third_index >= roof.mesh.vertices.size()) {
+                continue;
+            }
+            const std::array<Point3, 3> triangle{
+                Point3{.x = roof.mesh.vertices[first_index].x,
+                       .y = roof.mesh.vertices[first_index].y,
+                       .z = roof.mesh.vertices[first_index].z + base_z},
+                Point3{.x = roof.mesh.vertices[second_index].x,
+                       .y = roof.mesh.vertices[second_index].y,
+                       .z = roof.mesh.vertices[second_index].z + base_z},
+                Point3{.x = roof.mesh.vertices[third_index].x,
+                       .y = roof.mesh.vertices[third_index].y,
+                       .z = roof.mesh.vertices[third_index].z + base_z},
+            };
+            const auto plane_distance = [&](Point3 point) {
+                return section_cross(direction, Point2{
+                    .x = point.x - section_start.x,
+                    .y = point.y - section_start.y,
+                }) / section_length;
+            };
+            std::array<double, 3> distances{
+                plane_distance(triangle[0]), plane_distance(triangle[1]),
+                plane_distance(triangle[2]),
+            };
+            std::vector<Point3> intersections;
+            const auto append_unique = [&](Point3 point) {
+                const auto already_present = std::any_of(
+                    intersections.begin(), intersections.end(),
+                    [&](Point3 existing) {
+                        return std::abs(existing.x - point.x) <= 1.0e-6 &&
+                            std::abs(existing.y - point.y) <= 1.0e-6 &&
+                            std::abs(existing.z - point.z) <= 1.0e-6;
+                    });
+                if (!already_present) intersections.push_back(point);
+            };
+            for (const auto& [first_edge, second_edge] :
+                 std::array<std::pair<std::size_t, std::size_t>, 3>{
+                     std::pair{0U, 1U}, std::pair{1U, 2U}, std::pair{2U, 0U}}) {
+                const auto first_distance = distances[first_edge];
+                const auto second_distance = distances[second_edge];
+                if (std::abs(first_distance) <= 1.0e-8) {
+                    append_unique(triangle[first_edge]);
+                }
+                if ((first_distance < -1.0e-8 && second_distance > 1.0e-8) ||
+                    (first_distance > 1.0e-8 && second_distance < -1.0e-8)) {
+                    const auto t = first_distance / (first_distance - second_distance);
+                    const auto& first = triangle[first_edge];
+                    const auto& second = triangle[second_edge];
+                    append_unique(Point3{
+                        .x = first.x + ((second.x - first.x) * t),
+                        .y = first.y + ((second.y - first.y) * t),
+                        .z = first.z + ((second.z - first.z) * t),
+                    });
+                }
+            }
+            if (intersections.size() < 2) continue;
+            std::size_t first = 0;
+            std::size_t second = 1;
+            auto farthest_distance = -1.0;
+            for (std::size_t left = 0; left < intersections.size(); ++left) {
+                for (std::size_t right = left + 1; right < intersections.size(); ++right) {
+                    const auto distance = std::pow(intersections[right].x - intersections[left].x, 2.0) +
+                        std::pow(intersections[right].y - intersections[left].y, 2.0) +
+                        std::pow(intersections[right].z - intersections[left].z, 2.0);
+                    if (distance > farthest_distance) {
+                        farthest_distance = distance;
+                        first = left;
+                        second = right;
+                    }
+                }
+            }
+            const auto triangle_material_index = index / 3;
+            const auto material_id = triangle_material_index < roof.mesh.triangle_material_ids.size() &&
+                    roof.mesh.triangle_material_ids[triangle_material_index] != 0
+                ? roof.mesh.triangle_material_ids[triangle_material_index]
+                : fallback_material;
+            add_segment(intersections[first], intersections[second], material_id);
+        }
+        for (std::size_t index = 0; index < segments.size(); ++index) {
+            const auto& segment = segments[index];
+            append_section_object(
+                scene, source_id, ApiElementKind::Roof, roof.level_id, 0,
+                make_section_ribbon(segment.start_x, segment.start_z,
+                                    segment.end_x, segment.end_z,
+                                    segment.material_id),
+                {{"section_kind", "RoofSlopeCut"},
+                 {"assembly_id", std::to_string(roof.assembly_id)}},
+                index);
+        }
+        return !segments.empty();
+    };
+
+    for (const auto& [system_id, system] : document.floor_systems()) {
+        append_horizontal_layers(system.boundary_polygon, system_id,
+                                 ApiElementKind::FloorSystem, system.level_id,
+                                 level_elevation(levels, system.level_id, 0.0),
+                                 system.assembly_id, 0, "FloorCut");
+    }
+    for (const auto& [system_id, system] : document.ceiling_systems()) {
+        append_horizontal_layers(
+            system.boundary_polygon, system_id, ApiElementKind::CeilingSystem,
+            system.level_id,
+            level_elevation(levels, system.level_id, 0.0) +
+                system.height_offset_meters,
+            system.assembly_id, 0, "CeilingCut");
+    }
+    for (const auto& element : document.elements()) {
+        if (const auto* wall = element.wall()) {
+            const auto wall_direction = Point2{.x = wall->axis.end.x - wall->axis.start.x, .y = wall->axis.end.y - wall->axis.start.y};
+            double section_parameter = 0.0;
+            double wall_parameter = 0.0;
+            const auto layers = section_wall_layers(document, *wall);
+            const auto base_z = resolved_wall_base_elevation(*wall, levels);
+            const auto height = resolved_wall_height(*wall, levels);
+            const auto total_thickness = std::accumulate(layers.begin(), layers.end(), 0.0, [](double value, const auto& layer) { return value + layer.thickness_meters; });
+            const auto wall_length = std::sqrt(section_dot(wall_direction, wall_direction));
+            auto add_wall_layers = [&](double center,
+                                       double width,
+                                       const tbe::core::HostedOpening* opening) {
+                auto cursor = center - width * 0.5;
+                for (std::size_t index = 0; index < layers.size(); ++index) {
+                    const auto next = cursor + layers[index].thickness_meters / std::max(total_thickness, 1.0e-9) * width;
+                    const auto append_piece = [&](double z_min, double z_max, std::size_t fragment_index) {
+                        if (z_max - z_min <= 1.0e-6) return;
+                        std::map<std::string, std::string> metadata{
+                            {"section_kind", "WallCut"},
+                            {"layer_profile", wall_layer_profile(document, *wall)},
+                            {"wall_type_category", wall->wall_type_id == 0 ? "Generic" : wall_type_category_name(document.get_wall_type(wall->wall_type_id)->category)},
+                        };
+                        if (opening != nullptr) {
+                            metadata["section_opening_id"] = std::to_string(opening->element_id);
+                        }
+                        append_section_object(
+                            scene, element.id(), ApiElementKind::Wall,
+                            wall->level_id, index,
+                            make_section_box(cursor, next, -0.03, 0.03,
+                                             z_min, z_max,
+                                             layers[index].material_id),
+                            std::move(metadata), fragment_index);
+                    };
+                    if (opening == nullptr) {
+                        append_piece(base_z, base_z + height, 0);
+                    } else {
+                        const auto opening_bottom = std::clamp(
+                            base_z + opening->vertical_offset_meters + opening->sill_height_meters,
+                            base_z, base_z + height);
+                        const auto opening_top = std::clamp(
+                            opening_bottom + opening->height_meters,
+                            base_z, base_z + height);
+                        append_piece(base_z, opening_bottom, 0);
+                        append_piece(opening_top, base_z + height, 1);
+                    }
+                    cursor = next;
+                }
+            };
+            if (section_line_intersection(section_start, direction, wall->axis.start, wall_direction, section_parameter, wall_parameter) && section_parameter >= -1.0e-6 && section_parameter <= 1.0 + 1.0e-6 && wall_parameter >= -1.0e-6 && wall_parameter <= 1.0 + 1.0e-6) {
+                const auto station = wall_parameter * wall_length;
+                const tbe::core::HostedOpening* opening_at_cut = nullptr;
+                for (const auto& opening : wall->openings) {
+                    const auto opening_start = opening.offset_meters - (opening.width_meters * 0.5);
+                    const auto opening_end = opening.offset_meters + (opening.width_meters * 0.5);
+                    if (station >= opening_start - 1.0e-6 &&
+                        station <= opening_end + 1.0e-6) {
+                        opening_at_cut = &opening;
+                        break;
+                    }
+                }
+                add_wall_layers(section_parameter * section_length,
+                                total_thickness, opening_at_cut);
+            } else if (std::abs(section_cross(direction, Point2{.x = wall->axis.start.x - section_start.x, .y = wall->axis.start.y - section_start.y})) <= wall->thickness_meters * section_length) {
+                const auto a = section_dot(Point2{.x = wall->axis.start.x - section_start.x, .y = wall->axis.start.y - section_start.y}, unit);
+                const auto b = section_dot(Point2{.x = wall->axis.end.x - section_start.x, .y = wall->axis.end.y - section_start.y}, unit);
+                auto cursor = std::min(a, b);
+                const auto end_cursor = std::max(a, b);
+                for (std::size_t index = 0; index < layers.size(); ++index) {
+                    const auto next = cursor + layers[index].thickness_meters / std::max(total_thickness, 1.0e-9) * (end_cursor - std::min(a, b));
+                    append_section_object(scene, element.id(), ApiElementKind::Wall, wall->level_id, index, make_section_box(cursor, next, -0.03, 0.03, base_z, base_z + height, layers[index].material_id), {{"section_kind", "WallAlong"}, {"layer_profile", wall_layer_profile(document, *wall)}});
+                    cursor = next;
+                }
+            }
+        } else if (const auto* slab = element.slab()) {
+            const auto intervals = polygon_intervals(slab->boundary_polygon);
+            if (intervals.empty()) continue;
+            std::vector<tbe::core::WallAssemblyLayer> layers;
+            if (slab->assembly_id != 0) {
+                if (const auto* assembly = document.get_layered_assembly(slab->assembly_id)) layers = assembly->layers;
+            }
+            if (layers.empty()) layers.push_back(tbe::core::WallAssemblyLayer{.material_id = slab->material_id, .thickness_meters = slab->thickness_meters});
+            const auto slab_base = level_elevation(levels, slab->level_id, 0.0) + slab->elevation_offset_meters;
+            auto z = slab_base;
+            for (std::size_t index = 0; index < layers.size(); ++index) {
+                const auto next_z = z + layers[index].thickness_meters;
+                for (std::size_t interval_index = 0;
+                     interval_index < intervals.size(); ++interval_index) {
+                    const auto [slab_area_start, slab_area_end] = intervals[interval_index];
+                    append_section_object(scene, element.id(), ApiElementKind::Slab, slab->level_id, index, make_section_box(slab_area_start, slab_area_end, -0.03, 0.03, z, next_z, layers[index].material_id), {{"section_kind", "SlabCut"}, {"layer_thickness_meters", std::to_string(layers[index].thickness_meters)}, {"assembly_id", std::to_string(slab->assembly_id)}}, interval_index);
+                }
+                z = next_z;
+            }
+        } else if (const auto* roof = element.roof()) {
+            const auto has_sloped_profile =
+                roof->roof_type != tbe::core::RoofType::Flat &&
+                append_sloped_roof_cut(*roof, element.id());
+            if (!has_sloped_profile) {
+                append_horizontal_layers(
+                    roof->boundary_polygon, element.id(), ApiElementKind::Roof,
+                    roof->level_id, level_elevation(levels, roof->level_id, 0.0),
+                    roof->assembly_id, roof->material_id, "RoofCut");
+            }
+        }
+    }
+    scene.object_count = scene.objects.size();
+    return scene;
+}
+
 RenderSceneDTO build_render_scene(
     const Document& document,
     const std::set<ElementId>* visible_level_ids = nullptr
@@ -674,9 +1272,47 @@ RenderSceneDTO build_render_scene(
         }
     }
 
+    for (const auto& [material_id, material] : document.materials()) {
+        scene.materials.push_back(RenderSceneMaterialDTO{
+            .id = to_id(material_id),
+            .name = material.name,
+            .category = to_api_material_category(material.category),
+            .display_color = material.display_color,
+        });
+    }
+
+    // Default template guidance: two perpendicular cuts through the model
+    // center are visible immediately in plan. The actual section scene is
+    // generated only when the user requests one.
+    double min_x = std::numeric_limits<double>::max();
+    double min_y = std::numeric_limits<double>::max();
+    double max_x = std::numeric_limits<double>::lowest();
+    double max_y = std::numeric_limits<double>::lowest();
+    for (const auto& element : document.elements()) {
+        if (const auto* wall = element.wall()) {
+            min_x = std::min({min_x, wall->axis.start.x, wall->axis.end.x});
+            min_y = std::min({min_y, wall->axis.start.y, wall->axis.end.y});
+            max_x = std::max({max_x, wall->axis.start.x, wall->axis.end.x});
+            max_y = std::max({max_y, wall->axis.start.y, wall->axis.end.y});
+        }
+    }
+    if (min_x <= max_x && min_y <= max_y) {
+        const auto center_x = (min_x + max_x) * 0.5;
+        const auto center_y = (min_y + max_y) * 0.5;
+        // Let every default cut overrun the building shell. Besides matching
+        // Revit's readable section-marker convention, this keeps exterior
+        // wall intersections safely inside the finite section segment.
+        const auto span = std::max(max_x - min_x, max_y - min_y);
+        const auto margin = std::max(1.0, span * 0.08);
+        scene.sections.push_back(RenderSceneSectionDTO{.name = "Section A", .start = {.x = min_x - margin, .y = center_y}, .end = {.x = max_x + margin, .y = center_y}});
+        scene.sections.push_back(RenderSceneSectionDTO{.name = "Section B", .start = {.x = center_x, .y = min_y - margin}, .end = {.x = center_x, .y = max_y + margin}});
+    }
+
     for (const auto& element : document.elements()) {
         if (const auto* wall = element.wall(); wall != nullptr) {
             const auto base_elevation = resolved_wall_base_elevation(*wall, elevations);
+            const auto layer_profile = wall_layer_profile(document, *wall);
+            const auto* wall_type = wall->wall_type_id == 0 ? nullptr : document.get_wall_type(wall->wall_type_id);
             append_object(make_object_dto(
                 element.id(),
                 ApiElementKind::Wall,
@@ -691,6 +1327,8 @@ RenderSceneDTO build_render_scene(
                     {"end_y", std::to_string(wall->axis.end.y)},
                     {"thickness_meters", std::to_string(wall->thickness_meters)},
                     {"assembly_id", std::to_string(wall->assembly_id)},
+                    {"wall_type_id", std::to_string(wall->wall_type_id)},
+                    {"wall_type_category", wall_type == nullptr ? "Generic" : wall_type_category_name(wall_type->category)},
                     {"height_meters", std::to_string(resolved_wall_height(*wall, elevations))},
                     {"base_level_id", std::to_string(wall->base_level_id)},
                     {"top_level_id", std::to_string(wall->top_level_id)},
@@ -698,6 +1336,7 @@ RenderSceneDTO build_render_scene(
                     {"top_offset_meters", std::to_string(wall->top_offset_meters)},
                     {"height_mode", wall->height_mode == tbe::core::WallHeightMode::TopLevel ? "TopLevel" : "Unconnected"},
                     {"level_locked", "true"},
+                    {"layer_profile", layer_profile},
                 }
             ));
             for (const auto& opening : wall->openings) {
@@ -770,7 +1409,9 @@ RenderSceneDTO build_render_scene(
                 material_category_name(ApiElementKind::Roof),
                 {
                     {"assembly_id", std::to_string(roof->assembly_id)},
-                    {"roof_type", roof->roof_type == tbe::core::RoofType::SimpleGable ? "SimpleGable" : "Flat"},
+                    {"roof_type", roof->roof_type == tbe::core::RoofType::SimpleGable
+                        ? "SimpleGable"
+                        : roof->roof_type == tbe::core::RoofType::AutoFootprint ? "AutoFootprint" : "Flat"},
                     {"slope_degrees", roof->slope_degrees.has_value() ? std::to_string(*roof->slope_degrees) : ""},
                     {"overhang_meters", roof->overhang_meters.has_value() ? std::to_string(*roof->overhang_meters) : ""},
                 }
@@ -864,8 +1505,8 @@ std::string render_scene_to_json(const RenderSceneDTO& scene) {
     std::ostringstream out;
     out << '{';
     out << "\"scene_version\":" << scene.scene_version << ',';
-    out << "\"units\":\"" << "meters" << "\",";
-    out << "\"coordinate_system\":\"" << "X/Y plan, Z up" << "\",";
+    out << "\"units\":\"" << escape_json(scene.units) << "\",";
+    out << "\"coordinate_system\":\"" << escape_json(scene.coordinate_system) << "\",";
     out << "\"object_count\":" << scene.object_count << ',';
     out << "\"vertex_count\":" << scene.vertex_count << ',';
     out << "\"index_count\":" << scene.index_count << ',';
@@ -880,6 +1521,22 @@ std::string render_scene_to_json(const RenderSceneDTO& scene) {
             << ",\"elevation_meters\":" << safe_value(level.elevation_meters)
             << ",\"default_wall_height_meters\":" << safe_value(level.default_wall_height_meters)
             << "}";
+    }
+    out << "],";
+    out << "\"materials\":[";
+    for (std::size_t index = 0; index < scene.materials.size(); ++index) {
+        if (index != 0) out << ',';
+        const auto& material = scene.materials[index];
+        out << "{\"id\":" << material.id.value
+            << ",\"name\":\"" << escape_json(material.name) << "\""
+            << ",\"category\":\"" << static_cast<int>(material.category) << "\""
+            << ",\"display_color\":\"" << escape_json(material.display_color) << "\"}";
+    }
+    out << "],\"sections\":[";
+    for (std::size_t index = 0; index < scene.sections.size(); ++index) {
+        if (index != 0) out << ',';
+        const auto& section = scene.sections[index];
+        out << "{\"name\":\"" << escape_json(section.name) << "\",\"start\":{\"x\":" << safe_value(section.start.x) << ",\"y\":" << safe_value(section.start.y) << "},\"end\":{\"x\":" << safe_value(section.end.x) << ",\"y\":" << safe_value(section.end.y) << "}}";
     }
     out << "],";
     out << "\"objects\":[";
@@ -924,6 +1581,12 @@ std::string render_scene_to_json(const RenderSceneDTO& scene) {
                 out << ',';
             }
             out << object.mesh.indices[index];
+        }
+        out << ']';
+        out << ",\"triangle_material_ids\":[";
+        for (std::size_t index = 0; index < object.mesh.triangle_material_ids.size(); ++index) {
+            if (index != 0) out << ',';
+            out << object.mesh.triangle_material_ids[index];
         }
         out << ']';
         if (object.mesh.normals.has_value()) {
@@ -974,8 +1637,99 @@ ApiQuantityType to_api_quantity_type(tbe::core::QuantityType type) {
     return ApiQuantityType::Volume;
 }
 
+ApiMaterialCategory to_api_material_category(tbe::core::MaterialCategory category) {
+    switch (category) {
+    case tbe::core::MaterialCategory::Structural: return ApiMaterialCategory::Structural;
+    case tbe::core::MaterialCategory::Finish: return ApiMaterialCategory::Finish;
+    case tbe::core::MaterialCategory::Insulation: return ApiMaterialCategory::Insulation;
+    case tbe::core::MaterialCategory::Glass: return ApiMaterialCategory::Glass;
+    case tbe::core::MaterialCategory::Generic: return ApiMaterialCategory::Generic;
+    }
+    return ApiMaterialCategory::Generic;
+}
+
+tbe::core::MaterialCategory to_core_material_category(ApiMaterialCategory category) {
+    switch (category) {
+    case ApiMaterialCategory::Structural: return tbe::core::MaterialCategory::Structural;
+    case ApiMaterialCategory::Finish: return tbe::core::MaterialCategory::Finish;
+    case ApiMaterialCategory::Insulation: return tbe::core::MaterialCategory::Insulation;
+    case ApiMaterialCategory::Glass: return tbe::core::MaterialCategory::Glass;
+    case ApiMaterialCategory::Generic: return tbe::core::MaterialCategory::Generic;
+    }
+    return tbe::core::MaterialCategory::Generic;
+}
+
+ApiWallLayerFunction to_api_layer_function(tbe::core::WallLayerFunction function) {
+    switch (function) {
+    case tbe::core::WallLayerFunction::Core: return ApiWallLayerFunction::Core;
+    case tbe::core::WallLayerFunction::InteriorFinish: return ApiWallLayerFunction::InteriorFinish;
+    case tbe::core::WallLayerFunction::ExteriorFinish: return ApiWallLayerFunction::ExteriorFinish;
+    case tbe::core::WallLayerFunction::Insulation: return ApiWallLayerFunction::Insulation;
+    case tbe::core::WallLayerFunction::AirGap: return ApiWallLayerFunction::AirGap;
+    case tbe::core::WallLayerFunction::Generic: return ApiWallLayerFunction::Generic;
+    }
+    return ApiWallLayerFunction::Generic;
+}
+
+tbe::core::WallLayerFunction to_core_layer_function(ApiWallLayerFunction function) {
+    switch (function) {
+    case ApiWallLayerFunction::Core: return tbe::core::WallLayerFunction::Core;
+    case ApiWallLayerFunction::InteriorFinish: return tbe::core::WallLayerFunction::InteriorFinish;
+    case ApiWallLayerFunction::ExteriorFinish: return tbe::core::WallLayerFunction::ExteriorFinish;
+    case ApiWallLayerFunction::Insulation: return tbe::core::WallLayerFunction::Insulation;
+    case ApiWallLayerFunction::AirGap: return tbe::core::WallLayerFunction::AirGap;
+    case ApiWallLayerFunction::Generic: return tbe::core::WallLayerFunction::Generic;
+    }
+    return tbe::core::WallLayerFunction::Generic;
+}
+
+ApiWallTypeCategory to_api_wall_type_category(tbe::core::WallTypeCategory category) {
+    switch (category) {
+    case tbe::core::WallTypeCategory::Interior: return ApiWallTypeCategory::Interior;
+    case tbe::core::WallTypeCategory::Exterior: return ApiWallTypeCategory::Exterior;
+    case tbe::core::WallTypeCategory::Generic: return ApiWallTypeCategory::Generic;
+    }
+    return ApiWallTypeCategory::Generic;
+}
+
+tbe::core::WallTypeCategory to_core_wall_type_category(ApiWallTypeCategory category) {
+    switch (category) {
+    case ApiWallTypeCategory::Interior: return tbe::core::WallTypeCategory::Interior;
+    case ApiWallTypeCategory::Exterior: return tbe::core::WallTypeCategory::Exterior;
+    case ApiWallTypeCategory::Generic: return tbe::core::WallTypeCategory::Generic;
+    }
+    return tbe::core::WallTypeCategory::Generic;
+}
+
+ApiLayeredAssemblyKind to_api_assembly_kind(tbe::core::LayeredAssemblyKind kind) {
+    switch (kind) {
+    case tbe::core::LayeredAssemblyKind::Wall: return ApiLayeredAssemblyKind::Wall;
+    case tbe::core::LayeredAssemblyKind::Floor: return ApiLayeredAssemblyKind::Floor;
+    case tbe::core::LayeredAssemblyKind::Ceiling: return ApiLayeredAssemblyKind::Ceiling;
+    case tbe::core::LayeredAssemblyKind::Roof: return ApiLayeredAssemblyKind::Roof;
+    case tbe::core::LayeredAssemblyKind::Stair: return ApiLayeredAssemblyKind::Stair;
+    }
+    return ApiLayeredAssemblyKind::Floor;
+}
+
+tbe::core::LayeredAssemblyKind to_core_assembly_kind(ApiLayeredAssemblyKind kind) {
+    switch (kind) {
+    case ApiLayeredAssemblyKind::Wall: return tbe::core::LayeredAssemblyKind::Wall;
+    case ApiLayeredAssemblyKind::Floor: return tbe::core::LayeredAssemblyKind::Floor;
+    case ApiLayeredAssemblyKind::Ceiling: return tbe::core::LayeredAssemblyKind::Ceiling;
+    case ApiLayeredAssemblyKind::Roof: return tbe::core::LayeredAssemblyKind::Roof;
+    case ApiLayeredAssemblyKind::Stair: return tbe::core::LayeredAssemblyKind::Stair;
+    }
+    return tbe::core::LayeredAssemblyKind::Floor;
+}
+
 tbe::core::RoofType to_core_roof_type(ApiRoofType type) {
-    return type == ApiRoofType::SimpleGable ? tbe::core::RoofType::SimpleGable : tbe::core::RoofType::Flat;
+    switch (type) {
+    case ApiRoofType::SimpleGable: return tbe::core::RoofType::SimpleGable;
+    case ApiRoofType::AutoFootprint: return tbe::core::RoofType::AutoFootprint;
+    case ApiRoofType::Flat: return tbe::core::RoofType::Flat;
+    }
+    return tbe::core::RoofType::Flat;
 }
 
 tbe::core::WallHeightMode to_core_wall_height_mode(ApiWallHeightMode mode) {
@@ -1297,6 +2051,20 @@ std::vector<WallScheduleDTO> build_wall_schedule_cache(const Document& document)
             .net_area_square_meters = row.net_area_square_meters,
             .gross_volume_cubic_meters = row.gross_volume_cubic_meters,
             .net_volume_cubic_meters = row.net_volume_cubic_meters,
+            .material_volume_by_id = [&]() {
+                std::map<std::uint64_t, double> volumes;
+                for (const auto& [material_id, volume] : row.material_volume_by_id) {
+                    volumes[material_id] = volume;
+                }
+                return volumes;
+            }(),
+            .material_cost_by_id = [&]() {
+                std::map<std::uint64_t, double> costs;
+                for (const auto& [material_id, cost] : row.material_cost_by_id) {
+                    costs[material_id] = cost;
+                }
+                return costs;
+            }(),
         });
     }
     return rows;
@@ -1339,12 +2107,15 @@ std::vector<RoomScheduleDTO> build_room_schedule_cache(const Document& document)
 std::vector<MaterialTakeoffSummaryDTO> build_material_takeoff_cache(const Document& document) {
     std::vector<MaterialTakeoffSummaryDTO> rows;
     for (const auto& row : document.generate_material_takeoff()) {
+        const auto* material = document.get_material(row.material_id);
         rows.push_back(MaterialTakeoffSummaryDTO{
             .material_id = to_id(row.material_id),
             .material_name = row.material_name,
             .quantity_type = to_api_quantity_type(row.quantity_type),
             .quantity = row.quantity,
             .unit = row.unit,
+            .unit_cost = material == nullptr ? std::nullopt : material->unit_cost,
+            .estimated_cost = row.estimated_cost,
         });
     }
     return rows;
@@ -1656,7 +2427,10 @@ ApiVoidResult recompute_impl(SessionImpl& impl, ComputeMode mode) {
                 .exports = FreshnessState::Computing,
             };
             impl.document().recompute_all_rooms();
-            impl.document().regenerate_dirty_geometry();
+            // Assemblies remain semantic data. Interactive/final reports do
+            // not need a separate mesh for every layer; keep the viewport
+            // geometry at the single lightweight envelope level.
+            impl.document().regenerate_dirty_geometry(tbe::core::GeometryDetail::Envelope);
             (void)impl.document().dependency_graph();
             const auto& document = impl.document();
             auto rooms_job = impl.final_compute_jobs.submit([&document]() {
@@ -1695,29 +2469,23 @@ ApiVoidResult recompute_impl(SessionImpl& impl, ComputeMode mode) {
             return success_void();
         }
 
-        impl.freshness.room_metrics = FreshnessState::Computing;
         impl.freshness.geometry = FreshnessState::Computing;
-        (void)impl.document().recompute_dirty_rooms();
-        impl.document().regenerate_dirty_geometry();
-        impl.cached_rooms = build_room_cache(impl.document());
-        impl.freshness.room_metrics = FreshnessState::Clean;
+        impl.document().regenerate_dirty_geometry(tbe::core::GeometryDetail::Envelope);
         impl.freshness.geometry = FreshnessState::Clean;
 
-        if (mode == ComputeMode::Normal && impl.performance_profile != PerformanceProfile::BatterySaver) {
-            impl.freshness.schedules = FreshnessState::Computing;
-            impl.freshness.material_takeoff = FreshnessState::Computing;
-            impl.cached_wall_schedule = build_wall_schedule_cache(impl.document());
-            impl.cached_opening_schedule = build_opening_schedule_cache(impl.document());
-            impl.cached_room_schedule = build_room_schedule_cache(impl.document());
-            impl.cached_material_takeoff = build_material_takeoff_cache(impl.document());
-            impl.freshness.schedules = FreshnessState::Clean;
-            impl.freshness.material_takeoff = FreshnessState::Clean;
-        }
-
         if (mode == ComputeMode::InteractivePreview) {
+            // Room boundaries, schedules and cost takeoff are report data,
+            // not viewport data. Leave them dirty/stale until an explicit
+            // final/documentation request asks for exact calculations.
+            impl.freshness.room_metrics = dirty_or_stale(impl.freshness.room_metrics);
             impl.freshness.schedules = dirty_or_stale(impl.freshness.schedules);
             impl.freshness.material_takeoff = dirty_or_stale(impl.freshness.material_takeoff);
             impl.freshness.validation_report = dirty_or_stale(impl.freshness.validation_report);
+        } else {
+            impl.freshness.room_metrics = FreshnessState::Computing;
+            (void)impl.document().recompute_dirty_rooms();
+            impl.cached_rooms = build_room_cache(impl.document());
+            impl.freshness.room_metrics = FreshnessState::Clean;
         }
         impl.spatial_index_dirty = true;
 
@@ -2219,6 +2987,18 @@ ApiResult<std::string> EngineSession::get_render_scene_json_near_level(
     }
 }
 
+ApiResult<std::string> EngineSession::get_section_scene_json(Vec2 start, Vec2 end) const {
+    try {
+        auto recompute = recompute_impl(*impl_, ComputeMode::InteractivePreview);
+        if (!recompute.ok()) {
+            return error_result<std::string>(recompute.status, recompute.message);
+        }
+        return success_result(render_scene_to_json(build_section_scene(impl_->document(), start, end)));
+    } catch (const std::exception& error) {
+        return error_result<std::string>(status_from_exception(error), error.what());
+    }
+}
+
 ApiVoidResult EngineSession::export_render_scene_json(const std::string& path) const {
     namespace fs = std::filesystem;
     try {
@@ -2242,13 +3022,18 @@ ApiVoidResult EngineSession::export_render_scene_json(const std::string& path) c
 }
 
 ApiResult<std::string> EngineSession::save_project_json() const {
-    auto recompute = recompute_impl(*impl_, ComputeMode::FinalExact);
-    if (!recompute.ok()) {
-        return error_result<std::string>(recompute.status, recompute.message);
-    }
-    return query_result<std::string>([&]() {
+    // Project JSON is the semantic source of truth. Saving it must not force
+    // room discovery, schedules or material-cost takeoff; those are explicit
+    // report operations. Geometry is regenerated lazily when a viewport or
+    // export asks for it.
+    ApiResult<std::string> result = query_result<std::string>([&]() {
         return impl_->project.to_json();
     });
+    result.freshness = impl_->freshness.exports;
+    if (result.freshness != FreshnessState::Clean) {
+        result.message = "project JSON saved; derived report data remains stale";
+    }
+    return result;
 }
 
 ApiResult<std::string> EngineSession::save_project_json_cached(bool allow_stale) const {
@@ -2426,6 +3211,73 @@ ApiResult<ElementIdDTO> EngineSession::create_wall(std::string name, Vec2 start,
     });
 }
 
+ApiResult<ElementIdDTO> EngineSession::create_wall_type(
+    ApiWallTypeCategory category,
+    std::string name,
+    std::vector<AssemblyLayerDTO> layers
+) {
+    ElementIdDTO created{};
+    return apply_mutation_with_value(*impl_, "create_wall_type", created, [&](Document& document, ElementIdDTO& out) {
+        std::vector<tbe::core::WallAssemblyLayer> core_layers;
+        core_layers.reserve(layers.size());
+        for (const auto& layer : layers) {
+            core_layers.push_back(tbe::core::WallAssemblyLayer{
+                .material_id = layer.material_id.value,
+                .thickness_meters = layer.thickness_meters,
+                .function = to_core_layer_function(layer.function),
+                .priority = layer.priority,
+                .structural = layer.structural,
+            });
+        }
+        out = to_id(document.create_wall_type(std::move(name), std::move(core_layers), to_core_wall_type_category(category)));
+    });
+}
+
+ApiVoidResult EngineSession::update_wall_type(WallTypeDTO wall_type) {
+    return apply_mutation(*impl_, "update_wall_type", [&](Document& document) {
+        tbe::core::WallTypeData core_type{
+            .wall_type_id = wall_type.id.value,
+            .name = std::move(wall_type.name),
+            .category = to_core_wall_type_category(wall_type.category),
+        };
+        for (const auto& layer : wall_type.layers) {
+            core_type.layers.push_back(tbe::core::WallAssemblyLayer{
+                .material_id = layer.material_id.value,
+                .thickness_meters = layer.thickness_meters,
+                .function = to_core_layer_function(layer.function),
+                .priority = layer.priority,
+                .structural = layer.structural,
+            });
+        }
+        document.update_wall_type(std::move(core_type));
+    });
+}
+
+ApiResult<std::vector<WallTypeDTO>> EngineSession::list_wall_types() const {
+    return query_result<std::vector<WallTypeDTO>>([&]() {
+        std::vector<WallTypeDTO> rows;
+        for (const auto& [wall_type_id, wall_type] : impl_->document().wall_types()) {
+            WallTypeDTO row{
+                .id = to_id(wall_type_id),
+                .name = wall_type.name,
+                .category = to_api_wall_type_category(wall_type.category),
+                .total_thickness_meters = std::accumulate(wall_type.layers.begin(), wall_type.layers.end(), 0.0, [](double total, const auto& layer) { return total + layer.thickness_meters; }),
+            };
+            for (const auto& layer : wall_type.layers) {
+                row.layers.push_back(AssemblyLayerDTO{
+                    .material_id = to_id(layer.material_id),
+                    .thickness_meters = layer.thickness_meters,
+                    .function = to_api_layer_function(layer.function),
+                    .priority = layer.priority,
+                    .structural = layer.structural,
+                });
+            }
+            rows.push_back(std::move(row));
+        }
+        return rows;
+    });
+}
+
 ApiVoidResult EngineSession::set_wall_level_constraints(
     std::uint64_t wall_id,
     std::uint64_t base_level_id,
@@ -2552,6 +3404,22 @@ ApiVoidResult EngineSession::set_wall_axis(std::uint64_t wall_id, Vec2 start, Ve
     });
 }
 
+ApiVoidResult EngineSession::trim_extend_walls(
+    std::uint64_t first_wall_id,
+    bool first_uses_start,
+    std::uint64_t second_wall_id,
+    bool second_uses_start
+) {
+    return apply_mutation(*impl_, "trim_extend_walls", [&](Document& document) {
+        document.trim_extend_walls(
+            first_wall_id,
+            first_uses_start,
+            second_wall_id,
+            second_uses_start
+        );
+    });
+}
+
 ApiVoidResult EngineSession::update_wall_properties(std::uint64_t wall_id, double thickness_meters, double height_meters, std::uint64_t wall_type_id) {
     return apply_mutation(*impl_, "update_wall_properties", [&](Document& document) {
         document.set_wall_properties(wall_id, thickness_meters, height_meters, wall_type_id);
@@ -2561,6 +3429,123 @@ ApiVoidResult EngineSession::update_wall_properties(std::uint64_t wall_id, doubl
 ApiVoidResult EngineSession::set_element_assembly(std::uint64_t element_id, std::uint64_t assembly_id) {
     return apply_mutation(*impl_, "set_element_assembly", [&](Document& document) {
         document.set_element_assembly(element_id, assembly_id);
+    });
+}
+
+ApiResult<ElementIdDTO> EngineSession::create_material(
+    std::string name,
+    ApiMaterialCategory category,
+    std::optional<double> density_kg_per_m3,
+    std::optional<double> unit_cost,
+    std::string display_color
+) {
+    ElementIdDTO created{};
+    return apply_mutation_with_value(*impl_, "create_material", created, [&](Document& document, ElementIdDTO& out) {
+        out = to_id(document.create_material(
+            std::move(name),
+            to_core_material_category(category),
+            density_kg_per_m3,
+            unit_cost,
+            {},
+            std::move(display_color)
+        ));
+    });
+}
+
+ApiVoidResult EngineSession::update_material(MaterialDTO material) {
+    return apply_mutation(*impl_, "update_material", [&](Document& document) {
+        document.update_material(tbe::core::MaterialDefinition{
+            .material_id = material.id.value,
+            .name = std::move(material.name),
+            .category = to_core_material_category(material.category),
+            .density_kg_per_m3 = material.density_kg_per_m3,
+            .unit_cost = material.unit_cost,
+            .display_color = std::move(material.display_color),
+        });
+    });
+}
+
+ApiResult<std::vector<MaterialDTO>> EngineSession::list_materials() const {
+    return query_result<std::vector<MaterialDTO>>([&]() {
+        std::vector<MaterialDTO> rows;
+        for (const auto& [material_id, material] : impl_->document().materials()) {
+            rows.push_back(MaterialDTO{
+                .id = to_id(material_id),
+                .name = material.name,
+                .category = to_api_material_category(material.category),
+                .density_kg_per_m3 = material.density_kg_per_m3,
+                .unit_cost = material.unit_cost,
+                .display_color = material.display_color,
+            });
+        }
+        return rows;
+    });
+}
+
+ApiResult<ElementIdDTO> EngineSession::create_layered_assembly(
+    ApiLayeredAssemblyKind kind,
+    std::string name,
+    std::vector<AssemblyLayerDTO> layers
+) {
+    ElementIdDTO created{};
+    return apply_mutation_with_value(*impl_, "create_layered_assembly", created, [&](Document& document, ElementIdDTO& out) {
+        std::vector<tbe::core::WallAssemblyLayer> core_layers;
+        core_layers.reserve(layers.size());
+        for (const auto& layer : layers) {
+            core_layers.push_back(tbe::core::WallAssemblyLayer{
+                .material_id = layer.material_id.value,
+                .thickness_meters = layer.thickness_meters,
+                .function = to_core_layer_function(layer.function),
+                .priority = layer.priority,
+                .structural = layer.structural,
+            });
+        }
+        out = to_id(document.create_layered_assembly(to_core_assembly_kind(kind), std::move(name), std::move(core_layers)));
+    });
+}
+
+ApiVoidResult EngineSession::update_layered_assembly(LayeredAssemblyDTO assembly) {
+    return apply_mutation(*impl_, "update_layered_assembly", [&](Document& document) {
+        tbe::core::LayeredAssemblyData core_assembly{
+            .assembly_id = assembly.id.value,
+            .kind = to_core_assembly_kind(assembly.kind),
+            .name = std::move(assembly.name),
+        };
+        core_assembly.layers.reserve(assembly.layers.size());
+        for (const auto& layer : assembly.layers) {
+            core_assembly.layers.push_back(tbe::core::WallAssemblyLayer{
+                .material_id = layer.material_id.value,
+                .thickness_meters = layer.thickness_meters,
+                .function = to_core_layer_function(layer.function),
+                .priority = layer.priority,
+                .structural = layer.structural,
+            });
+        }
+        document.update_layered_assembly(std::move(core_assembly));
+    });
+}
+
+ApiResult<std::vector<LayeredAssemblyDTO>> EngineSession::list_layered_assemblies() const {
+    return query_result<std::vector<LayeredAssemblyDTO>>([&]() {
+        std::vector<LayeredAssemblyDTO> rows;
+        for (const auto& [assembly_id, assembly] : impl_->document().layered_assemblies()) {
+            LayeredAssemblyDTO row{
+                .id = to_id(assembly_id),
+                .kind = to_api_assembly_kind(assembly.kind),
+                .name = assembly.name,
+            };
+            for (const auto& layer : assembly.layers) {
+                row.layers.push_back(AssemblyLayerDTO{
+                    .material_id = to_id(layer.material_id),
+                    .thickness_meters = layer.thickness_meters,
+                    .function = to_api_layer_function(layer.function),
+                    .priority = layer.priority,
+                    .structural = layer.structural,
+                });
+            }
+            rows.push_back(std::move(row));
+        }
+        return rows;
     });
 }
 
@@ -2814,6 +3799,32 @@ ApiResult<std::vector<RoomDTO>> EngineSession::get_cached_rooms() const {
 
 ApiResult<std::vector<WallScheduleDTO>> EngineSession::get_wall_schedule() const {
     return const_cast<EngineSession*>(this)->generate_wall_schedule();
+}
+
+ApiResult<std::vector<SlabScheduleDTO>> EngineSession::get_slab_schedule() const {
+    auto recompute = recompute_impl(*impl_, ComputeMode::Normal);
+    if (!recompute.ok()) {
+        return error_result<std::vector<SlabScheduleDTO>>(recompute.status, recompute.message);
+    }
+    std::vector<SlabScheduleDTO> rows;
+    for (const auto& row : impl_->document().generate_slab_schedule()) {
+        SlabScheduleDTO dto{
+            .slab_id = to_id(row.slab_id),
+            .level_id = to_id(row.level_id),
+            .area_square_meters = row.area_square_meters,
+            .thickness_meters = row.thickness_meters,
+            .volume_cubic_meters = row.volume_cubic_meters,
+            .material_or_assembly_name = row.material_or_assembly_name,
+        };
+        for (const auto& [material_id, volume] : row.material_volume_by_id) {
+            dto.material_volume_by_id[material_id] = volume;
+        }
+        for (const auto& [material_id, cost] : row.material_cost_by_id) {
+            dto.material_cost_by_id[material_id] = cost;
+        }
+        rows.push_back(std::move(dto));
+    }
+    return success_result(std::move(rows));
 }
 
 ApiResult<std::vector<WallScheduleDTO>> EngineSession::get_cached_wall_schedule() const {

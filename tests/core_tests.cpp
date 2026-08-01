@@ -9,6 +9,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <numbers>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -108,7 +109,31 @@ int main() {
 
     const auto joined_profile = geometry.build_wall_profile(*wall_a);
     assert(joined_profile.has_miter_join);
-    assert(max_x(joined_profile.polygon) > 4.5);
+    // A 90° wall join shares one diagonal cap: both faces move in opposite
+    // directions.  A one-sided extension leaves overlapping rectangles and
+    // creates the jagged outer corners that are especially obvious in plan.
+    assert(near(joined_profile.polygon[1].x, 4.6));
+    assert(near(joined_profile.polygon[2].x, 4.4));
+
+    const std::vector<tbe::core::WallAssemblyLayer> joined_layers{
+        {.material_id = 1, .thickness_meters = 0.1},
+        {.material_id = 2, .thickness_meters = 0.1},
+    };
+    const auto layered_joined_geometry = geometry.build_wall_geometry(*wall_a, 1, joined_layers);
+    assert(layered_joined_geometry.mesh.triangle_material_ids.size() ==
+           layered_joined_geometry.mesh.indices.size() / 3);
+    const auto has_layered_outer_miter = std::any_of(
+        layered_joined_geometry.mesh.vertices.begin(),
+        layered_joined_geometry.mesh.vertices.end(),
+        [](const auto& point) { return near(point.x, 4.6) && near(point.y, -0.1); }
+    );
+    const auto has_layered_inner_miter = std::any_of(
+        layered_joined_geometry.mesh.vertices.begin(),
+        layered_joined_geometry.mesh.vertices.end(),
+        [](const auto& point) { return near(point.x, 4.4) && near(point.y, 0.1); }
+    );
+    assert(has_layered_outer_miter);
+    assert(has_layered_inner_miter);
 
     const auto wall_t_id = document.create_wall(
         "Wall T",
@@ -686,7 +711,36 @@ int main() {
         assert(second->joins.size() == 1);
         assert(first->joins.front().other_wall_id == second_wall);
         assert(second->joins.front().other_wall_id == first_wall);
+        const auto first_profile = geometry.build_wall_profile(*first);
+        const auto second_profile = geometry.build_wall_profile(*second);
+        const auto first_length = std::hypot(
+            first->axis.end.x - first->axis.start.x,
+            first->axis.end.y - first->axis.start.y
+        );
+        // Both faces must participate in every orientation of an exterior
+        // corner.  Extending only one face creates the stepped/rumpled plan
+        // outline this regression protects against.
+        assert(!near(first_profile.polygon[1].x, first_length));
+        assert(!near(first_profile.polygon[2].x, first_length));
+        assert(!near(second_profile.polygon[0].x, 0.0));
+        assert(!near(second_profile.polygon[3].x, 0.0));
     }
+
+    tbe::core::Document acute_corner_document{"Acute Corner"};
+    const auto acute_level = acute_corner_document.create_level("Level 1", 0.0, 3.0);
+    const auto acute_first = acute_corner_document.create_wall(
+        "Acute First", {{0.0, 0.0}, {4.0, 0.0}}, 0.2, 3.0, acute_level
+    );
+    acute_corner_document.create_wall(
+        "Acute Second", {{4.0, 0.0}, {6.0, 2.0}}, 0.2, 3.0, acute_level
+    );
+    acute_corner_document.auto_join_walls();
+    const auto acute_profile = geometry.build_wall_profile(
+        *acute_corner_document.find_ptr(acute_first)->wall()
+    );
+    const auto acute_extension = 0.1 * std::tan(std::numbers::pi / 8.0);
+    assert(near(acute_profile.polygon[1].x, 4.0 + acute_extension));
+    assert(near(acute_profile.polygon[2].x, 4.0 - acute_extension));
 
     tbe::core::Document tolerance_document{"Tolerance Join"};
     const auto tolerance_level = tolerance_document.create_level("Level 1", 0.0, 3.0);
@@ -915,6 +969,13 @@ int main() {
     assert(opening_schedule_before.empty());
     const auto sched_door_id = shared_wall_document.create_door("Door", shared_mid, 2.0, 1.0, 2.1);
     const auto sched_window_id = shared_wall_document.create_window("Window", shared_mid, 3.2, 0.8, 1.2, 0.9);
+    shared_wall_document.regenerate_dirty_geometry();
+    const auto* layered_wall = shared_wall_document.find_ptr(shared_mid)->wall();
+    assert(layered_wall != nullptr);
+    assert(layered_wall->geometry.mesh.triangle_material_ids.size() == layered_wall->geometry.mesh.indices.size() / 3);
+    assert(std::count(layered_wall->geometry.mesh.triangle_material_ids.begin(), layered_wall->geometry.mesh.triangle_material_ids.end(), brick_material) > 0);
+    assert(std::count(layered_wall->geometry.mesh.triangle_material_ids.begin(), layered_wall->geometry.mesh.triangle_material_ids.end(), plaster_material) > 0);
+    assert(layered_wall->geometry.openings_cut == 2);
     const auto updated_wall_schedule = shared_wall_document.generate_wall_schedule();
     const auto updated_opening_schedule = shared_wall_document.generate_opening_schedule();
     assert(updated_opening_schedule.size() == 2);
@@ -1289,6 +1350,70 @@ int main() {
     assert(l_room != nullptr);
     assert(near(l_room->centerline_area_square_meters, 20.0));
     assert(l_room->centerline_boundary_polygon.size() >= 6);
+
+    // Automatic footprint roof regression: a concave U profile must keep its
+    // exact boundary while producing a non-empty sloped mesh. The old
+    // rectangle-only gable path returned an empty mesh for this case.
+    tbe::core::Document u_roof_document{"U Roof"};
+    const auto u_roof_level = u_roof_document.create_level("Roof Level", 3.0, 3.0);
+    const std::vector<tbe::core::Point2> u_footprint{
+        {.x = 0.0, .y = 0.0}, {.x = 8.0, .y = 0.0}, {.x = 8.0, .y = 8.0},
+        {.x = 6.0, .y = 8.0}, {.x = 6.0, .y = 2.0}, {.x = 2.0, .y = 2.0},
+        {.x = 2.0, .y = 8.0}, {.x = 0.0, .y = 8.0},
+    };
+    const auto u_roof_id = u_roof_document.create_roof(
+        u_roof_level, u_footprint, tbe::core::RoofType::AutoFootprint,
+        0.24, 0, 0, 22.0, 0.30
+    );
+    u_roof_document.regenerate_dirty_geometry();
+    const auto* u_roof = u_roof_document.find_ptr(u_roof_id)->roof();
+    assert(u_roof != nullptr);
+    assert(u_roof->mesh.vertices.size() > 0);
+    assert(u_roof->mesh.indices.size() > 0);
+    assert(u_roof->area_square_meters > 40.0);
+    // Every footprint edge gets one slope plane.  Matching midpoints of the
+    // eave and raised ridge loops must therefore rise at tan(slope), even for
+    // a concave U where a centre fan would cut straight through the notch.
+    const auto u_edge_count = u_footprint.size();
+    assert(u_roof->mesh.vertices.size() >= u_edge_count * 3);
+    const auto expected_u_slope = std::tan(22.0 * std::numbers::pi / 180.0);
+    for (std::size_t index = 0; index < u_edge_count; ++index) {
+        const auto next = (index + 1) % u_edge_count;
+        const auto& eave_a = u_roof->mesh.vertices[u_edge_count + index];
+        const auto& eave_b = u_roof->mesh.vertices[u_edge_count + next];
+        const auto& ridge_a = u_roof->mesh.vertices[(u_edge_count * 2) + index];
+        const auto& ridge_b = u_roof->mesh.vertices[(u_edge_count * 2) + next];
+        const auto eave_dx = eave_b.x - eave_a.x;
+        const auto eave_dy = eave_b.y - eave_a.y;
+        const auto ridge_mid_x = (ridge_a.x + ridge_b.x) * 0.5;
+        const auto ridge_mid_y = (ridge_a.y + ridge_b.y) * 0.5;
+        // Concave corners can slide an offset edge along its own direction;
+        // only the perpendicular run determines its roof pitch.
+        const auto run = std::abs(
+            (eave_dx * (ridge_mid_y - eave_a.y)) -
+            (eave_dy * (ridge_mid_x - eave_a.x))
+        ) / std::hypot(eave_dx, eave_dy);
+        assert(run > 1.0e-9);
+        assert(near((ridge_a.z - eave_a.z) / run, expected_u_slope));
+    }
+    const auto u_peak_before = std::max_element(
+        u_roof->mesh.vertices.begin(), u_roof->mesh.vertices.end(),
+        [](const auto& left, const auto& right) { return left.z < right.z; }
+    )->z;
+    u_roof_document.update_roof_properties(
+        u_roof_id, tbe::core::RoofType::AutoFootprint, 35.0, 0.30
+    );
+    u_roof_document.regenerate_dirty_geometry();
+    const auto* steeper_u_roof = u_roof_document.find_ptr(u_roof_id)->roof();
+    const auto u_peak_after = std::max_element(
+        steeper_u_roof->mesh.vertices.begin(), steeper_u_roof->mesh.vertices.end(),
+        [](const auto& left, const auto& right) { return left.z < right.z; }
+    )->z;
+    assert(u_peak_after > u_peak_before);
+    const auto u_roundtrip = tbe::core::Document::from_json(u_roof_document.to_json());
+    const auto* loaded_u_roof = u_roundtrip.find_ptr(u_roof_id)->roof();
+    assert(loaded_u_roof != nullptr);
+    assert(loaded_u_roof->roof_type == tbe::core::RoofType::AutoFootprint);
 
     tbe::core::Project multi_project{"Multi Project"};
     multi_project.active_document() = multi_room_document;
@@ -1893,6 +2018,8 @@ int main() {
         tbe::core::Document compound{"Compound V2"};
         const auto level = compound.create_level("Level 1", 0.0, 3.2);
         const auto concrete = compound.create_material("Concrete", tbe::core::MaterialCategory::Structural);
+        const auto screed = compound.create_material("Screed", tbe::core::MaterialCategory::Structural);
+        const auto laminate = compound.create_material("Laminate", tbe::core::MaterialCategory::Finish);
         const auto wall_assembly = compound.create_layered_assembly(tbe::core::LayeredAssemblyKind::Wall, "Wall", {
             {.material_id = concrete, .thickness_meters = 0.20, .function = tbe::core::WallLayerFunction::Core, .priority = 100, .structural = true},
             {.material_id = concrete, .thickness_meters = 0.02, .function = tbe::core::WallLayerFunction::InteriorFinish, .priority = 10},
@@ -1903,7 +2030,18 @@ int main() {
         const auto stair_assembly = compound.create_layered_assembly(tbe::core::LayeredAssemblyKind::Stair, "Stair", {
             {.material_id = concrete, .thickness_meters = 0.15, .function = tbe::core::WallLayerFunction::Core, .priority = 100, .structural = true},
         });
+        const auto slab_assembly = compound.create_layered_assembly(tbe::core::LayeredAssemblyKind::Floor, "Floor Slab", {
+            tbe::core::WallAssemblyLayer{.material_id = concrete, .thickness_meters = 0.18, .function = tbe::core::WallLayerFunction::Core},
+            tbe::core::WallAssemblyLayer{.material_id = screed, .thickness_meters = 0.05, .function = tbe::core::WallLayerFunction::Core},
+            tbe::core::WallAssemblyLayer{.material_id = laminate, .thickness_meters = 0.012, .function = tbe::core::WallLayerFunction::InteriorFinish},
+        });
         const auto wall = compound.create_wall("Wall", {{0.0, 0.0}, {6.0, 0.0}}, 0.2, 3.2, level, wall_assembly);
+        const auto compound_wall_schedule = compound.generate_wall_schedule();
+        const auto compound_wall_row = std::find_if(compound_wall_schedule.begin(), compound_wall_schedule.end(), [wall](const auto& row) {
+            return row.wall_id == wall;
+        });
+        assert(compound_wall_row != compound_wall_schedule.end());
+        assert(near(compound_wall_row->material_volume_by_id.at(concrete), 4.224));
         const auto column = compound.create_column(level, {3.0, 0.0}, 0.30, 0.30, 3.0, concrete);
         const auto beam = compound.create_beam(level, {0.0, 0.0}, {6.0, 0.0}, 0.25, 0.4, concrete);
         compound.auto_join_structural_elements();
@@ -1914,6 +2052,20 @@ int main() {
         compound.set_structural_wall_cut(wall, column, false);
         assert(compound.find_ptr(wall)->wall()->openings.empty());
         compound.set_beam_column_join(beam, column, true);
+        const auto slab = compound.create_slab(level, {{0.0, 0.0}, {6.0, 0.0}, {6.0, 4.0}, {0.0, 4.0}}, 0.01, concrete, slab_assembly, 0.4);
+        compound.regenerate_dirty_geometry();
+        const auto* slab_data = compound.find_ptr(slab)->slab();
+        assert(slab_data != nullptr);
+        assert(near(slab_data->thickness_meters, 0.242));
+        assert(slab_data->mesh.triangle_material_ids.size() == slab_data->mesh.indices.size() / 3);
+        const auto compound_slab_schedule = compound.generate_slab_schedule();
+        const auto compound_slab_row = std::find_if(compound_slab_schedule.begin(), compound_slab_schedule.end(), [slab](const auto& row) {
+            return row.slab_id == slab;
+        });
+        assert(compound_slab_row != compound_slab_schedule.end());
+        assert(near(compound_slab_row->material_volume_by_id.at(concrete), 4.32));
+        assert(near(compound_slab_row->material_volume_by_id.at(screed), 1.2));
+        assert(near(compound_slab_row->material_volume_by_id.at(laminate), 0.288));
         const auto roof = compound.create_roof(level, {{0.0, 0.0}, {6.0, 0.0}, {6.0, 4.0}, {0.0, 4.0}}, tbe::core::RoofType::SimpleGable, 0.18, concrete, roof_assembly, 25.0);
         assert(!compound.find_ptr(roof)->roof()->mesh.vertices.empty());
         const auto stair = compound.create_stair(level, level, {0.0, 0.5}, {1.0, 0.0}, 1.1, 3.0, 4.0, 18, 17, concrete, stair_assembly);
@@ -1932,6 +2084,7 @@ int main() {
         const auto restored = tbe::core::Document::from_json(compound.to_json());
         assert(restored.find_ptr(wall)->wall()->assembly_id == wall_assembly);
         assert(restored.find_ptr(roof)->roof()->assembly_id == roof_assembly);
+        assert(restored.find_ptr(slab)->slab()->assembly_id == slab_assembly);
         assert(restored.find_ptr(stair)->stair()->assembly_id == stair_assembly);
         assert(restored.find_ptr(roof)->roof()->generated_geometry_dirty);
         assert(!restored.host_relations().empty());
@@ -1952,6 +2105,65 @@ int main() {
         compound.delete_element(column);
         assert(compound.find_ptr(replacement_wall)->wall()->openings.empty());
         assert(compound.find_ptr(beam) != nullptr);
+    }
+
+    {
+        // Trim/Extend is an endpoint-explicit, atomic authoring operation.
+        // The two axes begin with a gap and must meet at the infinite-line
+        // intersection after the single command.
+        tbe::core::Document trim_document{"Trim Extend"};
+        const auto level = trim_document.create_level("Level 1", 0.0, 3.0);
+        const auto horizontal = trim_document.create_wall(
+            "Horizontal",
+            {{0.0, 0.0}, {3.0, 0.0}},
+            0.2,
+            3.0,
+            level
+        );
+        const auto vertical = trim_document.create_wall(
+            "Vertical",
+            {{4.0, 1.0}, {4.0, 4.0}},
+            0.2,
+            3.0,
+            level
+        );
+        trim_document.trim_extend_walls(horizontal, false, vertical, true);
+        const auto* trimmed_horizontal = trim_document.find_ptr(horizontal)->wall();
+        const auto* trimmed_vertical = trim_document.find_ptr(vertical)->wall();
+        assert(near(trimmed_horizontal->axis.end.x, 4.0));
+        assert(near(trimmed_horizontal->axis.end.y, 0.0));
+        assert(near(trimmed_vertical->axis.start.x, 4.0));
+        assert(near(trimmed_vertical->axis.start.y, 0.0));
+        assert(!trimmed_horizontal->joins.empty());
+
+        // Opening validation happens before either axis is written, so an
+        // invalid trim cannot leave one wall changed and the other untouched.
+        const auto opening_wall = trim_document.create_wall(
+            "Opening wall",
+            {{6.0, 0.0}, {9.0, 0.0}},
+            0.2,
+            3.0,
+            level
+        );
+        trim_document.create_door("Door", opening_wall, 2.2, 0.5, 2.1);
+        const auto crossing_wall = trim_document.create_wall(
+            "Crossing wall",
+            {{7.0, -2.0}, {7.0, -0.5}},
+            0.2,
+            3.0,
+            level
+        );
+        bool trim_rejected = false;
+        try {
+            trim_document.trim_extend_walls(opening_wall, true, crossing_wall, false);
+        } catch (const std::invalid_argument&) {
+            trim_rejected = true;
+        }
+        assert(trim_rejected);
+        const auto* unchanged_opening_wall = trim_document.find_ptr(opening_wall)->wall();
+        const auto* unchanged_crossing_wall = trim_document.find_ptr(crossing_wall)->wall();
+        assert(near(unchanged_opening_wall->axis.start.x, 6.0));
+        assert(near(unchanged_crossing_wall->axis.end.y, -0.5));
     }
 
     return 0;

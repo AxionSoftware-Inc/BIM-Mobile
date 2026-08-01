@@ -47,6 +47,29 @@ enum class ApiMaterialCategory {
     Generic
 };
 
+enum class ApiWallLayerFunction {
+    Core,
+    InteriorFinish,
+    ExteriorFinish,
+    Insulation,
+    AirGap,
+    Generic
+};
+
+enum class ApiWallTypeCategory {
+    Interior,
+    Exterior,
+    Generic,
+};
+
+enum class ApiLayeredAssemblyKind {
+    Wall,
+    Floor,
+    Ceiling,
+    Roof,
+    Stair
+};
+
 enum class ApiQuantityType {
     Area,
     Volume,
@@ -56,7 +79,8 @@ enum class ApiQuantityType {
 
 enum class ApiRoofType {
     Flat,
-    SimpleGable
+    SimpleGable,
+    AutoFootprint
 };
 
 enum class ApiWallHeightMode {
@@ -219,7 +243,21 @@ struct WindowDTO {
 struct RenderSceneMeshDTO {
     std::vector<Vec3> positions{};
     std::vector<std::uint32_t> indices{};
+    std::vector<std::uint64_t> triangle_material_ids{};
     std::optional<std::vector<Vec3>> normals{};
+};
+
+struct RenderSceneMaterialDTO {
+    ElementIdDTO id{};
+    std::string name{};
+    ApiMaterialCategory category{ApiMaterialCategory::Generic};
+    std::string display_color{"#B0B7C3"};
+};
+
+struct RenderSceneSectionDTO {
+    std::string name{};
+    Vec2 start{};
+    Vec2 end{};
 };
 
 struct RenderSceneObjectDTO {
@@ -247,6 +285,8 @@ struct RenderSceneDTO {
     std::string units{"meters"};
     std::string coordinate_system{"X/Y plan, Z up"};
     std::vector<RenderSceneLevelDTO> levels{};
+    std::vector<RenderSceneMaterialDTO> materials{};
+    std::vector<RenderSceneSectionDTO> sections{};
     std::vector<RenderSceneObjectDTO> objects{};
     std::size_t object_count{};
     std::size_t vertex_count{};
@@ -271,12 +311,30 @@ struct MaterialDTO {
     ApiMaterialCategory category{ApiMaterialCategory::Generic};
     std::optional<double> density_kg_per_m3{};
     std::optional<double> unit_cost{};
+    std::string display_color{"#B0B7C3"};
+};
+
+struct AssemblyLayerDTO {
+    ElementIdDTO material_id{};
+    double thickness_meters{};
+    ApiWallLayerFunction function{ApiWallLayerFunction::Generic};
+    int priority{};
+    bool structural{};
+};
+
+struct LayeredAssemblyDTO {
+    ElementIdDTO id{};
+    ApiLayeredAssemblyKind kind{ApiLayeredAssemblyKind::Floor};
+    std::string name{};
+    std::vector<AssemblyLayerDTO> layers{};
 };
 
 struct WallTypeDTO {
     ElementIdDTO id{};
     std::string name{};
+    ApiWallTypeCategory category{ApiWallTypeCategory::Generic};
     double total_thickness_meters{};
+    std::vector<AssemblyLayerDTO> layers{};
 };
 
 struct WallScheduleDTO {
@@ -291,6 +349,19 @@ struct WallScheduleDTO {
     double net_area_square_meters{};
     double gross_volume_cubic_meters{};
     double net_volume_cubic_meters{};
+    std::map<std::uint64_t, double> material_volume_by_id{};
+    std::map<std::uint64_t, double> material_cost_by_id{};
+};
+
+struct SlabScheduleDTO {
+    ElementIdDTO slab_id{};
+    ElementIdDTO level_id{};
+    double area_square_meters{};
+    double thickness_meters{};
+    double volume_cubic_meters{};
+    std::string material_or_assembly_name{};
+    std::map<std::uint64_t, double> material_volume_by_id{};
+    std::map<std::uint64_t, double> material_cost_by_id{};
 };
 
 struct OpeningScheduleDTO {
@@ -321,6 +392,10 @@ struct MaterialTakeoffSummaryDTO {
     ApiQuantityType quantity_type{ApiQuantityType::Volume};
     double quantity{};
     std::string unit{};
+    // Cost is intentionally part of the report DTO, not the viewport scene.
+    // A missing unit price remains missing instead of being reported as zero.
+    std::optional<double> unit_cost{};
+    std::optional<double> estimated_cost{};
 };
 
 struct ValidationIssueDTO {
@@ -518,6 +593,10 @@ public:
     ApiResult<RenderSceneDTO> get_render_scene() const;
     ApiResult<std::string> get_render_scene_json() const;
     ApiResult<std::string> get_render_scene_json_near_level(std::uint64_t active_level_id, int adjacent_level_count = 1) const;
+    // Builds a vertical section along a plan line. The returned scene uses
+    // section distance as X and world elevation as Z, with layer-aware cut
+    // objects for walls and slabs.
+    ApiResult<std::string> get_section_scene_json(Vec2 start, Vec2 end) const;
     ApiVoidResult export_render_scene_json(const std::string& path) const;
     ApiVoidResult set_performance_profile(PerformanceProfile profile);
     ApiResult<PerformanceProfile> get_performance_profile() const;
@@ -545,6 +624,9 @@ public:
     );
     ApiVoidResult move_level_elevation(std::uint64_t level_id, double elevation_meters);
     ApiResult<ElementIdDTO> create_wall(std::string name, Vec2 start, Vec2 end, double thickness_meters, double height_meters, std::uint64_t level_id = 0);
+    ApiResult<ElementIdDTO> create_wall_type(ApiWallTypeCategory category, std::string name, std::vector<AssemblyLayerDTO> layers);
+    ApiVoidResult update_wall_type(WallTypeDTO wall_type);
+    ApiResult<std::vector<WallTypeDTO>> list_wall_types() const;
     ApiVoidResult set_wall_level_constraints(
         std::uint64_t wall_id,
         std::uint64_t base_level_id,
@@ -569,8 +651,26 @@ public:
     ApiResult<std::vector<RoomDTO>> detect_rooms();
     ApiVoidResult auto_join_walls();
     ApiVoidResult set_wall_axis(std::uint64_t wall_id, Vec2 start, Vec2 end);
+    ApiVoidResult trim_extend_walls(
+        std::uint64_t first_wall_id,
+        bool first_uses_start,
+        std::uint64_t second_wall_id,
+        bool second_uses_start
+    );
     ApiVoidResult update_wall_properties(std::uint64_t wall_id, double thickness_meters, double height_meters, std::uint64_t wall_type_id = 0);
     ApiVoidResult set_element_assembly(std::uint64_t element_id, std::uint64_t assembly_id);
+    ApiResult<ElementIdDTO> create_material(
+        std::string name,
+        ApiMaterialCategory category,
+        std::optional<double> density_kg_per_m3 = std::nullopt,
+        std::optional<double> unit_cost = std::nullopt,
+        std::string display_color = "#B0B7C3"
+    );
+    ApiVoidResult update_material(MaterialDTO material);
+    ApiResult<std::vector<MaterialDTO>> list_materials() const;
+    ApiResult<ElementIdDTO> create_layered_assembly(ApiLayeredAssemblyKind kind, std::string name, std::vector<AssemblyLayerDTO> layers);
+    ApiVoidResult update_layered_assembly(LayeredAssemblyDTO assembly);
+    ApiResult<std::vector<LayeredAssemblyDTO>> list_layered_assemblies() const;
     ApiVoidResult update_roof_properties(
         std::uint64_t roof_id,
         ApiRoofType roof_type,
@@ -633,6 +733,7 @@ public:
     ApiResult<std::vector<RoomDTO>> get_rooms() const;
     ApiResult<std::vector<RoomDTO>> get_cached_rooms() const;
     ApiResult<std::vector<WallScheduleDTO>> get_wall_schedule() const;
+    ApiResult<std::vector<SlabScheduleDTO>> get_slab_schedule() const;
     ApiResult<std::vector<WallScheduleDTO>> get_cached_wall_schedule() const;
     ApiResult<std::vector<OpeningScheduleDTO>> get_opening_schedule() const;
     ApiResult<std::vector<RoomScheduleDTO>> get_room_schedule() const;

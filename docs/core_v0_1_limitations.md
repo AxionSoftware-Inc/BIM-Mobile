@@ -23,7 +23,9 @@ This engine is a portable BIM-oriented core MVP, not a full production authoring
 
 ## Element Behavior
 
-- roof behavior is intentionally simple
+- roof behavior supports flat, rectangular simple-gable, and engine-owned
+  sloped `AutoFootprint` roofs for simple orthogonal L/U boundaries; full
+  multi-slope ridge/valley editing remains future work
 - stair behavior is placeholder/simple straight stair oriented
 - hosted opening logic is practical but not family-system-complete
 - placement intervals are wall-axis based, not full parametric constraint solving
