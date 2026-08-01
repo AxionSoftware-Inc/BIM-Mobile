@@ -41,6 +41,7 @@ internal data class SceneObject(
   val bounds: SceneBounds,
   val mesh: SceneMesh,
   val materialCategory: String,
+  val metadata: Map<String, String>,
 )
 
 internal data class SceneState(
@@ -110,6 +111,10 @@ internal fun toSceneState(payload: Any?): SceneState? {
           bounds = if (isFinite(bounds)) bounds else SceneBounds(ScenePoint(0.0, 0.0, 0.0), ScenePoint(0.0, 0.0, 0.0)),
           mesh = mesh,
           materialCategory = toStringValue(objectMap["material_category"], "generic"),
+          metadata = (objectMap["metadata"] as? Map<*, *>)
+            ?.entries
+            ?.associate { (key, value) -> key.toString() to value.toString() }
+            ?: emptyMap(),
         )
       )
     }

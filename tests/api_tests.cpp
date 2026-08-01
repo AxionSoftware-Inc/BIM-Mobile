@@ -1345,6 +1345,31 @@ int main() {
         assert(template_scene.value->levels.size() == 4);
         assert(template_scene.value->levels.back().name == "Level 4 (Roof)");
         assert(template_scene.value->sections.size() == 2);
+        const auto template_door_count = std::count_if(
+            template_scene.value->objects.begin(),
+            template_scene.value->objects.end(),
+            [](const auto& object) { return object.kind == tbe::api::ApiElementKind::Door; }
+        );
+        assert(template_door_count == 24);
+        const auto has_wall_category = [&](const std::string& category) {
+            return std::any_of(
+                template_scene.value->objects.begin(),
+                template_scene.value->objects.end(),
+                [&](const auto& object) {
+                    const auto found = object.metadata.find("wall_type_category");
+                    return object.kind == tbe::api::ApiElementKind::Wall &&
+                           found != object.metadata.end() && found->second == category;
+                }
+            );
+        };
+        assert(has_wall_category("Exterior"));
+        assert(has_wall_category("Interior"));
+        // Rooms remain an on-demand analysis product: the startup render
+        // does not compute them, but the realistic partitions must form
+        // usable enclosed spaces whenever documentation requests them.
+        const auto template_rooms = template_session->detect_rooms();
+        assert(template_rooms.ok() && template_rooms.value.has_value());
+        assert(!template_rooms.value->empty());
         const auto template_roof = std::find_if(
             template_scene.value->objects.begin(),
             template_scene.value->objects.end(),
@@ -1464,7 +1489,13 @@ int main() {
         char* template_json = nullptr;
         assert(tbe_project_save_json(template_handle, &template_json) == TBE_API_OK);
         assert(template_json != nullptr);
-        assert(tbe_project_load_json(template_handle, template_json) == TBE_API_OK);
+        const auto large_template_reload_status =
+            tbe_project_load_json(template_handle, template_json);
+        if (large_template_reload_status != TBE_API_OK) {
+            std::fprintf(stderr, "large template reload failed (%d buildings): %s\n",
+                         building_count, tbe_get_last_error(template_handle));
+        }
+        assert(large_template_reload_status == TBE_API_OK);
         tbe_free_string(template_json);
         tbe_engine_destroy(template_handle);
     }

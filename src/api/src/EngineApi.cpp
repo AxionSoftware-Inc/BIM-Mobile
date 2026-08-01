@@ -229,14 +229,21 @@ Project make_residential_template(int building_count, int story_count) {
             if (story + 1 < story_count) {
                 document.set_wall_level_constraints(partition_id, level_id, levels[static_cast<std::size_t>(story + 1)], 0.0, 0.0, tbe::core::WallHeightMode::TopLevel);
             }
+            // Two real apartment circulation doors keep both wings usable;
+            // 0.90 x 2.10 m matches a common residential interior opening.
+            document.create_door("Apartment hall door A", partition_id, 2.0, 0.90, 2.10);
+            document.create_door("Apartment hall door B", partition_id, 6.0, 0.90, 2.10);
             // A realistic authoring / renderer stress fixture needs more
             // than an empty shell. These repeated apartment cores exercise
             // openings, stairs, columns and beams while retaining level
             // ownership and deterministic geometry.
             for (const auto fraction : {0.25, 0.75}) {
+                const auto cross_end_x = fraction > 0.5
+                    ? origin_x + width * 0.58
+                    : origin_x + width;
                 const auto horizontal = document.create_wall(
                     "Building " + std::to_string(building + 1) + " apartment cross partition",
-                    Line2{.start = {.x = origin_x, .y = origin_y + depth * fraction}, .end = {.x = origin_x + width, .y = origin_y + depth * fraction}},
+                    Line2{.start = {.x = origin_x, .y = origin_y + depth * fraction}, .end = {.x = cross_end_x, .y = origin_y + depth * fraction}},
                     0.12,
                     3.2,
                     level_id
@@ -245,11 +252,15 @@ Project make_residential_template(int building_count, int story_count) {
                 if (story + 1 < story_count) {
                     document.set_wall_level_constraints(horizontal, level_id, levels[static_cast<std::size_t>(story + 1)], 0.0, 0.0, tbe::core::WallHeightMode::TopLevel);
                 }
+                document.create_door("Apartment cross-room door", horizontal, 3.0, 0.82, 2.10);
             }
             for (const auto fraction : {0.25, 0.75}) {
+                const auto room_end_y = fraction > 0.58
+                    ? origin_y + depth * 0.5
+                    : origin_y + depth;
                 const auto vertical = document.create_wall(
                     "Building " + std::to_string(building + 1) + " apartment room partition",
-                    Line2{.start = {.x = origin_x + width * fraction, .y = origin_y}, .end = {.x = origin_x + width * fraction, .y = origin_y + depth}},
+                    Line2{.start = {.x = origin_x + width * fraction, .y = origin_y}, .end = {.x = origin_x + width * fraction, .y = room_end_y}},
                     0.12,
                     3.2,
                     level_id
@@ -258,6 +269,7 @@ Project make_residential_template(int building_count, int story_count) {
                 if (story + 1 < story_count) {
                     document.set_wall_level_constraints(vertical, level_id, levels[static_cast<std::size_t>(story + 1)], 0.0, 0.0, tbe::core::WallHeightMode::TopLevel);
                 }
+                document.create_door("Apartment room door", vertical, 2.0, 0.82, 2.10);
             }
             for (const auto xFraction : {0.25, 0.75}) {
                 for (const auto yFraction : {0.25, 0.75}) {

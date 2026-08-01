@@ -78,6 +78,54 @@ void material(inout MaterialInputs material) {
 }
 """
 
+private const val PLASTER_MAT = """
+void material(inout MaterialInputs material) {
+    prepareMaterial(material);
+    float3 world = getWorldPosition();
+    float variation = 0.035 * sin(world.x * 31.0 + world.y * 17.0 + world.z * 23.0);
+    material.baseColor = float4(materialParams.baseColor.rgb * (1.0 + variation), materialParams.baseColor.a);
+}
+"""
+
+private const val WOOD_MAT = """
+void material(inout MaterialInputs material) {
+    prepareMaterial(material);
+    float3 world = getWorldPosition();
+    float grain = 0.10 * sin((world.x + world.z) * 46.0 + sin(world.y * 5.0));
+    material.baseColor = float4(materialParams.baseColor.rgb * (1.0 + grain), materialParams.baseColor.a);
+}
+"""
+
+private const val FLOOR_MAT = """
+void material(inout MaterialInputs material) {
+    prepareMaterial(material);
+    float3 world = getWorldPosition();
+    float board = step(0.94, fract((world.x + world.z * 0.18) / 0.18));
+    float grain = 0.06 * sin(world.x * 58.0 + world.z * 9.0);
+    material.baseColor = float4(materialParams.baseColor.rgb * (1.0 + grain - board * 0.20), materialParams.baseColor.a);
+}
+"""
+
+private const val ROOF_MAT = """
+void material(inout MaterialInputs material) {
+    prepareMaterial(material);
+    float3 world = getWorldPosition();
+    float course = step(0.90, fract((world.x + world.z) / 0.28));
+    float joint = step(0.94, fract((world.x - world.z) / 0.42));
+    material.baseColor = float4(materialParams.baseColor.rgb * (1.0 - max(course, joint) * 0.24), materialParams.baseColor.a);
+}
+"""
+
+private const val CONCRETE_MAT = """
+void material(inout MaterialInputs material) {
+    prepareMaterial(material);
+    float3 world = getWorldPosition();
+    float speckle = fract(sin(dot(world.xz, float2(12.9898, 78.233))) * 43758.5453);
+    float variation = (speckle - 0.5) * 0.10;
+    material.baseColor = float4(materialParams.baseColor.rgb * (1.0 + variation), materialParams.baseColor.a);
+}
+"""
+
 private data class FilamentRenderableEntry(
   val objectData: SceneObject,
   val entity: Int,
@@ -263,6 +311,11 @@ internal class RenderSceneFilamentHostView(
   private var material: Material? = null
   private var wallMaterial: Material? = null
   private var windowMaterial: Material? = null
+  private var plasterMaterial: Material? = null
+  private var woodMaterial: Material? = null
+  private var floorMaterial: Material? = null
+  private var roofMaterial: Material? = null
+  private var concreteMaterial: Material? = null
   private val renderables = linkedMapOf<Long, FilamentRenderableEntry>()
   private val attachedEntities = linkedSetOf<Int>()
   private var statusMessage = DEFAULT_RENDERER_STATUS
@@ -829,6 +882,11 @@ internal class RenderSceneFilamentHostView(
     }
     wallMaterial?.let { material -> engine?.destroyMaterial(material) }
     windowMaterial?.let { material -> engine?.destroyMaterial(material) }
+    plasterMaterial?.let { material -> engine?.destroyMaterial(material) }
+    woodMaterial?.let { material -> engine?.destroyMaterial(material) }
+    floorMaterial?.let { material -> engine?.destroyMaterial(material) }
+    roofMaterial?.let { material -> engine?.destroyMaterial(material) }
+    concreteMaterial?.let { material -> engine?.destroyMaterial(material) }
     engine?.destroy()
     swapChain = null
     renderer = null
@@ -840,6 +898,11 @@ internal class RenderSceneFilamentHostView(
     material = null
     wallMaterial = null
     windowMaterial = null
+    plasterMaterial = null
+    woodMaterial = null
+    floorMaterial = null
+    roofMaterial = null
+    concreteMaterial = null
     materialBuilderReady = false
   }
 
@@ -849,7 +912,13 @@ internal class RenderSceneFilamentHostView(
       material = buildMaterial(engine, "RenderSceneFlatColor", FLAT_COLOR_MAT)
       wallMaterial = buildMaterial(engine, "RenderSceneWallBrick", WALL_BRICK_MAT)
       windowMaterial = buildMaterial(engine, "RenderSceneWindowGlass", FLAT_COLOR_MAT, transparent = true)
-      if (material == null || wallMaterial == null || windowMaterial == null) {
+      plasterMaterial = buildMaterial(engine, "RenderScenePlaster", PLASTER_MAT)
+      woodMaterial = buildMaterial(engine, "RenderSceneWood", WOOD_MAT)
+      floorMaterial = buildMaterial(engine, "RenderSceneFloor", FLOOR_MAT)
+      roofMaterial = buildMaterial(engine, "RenderSceneRoof", ROOF_MAT)
+      concreteMaterial = buildMaterial(engine, "RenderSceneConcrete", CONCRETE_MAT)
+      if (listOf(material, wallMaterial, windowMaterial, plasterMaterial,
+          woodMaterial, floorMaterial, roofMaterial, concreteMaterial).any { it == null }) {
         statusMessage = "Filament material build returned an invalid package."
         updateStatus()
         return false
@@ -900,7 +969,9 @@ internal class RenderSceneFilamentHostView(
     destroyRenderables()
     val scene = scene ?: return
     val sceneState = currentScene ?: return
-    if ((material == null || wallMaterial == null || windowMaterial == null) && materialBuilderReady) {
+    if ((material == null || wallMaterial == null || windowMaterial == null ||
+        plasterMaterial == null || woodMaterial == null || floorMaterial == null ||
+        roofMaterial == null || concreteMaterial == null) && materialBuilderReady) {
       buildRuntimeMaterial()
     }
     val engine = engine ?: return
@@ -912,6 +983,11 @@ internal class RenderSceneFilamentHostView(
     }
     val wallMaterial = wallMaterial ?: material
     val windowMaterial = windowMaterial ?: material
+    val plasterMaterial = plasterMaterial ?: material
+    val woodMaterial = woodMaterial ?: material
+    val floorMaterial = floorMaterial ?: material
+    val roofMaterial = roofMaterial ?: material
+    val concreteMaterial = concreteMaterial ?: material
     val filteredObjects = sceneState.objects
       .filter { visibleKinds.isEmpty() || visibleKinds.contains(normalizeKind(it.kind)) }
     val objects = if (filteredObjects.isNotEmpty()) filteredObjects else sceneState.objects
@@ -940,8 +1016,16 @@ internal class RenderSceneFilamentHostView(
     for (objectData in objects) {
       try {
         val objectMaterial = when (normalizeKind(objectData.kind)) {
-          "wall" -> if (displayStyle == "solid") material else wallMaterial
+          "wall" -> if (displayStyle == "solid") material else if (
+            objectData.metadata["wall_type_category"] == "Interior"
+          ) plasterMaterial else wallMaterial
           "window" -> windowMaterial
+          "door" -> if (displayStyle == "solid") material else woodMaterial
+          "floor" -> if (displayStyle == "solid") material else floorMaterial
+          "roof" -> if (displayStyle == "solid") material else roofMaterial
+          "slab", "column", "beam", "stair" ->
+            if (displayStyle == "solid") material else concreteMaterial
+          "ceiling" -> if (displayStyle == "solid") material else plasterMaterial
           else -> material
         }
         val entry = createRenderable(
@@ -989,7 +1073,14 @@ internal class RenderSceneFilamentHostView(
     val entity = EntityManager.get().create()
     val materialInstance = sharedMaterial.createInstance()
     applySectionBoxState(materialInstance)
-    val baseColor = kindColor(normalizeKind(objectData.kind))
+    val baseColor = if (
+      normalizeKind(objectData.kind) == "wall" &&
+      objectData.metadata["wall_type_category"] == "Interior"
+    ) {
+      floatArrayOf(0.88f, 0.84f, 0.76f, 1.0f)
+    } else {
+      kindColor(normalizeKind(objectData.kind))
+    }
     materialInstance.setParameter(
       "baseColor",
       Colors.RgbaType.LINEAR,
@@ -1581,7 +1672,7 @@ internal class RenderSceneFilamentHostView(
       val color = when {
         active -> floatArrayOf(0.08f, 0.28f, 0.82f, if (isWindow) 0.12f else 1f)
         selected -> floatArrayOf(0.18f, 0.45f, 0.95f, if (isWindow) 0.16f else 1f)
-        highlighted -> floatArrayOf(0.92f, 0.34f, 0.16f, 1f)
+        highlighted -> floatArrayOf(0.92f, 0.34f, 0.16f, if (isWindow) 0.12f else 1f)
         else -> solidColor
       }
       entry.materialInstance.setParameter(
@@ -2118,12 +2209,12 @@ internal class RenderSceneFilamentHostView(
   private fun kindColor(kind: String): FloatArray {
     return when (kind) {
       "wall" -> floatArrayOf(0.62f, 0.38f, 0.25f, 1f)
-      "door" -> floatArrayOf(0.64f, 0.47f, 0.37f, 1f)
+      "door" -> floatArrayOf(0.52f, 0.30f, 0.16f, 1f)
       "window" -> floatArrayOf(0.34f, 0.72f, 0.96f, 0.10f)
       "slab" -> floatArrayOf(0.57f, 0.63f, 0.71f, 1f)
-      "floor" -> floatArrayOf(0.47f, 0.66f, 0.55f, 1f)
-      "ceiling" -> floatArrayOf(0.78f, 0.82f, 0.87f, 1f)
-      "roof" -> floatArrayOf(0.72f, 0.38f, 0.13f, 1f)
+      "floor" -> floatArrayOf(0.62f, 0.42f, 0.23f, 1f)
+      "ceiling" -> floatArrayOf(0.91f, 0.90f, 0.86f, 1f)
+      "roof" -> floatArrayOf(0.48f, 0.16f, 0.10f, 1f)
       "column" -> floatArrayOf(0.41f, 0.45f, 0.52f, 1f)
       "beam" -> floatArrayOf(0.30f, 0.36f, 0.42f, 1f)
       "stair" -> floatArrayOf(0.50f, 0.34f, 0.76f, 1f)

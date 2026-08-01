@@ -4199,7 +4199,7 @@ void Document::validate_opening(const WallData& wall, double offset_meters, doub
         throw std::invalid_argument("opening dimensions must be positive");
     }
 
-    if (height_meters > resolved_wall_height(wall)) {
+    if (height_meters > resolved_wall_height(wall) + epsilon) {
         throw std::invalid_argument("opening is taller than host wall");
     }
 
@@ -4234,8 +4234,13 @@ void Document::validate_wall_openings(const WallData& wall, std::optional<Elemen
         if (opening.vertical_offset_meters < 0.0) {
             throw std::invalid_argument("opening vertical offset must not be negative");
         }
-        if ((opening.height_meters + opening.sill_height_meters + opening.vertical_offset_meters) > resolved_wall_height(wall)) {
-            throw std::invalid_argument("opening is taller than host wall");
+        if ((opening.height_meters + opening.sill_height_meters + opening.vertical_offset_meters) > resolved_wall_height(wall) + epsilon) {
+            throw std::invalid_argument(
+                "opening is taller than host wall: opening=" +
+                std::to_string(opening.element_id) + " required=" +
+                std::to_string(opening.height_meters + opening.sill_height_meters + opening.vertical_offset_meters) +
+                " host=" + std::to_string(resolved_wall_height(wall))
+            );
         }
         const auto wall_length = length(wall.axis);
         const auto half_width = opening.width_meters / 2.0;
