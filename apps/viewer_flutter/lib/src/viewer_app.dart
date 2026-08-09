@@ -205,6 +205,55 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       _interactionMode == RenderSceneInteractionMode.addCeiling ||
       _interactionMode == RenderSceneInteractionMode.addRoof;
 
+  Set<String> get _authoringPickKinds => switch (_interactionMode) {
+        RenderSceneInteractionMode.addDoor ||
+        RenderSceneInteractionMode.addWindow ||
+        RenderSceneInteractionMode.trimExtend =>
+          const <String>{'wall'},
+        RenderSceneInteractionMode.addFloor ||
+        RenderSceneInteractionMode.addCeiling ||
+        RenderSceneInteractionMode.addRoof =>
+          switch (_surfaceDrawMode) {
+            RenderSceneSurfaceDrawMode.pickWalls => const <String>{'wall'},
+            RenderSceneSurfaceDrawMode.autoRoom => const <String>{'room'},
+            _ => const <String>{},
+          },
+        _ => const <String>{},
+      };
+
+  RenderSceneObject? _resolvePlanPick(
+    RenderScenePoint point,
+    Set<String> allowedKinds,
+    double toleranceMeters,
+  ) {
+    final repository = _engineRepository;
+    final scene = _scene;
+    if (!_engineBackedMode || repository == null || scene == null) return null;
+    try {
+      final candidates = repository.hitTest(
+        point.x,
+        point.y,
+        toleranceMeters: toleranceMeters,
+      );
+      for (final candidate in candidates) {
+        final object = scene.objectById(candidate.elementId);
+        if (object == null) continue;
+        if (_visibleKinds.isNotEmpty &&
+            !_visibleKinds.contains(object.kindKey)) {
+          continue;
+        }
+        if (allowedKinds.isNotEmpty && !allowedKinds.contains(object.kindKey)) {
+          continue;
+        }
+        return object;
+      }
+    } catch (_) {
+      // The mesh picker remains a safe fallback while a project is loading or
+      // when a legacy engine does not expose the spatial query.
+    }
+    return null;
+  }
+
   void _traceAndroidMutation(String message) {
     if (!kDebugMode) return;
     final timestamp = DateTime.now().toIso8601String().split('T').last;
@@ -1812,6 +1861,28 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     _viewportController.setSurfaceDraft(null);
   }
 
+  void _undoSurfaceDraft() {
+    final scene = _scene;
+    if (!_surfaceTool.undoLast()) return;
+    if (_surfaceDrawMode == RenderSceneSurfaceDrawMode.pickWalls &&
+        scene != null) {
+      _syncSurfaceDraftFromWalls(scene);
+    } else {
+      _syncSurfaceDraftPreview();
+    }
+    setState(() {
+      _editStatusMessage = switch (_surfaceDrawMode) {
+        RenderSceneSurfaceDrawMode.polyline =>
+          '${_draftSurfacePoints.length} boundary points remain.',
+        RenderSceneSurfaceDrawMode.pickWalls =>
+          '${_draftSurfaceWallIds.length} picked walls remain.',
+        RenderSceneSurfaceDrawMode.rectangle =>
+          'Rectangle cleared. Drag again to draw.',
+        RenderSceneSurfaceDrawMode.autoRoom => 'Tap a room.',
+      };
+    });
+  }
+
   Future<void> _clearDraft() async {
     final activeLevel = _activeLevel(_scene);
     _wallTool.reset();
@@ -2031,6 +2102,22 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       case RenderSceneInteractionMode.addFloor:
       case RenderSceneInteractionMode.addCeiling:
       case RenderSceneInteractionMode.addRoof:
+        if (_surfaceDrawMode == RenderSceneSurfaceDrawMode.pickWalls) {
+          final candidate = details.pickedObject;
+          if (candidate?.kindKey == 'wall' && candidate?.elementId != null) {
+            unawaited(_viewportController
+                .highlightElement(candidate!.elementId.toString()));
+          }
+          return;
+        }
+        if (_surfaceDrawMode == RenderSceneSurfaceDrawMode.autoRoom) {
+          final candidate = details.pickedObject;
+          if (candidate?.kindKey == 'room' && candidate?.elementId != null) {
+            unawaited(_viewportController
+                .highlightElement(candidate!.elementId.toString()));
+          }
+          return;
+        }
         if (_surfaceDrawMode != RenderSceneSurfaceDrawMode.rectangle) {
           return;
         }
@@ -2884,8 +2971,32 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       return;
     }
 
-    final snapped = _snapDraftToGrid ? _snapPoint(modelPoint) : modelPoint;
+    final snapped = _surfaceDrawMode == RenderSceneSurfaceDrawMode.polyline
+        ? _draftLinePoint(
+            rawPoint: modelPoint,
+            referenceStart: _draftSurfacePoints.lastOrNull,
+          )
+        : (_snapDraftToGrid ? _snapPoint(modelPoint) : modelPoint);
     if (_surfaceDrawMode == RenderSceneSurfaceDrawMode.polyline) {
+      final first = _draftSurfacePoints.firstOrNull;
+      if (first != null &&
+          _draftSurfacePoints.length >= 3 &&
+          PlanSketchGeometry.planDistance(first, snapped) <=
+              PlanSketchGeometry.defaultEndpointToleranceMeters) {
+        setState(() {
+          _draftSurfaceEnd = first;
+          _editStatusMessage = 'Boundary closed. Creating...';
+        });
+        _syncSurfaceDraftPreview();
+        await _confirmDraft();
+        return;
+      }
+      final previous = _draftSurfacePoints.lastOrNull;
+      if (previous != null &&
+          PlanSketchGeometry.planDistance(previous, snapped) <
+              PlanSketchGeometry.minimumSegmentMeters) {
+        return;
+      }
       setState(() {
         _draftSurfaceWallIds.clear();
         _draftSurfacePoints.add(snapped);
@@ -4271,6 +4382,10 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
             onSceneDragEnd: _handleSceneDragEnd,
             onSceneSecondaryTap: _handleSceneSecondaryTap,
             onSceneHover: _handleSceneHover,
+            authoringPickKinds: _authoringPickKinds,
+            directSurfaceDrag: _isSurfaceAuthoring &&
+                _surfaceDrawMode == RenderSceneSurfaceDrawMode.rectangle,
+            planPickResolver: _engineBackedMode ? _resolvePlanPick : null,
             onLevelElevationSubmitted: _moveSelectedLevelElevation,
             draftWallThicknessMeters: _defaultWallThicknessMeters,
             draftWallHeightMeters: _defaultWallHeightMeters,
@@ -4286,11 +4401,30 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
               drawMode: _surfaceDrawMode,
               enabled: _scene != null && !_isBusy,
               canFinish: _draftCanConfirm,
+              canUndo: _surfaceTool.canUndo,
               onDrawModeChanged: _setSurfaceDrawMode,
+              onUndo: _undoSurfaceDraft,
               onTrimExtend: () {
                 _setInteractionMode(RenderSceneInteractionMode.trimExtend);
               },
               onFinish: _confirmDraft,
+              onCancel: _cancelDraft,
+            ),
+          ),
+        if (_interactionMode == RenderSceneInteractionMode.addWall ||
+            _interactionMode == RenderSceneInteractionMode.addStair)
+          Positioned(
+            left: 16,
+            top: 16,
+            child: LineDrawingContextBar(
+              mode: _interactionMode,
+              enabled: _scene != null && !_isBusy,
+              hasDraft: _interactionMode == RenderSceneInteractionMode.addWall
+                  ? _wallTool.hasStart
+                  : _stairTool.hasStart,
+              onDone: () => unawaited(
+                _setInteractionMode(RenderSceneInteractionMode.select),
+              ),
               onCancel: _cancelDraft,
             ),
           ),
@@ -4766,9 +4900,63 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         }
         return;
       case RenderSceneInteractionMode.addWall:
-        // A tablet drag only places the second endpoint. Keeping the draft
-        // alive lets the visible Confirm action be the explicit commit.
-        _handleSceneHover(details);
+        final point = details.modelPoint;
+        if (point == null) return;
+        final snapped = _draftLinePoint(
+          rawPoint: point,
+          referenceStart: _wallTool.start,
+        );
+        if (!_wallTool.hasStart) {
+          _wallTool.begin(snapped);
+        } else {
+          _wallTool.preview(snapped);
+        }
+        _viewportController.setWallDraft(_wallTool.start, _wallTool.end);
+        setState(() {
+          _editStatusMessage = _wallTool.hasSegment
+              ? 'Release to create this wall.'
+              : 'Drag to draw, or tap the next wall corner.';
+        });
+        return;
+      case RenderSceneInteractionMode.addFloor:
+      case RenderSceneInteractionMode.addCeiling:
+      case RenderSceneInteractionMode.addRoof:
+        if (_surfaceDrawMode != RenderSceneSurfaceDrawMode.rectangle) return;
+        final point = details.modelPoint;
+        if (point == null) return;
+        final snapped = _snapDraftToGrid ? _snapPoint(point) : point;
+        setState(() {
+          if (_draftSurfaceStart == null) {
+            _draftSurfaceStart = snapped;
+            _draftSurfaceEnd = snapped;
+            _draftSurfacePoints
+              ..clear()
+              ..add(snapped);
+          } else {
+            _draftSurfaceEnd = snapped;
+            if (_draftSurfacePoints.length == 1) {
+              _draftSurfacePoints.add(snapped);
+            } else {
+              _draftSurfacePoints[1] = snapped;
+            }
+          }
+          _editStatusMessage = 'Drag and release to create rectangle.';
+        });
+        _syncSurfaceDraftPreview();
+        return;
+      case RenderSceneInteractionMode.addStair:
+        final point = details.modelPoint;
+        if (point == null) return;
+        final snapped = _draftLinePoint(
+          rawPoint: point,
+          referenceStart: _stairTool.start,
+        );
+        if (!_stairTool.hasStart) {
+          _stairTool.begin(snapped);
+        } else {
+          _stairTool.preview(snapped);
+        }
+        _viewportController.setWallDraft(_stairTool.start, _stairTool.end);
         return;
       case RenderSceneInteractionMode.moveWall:
         _handleMoveWallTap(scene, details.pickedObject, details.modelPoint);
@@ -4825,6 +5013,13 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
               scene: scene, opening: target, point: point);
         }
         return;
+      case RenderSceneInteractionMode.addWall:
+      case RenderSceneInteractionMode.addFloor:
+      case RenderSceneInteractionMode.addCeiling:
+      case RenderSceneInteractionMode.addRoof:
+      case RenderSceneInteractionMode.addStair:
+        _handleSceneHover(details);
+        return;
       default:
         return;
     }
@@ -4832,6 +5027,30 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
 
   Future<void> _handleSceneDragEnd(RenderSceneTapDetails details) async {
     switch (_interactionMode) {
+      case RenderSceneInteractionMode.addWall:
+        _handleSceneHover(details);
+        if (_wallTool.hasSegment) {
+          await _commitWallDraft(autoContinue: true);
+        }
+        return;
+      case RenderSceneInteractionMode.addFloor:
+      case RenderSceneInteractionMode.addCeiling:
+      case RenderSceneInteractionMode.addRoof:
+        if (_surfaceDrawMode != RenderSceneSurfaceDrawMode.rectangle) return;
+        _handleSceneHover(details);
+        if (PlanSketchGeometry.isUsableRectangle(
+          _draftSurfaceStart,
+          _draftSurfaceEnd,
+        )) {
+          await _confirmDraft();
+        }
+        return;
+      case RenderSceneInteractionMode.addStair:
+        _handleSceneHover(details);
+        if (_stairTool.hasRun) {
+          await _commitStairDraft();
+        }
+        return;
       case RenderSceneInteractionMode.select:
         if (_draftMoveLevelId != null && _draftWallEnd != null) {
           final repository = _engineRepository;

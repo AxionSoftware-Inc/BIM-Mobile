@@ -26,6 +26,13 @@ class SurfaceToolController extends ChangeNotifier {
   /// remain scoped to this controller instead of the app-level UI state.
   List<RenderScenePoint> get points => _points;
   Set<int> get wallIds => _wallIds;
+  bool get canUndo => switch (_drawMode) {
+        RenderSceneSurfaceDrawMode.polyline => _points.isNotEmpty,
+        RenderSceneSurfaceDrawMode.pickWalls => _wallIds.isNotEmpty,
+        RenderSceneSurfaceDrawMode.rectangle =>
+          _start != null || _end != null || _points.isNotEmpty,
+        RenderSceneSurfaceDrawMode.autoRoom => false,
+      };
   RenderSceneSurfaceDrawMode get drawMode => _drawMode;
   set drawMode(RenderSceneSurfaceDrawMode value) {
     if (_drawMode == value) return;
@@ -58,6 +65,37 @@ class SurfaceToolController extends ChangeNotifier {
       ..clear()
       ..addAll(value);
     notifyListeners();
+  }
+
+  /// Removes the most recent touch decision without cancelling the tool.
+  /// Dart's insertion-ordered Set makes wall picking reversible in the same
+  /// order the user selected boundaries.
+  bool undoLast() {
+    switch (_drawMode) {
+      case RenderSceneSurfaceDrawMode.polyline:
+        if (_points.isEmpty) return false;
+        _points.removeLast();
+        _start = _points.firstOrNull;
+        _end = _points.lastOrNull;
+        break;
+      case RenderSceneSurfaceDrawMode.pickWalls:
+        if (_wallIds.isEmpty) return false;
+        _wallIds.remove(_wallIds.last);
+        _points.clear();
+        _start = null;
+        _end = null;
+        break;
+      case RenderSceneSurfaceDrawMode.rectangle:
+        if (_start == null && _end == null && _points.isEmpty) return false;
+        _start = null;
+        _end = null;
+        _points.clear();
+        break;
+      case RenderSceneSurfaceDrawMode.autoRoom:
+        return false;
+    }
+    notifyListeners();
+    return true;
   }
 
   void reset({required double levelElevation, required double defaultHeight}) {

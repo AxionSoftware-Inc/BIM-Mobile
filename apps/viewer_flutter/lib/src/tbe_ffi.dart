@@ -2250,12 +2250,22 @@ class ViewerRepository
     return currentRenderScene();
   }
 
-  List<HitCandidateView> hitTest(double modelX, double modelY) {
+  List<HitCandidateView> hitTest(
+    double modelX,
+    double modelY, {
+    double toleranceMeters = 0.25,
+  }) {
     final handle = _handle;
     if (handle == null) {
       throw TbeApiException('No loaded project');
     }
-    return _api.hitTestCandidates(handle, _activeLevelId, modelX, modelY);
+    return _api.hitTestCandidates(
+      handle,
+      _activeLevelId,
+      modelX,
+      modelY,
+      toleranceMeters: toleranceMeters,
+    );
   }
 
   int _extractPrimaryLevelIdFromPackage(String packagePath) {
@@ -2301,10 +2311,18 @@ class ViewerRepository
   int? defaultAssemblyId(String kind) {
     try {
       final packagePath = _currentPackagePath;
-      final json = _currentJson ??
+      var json = _currentJson ??
           (packagePath == null
               ? null
               : File('$packagePath/project.json').readAsStringSync());
+      // Large generated templates intentionally skip eager serialization on
+      // load. Authoring is the first point where an assembly ID is required,
+      // so serialize once here and retain the catalog for subsequent tools.
+      if (json == null && _handle != null) {
+        json = _api.saveProjectJson(_handle!);
+        _currentJson = json;
+        _currentJsonPath = null;
+      }
       if (json == null) {
         return null;
       }

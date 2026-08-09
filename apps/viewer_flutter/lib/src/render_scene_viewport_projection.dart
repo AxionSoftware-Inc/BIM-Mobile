@@ -161,8 +161,11 @@ RenderSceneObject? pickObjectAt({
   required RenderSceneCameraState camera,
   required Set<String> visibleKinds,
   required double padding,
+  Set<String> allowedKinds = const <String>{},
+  double additionalHitSlop = 0.0,
 }) {
-  final objects = scene.objectsForKinds(visibleKinds);
+  final objects = scene.objectsForKinds(visibleKinds).where((object) =>
+      allowedKinds.isEmpty || allowedKinds.contains(object.kindKey));
   if (objects.isEmpty) {
     return null;
   }
@@ -187,6 +190,7 @@ RenderSceneObject? pickObjectAt({
       object: object,
       localPosition: localPosition,
       projection: projection,
+      additionalHitSlop: additionalHitSlop,
     );
     if (hit == null) {
       continue;
@@ -218,6 +222,7 @@ double? _pickScoreForObject({
   required RenderSceneObject object,
   required Offset localPosition,
   required RenderSceneProjection projection,
+  double additionalHitSlop = 0.0,
 }) {
   final mesh = object.mesh;
   double? bestTriangleDistance;
@@ -234,7 +239,9 @@ double? _pickScoreForObject({
       final pc = projection.project(c).screen;
       final triangleBounds =
           Rect.fromPoints(pa, pb).expandToInclude(Rect.fromPoints(pa, pc));
-      if (!triangleBounds.inflate(6).contains(localPosition)) {
+      if (!triangleBounds
+          .inflate(6 + additionalHitSlop)
+          .contains(localPosition)) {
         continue;
       }
       if (_pointInTriangle(localPosition, pa, pb, pc)) {
@@ -253,11 +260,12 @@ double? _pickScoreForObject({
   // tolerance around mesh lines. This keeps a wall face, opening face or slab
   // selectable by tapping inside it in 2D, elevation and 3D.
   final pickInflation = switch (object.kindKey) {
-    'door' || 'window' => 16.0,
-    'stair' || 'column' || 'beam' => 14.0,
-    'floor' || 'ceiling' || 'roof' || 'slab' => 12.0,
-    _ => 10.0,
-  };
+        'door' || 'window' => 16.0,
+        'stair' || 'column' || 'beam' => 14.0,
+        'floor' || 'ceiling' || 'roof' || 'slab' => 12.0,
+        _ => 10.0,
+      } +
+      additionalHitSlop;
   final rect =
       projectBoundsRect(object.bounds, projection).inflate(pickInflation);
   if (!rect.contains(localPosition)) {

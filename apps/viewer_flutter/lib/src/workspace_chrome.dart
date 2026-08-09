@@ -262,6 +262,70 @@ class AuthoringToolPalette extends StatelessWidget {
   }
 }
 
+/// Small touch-first HUD for line tools. It replaces desktop hover
+/// instructions with an explicit one-finger gesture contract while keeping
+/// navigation available under two fingers.
+class LineDrawingContextBar extends StatelessWidget {
+  const LineDrawingContextBar({
+    super.key,
+    required this.mode,
+    required this.enabled,
+    required this.hasDraft,
+    required this.onDone,
+    required this.onCancel,
+  });
+
+  final RenderSceneInteractionMode mode;
+  final bool enabled;
+  final bool hasDraft;
+  final VoidCallback onDone;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isWall = mode == RenderSceneInteractionMode.addWall;
+    return Material(
+      elevation: 4,
+      color: theme.colorScheme.surface.withValues(alpha: 0.97),
+      borderRadius: BorderRadius.circular(14),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Icon(isWall ? Icons.architecture_outlined : Icons.stairs_outlined,
+                size: 19),
+            const SizedBox(width: 8),
+            Text(isWall ? 'Draw Walls' : 'Draw Stair'),
+            const SizedBox(width: 12),
+            Text(
+              isWall
+                  ? 'Drag a wall · tap corners to chain · two fingers navigate'
+                  : 'Drag from stair start to direction',
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(width: 12),
+            FilledButton.icon(
+              onPressed: enabled ? onDone : null,
+              icon: const Icon(Icons.check, size: 18),
+              label: const Text('Done'),
+            ),
+            const SizedBox(width: 4),
+            IconButton(
+              tooltip: hasDraft ? 'Cancel current segment' : 'Close tool',
+              onPressed: enabled ? onCancel : null,
+              icon: const Icon(Icons.close, size: 19),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// Contextual surface-authoring controls, deliberately shown next to the
 /// viewport while a Floor, Ceiling, or Roof footprint is active. Keeping the
 /// command vocabulary here makes sketching discoverable without duplicating
@@ -273,7 +337,9 @@ class SurfaceDrawingContextBar extends StatelessWidget {
     required this.drawMode,
     required this.enabled,
     required this.canFinish,
+    required this.canUndo,
     required this.onDrawModeChanged,
+    required this.onUndo,
     required this.onTrimExtend,
     required this.onFinish,
     required this.onCancel,
@@ -283,7 +349,9 @@ class SurfaceDrawingContextBar extends StatelessWidget {
   final RenderSceneSurfaceDrawMode drawMode;
   final bool enabled;
   final bool canFinish;
+  final bool canUndo;
   final ValueChanged<RenderSceneSurfaceDrawMode> onDrawModeChanged;
+  final VoidCallback onUndo;
   final VoidCallback onTrimExtend;
   final VoidCallback onFinish;
   final VoidCallback onCancel;
@@ -346,6 +414,13 @@ class SurfaceDrawingContextBar extends StatelessWidget {
               child: VerticalDivider(width: 8),
             ),
             Tooltip(
+              message: 'Remove the last point or picked wall',
+              child: IconButton.filledTonal(
+                onPressed: enabled && canUndo ? onUndo : null,
+                icon: const Icon(Icons.undo, size: 19),
+              ),
+            ),
+            Tooltip(
               message: 'Switch to the wall Trim / Extend tool',
               child: OutlinedButton.icon(
                 onPressed: enabled ? onTrimExtend : null,
@@ -361,6 +436,16 @@ class SurfaceDrawingContextBar extends StatelessWidget {
             TextButton(
               onPressed: enabled ? onCancel : null,
               child: const Text('Cancel'),
+            ),
+            Text(
+              drawMode == RenderSceneSurfaceDrawMode.rectangle
+                  ? 'Drag one finger · two fingers navigate'
+                  : drawMode == RenderSceneSurfaceDrawMode.pickWalls
+                      ? 'Tap walls · tap again to remove'
+                      : 'Tap corners · Finish closes the loop',
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
             ),
           ],
         ),

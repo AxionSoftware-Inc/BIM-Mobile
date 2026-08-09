@@ -1437,6 +1437,37 @@ void main() {
     expect(tool.heightMeters, closeTo(3.6, 1e-9));
   });
 
+  test('surface touch undo reverses points, picked walls and rectangles', () {
+    final tool = SurfaceToolController();
+    addTearDown(tool.dispose);
+    const first = RenderScenePoint(x: 1, y: 2, z: 0);
+    const second = RenderScenePoint(x: 4, y: 2, z: 0);
+
+    tool
+      ..drawMode = RenderSceneSurfaceDrawMode.polyline
+      ..replacePoints(const <RenderScenePoint>[first, second]);
+    expect(tool.canUndo, isTrue);
+    expect(tool.undoLast(), isTrue);
+    expect(tool.points, const <RenderScenePoint>[first]);
+    expect(tool.start, first);
+    expect(tool.end, first);
+
+    tool
+      ..drawMode = RenderSceneSurfaceDrawMode.pickWalls
+      ..replaceWallIds(const <int>[8, 3, 11]);
+    expect(tool.undoLast(), isTrue);
+    expect(tool.wallIds, const <int>{8, 3});
+
+    tool
+      ..drawMode = RenderSceneSurfaceDrawMode.rectangle
+      ..start = first
+      ..end = second;
+    expect(tool.undoLast(), isTrue);
+    expect(tool.start, isNull);
+    expect(tool.end, isNull);
+    expect(tool.canUndo, isFalse);
+  });
+
   test('plan sketch kernel shares snap, ortho and rectangle rules', () {
     const start = RenderScenePoint(x: 0, y: 0, z: 3.2);
     const raw = RenderScenePoint(x: 2.10, y: 2.84, z: 3.2);

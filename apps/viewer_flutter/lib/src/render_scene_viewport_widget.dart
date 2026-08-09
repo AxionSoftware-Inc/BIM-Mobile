@@ -15,6 +15,12 @@ import 'render_scene_viewport_projection.dart';
 import 'render_scene_viewport_types.dart';
 import 'viewport_interaction.dart';
 
+typedef RenderScenePlanPickResolver = RenderSceneObject? Function(
+  RenderScenePoint modelPoint,
+  Set<String> allowedKinds,
+  double toleranceMeters,
+);
+
 class RenderSceneViewport extends StatefulWidget {
   const RenderSceneViewport({
     super.key,
@@ -26,6 +32,9 @@ class RenderSceneViewport extends StatefulWidget {
     this.onSceneDragEnd,
     this.onSceneSecondaryTap,
     this.onSceneHover,
+    this.authoringPickKinds = const <String>{},
+    this.directSurfaceDrag = false,
+    this.planPickResolver,
     this.onLevelElevationSubmitted,
     this.draftWallThicknessMeters =
         RenderSceneEditor.defaultWallThicknessMeters,
@@ -40,6 +49,9 @@ class RenderSceneViewport extends StatefulWidget {
   final ValueChanged<RenderSceneTapDetails>? onSceneDragEnd;
   final ValueChanged<RenderSceneTapDetails>? onSceneSecondaryTap;
   final ValueChanged<RenderSceneTapDetails>? onSceneHover;
+  final Set<String> authoringPickKinds;
+  final bool directSurfaceDrag;
+  final RenderScenePlanPickResolver? planPickResolver;
   final Future<void> Function(RenderSceneLevel level, String value)?
       onLevelElevationSubmitted;
   final double draftWallThicknessMeters;
@@ -101,6 +113,9 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
         onSceneDragEnd: widget.onSceneDragEnd,
         onSceneSecondaryTap: widget.onSceneSecondaryTap,
         onSceneHover: widget.onSceneHover,
+        authoringPickKinds: widget.authoringPickKinds,
+        directSurfaceDrag: widget.directSurfaceDrag,
+        planPickResolver: widget.planPickResolver,
         onLevelElevationSubmitted: widget.onLevelElevationSubmitted,
         draftWallThicknessMeters: widget.draftWallThicknessMeters,
         draftWallHeightMeters: widget.draftWallHeightMeters,
@@ -124,6 +139,9 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
       onSceneDragEnd: widget.onSceneDragEnd,
       onSceneSecondaryTap: widget.onSceneSecondaryTap,
       onSceneHover: widget.onSceneHover,
+      authoringPickKinds: widget.authoringPickKinds,
+      directSurfaceDrag: widget.directSurfaceDrag,
+      planPickResolver: widget.planPickResolver,
       onLevelElevationSubmitted: widget.onLevelElevationSubmitted,
       draftWallThicknessMeters: widget.draftWallThicknessMeters,
       draftWallHeightMeters: widget.draftWallHeightMeters,
@@ -171,6 +189,9 @@ class _FallbackRenderSceneView extends StatefulWidget {
     required this.onSceneDragEnd,
     required this.onSceneSecondaryTap,
     required this.onSceneHover,
+    required this.authoringPickKinds,
+    required this.directSurfaceDrag,
+    required this.planPickResolver,
     required this.onLevelElevationSubmitted,
     required this.draftWallThicknessMeters,
     required this.draftWallHeightMeters,
@@ -186,6 +207,9 @@ class _FallbackRenderSceneView extends StatefulWidget {
   final ValueChanged<RenderSceneTapDetails>? onSceneDragEnd;
   final ValueChanged<RenderSceneTapDetails>? onSceneSecondaryTap;
   final ValueChanged<RenderSceneTapDetails>? onSceneHover;
+  final Set<String> authoringPickKinds;
+  final bool directSurfaceDrag;
+  final RenderScenePlanPickResolver? planPickResolver;
   final Future<void> Function(RenderSceneLevel level, String value)?
       onLevelElevationSubmitted;
   final double draftWallThicknessMeters;
@@ -328,6 +352,79 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
   }
 
   RenderSceneViewportController get controller => widget.controller;
+
+  bool get _usesDirectAuthoringDrag => switch (widget.interactionMode) {
+        RenderSceneInteractionMode.addWall ||
+        RenderSceneInteractionMode.addStair =>
+          true,
+        RenderSceneInteractionMode.addFloor ||
+        RenderSceneInteractionMode.addCeiling ||
+        RenderSceneInteractionMode.addRoof =>
+          widget.directSurfaceDrag,
+        _ => false,
+      };
+
+  RenderSceneObject? _pickObject(
+    RenderScene scene,
+    Size size,
+    Offset position, {
+    bool touchFriendly = false,
+  }) {
+    final resolver = widget.planPickResolver;
+    if (resolver != null && controller.projectionMode.isPlanar) {
+      final modelPoint = controller.screenToModelPlan(position, size);
+      if (modelPoint != null) {
+        final screenTolerance = touchFriendly ? 24.0 : 10.0;
+        final modelTolerance =
+            (screenTolerance / controller.planCamera.zoom).clamp(0.12, 0.75);
+        return resolver(
+          modelPoint,
+          widget.interactionMode == RenderSceneInteractionMode.select
+              ? const <String>{}
+              : widget.authoringPickKinds,
+          modelTolerance,
+        );
+      }
+    }
+    return pickObjectAt(
+      scene: scene,
+      size: size,
+      localPosition: position,
+      projectionMode: controller.projectionMode,
+      orbitProjectionStyle: controller.orbitProjectionStyle,
+      planCamera: controller.planCamera,
+      camera: controller.camera,
+      visibleKinds: controller.visibleKinds,
+      padding: FallbackRenderScenePainter.padding,
+      allowedKinds: widget.interactionMode == RenderSceneInteractionMode.select
+          ? const <String>{}
+          : widget.authoringPickKinds,
+      additionalHitSlop: touchFriendly ? 10.0 : 0.0,
+    );
+  }
+
+  RenderSceneTapDetails _sceneDetails(
+    RenderScene scene,
+    Size size,
+    Offset localPosition,
+    Offset globalPosition, {
+    bool touchFriendly = false,
+  }) {
+    final picked = _pickObject(
+      scene,
+      size,
+      localPosition,
+      touchFriendly: touchFriendly,
+    );
+    final pickedLevel = _pickLevelAtPosition(scene, size, localPosition);
+    return RenderSceneTapDetails(
+      screenPosition: localPosition,
+      globalPosition: globalPosition,
+      modelPoint: controller.screenToModelPlan(localPosition, size),
+      pickedObject: pickedLevel == null ? picked : null,
+      pickedLevel: pickedLevel,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -499,6 +596,28 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                 widget.onSceneDragStart?.call(details);
                 _sceneDragStarted = true;
               }
+              if (!_isSecondaryDrag && _usesDirectAuthoringDrag) {
+                widget.onSceneDragStart?.call(_sceneDetails(
+                  scene,
+                  size,
+                  event.localPosition,
+                  event.position,
+                  touchFriendly: _usesTouchNavigation(event),
+                ));
+                _sceneDragStarted = true;
+              } else if (!_isSecondaryDrag &&
+                  widget.interactionMode != RenderSceneInteractionMode.select) {
+                // Touch has no hover state. Resolve the candidate immediately
+                // on contact so Pick Wall/Room and hosted openings get the
+                // same live preview a mouse user receives before clicking.
+                _emitHover(
+                  scene,
+                  size,
+                  event.localPosition,
+                  event.position,
+                  touchFriendly: _usesTouchNavigation(event),
+                );
+              }
             },
             onPointerPanZoomStart: (_) {
               if (nativeClipInteraction) return;
@@ -616,30 +735,24 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                       widget.interactionMode ==
                           RenderSceneInteractionMode.moveLevel ||
                       widget.interactionMode ==
-                          RenderSceneInteractionMode.moveOpening)) {
-                final picked = pickObjectAt(
-                  scene: scene,
-                  size: size,
-                  localPosition: event.localPosition,
-                  projectionMode: controller.projectionMode,
-                  orbitProjectionStyle: controller.orbitProjectionStyle,
-                  planCamera: controller.planCamera,
-                  camera: controller.camera,
-                  visibleKinds: controller.visibleKinds,
-                  padding: FallbackRenderScenePainter.padding,
-                );
-                final modelPoint =
-                    controller.screenToModelPlan(event.localPosition, size);
-                final details = RenderSceneTapDetails(
-                  screenPosition: event.localPosition,
-                  globalPosition: event.position,
-                  modelPoint: modelPoint,
-                  pickedObject: picked,
-                );
-                widget.onSceneDragUpdate?.call(details);
+                          RenderSceneInteractionMode.moveOpening ||
+                      _usesDirectAuthoringDrag)) {
+                widget.onSceneDragUpdate?.call(_sceneDetails(
+                  scene,
+                  size,
+                  event.localPosition,
+                  event.position,
+                  touchFriendly: _usesTouchNavigation(event),
+                ));
               } else if (widget.interactionMode !=
                   RenderSceneInteractionMode.select) {
-                _emitHover(scene, size, event.localPosition, event.position);
+                _emitHover(
+                  scene,
+                  size,
+                  event.localPosition,
+                  event.position,
+                  touchFriendly: _usesTouchNavigation(event),
+                );
               } else if (_isSecondaryDrag) {
                 controller.panOrbitBy(delta, size);
               } else if (widget.interactionMode ==
@@ -713,49 +826,16 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                       widget.interactionMode ==
                           RenderSceneInteractionMode.moveLevel ||
                       widget.interactionMode ==
-                          RenderSceneInteractionMode.moveOpening)) {
-                final picked = pickObjectAt(
-                  scene: scene,
-                  size: size,
-                  localPosition: event.localPosition,
-                  projectionMode: controller.projectionMode,
-                  orbitProjectionStyle: controller.orbitProjectionStyle,
-                  planCamera: controller.planCamera,
-                  camera: controller.camera,
-                  visibleKinds: controller.visibleKinds,
-                  padding: FallbackRenderScenePainter.padding,
-                );
-                final modelPoint =
-                    controller.screenToModelPlan(event.localPosition, size);
-                final pickedLevel =
-                    _pickLevelAtPosition(scene, size, event.localPosition);
-                final details = RenderSceneTapDetails(
-                  screenPosition: event.localPosition,
-                  globalPosition: event.position,
-                  modelPoint: modelPoint,
-                  pickedObject: pickedLevel != null ? null : picked,
-                  pickedLevel: pickedLevel,
-                );
-                widget.onSceneDragEnd?.call(details);
+                          RenderSceneInteractionMode.moveOpening ||
+                      _usesDirectAuthoringDrag)) {
+                widget.onSceneDragEnd?.call(_sceneDetails(
+                  scene,
+                  size,
+                  event.localPosition,
+                  event.position,
+                  touchFriendly: _usesTouchNavigation(event),
+                ));
                 _sceneDragStarted = false;
-                _clearPointerState();
-                return;
-              }
-              if (widget.interactionMode ==
-                      RenderSceneInteractionMode.addWall &&
-                  moved >= _tapDistanceThreshold(event)) {
-                // First tap establishes the start; each following drag-release
-                // produces one wall segment and continues from its endpoint.
-                final details = RenderSceneTapDetails(
-                  screenPosition: event.localPosition,
-                  globalPosition: event.position,
-                  modelPoint:
-                      controller.screenToModelPlan(event.localPosition, size),
-                  pickedObject: null,
-                  pickedLevel:
-                      _pickLevelAtPosition(scene, size, event.localPosition),
-                );
-                widget.onSceneTap?.call(details);
                 _clearPointerState();
                 return;
               }
@@ -771,16 +851,11 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                 return;
               }
               if (moved < _tapDistanceThreshold(event)) {
-                final picked = pickObjectAt(
-                  scene: scene,
-                  size: size,
-                  localPosition: event.localPosition,
-                  projectionMode: controller.projectionMode,
-                  orbitProjectionStyle: controller.orbitProjectionStyle,
-                  planCamera: controller.planCamera,
-                  camera: controller.camera,
-                  visibleKinds: controller.visibleKinds,
-                  padding: FallbackRenderScenePainter.padding,
+                final picked = _pickObject(
+                  scene,
+                  size,
+                  event.localPosition,
+                  touchFriendly: _usesTouchNavigation(event),
                 );
 
                 final modelPoint =
@@ -889,18 +964,14 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
     RenderScene scene,
     Size size,
     Offset localPosition,
-    Offset globalPosition,
-  ) {
-    final picked = pickObjectAt(
-      scene: scene,
-      size: size,
-      localPosition: localPosition,
-      projectionMode: controller.projectionMode,
-      orbitProjectionStyle: controller.orbitProjectionStyle,
-      planCamera: controller.planCamera,
-      camera: controller.camera,
-      visibleKinds: controller.visibleKinds,
-      padding: FallbackRenderScenePainter.padding,
+    Offset globalPosition, {
+    bool touchFriendly = false,
+  }) {
+    final picked = _pickObject(
+      scene,
+      size,
+      localPosition,
+      touchFriendly: touchFriendly,
     );
     final details = RenderSceneTapDetails(
       screenPosition: localPosition,
