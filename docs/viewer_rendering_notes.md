@@ -25,7 +25,7 @@ This file tracks rendering-specific issues we hit in the Flutter fallback CAD/3D
   Bounds are not an axis for a joined or diagonal wall.
 - Use mesh-derived outlines instead of bounds-box diagonals.
 - Cull backfaces in the Flutter fallback solid painter.
-- **Android Filament Solid border contract:** render sharp semantic edges as a single, thin, depth-tested triangle mesh per BIM element. This is deliberately not `PrimitiveType.LINES` and not a Canvas overlay.
+- **Android Filament Solid border contract:** render sharp semantic edges as thin, depth-tested triangle prisms. Static prisms are batched by category, level and spatial tile so large projects do not pay one extra draw call per BIM element. This is deliberately not `PrimitiveType.LINES` and not a Canvas overlay.
   - The edge mesh is visual-only; it never changes engine geometry, selection, quantities, joins, or persistence.
   - It contains only boundary / sharp architectural edges, not tessellation seams.
   - It is shown only in `solid`; `wireframe` continues to use its full edge representation.
@@ -78,7 +78,33 @@ This file tracks rendering-specific issues we hit in the Flutter fallback CAD/3D
 `RenderSceneFilamentHostView.kt` has two intentionally separate paths:
 
 - `NativeSelectionOverlay`: rectangle selection, levels, Wire and selection feedback. It is **not** the production Solid-border renderer.
-- `edgeGeometry(...)`: batches thin 3D edge prisms and is the production Solid-border renderer. Filament depth testing hides occluded portions correctly.
+- `edgeGeometry(...)`: creates thin 3D edge prisms; the native renderer then combines them into category/level/spatial batches. This is the production Solid-border renderer and Filament depth testing hides occluded portions correctly.
+
+The visual contract and the batching contract are separate. Do not restore a
+per-element edge renderable merely to support selection: normal borders stay
+batched, while `NativeSelectionOverlay` owns selected/highlight feedback. Edge
+geometry is cached by element revision outside clipping mode, and a static
+viewport must be event-driven rather than continuously rendering at 30 FPS.
+Each square prism uploads only its four visible side quads; microscopic end
+caps are omitted, preserving thickness/depth behavior while reducing border
+triangles and indices by one third.
+An unchanged RenderScene replay is fingerprinted from element IDs, revisions,
+mesh cardinality, bounds and metadata and reuses the existing GPU batches.
+
+Large native scenes (currently 256 objects and above) also batch face geometry
+by material variant, category, level and 24 m spatial tile. CPU ray-picking and
+the selection overlay retain element identity, while the GPU avoids one face
+draw call per BIM element. Small scenes keep per-element faces for the most
+direct editing path. A disabled section/section-box replay is a no-op and must
+not trigger a full scene rebuild.
+
+Connected-tablet production gate (Adreno 810, debug APK): the six-building,
+nine-storey template contains 1,842 BIM objects and resolves to 234 face
+batches plus 216 edge batches (450 estimated draw calls instead of roughly
+3,684 per-element face/edge calls). After interaction settles, a four-second
+`gfxinfo` sample must report zero newly rendered frames. Solid, Shaded,
+selection overlay, Section Box cut and full-model restore were verified on
+this fixture.
 
 Do not replace `edgeGeometry(...)` with Canvas drawing or `PrimitiveType.LINES` merely to simplify the code. Both were tried and caused the historical failures: either Solid became full Wire, or borders disappeared / flickered on Android.
 

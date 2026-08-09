@@ -569,12 +569,17 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       if (diagnostics != null && mounted) {
         final input = diagnostics['inputObjects'] ?? 0;
         final renderables = diagnostics['renderables'] ?? 0;
+        final faceBatches = diagnostics['faceBatches'] ?? renderables;
+        final edgeBatches = diagnostics['edgeBatches'] ?? 0;
+        final drawCalls = diagnostics['estimatedDrawCalls'] ?? renderables;
         final frames = diagnostics['renderedFrames'] ?? 0;
         final materialReady = diagnostics['materialReady'] == true;
         setState(() {
           _statusMessage =
               'Filament: input=$input · renderables=$renderables · '
-              'frames=$frames · material=${materialReady ? 'ready' : 'FAILED'}';
+              'face batches=$faceBatches · edge batches=$edgeBatches · '
+              'draws=$drawCalls · frames=$frames · '
+              'material=${materialReady ? 'ready' : 'FAILED'}';
         });
       }
     }
