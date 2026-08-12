@@ -1607,7 +1607,7 @@ void main() {
     expect(find.text('Auto Room'), findsNothing);
   });
 
-  testWidgets('Selecting a wall shows inline wall level controls',
+  testWidgets('Project Browser keeps categories without an object list',
       (WidgetTester tester) async {
     final json = File('assets/render_scene.json').readAsStringSync();
     await tester.binding.setSurfaceSize(const Size(1600, 1000));
@@ -1627,13 +1627,8 @@ void main() {
 
     expect(find.text('Sections (2)'), findsOneWidget);
     expect(find.textContaining('Sheets ('), findsOneWidget);
-    await tester.tap(find.text('Wall #11'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Wall properties'), findsOneWidget);
-    expect(find.text('Apply wall levels'), findsOneWidget);
-    expect(find.text('Base level'), findsWidgets);
-    expect(find.text('Top level'), findsWidgets);
+    expect(find.text('Categories'), findsOneWidget);
+    expect(find.text('Wall #11'), findsNothing);
   });
 
   test('documentation sheet resolver supports current and all floor plans', () {

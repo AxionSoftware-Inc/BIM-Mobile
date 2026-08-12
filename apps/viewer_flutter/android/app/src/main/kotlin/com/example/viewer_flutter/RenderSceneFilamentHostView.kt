@@ -221,6 +221,23 @@ private data class EdgeBatchEntry(
   var attached: Boolean = false,
 )
 
+/**
+ * A precomputed, low-cost architectural shadow silhouette.
+ *
+ * This is deliberately a mesh, not a Filament light/shadow-map pass. It is
+ * rebuilt only with the authoritative scene geometry and then merely toggled
+ * with projection/display visibility while the camera moves.
+ */
+private data class StaticShadowBatchEntry(
+  val entity: Int,
+  val vertexBuffer: VertexBuffer,
+  val indexBuffer: IndexBuffer,
+  val materialInstance: MaterialInstance,
+  val vertexCount: Int,
+  val indexCount: Int,
+  var attached: Boolean = false,
+)
+
 private data class FilamentSceneMetrics(
   val bounds: SceneBounds,
   val objectCount: Int,
@@ -422,10 +439,12 @@ internal class RenderSceneFilamentHostView(
   private var floorMaterial: Material? = null
   private var roofMaterial: Material? = null
   private var concreteMaterial: Material? = null
+  private var shadowMaterial: Material? = null
   private val renderables = linkedMapOf<Long, FilamentRenderableEntry>()
   private val faceBatches = mutableListOf<FaceBatchEntry>()
   private val instanceFaceGroups = mutableListOf<InstanceFaceGroupEntry>()
   private val edgeBatches = mutableListOf<EdgeBatchEntry>()
+  private var staticShadowBatch: StaticShadowBatchEntry? = null
   private val edgeGeometryCache = linkedMapOf<Long, CachedEdgeGeometry>()
   private val attachedEntities = linkedSetOf<Int>()
   private var statusMessage = DEFAULT_RENDERER_STATUS
@@ -662,6 +681,11 @@ internal class RenderSceneFilamentHostView(
     val edgeGeometryNeedsRefresh =
       (projectionMode == "topDown") != (mode == "topDown")
     projectionMode = mode
+    if (mode == "isometric" && staticShadowBatch == null && currentScene != null && materialBuilderReady) {
+      // Plan/elevation snapshots do not need shadow geometry. Build it lazily
+      // the first time the cached authoritative scene enters 3D.
+      createStaticShadowBatch(engine ?: return, scene ?: return, currentScene!!)
+    }
     if (edgeGeometryNeedsRefresh && currentScene != null && materialBuilderReady) {
       // Edge prisms are projection-aware: top-down uses a light line weight
       // and omits section-only reconstruction segments that become diagonal
@@ -671,6 +695,9 @@ internal class RenderSceneFilamentHostView(
       syncVisibility()
       refreshTintState()
     }
+    // Static shadow visibility follows the view mode, but its geometry is not
+    // rebuilt when the camera or projection changes.
+    syncVisibility()
     resetCameraOrientationForProjection()
     configureCameraProjection()
     updateOrbitCamera()
@@ -1117,6 +1144,7 @@ internal class RenderSceneFilamentHostView(
     floorMaterial?.let { material -> engine?.destroyMaterial(material) }
     roofMaterial?.let { material -> engine?.destroyMaterial(material) }
     concreteMaterial?.let { material -> engine?.destroyMaterial(material) }
+    shadowMaterial?.let { material -> engine?.destroyMaterial(material) }
     engine?.destroy()
     swapChain = null
     renderer = null
@@ -1133,6 +1161,7 @@ internal class RenderSceneFilamentHostView(
     floorMaterial = null
     roofMaterial = null
     concreteMaterial = null
+    shadowMaterial = null
     materialBuilderReady = false
   }
 
@@ -1147,8 +1176,15 @@ internal class RenderSceneFilamentHostView(
       floorMaterial = buildMaterial(engine, "RenderSceneFloor", FLOOR_MAT)
       roofMaterial = buildMaterial(engine, "RenderSceneRoof", ROOF_MAT)
       concreteMaterial = buildMaterial(engine, "RenderSceneConcrete", CONCRETE_MAT)
+      shadowMaterial = buildMaterial(
+        engine,
+        "RenderSceneBakedShadow",
+        FLAT_COLOR_MAT,
+        transparent = true,
+      )
       if (listOf(material, wallMaterial, windowMaterial, plasterMaterial,
-          woodMaterial, floorMaterial, roofMaterial, concreteMaterial).any { it == null }) {
+          woodMaterial, floorMaterial, roofMaterial, concreteMaterial,
+          shadowMaterial).any { it == null }) {
         statusMessage = "Filament material build returned an invalid package."
         updateStatus()
         return false
@@ -1202,7 +1238,8 @@ internal class RenderSceneFilamentHostView(
     val sceneState = currentScene ?: return
     if ((material == null || wallMaterial == null || windowMaterial == null ||
         plasterMaterial == null || woodMaterial == null || floorMaterial == null ||
-        roofMaterial == null || concreteMaterial == null) && materialBuilderReady) {
+        roofMaterial == null || concreteMaterial == null || shadowMaterial == null) &&
+      materialBuilderReady) {
       buildRuntimeMaterial()
     }
     val engine = engine ?: return
@@ -1291,6 +1328,9 @@ internal class RenderSceneFilamentHostView(
     }
     if (batchFaces) createFaceBatches(engine, scene, faceChunks)
     createEdgeBatches(engine, scene, edgeChunks)
+    if (projectionMode == "isometric") {
+      createStaticShadowBatch(engine, scene, sceneState)
+    }
     updateMetrics()
     renderDirty = true
     Log.i(
@@ -1733,6 +1773,152 @@ internal class RenderSceneFilamentHostView(
       )
     }
   }
+
+  private fun createStaticShadowBatch(
+    engine: Engine,
+    scene: Scene,
+    sceneState: SceneState,
+  ) {
+    destroyStaticShadowBatch(engine, scene)
+    val shadowMaterial = shadowMaterial ?: return
+    if (sceneState.objects.isEmpty()) return
+
+    val allBounds = sceneState.objects
+      .map { transformBounds(it.bounds) }
+      .reduce(::unionBounds)
+    val groundY = allBounds.min.y + 0.018
+    val lightX = 0.58
+    val lightY = -1.0
+    val lightZ = 0.36
+
+    data class ShadowPoint(val x: Double, val z: Double)
+    fun cross(origin: ShadowPoint, first: ShadowPoint, second: ShadowPoint): Double =
+      (first.x - origin.x) * (second.z - origin.z) -
+        (first.z - origin.z) * (second.x - origin.x)
+
+    fun convexHull(points: List<ShadowPoint>): List<ShadowPoint> {
+      val sorted = points
+        .distinctBy { "${kotlin.math.round(it.x * 10000.0)}:${kotlin.math.round(it.z * 10000.0)}" }
+        .sortedWith(compareBy<ShadowPoint> { it.x }.thenBy { it.z })
+      if (sorted.size <= 2) return sorted
+      val lower = mutableListOf<ShadowPoint>()
+      for (point in sorted) {
+        while (lower.size >= 2 && cross(lower[lower.size - 2], lower.last(), point) <= 0.0) {
+          lower.removeAt(lower.lastIndex)
+        }
+        lower.add(point)
+      }
+      val upper = mutableListOf<ShadowPoint>()
+      for (point in sorted.asReversed()) {
+        while (upper.size >= 2 && cross(upper[upper.size - 2], upper.last(), point) <= 0.0) {
+          upper.removeAt(upper.lastIndex)
+        }
+        upper.add(point)
+      }
+      return (lower.dropLast(1) + upper.dropLast(1))
+    }
+
+    fun projectToGround(point: ScenePoint): ShadowPoint? {
+      val distance = (groundY - point.y) / lightY
+      if (distance < 0.0) return null
+      return ShadowPoint(point.x + lightX * distance, point.z + lightZ * distance)
+    }
+
+    // Prefer roofs as the baked silhouette. If a model has no roof, its
+    // highest walls provide a stable fallback. This keeps campus shadows
+    // separated per building instead of making one huge scene-wide polygon.
+    val roofs = sceneState.objects.filter { normalizeKind(it.kind) == "roof" }
+    val candidates = if (roofs.isNotEmpty()) {
+      roofs
+    } else {
+      val highestY = sceneState.objects.maxOf { transformBounds(it.bounds).max.y }
+      sceneState.objects.filter { objectData ->
+        normalizeKind(objectData.kind) == "wall" &&
+          transformBounds(objectData.bounds).max.y >= highestY - 0.20
+      }
+    }
+    val polygons = candidates.mapNotNull { objectData ->
+      val points = boxCorners(objectData.bounds)
+        .map(::toFilamentPoint)
+        .mapNotNull(::projectToGround)
+      val hull = convexHull(points)
+      hull.takeIf { it.size >= 3 }
+    }
+    if (polygons.isEmpty()) return
+
+    val vertices = mutableListOf<ScenePoint>()
+    val indices = mutableListOf<Int>()
+    for (polygon in polygons) {
+      val base = vertices.size
+      vertices += polygon.map { point -> ScenePoint(point.x, groundY, point.z) }
+      for (index in 1 until polygon.size - 1) {
+        indices += base
+        indices += base + index
+        indices += base + index + 1
+      }
+    }
+    if (vertices.isEmpty() || indices.isEmpty()) return
+
+    val vertexData = ByteBuffer.allocateDirect(vertices.size * 12).order(ByteOrder.nativeOrder())
+    for (point in vertices) {
+      vertexData.putFloat(point.x.toFloat())
+      vertexData.putFloat(point.y.toFloat())
+      vertexData.putFloat(point.z.toFloat())
+    }
+    vertexData.flip()
+    val indexData = ByteBuffer
+      .allocateDirect(indices.size * Int.SIZE_BYTES)
+      .order(ByteOrder.nativeOrder())
+      .asIntBuffer()
+    indices.forEach(indexData::put)
+    indexData.flip()
+    val entity = EntityManager.get().create()
+    val materialInstance = shadowMaterial.createInstance().also { instance ->
+      applySectionBoxState(instance)
+      instance.setParameter("displayShade", 0.0f)
+      instance.setParameter(
+        "baseColor",
+        Colors.RgbaType.LINEAR,
+        0.08f,
+        0.10f,
+        0.12f,
+        0.20f,
+      )
+    }
+    val vertexBuffer = VertexBuffer.Builder()
+      .bufferCount(1)
+      .vertexCount(vertices.size)
+      .attribute(VertexBuffer.VertexAttribute.POSITION, 0, VertexBuffer.AttributeType.FLOAT3, 0, 12)
+      .build(engine)
+      .also { it.setBufferAt(engine, 0, vertexData) }
+    val indexBuffer = IndexBuffer.Builder()
+      .indexCount(indices.size)
+      .bufferType(IndexBuffer.Builder.IndexType.UINT)
+      .build(engine)
+      .also { it.setBuffer(engine, indexData) }
+    RenderableManager.Builder(1)
+      .boundingBox(filamentBox(boundsForPoints(vertices)))
+      .culling(true)
+      .priority(1)
+      .geometry(0, PrimitiveType.TRIANGLES, vertexBuffer, indexBuffer, 0, indices.size)
+      .material(0, materialInstance)
+      .build(engine, entity)
+    val attached = staticShadowVisible()
+    if (attached) scene.addEntity(entity)
+    staticShadowBatch = StaticShadowBatchEntry(
+      entity = entity,
+      vertexBuffer = vertexBuffer,
+      indexBuffer = indexBuffer,
+      materialInstance = materialInstance,
+      vertexCount = vertices.size,
+      indexCount = indices.size,
+      attached = attached,
+    )
+    Log.i(TAG, "Baked shadow mesh: polygons=${polygons.size}, vertices=${vertices.size}, triangles=${indices.size / 3}")
+  }
+
+  private fun staticShadowVisible(): Boolean =
+    projectionMode == "isometric" && displayStyle != "wireframe"
 
   private fun combineGeometry(geometries: List<GeometryData>): GeometryData? {
     if (geometries.isEmpty()) return null
@@ -2384,6 +2570,16 @@ internal class RenderSceneFilamentHostView(
         batch.attached = false
       }
     }
+    staticShadowBatch?.let { batch ->
+      val visible = staticShadowVisible()
+      if (visible && !batch.attached) {
+        scene.addEntity(batch.entity)
+        batch.attached = true
+      } else if (!visible && batch.attached) {
+        scene.removeEntity(batch.entity)
+        batch.attached = false
+      }
+    }
     requestRender()
   }
 
@@ -2447,6 +2643,7 @@ internal class RenderSceneFilamentHostView(
     destroyFaceBatches(engine, scene)
     destroyInstanceFaceGroups(engine, scene)
     destroyEdgeBatches(engine, scene)
+    destroyStaticShadowBatch(engine, scene)
     for (entry in renderables.values) {
       if (entry.attached) {
         scene?.removeEntity(entry.entity)
@@ -2497,6 +2694,17 @@ internal class RenderSceneFilamentHostView(
       EntityManager.get().destroy(batch.entity)
     }
     edgeBatches.clear()
+  }
+
+  private fun destroyStaticShadowBatch(engine: Engine, scene: Scene?) {
+    val batch = staticShadowBatch ?: return
+    if (batch.attached) scene?.removeEntity(batch.entity)
+    engine.destroyEntity(batch.entity)
+    engine.destroyMaterialInstance(batch.materialInstance)
+    engine.destroyVertexBuffer(batch.vertexBuffer)
+    engine.destroyIndexBuffer(batch.indexBuffer)
+    EntityManager.get().destroy(batch.entity)
+    staticShadowBatch = null
   }
 
   private fun updateMetrics() {

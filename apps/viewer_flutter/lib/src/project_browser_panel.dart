@@ -15,11 +15,9 @@ class ProjectBrowserPanel extends StatelessWidget {
     required this.scene,
     required this.availableKinds,
     required this.visibleKinds,
-    required this.selectedElementId,
     required this.activeViewTabId,
     required this.onClose,
     required this.onVisibleKindsChanged,
-    required this.onSelectObject,
     required this.onOpen3d,
     required this.onOpenFloorPlan,
     required this.onOpenElevation,
@@ -33,11 +31,9 @@ class ProjectBrowserPanel extends StatelessWidget {
   final RenderScene? scene;
   final List<String> availableKinds;
   final Set<String> visibleKinds;
-  final String? selectedElementId;
   final String? activeViewTabId;
   final VoidCallback onClose;
   final ValueChanged<Set<String>> onVisibleKindsChanged;
-  final Future<void> Function(RenderSceneObject object) onSelectObject;
   final Future<void> Function() onOpen3d;
   final Future<void> Function(int levelId) onOpenFloorPlan;
   final Future<void> Function(RenderSceneProjectionMode mode) onOpenElevation;
@@ -50,9 +46,6 @@ class ProjectBrowserPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final activeScene = scene;
-    final objects = activeScene == null
-        ? const <RenderSceneObject>[]
-        : activeScene.objectsForKinds(visibleKinds);
     final theme = Theme.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -126,36 +119,6 @@ class ProjectBrowserPanel extends StatelessWidget {
                     message: 'Load a RenderScene sample to inspect objects.',
                   ),
                 )
-              else if (objects.isEmpty)
-                const SliverFillRemaining(
-                  hasScrollBody: false,
-                  child: _BrowserEmptyMessage(
-                    icon: Icons.filter_alt_off,
-                    title: 'No visible objects',
-                    message: 'Change category filters to show objects.',
-                  ),
-                )
-              else
-                SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(8, 0, 8, 12),
-                  sliver: SliverList(
-                    delegate: SliverChildBuilderDelegate(
-                      (context, index) {
-                        final object = objects[index];
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 4),
-                          child: _ObjectListTile(
-                            object: object,
-                            selected: object.elementId?.toString() ==
-                                selectedElementId,
-                            onTap: () => onSelectObject(object),
-                          ),
-                        );
-                      },
-                      childCount: objects.length,
-                    ),
-                  ),
-                ),
             ],
           ),
         ),
@@ -211,47 +174,6 @@ class _KindFilterWrap extends StatelessWidget {
   }
 }
 
-class _ObjectListTile extends StatelessWidget {
-  const _ObjectListTile({
-    required this.object,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final RenderSceneObject object;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final kind = prettySceneKind(object.kind);
-    final id = object.elementId?.toString() ?? 'no-id';
-    final color = _kindColor(object.kindKey);
-    return Material(
-      color: selected ? theme.colorScheme.primaryContainer : Colors.transparent,
-      borderRadius: BorderRadius.circular(12),
-      child: ListTile(
-        dense: true,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        onTap: onTap,
-        leading: CircleAvatar(
-          radius: 17,
-          backgroundColor: color.withValues(alpha: 0.15),
-          child: Icon(_kindIcon(object.kindKey), size: 18, color: color),
-        ),
-        title: Text('$kind #$id', maxLines: 1, overflow: TextOverflow.ellipsis),
-        subtitle: Text(
-          '${object.mesh.positions.length} vertices · ${object.mesh.triangleCount} tris',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        trailing: selected ? const Icon(Icons.check_circle) : null,
-      ),
-    );
-  }
-}
-
 class _BrowserEmptyMessage extends StatelessWidget {
   const _BrowserEmptyMessage({
     required this.icon,
@@ -281,31 +203,3 @@ class _BrowserEmptyMessage extends StatelessWidget {
         ),
       );
 }
-
-IconData _kindIcon(String kind) => switch (kind) {
-      'wall' => Icons.linear_scale,
-      'door' => Icons.door_front_door_outlined,
-      'window' => Icons.window_outlined,
-      'room' => Icons.meeting_room_outlined,
-      'slab' || 'floor' => Icons.layers_outlined,
-      'ceiling' => Icons.flip_to_front_outlined,
-      'roof' => Icons.roofing_outlined,
-      'column' => Icons.view_column_outlined,
-      'beam' => Icons.horizontal_rule,
-      'stair' => Icons.stairs_outlined,
-      _ => Icons.category_outlined,
-    };
-
-Color _kindColor(String kind) => switch (kind) {
-      'wall' => const Color(0xFF1F5D4E),
-      'door' => const Color(0xFFC2410C),
-      'window' => const Color(0xFF0284C7),
-      'room' => const Color(0xFF7C3AED),
-      'slab' || 'floor' => const Color(0xFF475569),
-      'ceiling' => const Color(0xFF64748B),
-      'roof' => const Color(0xFFB91C1C),
-      'column' => const Color(0xFF374151),
-      'beam' => const Color(0xFF92400E),
-      'stair' => const Color(0xFF4338CA),
-      _ => const Color(0xFF6B7280),
-    };
