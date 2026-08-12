@@ -28,6 +28,7 @@ import com.google.android.filament.Engine
 import com.google.android.filament.EntityManager
 import com.google.android.filament.Filament
 import com.google.android.filament.IndexBuffer
+import com.google.android.filament.LightManager
 import com.google.android.filament.Material
 import com.google.android.filament.MaterialInstance
 import com.google.android.filament.RenderableManager
@@ -238,6 +239,14 @@ private data class StaticShadowBatchEntry(
   var attached: Boolean = false,
 )
 
+private data class GroundReceiverEntry(
+  val entity: Int,
+  val vertexBuffer: VertexBuffer,
+  val indexBuffer: IndexBuffer,
+  val materialInstance: MaterialInstance,
+  var attached: Boolean = false,
+)
+
 private data class FilamentSceneMetrics(
   val bounds: SceneBounds,
   val objectCount: Int,
@@ -330,6 +339,12 @@ internal class RenderSceneFilamentHostView(
   private val uiHelper = UiHelper(UiHelper.ContextErrorPolicy.DONT_CHECK)
   private val displayHelper = DisplayHelper(context, Handler(Looper.getMainLooper()))
   private val sectionBoxHandler = Handler(Looper.getMainLooper())
+  private val shadowResume = Runnable {
+    if (!touching && realShadowVisible()) {
+      filamentView?.setShadowingEnabled(true)
+      requestRender()
+    }
+  }
   private var fitSectionBoxOnNextRebuild = false
   private var fitSectionViewOnNextRebuild = false
   private val sectionBoxRebuild = Runnable {
@@ -398,6 +413,8 @@ internal class RenderSceneFilamentHostView(
   private var scene: Scene? = null
   private var filamentView: View? = null
   private var camera: Camera? = null
+  private var sunLightEntity: Int? = null
+  private var fillLightEntity: Int? = null
   private var colorGrading: ColorGrading? = null
   private var swapChain: SwapChain? = null
   private var sceneMetrics = FilamentSceneMetrics(
@@ -439,12 +456,14 @@ internal class RenderSceneFilamentHostView(
   private var floorMaterial: Material? = null
   private var roofMaterial: Material? = null
   private var concreteMaterial: Material? = null
+  private var edgeMaterial: Material? = null
   private var shadowMaterial: Material? = null
   private val renderables = linkedMapOf<Long, FilamentRenderableEntry>()
   private val faceBatches = mutableListOf<FaceBatchEntry>()
   private val instanceFaceGroups = mutableListOf<InstanceFaceGroupEntry>()
   private val edgeBatches = mutableListOf<EdgeBatchEntry>()
   private var staticShadowBatch: StaticShadowBatchEntry? = null
+  private var groundReceiver: GroundReceiverEntry? = null
   private val edgeGeometryCache = linkedMapOf<Long, CachedEdgeGeometry>()
   private val attachedEntities = linkedSetOf<Int>()
   private var statusMessage = DEFAULT_RENDERER_STATUS
@@ -524,6 +543,10 @@ internal class RenderSceneFilamentHostView(
       camera = filamentEngine.createCamera(EntityManager.get().create())
       filamentView?.scene = scene
       filamentView?.camera = camera
+      createSunLight(filamentEngine)
+      createFillLight(filamentEngine)
+      filamentView?.setShadowingEnabled(false)
+      filamentView?.setShadowType(View.ShadowType.PCF)
       colorGrading = ColorGrading.Builder()
         .toneMapping(ColorGrading.ToneMapping.LINEAR)
         .build(filamentEngine)
@@ -541,6 +564,65 @@ internal class RenderSceneFilamentHostView(
       statusMessage = "Filament init failed: ${error.message ?: error::class.java.simpleName}"
       Log.e(TAG, statusMessage, error)
       updateStatus()
+    }
+  }
+
+  private fun createSunLight(engine: Engine) {
+    val entity = EntityManager.get().create()
+    val shadowOptions = LightManager.ShadowOptions().apply {
+      // A single stable cascade is enough for this BIM viewport and avoids
+      // the cost of a continuously refreshed high-resolution shadow atlas.
+      mapSize = 1024
+      shadowCascades = 1
+      constantBias = 0.001f
+      normalBias = 0.025f
+      shadowNearHint = 0.5f
+      shadowFarHint = 120.0f
+      shadowFar = 120.0f
+      maxShadowDistance = 120.0f
+      stable = true
+      screenSpaceContactShadows = false
+    }
+    try {
+      LightManager.Builder(LightManager.Type.SUN)
+        .color(1.0f, 0.96f, 0.90f)
+        .intensity(70000.0f)
+        .direction(0.58f, -1.0f, 0.36f)
+        .sunAngularRadius(0.045f)
+        .castShadows(true)
+        .shadowOptions(shadowOptions)
+        .build(engine, entity)
+      scene?.addEntity(entity)
+      sunLightEntity = entity
+      Log.i(TAG, "Fixed sun light enabled with cached 1-cascade shadow map.")
+    } catch (error: Throwable) {
+      EntityManager.get().destroy(entity)
+      Log.e(TAG, "Failed to create fixed sun light", error)
+    }
+  }
+
+  private fun realShadowVisible(mode: String = projectionMode): Boolean =
+    sunLightEntity != null && mode == "isometric" && displayStyle != "wireframe"
+
+  private fun createFillLight(engine: Engine) {
+    val entity = EntityManager.get().create()
+    try {
+      // This light has no shadow map. It only lifts fully occluded faces so
+      // the fixed sun produces readable BIM shading instead of crushed black
+      // surfaces on tablet GPUs.
+      LightManager.Builder(LightManager.Type.SUN)
+        .color(0.82f, 0.86f, 0.94f)
+        .intensity(45000.0f)
+        .direction(-0.40f, -0.70f, -0.65f)
+        .sunAngularRadius(0.045f)
+        .castLight(true)
+        .castShadows(false)
+        .build(engine, entity)
+      scene?.addEntity(entity)
+      fillLightEntity = entity
+    } catch (error: Throwable) {
+      EntityManager.get().destroy(entity)
+      Log.e(TAG, "Failed to create fill light", error)
     }
   }
 
@@ -681,10 +763,14 @@ internal class RenderSceneFilamentHostView(
     val edgeGeometryNeedsRefresh =
       (projectionMode == "topDown") != (mode == "topDown")
     projectionMode = mode
-    if (mode == "isometric" && staticShadowBatch == null && currentScene != null && materialBuilderReady) {
+    filamentView?.setShadowingEnabled(realShadowVisible(mode))
+    if (mode == "isometric" && sunLightEntity == null && staticShadowBatch == null && currentScene != null && materialBuilderReady) {
       // Plan/elevation snapshots do not need shadow geometry. Build it lazily
       // the first time the cached authoritative scene enters 3D.
       createStaticShadowBatch(engine ?: return, scene ?: return, currentScene!!)
+    }
+    if (mode == "isometric" && groundReceiver == null && currentScene != null && materialBuilderReady) {
+      createGroundReceiver(engine ?: return, scene ?: return, currentScene!!)
     }
     if (edgeGeometryNeedsRefresh && currentScene != null && materialBuilderReady) {
       // Edge prisms are projection-aware: top-down uses a light line weight
@@ -759,6 +845,7 @@ internal class RenderSceneFilamentHostView(
   fun setDisplayStyle(style: String) {
     if (displayStyle == style) return
     displayStyle = style
+    filamentView?.setShadowingEnabled(realShadowVisible())
     selectionOverlay.setDisplayStyle(style)
     // Wire hides Filament faces entirely; do not churn thousands of material
     // instances for a pass that is not visible. The desired face material is
@@ -1111,6 +1198,7 @@ internal class RenderSceneFilamentHostView(
     }
     disposed = true
     sectionBoxHandler.removeCallbacks(sectionBoxRebuild)
+    sectionBoxHandler.removeCallbacks(shadowResume)
     cancelFrame()
     uiHelper.detach()
     displayHelper.detach()
@@ -1118,6 +1206,18 @@ internal class RenderSceneFilamentHostView(
       engine?.destroySwapChain(chain)
     }
     clearScene()
+    sunLightEntity?.let { entity ->
+      scene?.removeEntity(entity)
+      engine?.destroyEntity(entity)
+      EntityManager.get().destroy(entity)
+    }
+    sunLightEntity = null
+    fillLightEntity?.let { entity ->
+      scene?.removeEntity(entity)
+      engine?.destroyEntity(entity)
+      EntityManager.get().destroy(entity)
+    }
+    fillLightEntity = null
     scene?.let { scene ->
       engine?.destroyScene(scene)
     }
@@ -1144,6 +1244,7 @@ internal class RenderSceneFilamentHostView(
     floorMaterial?.let { material -> engine?.destroyMaterial(material) }
     roofMaterial?.let { material -> engine?.destroyMaterial(material) }
     concreteMaterial?.let { material -> engine?.destroyMaterial(material) }
+    edgeMaterial?.let { material -> engine?.destroyMaterial(material) }
     shadowMaterial?.let { material -> engine?.destroyMaterial(material) }
     engine?.destroy()
     swapChain = null
@@ -1161,6 +1262,7 @@ internal class RenderSceneFilamentHostView(
     floorMaterial = null
     roofMaterial = null
     concreteMaterial = null
+    edgeMaterial = null
     shadowMaterial = null
     materialBuilderReady = false
   }
@@ -1176,15 +1278,17 @@ internal class RenderSceneFilamentHostView(
       floorMaterial = buildMaterial(engine, "RenderSceneFloor", FLOOR_MAT)
       roofMaterial = buildMaterial(engine, "RenderSceneRoof", ROOF_MAT)
       concreteMaterial = buildMaterial(engine, "RenderSceneConcrete", CONCRETE_MAT)
+      edgeMaterial = buildMaterial(engine, "RenderSceneEdges", FLAT_COLOR_MAT, lit = false)
       shadowMaterial = buildMaterial(
         engine,
         "RenderSceneBakedShadow",
         FLAT_COLOR_MAT,
         transparent = true,
+        lit = false,
       )
       if (listOf(material, wallMaterial, windowMaterial, plasterMaterial,
           woodMaterial, floorMaterial, roofMaterial, concreteMaterial,
-          shadowMaterial).any { it == null }) {
+          edgeMaterial, shadowMaterial).any { it == null }) {
         statusMessage = "Filament material build returned an invalid package."
         updateStatus()
         return false
@@ -1203,10 +1307,11 @@ internal class RenderSceneFilamentHostView(
     name: String,
     source: String,
     transparent: Boolean = false,
+    lit: Boolean = true,
   ): Material? {
       val builder = MaterialBuilder()
         .name(name)
-        .shading(MaterialBuilder.Shading.UNLIT)
+        .shading(if (lit) MaterialBuilder.Shading.LIT else MaterialBuilder.Shading.UNLIT)
         .culling(MaterialBuilder.CullingMode.NONE)
         .doubleSided(true)
       .uniformParameter(MaterialBuilder.UniformType.FLOAT4, "baseColor")
@@ -1238,7 +1343,7 @@ internal class RenderSceneFilamentHostView(
     val sceneState = currentScene ?: return
     if ((material == null || wallMaterial == null || windowMaterial == null ||
         plasterMaterial == null || woodMaterial == null || floorMaterial == null ||
-        roofMaterial == null || concreteMaterial == null || shadowMaterial == null) &&
+        roofMaterial == null || concreteMaterial == null || edgeMaterial == null || shadowMaterial == null) &&
       materialBuilderReady) {
       buildRuntimeMaterial()
     }
@@ -1328,8 +1433,11 @@ internal class RenderSceneFilamentHostView(
     }
     if (batchFaces) createFaceBatches(engine, scene, faceChunks)
     createEdgeBatches(engine, scene, edgeChunks)
-    if (projectionMode == "isometric") {
+    if (projectionMode == "isometric" && sunLightEntity == null) {
       createStaticShadowBatch(engine, scene, sceneState)
+    }
+    if (projectionMode == "isometric") {
+      createGroundReceiver(engine, scene, sceneState)
     }
     updateMetrics()
     renderDirty = true
@@ -1607,11 +1715,13 @@ internal class RenderSceneFilamentHostView(
     val local = first.third.geometry
     val sharedMaterial = materialForObject(representative, fallback)
     val baseColor = displayBaseColor(representative)
+    val vertexData = vertexDataWithTangents(local)
     val vertexBuffer = VertexBuffer.Builder()
       .bufferCount(1)
       .vertexCount(local.vertexCount)
-      .attribute(VertexBuffer.VertexAttribute.POSITION, 0, VertexBuffer.AttributeType.FLOAT3, 0, 12)
-      .build(engine).also { it.setBufferAt(engine, 0, local.vertexData) }
+      .attribute(VertexBuffer.VertexAttribute.POSITION, 0, VertexBuffer.AttributeType.FLOAT3, 0, 28)
+      .attribute(VertexBuffer.VertexAttribute.TANGENTS, 0, VertexBuffer.AttributeType.FLOAT4, 12, 28)
+      .build(engine).also { it.setBufferAt(engine, 0, vertexData) }
     val indexBuffer = IndexBuffer.Builder()
       .indexCount(local.indexCount)
       .bufferType(IndexBuffer.Builder.IndexType.UINT)
@@ -1632,6 +1742,8 @@ internal class RenderSceneFilamentHostView(
       RenderableManager.Builder(1)
         .boundingBox(filamentBox(local.bounds))
         .culling(true)
+        .castShadows(true)
+        .receiveShadows(true)
         .geometry(0, PrimitiveType.TRIANGLES, vertexBuffer, indexBuffer, 0, local.indexCount)
         .material(0, materialInstance)
         .build(engine, entity)
@@ -1681,11 +1793,13 @@ internal class RenderSceneFilamentHostView(
       val geometry = combineGeometry(sources.map { it.second }) ?: continue
       val sharedMaterial = materialForObject(representative, fallback)
       val baseColor = displayBaseColor(representative)
+      val vertexData = vertexDataWithTangents(geometry)
       val vertexBuffer = VertexBuffer.Builder()
         .bufferCount(1)
         .vertexCount(geometry.vertexCount)
-        .attribute(VertexBuffer.VertexAttribute.POSITION, 0, VertexBuffer.AttributeType.FLOAT3, 0, 12)
-        .build(engine).also { it.setBufferAt(engine, 0, geometry.vertexData) }
+        .attribute(VertexBuffer.VertexAttribute.POSITION, 0, VertexBuffer.AttributeType.FLOAT3, 0, 28)
+        .attribute(VertexBuffer.VertexAttribute.TANGENTS, 0, VertexBuffer.AttributeType.FLOAT4, 12, 28)
+        .build(engine).also { it.setBufferAt(engine, 0, vertexData) }
       val indexBuffer = IndexBuffer.Builder()
         .indexCount(geometry.indexCount)
         .bufferType(IndexBuffer.Builder.IndexType.UINT)
@@ -1702,6 +1816,8 @@ internal class RenderSceneFilamentHostView(
       RenderableManager.Builder(1)
         .boundingBox(filamentBox(geometry.bounds))
         .culling(true)
+        .castShadows(true)
+        .receiveShadows(true)
         .geometry(0, PrimitiveType.TRIANGLES, vertexBuffer, indexBuffer, 0, geometry.indexCount)
         .material(0, materialInstance)
         .build(engine, entity)
@@ -1732,7 +1848,7 @@ internal class RenderSceneFilamentHostView(
     scene: Scene,
     chunks: Map<EdgeBatchKey, List<GeometryData>>,
   ) {
-    val edgeMaterial = material ?: return
+    val edgeMaterial = edgeMaterial ?: material ?: return
     for ((key, geometries) in chunks) {
       val geometry = combineGeometry(geometries) ?: continue
       val vertexBuffer = VertexBuffer.Builder()
@@ -1772,6 +1888,86 @@ internal class RenderSceneFilamentHostView(
         )
       )
     }
+  }
+
+  private fun createGroundReceiver(
+    engine: Engine,
+    scene: Scene,
+    sceneState: SceneState,
+  ) {
+    destroyGroundReceiver(engine, scene)
+    val groundMaterial = material ?: return
+    if (sceneState.objects.isEmpty()) return
+    val allBounds = sceneState.objects
+      .map { transformBounds(it.bounds) }
+      .reduce(::unionBounds)
+    val buildingHeight = allBounds.max.y - allBounds.min.y
+    val horizontalMargin = max(4.0, buildingHeight * 0.70 + 2.0)
+    val y = allBounds.min.y + 0.012
+    val minX = allBounds.min.x - horizontalMargin
+    val maxX = allBounds.max.x + horizontalMargin
+    val minZ = allBounds.min.z - horizontalMargin
+    val maxZ = allBounds.max.z + horizontalMargin
+    val positionData = ByteBuffer.allocateDirect(4 * 12).order(ByteOrder.nativeOrder()).apply {
+      putFloat(minX.toFloat()); putFloat(y.toFloat()); putFloat(minZ.toFloat())
+      putFloat(maxX.toFloat()); putFloat(y.toFloat()); putFloat(minZ.toFloat())
+      putFloat(maxX.toFloat()); putFloat(y.toFloat()); putFloat(maxZ.toFloat())
+      putFloat(minX.toFloat()); putFloat(y.toFloat()); putFloat(maxZ.toFloat())
+      flip()
+    }
+    val indexData = ByteBuffer.allocateDirect(6 * Int.SIZE_BYTES)
+      .order(ByteOrder.nativeOrder()).asIntBuffer().apply {
+        // Counter-clockwise when viewed from above, so the receiver normal is
+        // +Y and the sun can shade it from the front-facing side.
+        put(0); put(2); put(1); put(0); put(3); put(2)
+        flip()
+      }
+    val geometry = GeometryData(
+      vertexCount = 4,
+      indexCount = 6,
+      vertexData = positionData,
+      indexData = indexData,
+      bounds = SceneBounds(
+        ScenePoint(minX, y, minZ),
+        ScenePoint(maxX, y, maxZ),
+      ),
+    )
+    val vertexBuffer = VertexBuffer.Builder()
+      .bufferCount(1)
+      .vertexCount(geometry.vertexCount)
+      .attribute(VertexBuffer.VertexAttribute.POSITION, 0, VertexBuffer.AttributeType.FLOAT3, 0, 28)
+      .attribute(VertexBuffer.VertexAttribute.TANGENTS, 0, VertexBuffer.AttributeType.FLOAT4, 12, 28)
+      .build(engine)
+      .also { it.setBufferAt(engine, 0, vertexDataWithTangents(geometry)) }
+    val indexBuffer = IndexBuffer.Builder()
+      .indexCount(geometry.indexCount)
+      .bufferType(IndexBuffer.Builder.IndexType.UINT)
+      .build(engine)
+      .also { it.setBuffer(engine, geometry.indexData) }
+    val materialInstance = groundMaterial.createInstance().also { instance ->
+      applySectionBoxState(instance)
+      instance.setParameter("displayShade", 0.0f)
+      instance.setParameter("baseColor", Colors.RgbaType.LINEAR, 0.88f, 0.89f, 0.90f, 1.0f)
+    }
+    val entity = EntityManager.get().create()
+    RenderableManager.Builder(1)
+      .boundingBox(filamentBox(geometry.bounds))
+      .culling(false)
+      .castShadows(false)
+      .receiveShadows(true)
+      .geometry(0, PrimitiveType.TRIANGLES, vertexBuffer, indexBuffer, 0, geometry.indexCount)
+      .material(0, materialInstance)
+      .build(engine, entity)
+    val attached = realShadowVisible()
+    if (attached) scene.addEntity(entity)
+    groundReceiver = GroundReceiverEntry(
+      entity = entity,
+      vertexBuffer = vertexBuffer,
+      indexBuffer = indexBuffer,
+      materialInstance = materialInstance,
+      attached = attached,
+    )
+    Log.i(TAG, "Real shadow receiver: ${horizontalMargin.format(2)}m perimeter plane")
   }
 
   private fun createStaticShadowBatch(
@@ -1918,7 +2114,7 @@ internal class RenderSceneFilamentHostView(
   }
 
   private fun staticShadowVisible(): Boolean =
-    projectionMode == "isometric" && displayStyle != "wireframe"
+    sunLightEntity == null && projectionMode == "isometric" && displayStyle != "wireframe"
 
   private fun combineGeometry(geometries: List<GeometryData>): GeometryData? {
     if (geometries.isEmpty()) return null
@@ -1940,6 +2136,81 @@ internal class RenderSceneFilamentHostView(
     indexData.flip()
     val bounds = geometries.map { it.bounds }.reduce(::unionBounds)
     return GeometryData(vertexCount, indexCount, vertexData, indexData, bounds)
+  }
+
+  /**
+   * Filament's lit materials consume a tangent-frame quaternion rather than a
+   * standalone normal attribute. The imported BIM meshes carry positions and
+   * indices, so derive an area-weighted normal per vertex once while building
+   * the GPU batch. This gives the fixed sun real facade orientation without
+   * adding a CPU update to every rendered frame.
+   */
+  private fun vertexDataWithTangents(geometry: GeometryData): ByteBuffer {
+    val positions = FloatArray(geometry.vertexCount * 3)
+    val source = geometry.vertexData.duplicate().order(ByteOrder.nativeOrder()).apply { rewind() }
+      .asFloatBuffer()
+    source.get(positions)
+    val normals = DoubleArray(geometry.vertexCount * 3)
+    val indices = geometry.indexData.duplicate().apply { rewind() }
+    while (indices.remaining() >= 3) {
+      val first = indices.get()
+      val second = indices.get()
+      val third = indices.get()
+      if (first !in 0 until geometry.vertexCount ||
+        second !in 0 until geometry.vertexCount ||
+        third !in 0 until geometry.vertexCount
+      ) continue
+      val ax = positions[second * 3] - positions[first * 3]
+      val ay = positions[second * 3 + 1] - positions[first * 3 + 1]
+      val az = positions[second * 3 + 2] - positions[first * 3 + 2]
+      val bx = positions[third * 3] - positions[first * 3]
+      val by = positions[third * 3 + 1] - positions[first * 3 + 1]
+      val bz = positions[third * 3 + 2] - positions[first * 3 + 2]
+      val nx = ay * bz - az * by
+      val ny = az * bx - ax * bz
+      val nz = ax * by - ay * bx
+      for (index in intArrayOf(first, second, third)) {
+        normals[index * 3] += nx
+        normals[index * 3 + 1] += ny
+        normals[index * 3 + 2] += nz
+      }
+    }
+    val result = ByteBuffer.allocateDirect(geometry.vertexCount * 28).order(ByteOrder.nativeOrder())
+    repeat(geometry.vertexCount) { index ->
+      result.putFloat(positions[index * 3])
+      result.putFloat(positions[index * 3 + 1])
+      result.putFloat(positions[index * 3 + 2])
+      var nx = normals[index * 3]
+      var ny = normals[index * 3 + 1]
+      var nz = normals[index * 3 + 2]
+      val length = kotlin.math.sqrt(nx * nx + ny * ny + nz * nz)
+      if (length <= 1.0e-12) {
+        nx = 0.0
+        ny = 1.0
+        nz = 0.0
+      } else {
+        nx /= length
+        ny /= length
+        nz /= length
+      }
+      // Quaternion rotating Filament's canonical +Z normal into this normal.
+      // This is the compact format expected by VertexAttribute.TANGENTS.
+      val dot = nz.coerceIn(-1.0, 1.0)
+      if (dot < -0.9999) {
+        result.putFloat(0.0f)
+        result.putFloat(1.0f)
+        result.putFloat(0.0f)
+        result.putFloat(0.0f)
+      } else {
+        val denominator = kotlin.math.sqrt(2.0 * (1.0 + dot)).coerceAtLeast(1.0e-8)
+        result.putFloat((-ny / denominator).toFloat())
+        result.putFloat((nx / denominator).toFloat())
+        result.putFloat(0.0f)
+        result.putFloat(kotlin.math.sqrt((1.0 + dot) * 0.5).toFloat())
+      }
+    }
+    result.flip()
+    return result
   }
 
   private fun unionBounds(first: SceneBounds, second: SceneBounds): SceneBounds = SceneBounds(
@@ -1964,12 +2235,14 @@ internal class RenderSceneFilamentHostView(
     objectData: SceneObject,
     geometry: GeometryData,
   ): FilamentRenderableEntry? {
+    val vertexData = vertexDataWithTangents(geometry)
     val vertexBuffer = VertexBuffer.Builder()
       .bufferCount(1)
       .vertexCount(geometry.vertexCount)
-      .attribute(VertexBuffer.VertexAttribute.POSITION, 0, VertexBuffer.AttributeType.FLOAT3, 0, 12)
+      .attribute(VertexBuffer.VertexAttribute.POSITION, 0, VertexBuffer.AttributeType.FLOAT3, 0, 28)
+      .attribute(VertexBuffer.VertexAttribute.TANGENTS, 0, VertexBuffer.AttributeType.FLOAT4, 12, 28)
       .build(engine)
-    vertexBuffer.setBufferAt(engine, 0, geometry.vertexData)
+    vertexBuffer.setBufferAt(engine, 0, vertexData)
 
     val indexBuffer = IndexBuffer.Builder()
       .indexCount(geometry.indexCount)
@@ -2000,6 +2273,8 @@ internal class RenderSceneFilamentHostView(
       // lets frustum culling discard the entire scene.
       .boundingBox(filamentBox(bounds))
       .culling(true)
+      .castShadows(true)
+      .receiveShadows(true)
       .geometry(0, PrimitiveType.TRIANGLES, vertexBuffer, indexBuffer, 0, geometry.indexCount)
       .material(0, materialInstance)
       .build(engine, entity)
@@ -2580,6 +2855,16 @@ internal class RenderSceneFilamentHostView(
         batch.attached = false
       }
     }
+    groundReceiver?.let { receiver ->
+      val visible = realShadowVisible()
+      if (visible && !receiver.attached) {
+        scene.addEntity(receiver.entity)
+        receiver.attached = true
+      } else if (!visible && receiver.attached) {
+        scene.removeEntity(receiver.entity)
+        receiver.attached = false
+      }
+    }
     requestRender()
   }
 
@@ -2643,6 +2928,7 @@ internal class RenderSceneFilamentHostView(
     destroyFaceBatches(engine, scene)
     destroyInstanceFaceGroups(engine, scene)
     destroyEdgeBatches(engine, scene)
+    destroyGroundReceiver(engine, scene)
     destroyStaticShadowBatch(engine, scene)
     for (entry in renderables.values) {
       if (entry.attached) {
@@ -2705,6 +2991,17 @@ internal class RenderSceneFilamentHostView(
     engine.destroyIndexBuffer(batch.indexBuffer)
     EntityManager.get().destroy(batch.entity)
     staticShadowBatch = null
+  }
+
+  private fun destroyGroundReceiver(engine: Engine, scene: Scene?) {
+    val receiver = groundReceiver ?: return
+    if (receiver.attached) scene?.removeEntity(receiver.entity)
+    engine.destroyEntity(receiver.entity)
+    engine.destroyMaterialInstance(receiver.materialInstance)
+    engine.destroyVertexBuffer(receiver.vertexBuffer)
+    engine.destroyIndexBuffer(receiver.indexBuffer)
+    EntityManager.get().destroy(receiver.entity)
+    groundReceiver = null
   }
 
   private fun updateMetrics() {
@@ -2831,6 +3128,14 @@ internal class RenderSceneFilamentHostView(
     renderDirty = true
     if (interactiveForMs > 0L) {
       interactiveUntilMs = max(interactiveUntilMs, SystemClock.uptimeMillis() + interactiveForMs)
+      if (realShadowVisible()) {
+        filamentView?.setShadowingEnabled(false)
+        sectionBoxHandler.removeCallbacks(shadowResume)
+        sectionBoxHandler.postDelayed(shadowResume, interactiveForMs + 80L)
+      }
+    } else if (!touching && realShadowVisible()) {
+      sectionBoxHandler.removeCallbacks(shadowResume)
+      sectionBoxHandler.postDelayed(shadowResume, 80L)
     }
     if (surfaceReady) scheduleFrame()
   }
