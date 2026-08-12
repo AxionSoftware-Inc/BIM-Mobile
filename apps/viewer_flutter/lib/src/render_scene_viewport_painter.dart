@@ -721,17 +721,53 @@ class FallbackRenderScenePainter extends CustomPainter {
       final first = center - axisUnit.scale(halfWidth);
       final second = center + axisUnit.scale(halfWidth);
       final openEnd = first + normal.scale(width);
-      final openOtherEnd = second + normal.scale(width);
       final p0 = projection.project(first).screen;
       final p1 = projection.project(second).screen;
       final pc = projection.project(center).screen;
       final po = projection.project(openEnd).screen;
       if (opening.kindKey == 'window') {
-        final po2 = projection.project(openOtherEnd).screen;
-        // Double-casement window: two leaves open from the centre toward
-        // opposite jambs, matching the native Filament plan symbol.
-        canvas.drawLine(pc, po, paint);
-        canvas.drawLine(pc, po2, paint);
+        // Double-casement window: draw two door-like leaves side by side.
+        // Each leaf is hinged at its outer jamb and swings toward the
+        // centre, so the two quarter-circle arcs meet at the centre split.
+        final panelWidth = halfWidth;
+        final leftOpen = first + normal.scale(panelWidth);
+        final rightOpen = second + normal.scale(panelWidth);
+        final leftHinge = projection.project(first).screen;
+        final rightHinge = projection.project(second).screen;
+        final leftOpenPoint = projection.project(leftOpen).screen;
+        final rightOpenPoint = projection.project(rightOpen).screen;
+        canvas.drawLine(leftHinge, leftOpenPoint, paint);
+        canvas.drawLine(rightHinge, rightOpenPoint, paint);
+
+        void drawSwingArc(Offset hinge, Offset closed, Offset open) {
+          final radius = (closed - hinge).distance;
+          if (radius <= 1.0) return;
+          final startAngle = math.atan2(
+            closed.dy - hinge.dy,
+            closed.dx - hinge.dx,
+          );
+          final endAngle = math.atan2(
+            open.dy - hinge.dy,
+            open.dx - hinge.dx,
+          );
+          var sweep = endAngle - startAngle;
+          while (sweep > math.pi) {
+            sweep -= math.pi * 2;
+          }
+          while (sweep < -math.pi) {
+            sweep += math.pi * 2;
+          }
+          canvas.drawArc(
+            Rect.fromCircle(center: hinge, radius: radius),
+            startAngle,
+            sweep,
+            false,
+            paint,
+          );
+        }
+
+        drawSwingArc(leftHinge, pc, leftOpenPoint);
+        drawSwingArc(rightHinge, pc, rightOpenPoint);
         continue;
       }
       canvas.drawLine(p0, po, paint);

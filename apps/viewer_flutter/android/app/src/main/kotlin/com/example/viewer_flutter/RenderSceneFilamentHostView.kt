@@ -3687,23 +3687,55 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
         centerX - ux * halfWidth + nx * widthMeters,
         centerY - uy * halfWidth + ny * widthMeters,
       )
-      val openOtherEnd = sourcePlanPoint(
-        centerX + ux * halfWidth + nx * widthMeters,
-        centerY + uy * halfWidth + ny * widthMeters,
-      )
       val first = project(start) ?: continue
       val second = project(end) ?: continue
       val center = project(centerPoint) ?: continue
       val open = project(openEnd) ?: continue
-      val openOther = project(openOtherEnd) ?: continue
       val selected = opening.elementId != null && selectedIds.contains(opening.elementId)
       paint.color = if (selected) Color.rgb(37, 99, 235) else Color.rgb(17, 24, 39)
       if (opening.kind == "window") {
-        // Double-casement window: the centre split opens toward both sides.
-        // The two leaves form a clear V from the centre to each jamb, like a
-        // Revit plan symbol, instead of reading as a closed rectangle.
-        canvas.drawLine(center.x, center.y, open.x, open.y, paint)
-        canvas.drawLine(center.x, center.y, openOther.x, openOther.y, paint)
+        // Double-casement window: two door-like leaves side by side. Each
+        // leaf is hinged at its outer jamb and swings toward the centre split,
+        // giving the window two clean quarter-circle arcs instead of a V.
+        val panelWidth = halfWidth
+        val leftOpenPoint = project(
+          sourcePlanPoint(centerX - ux * halfWidth + nx * panelWidth,
+            centerY - uy * halfWidth + ny * panelWidth),
+        ) ?: continue
+        val rightOpenPoint = project(
+          sourcePlanPoint(centerX + ux * halfWidth + nx * panelWidth,
+            centerY + uy * halfWidth + ny * panelWidth),
+        ) ?: continue
+        canvas.drawLine(first.x, first.y, leftOpenPoint.x, leftOpenPoint.y, paint)
+        canvas.drawLine(second.x, second.y, rightOpenPoint.x, rightOpenPoint.y, paint)
+
+        fun drawSwingArc(hinge: PointF, closed: PointF, openPoint: PointF) {
+          val radius = kotlin.math.hypot(
+            (closed.x - hinge.x).toDouble(),
+            (closed.y - hinge.y).toDouble(),
+          ).toFloat()
+          if (radius <= 1.0f) return
+          val startAngle = Math.toDegrees(
+            atan2((closed.y - hinge.y).toDouble(), (closed.x - hinge.x).toDouble()),
+          ).toFloat()
+          val endAngle = Math.toDegrees(
+            atan2((openPoint.y - hinge.y).toDouble(), (openPoint.x - hinge.x).toDouble()),
+          ).toFloat()
+          var sweep = endAngle - startAngle
+          while (sweep > 180f) sweep -= 360f
+          while (sweep < -180f) sweep += 360f
+          canvas.drawArc(
+            RectF(hinge.x - radius, hinge.y - radius,
+              hinge.x + radius, hinge.y + radius),
+            startAngle,
+            sweep,
+            false,
+            paint,
+          )
+        }
+
+        drawSwingArc(first, center, leftOpenPoint)
+        drawSwingArc(second, center, rightOpenPoint)
         continue
       }
 
