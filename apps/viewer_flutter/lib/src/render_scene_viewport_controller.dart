@@ -40,6 +40,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
   RenderSceneOrbitProjectionStyle _orbitProjectionStyle =
       RenderSceneOrbitProjectionStyle.orthographic;
   RenderSceneDisplayStyle _displayStyle = RenderSceneDisplayStyle.solid;
+  bool _shadowsEnabled = true;
   RenderSceneViewportBackend _backend;
   RenderSceneInteractionMode _interactionMode =
       RenderSceneInteractionMode.select;
@@ -108,6 +109,9 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
 
   @override
   RenderSceneDisplayStyle get displayStyle => _displayStyle;
+
+  @override
+  bool get shadowsEnabled => _shadowsEnabled;
 
   @override
   RenderSceneViewportBackend get backend => _backend;
@@ -363,6 +367,14 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     _displayStyle = style;
     notifyListeners();
     await _invoke('setDisplayStyle', style.name);
+  }
+
+  @override
+  Future<void> setShadowsEnabled(bool enabled) async {
+    if (_shadowsEnabled == enabled) return;
+    _shadowsEnabled = enabled;
+    notifyListeners();
+    await _invoke('setShadowsEnabled', enabled);
   }
 
   /// Native ClipVolume for the live 3D viewport. It clips render triangles
@@ -740,6 +752,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
       if (sectionBox != null) 'max': sectionBox.max.toJson(),
     });
     await _invoke('setDisplayStyle', _displayStyle.name);
+    await _invoke('setShadowsEnabled', _shadowsEnabled);
     await _invoke('setProjectionMode', _projectionMode.name);
     await _invoke('setOrbitProjectionStyle', _orbitProjectionStyle.name);
     await _invoke('setCamera', _nativeCameraPayload());

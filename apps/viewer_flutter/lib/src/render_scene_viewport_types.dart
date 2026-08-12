@@ -228,6 +228,7 @@ abstract class RenderSceneViewportActions extends ChangeNotifier {
   RenderSceneProjectionMode get projectionMode;
   RenderSceneOrbitProjectionStyle get orbitProjectionStyle;
   RenderSceneDisplayStyle get displayStyle;
+  bool get shadowsEnabled;
   RenderSceneViewportBackend get backend;
   RenderSceneInteractionMode get interactionMode;
   RenderScenePlanCameraState get planCamera;
@@ -244,6 +245,7 @@ abstract class RenderSceneViewportActions extends ChangeNotifier {
   Future<void> setProjectionMode(RenderSceneProjectionMode mode);
   Future<void> setOrbitProjectionStyle(RenderSceneOrbitProjectionStyle style);
   Future<void> setDisplayStyle(RenderSceneDisplayStyle style);
+  Future<void> setShadowsEnabled(bool enabled);
   Future<void> setBackend(RenderSceneViewportBackend backend);
   Future<void> setInteractionMode(RenderSceneInteractionMode mode);
   void setWallDraft(RenderScenePoint? start, RenderScenePoint? end);

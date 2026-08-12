@@ -1325,6 +1325,14 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     await _viewportController.setDisplayStyle(style);
   }
 
+  Future<void> _setShadowsEnabled(bool enabled) async {
+    await _viewportController.setShadowsEnabled(enabled);
+    if (!mounted) return;
+    setState(() {
+      _statusMessage = enabled ? 'Real shadows enabled' : 'Real shadows disabled';
+    });
+  }
+
   Future<void> _showSectionBoxDialog() async {
     final bounds = _viewportController.sceneBounds;
     if (!bounds.isFinite || _projectionMode.is3D == false) return;
@@ -4764,9 +4772,11 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
             hasScene: _scene != null && !_isBusy,
             projectionMode: _projectionMode,
             displayStyle: _displayStyle,
+            shadowsEnabled: _viewportController.shadowsEnabled,
             orbitStyle: _orbitProjectionStyle,
             onProjectionChanged: _setProjectionMode,
             onDisplayStyleChanged: _setDisplayStyle,
+            onShadowsChanged: _setShadowsEnabled,
             onOrbitStyleChanged: _setOrbitProjectionStyle,
             onFit: _fitCamera,
             hasSectionBox: _viewportController.hasSectionBox,

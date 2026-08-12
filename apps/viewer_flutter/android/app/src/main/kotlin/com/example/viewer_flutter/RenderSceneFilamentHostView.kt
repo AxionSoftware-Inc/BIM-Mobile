@@ -62,6 +62,7 @@ private const val FLAT_COLOR_MAT = """
 void material(inout MaterialInputs material) {
     prepareMaterial(material);
     float3 world = getWorldPosition();
+    material.normal = normalize(cross(dFdx(world), dFdy(world)));
     float shade = mix(1.0, 0.82 + 0.18 * sin(world.x * 0.45 + world.z * 0.31), materialParams.displayShade);
     material.baseColor = float4(materialParams.baseColor.rgb * shade, materialParams.baseColor.a);
 }
@@ -71,6 +72,7 @@ private const val WALL_BRICK_MAT = """
 void material(inout MaterialInputs material) {
     prepareMaterial(material);
     float3 world = getWorldPosition();
+    material.normal = normalize(cross(dFdx(world), dFdy(world)));
     float row = floor(world.y / 0.075);
     float jointY = step(fract(world.y / 0.075), 0.018);
     float jointX = step(fract((world.x + mod(row, 2.0) * 0.12) / 0.24), 0.014);
@@ -87,6 +89,7 @@ private const val PLASTER_MAT = """
 void material(inout MaterialInputs material) {
     prepareMaterial(material);
     float3 world = getWorldPosition();
+    material.normal = normalize(cross(dFdx(world), dFdy(world)));
     float variation = 0.035 * sin(world.x * 31.0 + world.y * 17.0 + world.z * 23.0) * materialParams.displayShade;
     float shade = mix(1.0, 0.82 + 0.18 * sin(world.x * 0.45 + world.z * 0.31), materialParams.displayShade);
     material.baseColor = float4(materialParams.baseColor.rgb * (1.0 + variation) * shade, materialParams.baseColor.a);
@@ -97,6 +100,7 @@ private const val WOOD_MAT = """
 void material(inout MaterialInputs material) {
     prepareMaterial(material);
     float3 world = getWorldPosition();
+    material.normal = normalize(cross(dFdx(world), dFdy(world)));
     float grain = 0.10 * sin((world.x + world.z) * 46.0 + sin(world.y * 5.0)) * materialParams.displayShade;
     float shade = mix(1.0, 0.82 + 0.18 * sin(world.x * 0.45 + world.z * 0.31), materialParams.displayShade);
     material.baseColor = float4(materialParams.baseColor.rgb * (1.0 + grain) * shade, materialParams.baseColor.a);
@@ -107,6 +111,7 @@ private const val FLOOR_MAT = """
 void material(inout MaterialInputs material) {
     prepareMaterial(material);
     float3 world = getWorldPosition();
+    material.normal = normalize(cross(dFdx(world), dFdy(world)));
     float board = step(0.94, fract((world.x + world.z * 0.18) / 0.18)) * materialParams.displayShade;
     float grain = 0.06 * sin(world.x * 58.0 + world.z * 9.0) * materialParams.displayShade;
     float shade = mix(1.0, 0.82 + 0.18 * sin(world.x * 0.45 + world.z * 0.31), materialParams.displayShade);
@@ -118,6 +123,7 @@ private const val ROOF_MAT = """
 void material(inout MaterialInputs material) {
     prepareMaterial(material);
     float3 world = getWorldPosition();
+    material.normal = normalize(cross(dFdx(world), dFdy(world)));
     float course = step(0.90, fract((world.x + world.z) / 0.28)) * materialParams.displayShade;
     float joint = step(0.94, fract((world.x - world.z) / 0.42)) * materialParams.displayShade;
     float shade = mix(1.0, 0.82 + 0.18 * sin(world.x * 0.45 + world.z * 0.31), materialParams.displayShade);
@@ -129,6 +135,7 @@ private const val CONCRETE_MAT = """
 void material(inout MaterialInputs material) {
     prepareMaterial(material);
     float3 world = getWorldPosition();
+    material.normal = normalize(cross(dFdx(world), dFdy(world)));
     float speckle = fract(sin(dot(world.xz, float2(12.9898, 78.233))) * 43758.5453);
     float variation = (speckle - 0.5) * 0.10 * materialParams.displayShade;
     float shade = mix(1.0, 0.82 + 0.18 * sin(world.x * 0.45 + world.z * 0.31), materialParams.displayShade);
@@ -457,6 +464,7 @@ internal class RenderSceneFilamentHostView(
   private var roofMaterial: Material? = null
   private var concreteMaterial: Material? = null
   private var edgeMaterial: Material? = null
+  private var groundMaterial: Material? = null
   private var shadowMaterial: Material? = null
   private val renderables = linkedMapOf<Long, FilamentRenderableEntry>()
   private val faceBatches = mutableListOf<FaceBatchEntry>()
@@ -476,6 +484,7 @@ internal class RenderSceneFilamentHostView(
   private var projectionMode = "topDown"
   private var orbitProjectionStyle = "orthographic"
   private var displayStyle = "solid"
+  private var shadowsEnabled = true
   private var clipVolume = ClipVolumeState.none()
   private val sectionBoxEnabled get() = clipVolume.isSectionBox
   private val sectionBoxMin get() = clipVolume.boxMin
@@ -534,6 +543,13 @@ internal class RenderSceneFilamentHostView(
       filamentEngine.isAutomaticInstancingEnabled = true
       engine = filamentEngine
       renderer = filamentEngine.createRenderer()
+      renderer?.setClearOptions(Renderer.ClearOptions().apply {
+        // Explicitly clear every submitted frame. This matters when the
+        // shadow receiver is removed: otherwise a TextureView can retain the
+        // previous black shadow pixels until an unrelated redraw.
+        clear = true
+        clearColor = doubleArrayOf(0.95, 0.96, 0.95, 1.0)
+      })
       scene = filamentEngine.createScene()
       filamentView = filamentEngine.createView()
       filamentView?.isFrustumCullingEnabled = true
@@ -602,7 +618,7 @@ internal class RenderSceneFilamentHostView(
   }
 
   private fun realShadowVisible(mode: String = projectionMode): Boolean =
-    sunLightEntity != null && mode == "isometric" && displayStyle != "wireframe"
+    shadowsEnabled && sunLightEntity != null && mode == "isometric" && displayStyle != "wireframe"
 
   private fun createFillLight(engine: Engine) {
     val entity = EntityManager.get().create()
@@ -764,12 +780,12 @@ internal class RenderSceneFilamentHostView(
       (projectionMode == "topDown") != (mode == "topDown")
     projectionMode = mode
     filamentView?.setShadowingEnabled(realShadowVisible(mode))
-    if (mode == "isometric" && sunLightEntity == null && staticShadowBatch == null && currentScene != null && materialBuilderReady) {
+    if (mode == "isometric" && shadowsEnabled && sunLightEntity == null && staticShadowBatch == null && currentScene != null && materialBuilderReady) {
       // Plan/elevation snapshots do not need shadow geometry. Build it lazily
       // the first time the cached authoritative scene enters 3D.
       createStaticShadowBatch(engine ?: return, scene ?: return, currentScene!!)
     }
-    if (mode == "isometric" && groundReceiver == null && currentScene != null && materialBuilderReady) {
+    if (mode == "isometric" && shadowsEnabled && groundReceiver == null && currentScene != null && materialBuilderReady) {
       createGroundReceiver(engine ?: return, scene ?: return, currentScene!!)
     }
     if (edgeGeometryNeedsRefresh && currentScene != null && materialBuilderReady) {
@@ -851,10 +867,56 @@ internal class RenderSceneFilamentHostView(
     // instances for a pass that is not visible. The desired face material is
     // applied only when Solid or Shaded becomes active again.
     if (style != "wireframe") refreshFaceMaterials()
+    if (style != "wireframe" && shadowsEnabled && projectionMode == "isometric" &&
+      groundReceiver == null && currentScene != null && materialBuilderReady
+    ) {
+      createGroundReceiver(engine ?: return, scene ?: return, currentScene!!)
+    }
     syncVisibility()
     refreshTintState()
     updateStatus(if (style == "wireframe") "Wireframe: faces hidden, mesh edges shown." else null)
     requestRender(250L)
+    invalidate()
+  }
+
+  fun setShadowsEnabled(enabled: Boolean) {
+    if (shadowsEnabled == enabled) return
+    shadowsEnabled = enabled
+    sectionBoxHandler.removeCallbacks(shadowResume)
+    val nativeEngine = engine
+    val nativeScene = scene
+    sunLightEntity?.let { entity ->
+      nativeEngine?.let { runtimeEngine ->
+        val lightInstance = runtimeEngine.lightManager.getInstance(entity)
+        if (lightInstance != 0) {
+          runtimeEngine.lightManager.setShadowCaster(lightInstance, enabled)
+        }
+      }
+      if (enabled) nativeScene?.addEntity(entity) else nativeScene?.removeEntity(entity)
+    }
+    // Rebuild once on an explicit toggle so the receiver and shadow state are
+    // removed from the current frame immediately. Camera movement never
+    // enters this path.
+    if (nativeEngine != null && nativeScene != null && materialBuilderReady) {
+      rebuildScene()
+    }
+    Log.i(TAG, "Shadow toggle: enabled=$enabled, receiver=${groundReceiver != null}, static=${staticShadowBatch != null}")
+    filamentView?.setShadowingEnabled(realShadowVisible())
+    syncVisibility()
+    // TextureView can retain the previous shadow-receiver frame after the
+    // receiver entity is removed. Submit a short burst of clean frames so the
+    // cleared background is actually presented. This is only for an explicit
+    // toggle; camera movement still uses the event-driven shadow pause path.
+    requestRender(300L)
+    renderSurface.invalidate()
+    sectionBoxHandler.postDelayed({
+      if (!disposed) {
+        renderDirty = true
+        renderSurface.invalidate()
+        requestRender()
+      }
+    }, 120L)
+    updateStatus(if (enabled) "Real shadows enabled." else "Real shadows disabled.")
     invalidate()
   }
 
@@ -1245,6 +1307,7 @@ internal class RenderSceneFilamentHostView(
     roofMaterial?.let { material -> engine?.destroyMaterial(material) }
     concreteMaterial?.let { material -> engine?.destroyMaterial(material) }
     edgeMaterial?.let { material -> engine?.destroyMaterial(material) }
+    groundMaterial?.let { material -> engine?.destroyMaterial(material) }
     shadowMaterial?.let { material -> engine?.destroyMaterial(material) }
     engine?.destroy()
     swapChain = null
@@ -1263,6 +1326,7 @@ internal class RenderSceneFilamentHostView(
     roofMaterial = null
     concreteMaterial = null
     edgeMaterial = null
+    groundMaterial = null
     shadowMaterial = null
     materialBuilderReady = false
   }
@@ -1270,15 +1334,16 @@ internal class RenderSceneFilamentHostView(
   private fun buildRuntimeMaterial(): Boolean {
     val engine = engine ?: return false
     return try {
-      material = buildMaterial(engine, "RenderSceneFlatColor", FLAT_COLOR_MAT)
-      wallMaterial = buildMaterial(engine, "RenderSceneWallBrick", WALL_BRICK_MAT)
-      windowMaterial = buildMaterial(engine, "RenderSceneWindowGlass", FLAT_COLOR_MAT, transparent = true)
-      plasterMaterial = buildMaterial(engine, "RenderScenePlaster", PLASTER_MAT)
-      woodMaterial = buildMaterial(engine, "RenderSceneWood", WOOD_MAT)
-      floorMaterial = buildMaterial(engine, "RenderSceneFloor", FLOOR_MAT)
-      roofMaterial = buildMaterial(engine, "RenderSceneRoof", ROOF_MAT)
-      concreteMaterial = buildMaterial(engine, "RenderSceneConcrete", CONCRETE_MAT)
+      material = buildMaterial(engine, "RenderSceneFlatColor", FLAT_COLOR_MAT, lit = false)
+      wallMaterial = buildMaterial(engine, "RenderSceneWallBrick", WALL_BRICK_MAT, lit = false)
+      windowMaterial = buildMaterial(engine, "RenderSceneWindowGlass", FLAT_COLOR_MAT, transparent = true, lit = false)
+      plasterMaterial = buildMaterial(engine, "RenderScenePlaster", PLASTER_MAT, lit = false)
+      woodMaterial = buildMaterial(engine, "RenderSceneWood", WOOD_MAT, lit = false)
+      floorMaterial = buildMaterial(engine, "RenderSceneFloor", FLOOR_MAT, lit = false)
+      roofMaterial = buildMaterial(engine, "RenderSceneRoof", ROOF_MAT, lit = false)
+      concreteMaterial = buildMaterial(engine, "RenderSceneConcrete", CONCRETE_MAT, lit = false)
       edgeMaterial = buildMaterial(engine, "RenderSceneEdges", FLAT_COLOR_MAT, lit = false)
+      groundMaterial = buildMaterial(engine, "RenderSceneShadowReceiver", FLAT_COLOR_MAT, lit = true)
       shadowMaterial = buildMaterial(
         engine,
         "RenderSceneBakedShadow",
@@ -1288,7 +1353,7 @@ internal class RenderSceneFilamentHostView(
       )
       if (listOf(material, wallMaterial, windowMaterial, plasterMaterial,
           woodMaterial, floorMaterial, roofMaterial, concreteMaterial,
-          edgeMaterial, shadowMaterial).any { it == null }) {
+          edgeMaterial, groundMaterial, shadowMaterial).any { it == null }) {
         statusMessage = "Filament material build returned an invalid package."
         updateStatus()
         return false
@@ -1307,7 +1372,7 @@ internal class RenderSceneFilamentHostView(
     name: String,
     source: String,
     transparent: Boolean = false,
-    lit: Boolean = true,
+    lit: Boolean = false,
   ): Material? {
       val builder = MaterialBuilder()
         .name(name)
@@ -1343,7 +1408,8 @@ internal class RenderSceneFilamentHostView(
     val sceneState = currentScene ?: return
     if ((material == null || wallMaterial == null || windowMaterial == null ||
         plasterMaterial == null || woodMaterial == null || floorMaterial == null ||
-        roofMaterial == null || concreteMaterial == null || edgeMaterial == null || shadowMaterial == null) &&
+        roofMaterial == null || concreteMaterial == null || edgeMaterial == null ||
+        groundMaterial == null || shadowMaterial == null) &&
       materialBuilderReady) {
       buildRuntimeMaterial()
     }
@@ -1433,10 +1499,10 @@ internal class RenderSceneFilamentHostView(
     }
     if (batchFaces) createFaceBatches(engine, scene, faceChunks)
     createEdgeBatches(engine, scene, edgeChunks)
-    if (projectionMode == "isometric" && sunLightEntity == null) {
+    if (projectionMode == "isometric" && shadowsEnabled && sunLightEntity == null) {
       createStaticShadowBatch(engine, scene, sceneState)
     }
-    if (projectionMode == "isometric") {
+    if (projectionMode == "isometric" && shadowsEnabled) {
       createGroundReceiver(engine, scene, sceneState)
     }
     updateMetrics()
@@ -1742,8 +1808,8 @@ internal class RenderSceneFilamentHostView(
       RenderableManager.Builder(1)
         .boundingBox(filamentBox(local.bounds))
         .culling(true)
-        .castShadows(true)
-        .receiveShadows(true)
+        .castShadows(shadowsEnabled)
+        .receiveShadows(shadowsEnabled)
         .geometry(0, PrimitiveType.TRIANGLES, vertexBuffer, indexBuffer, 0, local.indexCount)
         .material(0, materialInstance)
         .build(engine, entity)
@@ -1816,8 +1882,8 @@ internal class RenderSceneFilamentHostView(
       RenderableManager.Builder(1)
         .boundingBox(filamentBox(geometry.bounds))
         .culling(true)
-        .castShadows(true)
-        .receiveShadows(true)
+        .castShadows(shadowsEnabled)
+        .receiveShadows(shadowsEnabled)
         .geometry(0, PrimitiveType.TRIANGLES, vertexBuffer, indexBuffer, 0, geometry.indexCount)
         .material(0, materialInstance)
         .build(engine, entity)
@@ -1896,7 +1962,7 @@ internal class RenderSceneFilamentHostView(
     sceneState: SceneState,
   ) {
     destroyGroundReceiver(engine, scene)
-    val groundMaterial = material ?: return
+    val receiverMaterial = this.groundMaterial ?: return
     if (sceneState.objects.isEmpty()) return
     val allBounds = sceneState.objects
       .map { transformBounds(it.bounds) }
@@ -1944,7 +2010,7 @@ internal class RenderSceneFilamentHostView(
       .bufferType(IndexBuffer.Builder.IndexType.UINT)
       .build(engine)
       .also { it.setBuffer(engine, geometry.indexData) }
-    val materialInstance = groundMaterial.createInstance().also { instance ->
+    val materialInstance = receiverMaterial.createInstance().also { instance ->
       applySectionBoxState(instance)
       instance.setParameter("displayShade", 0.0f)
       instance.setParameter("baseColor", Colors.RgbaType.LINEAR, 0.88f, 0.89f, 0.90f, 1.0f)
@@ -2114,7 +2180,7 @@ internal class RenderSceneFilamentHostView(
   }
 
   private fun staticShadowVisible(): Boolean =
-    sunLightEntity == null && projectionMode == "isometric" && displayStyle != "wireframe"
+    shadowsEnabled && sunLightEntity == null && projectionMode == "isometric" && displayStyle != "wireframe"
 
   private fun combineGeometry(geometries: List<GeometryData>): GeometryData? {
     if (geometries.isEmpty()) return null
@@ -2273,8 +2339,8 @@ internal class RenderSceneFilamentHostView(
       // lets frustum culling discard the entire scene.
       .boundingBox(filamentBox(bounds))
       .culling(true)
-      .castShadows(true)
-      .receiveShadows(true)
+      .castShadows(shadowsEnabled)
+      .receiveShadows(shadowsEnabled)
       .geometry(0, PrimitiveType.TRIANGLES, vertexBuffer, indexBuffer, 0, geometry.indexCount)
       .material(0, materialInstance)
       .build(engine, entity)
@@ -2984,7 +3050,7 @@ internal class RenderSceneFilamentHostView(
 
   private fun destroyStaticShadowBatch(engine: Engine, scene: Scene?) {
     val batch = staticShadowBatch ?: return
-    if (batch.attached) scene?.removeEntity(batch.entity)
+    scene?.removeEntity(batch.entity)
     engine.destroyEntity(batch.entity)
     engine.destroyMaterialInstance(batch.materialInstance)
     engine.destroyVertexBuffer(batch.vertexBuffer)
@@ -2995,7 +3061,8 @@ internal class RenderSceneFilamentHostView(
 
   private fun destroyGroundReceiver(engine: Engine, scene: Scene?) {
     val receiver = groundReceiver ?: return
-    if (receiver.attached) scene?.removeEntity(receiver.entity)
+    Log.i(TAG, "Destroying real shadow receiver entity=${receiver.entity}")
+    scene?.removeEntity(receiver.entity)
     engine.destroyEntity(receiver.entity)
     engine.destroyMaterialInstance(receiver.materialInstance)
     engine.destroyVertexBuffer(receiver.vertexBuffer)

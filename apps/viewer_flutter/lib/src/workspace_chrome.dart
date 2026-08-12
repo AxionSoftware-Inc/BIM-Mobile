@@ -502,6 +502,8 @@ class ViewportControlDeck extends StatelessWidget {
     required this.orbitStyle,
     required this.onProjectionChanged,
     required this.onDisplayStyleChanged,
+    required this.shadowsEnabled,
+    required this.onShadowsChanged,
     required this.onOrbitStyleChanged,
     required this.onFit,
     required this.hasSectionBox,
@@ -514,6 +516,8 @@ class ViewportControlDeck extends StatelessWidget {
   final RenderSceneOrbitProjectionStyle orbitStyle;
   final ValueChanged<RenderSceneProjectionMode> onProjectionChanged;
   final ValueChanged<RenderSceneDisplayStyle> onDisplayStyleChanged;
+  final bool shadowsEnabled;
+  final ValueChanged<bool> onShadowsChanged;
   final ValueChanged<RenderSceneOrbitProjectionStyle> onOrbitStyleChanged;
   final VoidCallback onFit;
   final bool hasSectionBox;
@@ -564,6 +568,16 @@ class ViewportControlDeck extends StatelessWidget {
                   ),
               ],
             ),
+            if (is3D)
+              _DeckIconButton(
+                tooltip: shadowsEnabled ? 'Turn shadows off' : 'Turn shadows on',
+                selected: shadowsEnabled,
+                enabled: hasScene,
+                icon: shadowsEnabled
+                    ? Icons.wb_sunny_outlined
+                    : Icons.wb_sunny,
+                onPressed: () => onShadowsChanged(!shadowsEnabled),
+              ),
             if (is3D)
               _DeckIconButton(
                 tooltip:
