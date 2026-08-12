@@ -16,6 +16,7 @@ class WorkspaceAppBar extends StatelessWidget implements PreferredSizeWidget {
     required this.inspectorVisible,
     required this.onCreateTemplate,
     required this.onSave,
+    required this.onDocumentation,
     required this.onOpenMaterials,
     required this.onCreateSection,
     required this.onReload,
@@ -38,6 +39,7 @@ class WorkspaceAppBar extends StatelessWidget implements PreferredSizeWidget {
   final bool inspectorVisible;
   final ValueChanged<WorkspaceTemplate> onCreateTemplate;
   final VoidCallback onSave;
+  final VoidCallback onDocumentation;
   final VoidCallback onOpenMaterials;
   final VoidCallback onCreateSection;
   final VoidCallback onReload;
@@ -100,6 +102,11 @@ class WorkspaceAppBar extends StatelessWidget implements PreferredSizeWidget {
           tooltip: 'Save project',
           onPressed: busy || !engineBacked ? null : onSave,
           icon: const Icon(Icons.save_outlined),
+        ),
+        IconButton(
+          tooltip: 'Documentation and PDF',
+          onPressed: busy || !hasScene ? null : onDocumentation,
+          icon: const Icon(Icons.description_outlined),
         ),
         IconButton(
           tooltip: 'Materials and assemblies',

@@ -30,6 +30,8 @@ class FallbackRenderScenePainter extends CustomPainter {
     required this.draftSurface,
     required this.draftWallThicknessMeters,
     required this.draftWallHeightMeters,
+    this.showObjectLabels = true,
+    this.showReferenceGrid = true,
   });
 
   static const double padding = 48;
@@ -52,6 +54,8 @@ class FallbackRenderScenePainter extends CustomPainter {
   final RenderSceneSurfaceDraft? draftSurface;
   final double draftWallThicknessMeters;
   final double draftWallHeightMeters;
+  final bool showObjectLabels;
+  final bool showReferenceGrid;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -74,11 +78,13 @@ class FallbackRenderScenePainter extends CustomPainter {
       padding: padding,
     );
 
-    _drawGrid(canvas, projection);
-    _drawAxes(canvas, projection);
-    _drawLevels(canvas, projection);
-    if (projectionMode == RenderSceneProjectionMode.topDown) {
-      _drawSectionGuides(canvas, projection);
+    if (showReferenceGrid) {
+      _drawGrid(canvas, projection);
+      _drawAxes(canvas, projection);
+      _drawLevels(canvas, projection);
+      if (projectionMode == RenderSceneProjectionMode.topDown) {
+        _drawSectionGuides(canvas, projection);
+      }
     }
 
     final packets = <_RenderPacket>[];
@@ -102,6 +108,16 @@ class FallbackRenderScenePainter extends CustomPainter {
         : null;
 
     for (final object in filteredObjects) {
+      // A plan wall is already painted above as one joined horizontal cut.
+      // Re-projecting the 3D wall mesh here draws its triangulation and its
+      // unjoined end caps over the canonical footprint, producing diagonal
+      // selection lines and dark spikes at otherwise valid wall corners.
+      if (projectionMode == RenderSceneProjectionMode.topDown &&
+          (object.kindKey == 'wall' ||
+              object.kindKey == 'door' ||
+              object.kindKey == 'window')) {
+        continue;
+      }
       final elementId = object.elementId?.toString();
       final isSelected =
           elementId != null && selectedElementIds.contains(elementId);
@@ -112,9 +128,7 @@ class FallbackRenderScenePainter extends CustomPainter {
           ? const Color(0xFF2563EB)
           : isHighlighted
               ? const Color(0xFFDC2626)
-              : displayStyle == RenderSceneDisplayStyle.solid
-                  ? Colors.white
-                  : baseColor;
+              : baseColor;
       final depthWeight = projectionMode.isElevation
           ? _depthVisualWeight(
               depth: projectObjectDepth(object.bounds, projection),
@@ -154,7 +168,14 @@ class FallbackRenderScenePainter extends CustomPainter {
               for (final material in scene.materials)
                 material.id: _materialColor(material.displayColor),
             },
-            honorMaterialColors: !isSelected && !isHighlighted,
+            // Keep the architectural display colors stable in both Shaded
+            // and Solid modes. Assembly/material colors are still used by
+            // the lightweight layer hatch renderer below.
+            honorMaterialColors: !isSelected &&
+                !isHighlighted &&
+                object.kindKey != 'wall' &&
+                object.kindKey != 'door' &&
+                object.kindKey != 'window',
           ),
           outlines: displayStyle == RenderSceneDisplayStyle.solid &&
                   _shouldDrawSolidOutline(
@@ -225,6 +246,10 @@ class FallbackRenderScenePainter extends CustomPainter {
       }
     }
 
+    if (projectionMode == RenderSceneProjectionMode.topDown) {
+      _drawPlanOpeningSymbols(canvas, projection, filteredObjects);
+    }
+
     if (projectionMode.isElevation) {
       _drawSectionLayerSeparators(canvas, projection, filteredObjects);
     }
@@ -232,7 +257,9 @@ class FallbackRenderScenePainter extends CustomPainter {
       _drawRoofSlopeLines(canvas, projection, filteredObjects);
     }
 
-    _drawLabels(canvas, projection, filteredObjects);
+    if (showObjectLabels) {
+      _drawLabels(canvas, projection, filteredObjects);
+    }
     _drawActiveObjectGizmo(canvas, projection);
     _drawSelectedWallHandles(canvas, projection);
     _drawDraftOverlay(canvas, projection);
@@ -345,8 +372,7 @@ class FallbackRenderScenePainter extends CustomPainter {
           }
           final first = positions[firstIndex];
           final second = positions[secondIndex];
-          final isRidgeEdge =
-              (first.z - ridgeZ).abs() <= 1e-6 &&
+          final isRidgeEdge = (first.z - ridgeZ).abs() <= 1e-6 &&
               (second.z - ridgeZ).abs() <= 1e-6;
           if (first.z <= baseZ + 1e-6 ||
               second.z <= baseZ + 1e-6 ||
@@ -448,9 +474,10 @@ class FallbackRenderScenePainter extends CustomPainter {
     RenderSceneProjection projection,
     Iterable<RenderSceneObject> objects,
   ) {
-    final wallObjects = objects.where((object) => object.kindKey == 'wall');
-    final wallCount = wallObjects.length;
-    final showLayerSeparators = wallCount <= 2000;
+    final wallObjects = objects
+        .where((object) => object.kindKey == 'wall')
+        .toList(growable: false);
+    final footprints = <_PlanWallFootprint>[];
     for (final wall in wallObjects) {
       final start = RenderSceneEditor.wallStartPoint(wall);
       final end = RenderSceneEditor.wallEndPoint(wall);
@@ -477,142 +504,273 @@ class FallbackRenderScenePainter extends CustomPainter {
       final id = wall.elementId?.toString();
       final selected = id != null && selectedElementIds.contains(id);
       final highlighted = id != null && id == highlightedElementId;
-      final color = selected
-          ? const Color(0xFF2563EB)
-          : highlighted
-              ? const Color(0xFFDC2626)
-              : const Color(0xFF334155);
       final path = Path()
         ..moveTo(screen.first.dx, screen.first.dy)
         ..lineTo(screen[1].dx, screen[1].dy)
         ..lineTo(screen[2].dx, screen[2].dy)
         ..lineTo(screen[3].dx, screen[3].dy)
         ..close();
-      canvas.drawPath(
-        path,
-        Paint()
-          ..style = PaintingStyle.fill
-          ..color =
-              color.withValues(alpha: selected || highlighted ? 0.48 : 0.28),
+      footprints.add(
+        _PlanWallFootprint(
+          path: path,
+          start: start,
+          end: end,
+          axis: axis,
+          length: length,
+          thickness: thickness,
+          profile: _parseLayerProfile(wall.metadata['layer_profile']),
+          selected: selected,
+          highlighted: highlighted,
+        ),
       );
-      canvas.drawPath(
-        path,
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = selected || highlighted ? 2.4 : 1.6
-          ..color = color,
-      );
+    }
+    if (footprints.isEmpty) return;
 
-      // Assemblies stay semantic in the scene. In floor plan, show their
-      // cut convention as a few lightweight separator lines instead of
-      // rendering every layer as a 3-D mesh. At dense city/building scale a
-      // single center mark preserves responsiveness while the assembly data
-      // remains available for schedules and reports.
-      final profile = _parseLayerProfile(wall.metadata['layer_profile']);
-      if (profile.isNotEmpty && showLayerSeparators) {
+    // A floor plan is one horizontal cut through the wall network, not a
+    // stack of independent wall rectangles. Unioning the cut footprints
+    // removes doubled outlines, square end caps and protruding corners at
+    // miter, tee and cross joins while preserving the semantic wall objects
+    // used for picking and editing.
+    final joinedWallPath = _unionPaths(
+      footprints.map((footprint) => footprint.path),
+    );
+    const wallColor = Color(0xFF334155);
+    canvas.drawPath(
+      joinedWallPath,
+      Paint()
+        ..style = PaintingStyle.fill
+        ..color = wallColor.withValues(alpha: 0.28),
+    );
+
+    // Keep assembly geometry semantic and lightweight. Layer strips from
+    // touching walls are unioned before paint, so their hatches continue
+    // through corners instead of drawing a rectangular cap for every wall.
+    if (footprints.length <= 2000) {
+      final layerBands = <_PlanLayerBandKey, List<Path>>{};
+      for (final footprint in footprints) {
+        final profile = footprint.profile;
+        if (profile.isEmpty) continue;
         final profileThickness = profile.fold<double>(
           0.0,
           (sum, layer) => sum + layer.thicknessMeters,
         );
-        if (profileThickness > 1e-8) {
-          var offset = -half;
-          final normalUnit = RenderScenePoint(
-            x: -axis.y / length,
-            y: axis.x / length,
-            z: 0,
+        if (profileThickness <= 1e-8) continue;
+        final half = footprint.thickness * 0.5;
+        final normalUnit = RenderScenePoint(
+          x: -footprint.axis.y / footprint.length,
+          y: footprint.axis.x / footprint.length,
+          z: 0,
+        );
+        var offset = -half;
+        for (var layerIndex = 0; layerIndex < profile.length; layerIndex += 1) {
+          final layer = profile[layerIndex];
+          final previousOffset = offset;
+          offset +=
+              (layer.thicknessMeters / profileThickness) * footprint.thickness;
+          final layerStart = footprint.start +
+              RenderScenePoint(
+                x: normalUnit.x * previousOffset,
+                y: normalUnit.y * previousOffset,
+                z: 0,
+              );
+          final layerEnd = footprint.end +
+              RenderScenePoint(
+                x: normalUnit.x * previousOffset,
+                y: normalUnit.y * previousOffset,
+                z: 0,
+              );
+          final nextStart = footprint.start +
+              RenderScenePoint(
+                x: normalUnit.x * offset,
+                y: normalUnit.y * offset,
+                z: 0,
+              );
+          final nextEnd = footprint.end +
+              RenderScenePoint(
+                x: normalUnit.x * offset,
+                y: normalUnit.y * offset,
+                z: 0,
+              );
+          final layerScreen = <Offset>[
+            projection.project(layerStart).screen,
+            projection.project(layerEnd).screen,
+            projection.project(nextEnd).screen,
+            projection.project(nextStart).screen,
+          ];
+          final layerPath = Path()
+            ..moveTo(layerScreen.first.dx, layerScreen.first.dy)
+            ..lineTo(layerScreen[1].dx, layerScreen[1].dy)
+            ..lineTo(layerScreen[2].dx, layerScreen[2].dy)
+            ..lineTo(layerScreen[3].dx, layerScreen[3].dy)
+            ..close();
+          final key = _PlanLayerBandKey(
+            materialId: layer.materialId,
+            layerIndex: layerIndex,
+            layerCount: profile.length,
           );
-          for (var layerIndex = 0;
-              layerIndex < profile.length;
-              layerIndex += 1) {
-            final layer = profile[layerIndex];
-            final previousOffset = offset;
-            offset += (layer.thicknessMeters / profileThickness) * thickness;
-            final layerStart = start +
-                RenderScenePoint(
-                  x: normalUnit.x * previousOffset,
-                  y: normalUnit.y * previousOffset,
-                  z: 0,
-                );
-            final layerEnd = end +
-                RenderScenePoint(
-                  x: normalUnit.x * previousOffset,
-                  y: normalUnit.y * previousOffset,
-                  z: 0,
-                );
-            final nextStart = start +
-                RenderScenePoint(
-                  x: normalUnit.x * offset,
-                  y: normalUnit.y * offset,
-                  z: 0,
-                );
-            final nextEnd = end +
-                RenderScenePoint(
-                  x: normalUnit.x * offset,
-                  y: normalUnit.y * offset,
-                  z: 0,
-                );
-            final layerPath = Path()
-              ..moveTo(projection.project(layerStart).screen.dx,
-                  projection.project(layerStart).screen.dy)
-              ..lineTo(projection.project(layerEnd).screen.dx,
-                  projection.project(layerEnd).screen.dy)
-              ..lineTo(projection.project(nextEnd).screen.dx,
-                  projection.project(nextEnd).screen.dy)
-              ..lineTo(projection.project(nextStart).screen.dx,
-                  projection.project(nextStart).screen.dy)
-              ..close();
-            final layerPoints = <Offset>[
-              projection.project(layerStart).screen,
-              projection.project(layerEnd).screen,
-              projection.project(nextEnd).screen,
-              projection.project(nextStart).screen,
-            ];
-            final layerColor = selected || highlighted
-                ? color
-                : (_materialColorForId(layer.materialId) ?? color);
-            canvas.drawPath(
-              layerPath,
-              Paint()
-                ..style = PaintingStyle.fill
-                ..color = layerColor.withValues(alpha: 0.34),
-            );
-            _drawHatchPattern(
-              canvas,
-              layerPath,
-              _boundsOfOffsets(layerPoints),
-              layerIndex,
-              layerColor.withValues(alpha: 0.42),
-            );
-            if (offset >= thickness - 1e-6) continue;
-            final lineStart = nextStart;
-            final lineEnd = nextEnd;
-            canvas.drawLine(
-              projection.project(lineStart).screen,
-              projection.project(lineEnd).screen,
-              Paint()
-                ..style = PaintingStyle.stroke
-                ..strokeWidth = 1.8
-                ..strokeCap = StrokeCap.square
-                ..color = layerColor.withValues(alpha: 0.95),
-            );
-          }
+          layerBands.putIfAbsent(key, () => <Path>[]).add(layerPath);
         }
       }
+
+      final orderedBands = layerBands.entries.toList(growable: false)
+        ..sort((a, b) => a.key.layerIndex.compareTo(b.key.layerIndex));
+      for (final entry in orderedBands) {
+        final bandPath = Path.combine(
+          PathOperation.intersect,
+          _unionPaths(entry.value),
+          joinedWallPath,
+        );
+        final layerColor =
+            _materialColorForId(entry.key.materialId) ?? wallColor;
+        canvas.drawPath(
+          bandPath,
+          Paint()
+            ..style = PaintingStyle.fill
+            ..color = layerColor.withValues(alpha: 0.34),
+        );
+        _drawHatchPattern(
+          canvas,
+          bandPath,
+          bandPath.getBounds(),
+          entry.key.layerIndex,
+          layerColor.withValues(alpha: 0.34),
+        );
+        canvas.drawPath(
+          bandPath,
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 0.85
+            ..strokeJoin = StrokeJoin.miter
+            ..color = wallColor.withValues(alpha: 0.55),
+        );
+      }
+    }
+
+    // The network gets exactly one architectural cut outline. Selection is a
+    // separate transient overlay and never reintroduces per-wall normal
+    // outlines at unselected joins.
+    canvas.drawPath(
+      joinedWallPath,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.6
+        ..strokeJoin = StrokeJoin.miter
+        ..color = wallColor,
+    );
+    for (final footprint in footprints) {
+      if (!footprint.selected && !footprint.highlighted) continue;
+      final color = footprint.selected
+          ? const Color(0xFF2563EB)
+          : const Color(0xFFDC2626);
+      canvas.drawPath(
+        footprint.path,
+        Paint()
+          ..style = PaintingStyle.fill
+          ..color = color.withValues(alpha: 0.22),
+      );
+      canvas.drawPath(
+        footprint.path,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.4
+          ..strokeJoin = StrokeJoin.miter
+          ..color = color,
+      );
     }
   }
 
-  Rect _boundsOfOffsets(List<Offset> points) {
-    var minX = double.infinity;
-    var minY = double.infinity;
-    var maxX = double.negativeInfinity;
-    var maxY = double.negativeInfinity;
-    for (final point in points) {
-      minX = math.min(minX, point.dx);
-      minY = math.min(minY, point.dy);
-      maxX = math.max(maxX, point.dx);
-      maxY = math.max(maxY, point.dy);
+  void _drawPlanOpeningSymbols(
+    Canvas canvas,
+    RenderSceneProjection projection,
+    Iterable<RenderSceneObject> objects,
+  ) {
+    final walls = <int, RenderSceneObject>{
+      for (final object in objects)
+        if (object.kindKey == 'wall' && object.elementId != null)
+          object.elementId!: object,
+    };
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.05
+      ..strokeCap = StrokeCap.square
+      ..strokeJoin = StrokeJoin.miter
+      ..color = const Color(0xFF111827);
+    for (final opening in objects) {
+      if (opening.kindKey != 'door' && opening.kindKey != 'window') continue;
+      final hostId = int.tryParse('${opening.metadata['host_wall_id'] ?? ''}');
+      final host = hostId == null ? null : walls[hostId];
+      if (host == null) continue;
+      final start = RenderSceneEditor.wallStartPoint(host);
+      final end = RenderSceneEditor.wallEndPoint(host);
+      final offset = _metadataDouble(opening, 'offset_meters');
+      final width = _metadataDouble(opening, 'width_meters');
+      if (start == null || end == null || offset == null || width == null) {
+        continue;
+      }
+      final axis = end - start;
+      final length = axis.distanceTo(RenderScenePoint.zero());
+      if (length <= 1e-8 || width <= 1e-8) continue;
+      final axisUnit = axis.scale(1.0 / length);
+      final normal = RenderScenePoint(
+        x: -axisUnit.y,
+        y: axisUnit.x,
+        z: 0,
+      );
+      final center = start + axisUnit.scale(offset);
+      final halfWidth = width * 0.5;
+      final first = center - axisUnit.scale(halfWidth);
+      final second = center + axisUnit.scale(halfWidth);
+      final openEnd = first + normal.scale(width);
+      final openOtherEnd = second + normal.scale(width);
+      final p0 = projection.project(first).screen;
+      final p1 = projection.project(second).screen;
+      final pc = projection.project(center).screen;
+      final po = projection.project(openEnd).screen;
+      if (opening.kindKey == 'window') {
+        final po2 = projection.project(openOtherEnd).screen;
+        // Double-casement window: two leaves open from the centre toward
+        // opposite jambs, matching the native Filament plan symbol.
+        canvas.drawLine(pc, po, paint);
+        canvas.drawLine(pc, po2, paint);
+        continue;
+      }
+      canvas.drawLine(p0, po, paint);
+      final radius = (p1 - p0).distance;
+      if (radius <= 1.0) continue;
+      final startAngle = math.atan2(p1.dy - p0.dy, p1.dx - p0.dx);
+      final endAngle = math.atan2(po.dy - p0.dy, po.dx - p0.dx);
+      var sweep = endAngle - startAngle;
+      while (sweep > math.pi) {
+        sweep -= math.pi * 2;
+      }
+      while (sweep < -math.pi) {
+        sweep += math.pi * 2;
+      }
+      if (sweep.abs() < 0.08) sweep = sweep < 0 ? -math.pi / 2 : math.pi / 2;
+      canvas.drawArc(
+        Rect.fromCircle(center: p0, radius: radius),
+        startAngle,
+        sweep,
+        false,
+        paint,
+      );
     }
-    return Rect.fromLTRB(minX, minY, maxX, maxY);
+  }
+
+  double? _metadataDouble(RenderSceneObject object, String key) {
+    final value = object.metadata[key];
+    if (value is num) return value.toDouble();
+    return double.tryParse('$value');
+  }
+
+  Path _unionPaths(Iterable<Path> paths) {
+    final iterator = paths.iterator;
+    if (!iterator.moveNext()) return Path();
+    var joined = Path.from(iterator.current);
+    while (iterator.moveNext()) {
+      joined = Path.combine(PathOperation.union, joined, iterator.current);
+    }
+    return joined;
   }
 
   void _drawHatchPattern(
@@ -825,8 +983,9 @@ class FallbackRenderScenePainter extends CustomPainter {
         case 'wall':
           return 0.12;
         case 'door':
-        case 'window':
           return 0.18;
+        case 'window':
+          return 0.30;
         case 'room':
           return 0.0;
         default:
@@ -839,8 +998,9 @@ class FallbackRenderScenePainter extends CustomPainter {
         case 'wall':
           return 0.18;
         case 'door':
-        case 'window':
           return 0.32;
+        case 'window':
+          return 0.30;
         case 'room':
           return 0.05;
         case 'floor':
@@ -1710,11 +1870,11 @@ class FallbackRenderScenePainter extends CustomPainter {
   Color _kindColor(String kind) {
     switch (kind) {
       case 'wall':
-        return const Color(0xFFF3F1EA);
+        return const Color(0xFF9CA3AF);
       case 'door':
-        return const Color(0xFFB08968);
+        return const Color(0xFF2563EB);
       case 'window':
-        return const Color(0xFF96C6FF);
+        return const Color(0xFF0284C7);
       case 'slab':
       case 'floor':
         return const Color(0xFFE2D6B5);
@@ -1754,7 +1914,9 @@ class FallbackRenderScenePainter extends CustomPainter {
         oldDelegate.draftOpening != draftOpening ||
         oldDelegate.draftSurface != draftSurface ||
         oldDelegate.draftWallThicknessMeters != draftWallThicknessMeters ||
-        oldDelegate.draftWallHeightMeters != draftWallHeightMeters;
+        oldDelegate.draftWallHeightMeters != draftWallHeightMeters ||
+        oldDelegate.showObjectLabels != showObjectLabels ||
+        oldDelegate.showReferenceGrid != showReferenceGrid;
   }
 }
 
@@ -1766,6 +1928,52 @@ class _LayerProfileEntry {
 
   final int materialId;
   final double thicknessMeters;
+}
+
+class _PlanWallFootprint {
+  const _PlanWallFootprint({
+    required this.path,
+    required this.start,
+    required this.end,
+    required this.axis,
+    required this.length,
+    required this.thickness,
+    required this.profile,
+    required this.selected,
+    required this.highlighted,
+  });
+
+  final Path path;
+  final RenderScenePoint start;
+  final RenderScenePoint end;
+  final RenderScenePoint axis;
+  final double length;
+  final double thickness;
+  final List<_LayerProfileEntry> profile;
+  final bool selected;
+  final bool highlighted;
+}
+
+class _PlanLayerBandKey {
+  const _PlanLayerBandKey({
+    required this.materialId,
+    required this.layerIndex,
+    required this.layerCount,
+  });
+
+  final int materialId;
+  final int layerIndex;
+  final int layerCount;
+
+  @override
+  bool operator ==(Object other) =>
+      other is _PlanLayerBandKey &&
+      materialId == other.materialId &&
+      layerIndex == other.layerIndex &&
+      layerCount == other.layerCount;
+
+  @override
+  int get hashCode => Object.hash(materialId, layerIndex, layerCount);
 }
 
 class _RenderPacket {

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'documentation/document_models.dart';
 import 'project_browser_views.dart';
 import 'render_scene_models.dart';
 import 'render_scene_viewport_types.dart';
@@ -25,6 +26,10 @@ class ProjectBrowserPanel extends StatelessWidget {
     required this.onOpenFloorPlan,
     required this.onOpenElevation,
     required this.onOpenSection,
+    required this.sheets,
+    this.activeSheetId,
+    required this.onCreateSheet,
+    required this.onOpenSheet,
   });
 
   final RenderScene? scene;
@@ -41,6 +46,10 @@ class ProjectBrowserPanel extends StatelessWidget {
   final Future<void> Function(int levelId) onOpenFloorPlan;
   final Future<void> Function(RenderSceneProjectionMode mode) onOpenElevation;
   final Future<void> Function(RenderSceneSection section) onOpenSection;
+  final List<ProjectSheet> sheets;
+  final String? activeSheetId;
+  final VoidCallback onCreateSheet;
+  final ValueChanged<String> onOpenSheet;
 
   @override
   Widget build(BuildContext context) {
@@ -87,6 +96,10 @@ class ProjectBrowserPanel extends StatelessWidget {
                         onOpenFloorPlan: onOpenFloorPlan,
                         onOpenElevation: onOpenElevation,
                         onOpenSection: onOpenSection,
+                        sheets: sheets,
+                        activeSheetId: activeSheetId,
+                        onCreateSheet: onCreateSheet,
+                        onOpenSheet: onOpenSheet,
                       ),
                       const Divider(height: 20),
                       Padding(

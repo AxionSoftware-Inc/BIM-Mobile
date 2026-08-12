@@ -25,6 +25,12 @@ class SceneViewService {
   Future<RenderSceneLoadResult> setFullSceneRenderScope(bool enabled) =>
       _requireRepository().setFullSceneRenderScope(enabled);
 
+  Future<RenderSceneLoadResult> section(
+    RenderScenePoint start,
+    RenderScenePoint end,
+  ) =>
+      _requireRepository().sectionScene(start, end);
+
   ViewerSceneGateway _requireRepository() {
     final repository = _repository();
     if (!_engineEnabled() || repository == null) {

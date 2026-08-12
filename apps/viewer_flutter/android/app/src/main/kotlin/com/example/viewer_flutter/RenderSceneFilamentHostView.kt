@@ -48,6 +48,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.IntBuffer
 import kotlin.math.cos
+import kotlin.math.atan2
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
@@ -59,7 +60,9 @@ private const val TAG = "RenderSceneFilament"
 private const val FLAT_COLOR_MAT = """
 void material(inout MaterialInputs material) {
     prepareMaterial(material);
-    material.baseColor = materialParams.baseColor;
+    float3 world = getWorldPosition();
+    float shade = mix(1.0, 0.82 + 0.18 * sin(world.x * 0.45 + world.z * 0.31), materialParams.displayShade);
+    material.baseColor = float4(materialParams.baseColor.rgb * shade, materialParams.baseColor.a);
 }
 """
 
@@ -72,9 +75,10 @@ void material(inout MaterialInputs material) {
     float jointX = step(fract((world.x + mod(row, 2.0) * 0.12) / 0.24), 0.014);
     // Keep this subtle enough for a working BIM view, but distinct on a
     // tablet-sized wall face; the prior 16% contrast disappeared in Solid.
-    float mortar = max(jointY, jointX) * 0.58;
+    float mortar = max(jointY, jointX) * 0.58 * materialParams.displayShade;
     float3 brick = materialParams.baseColor.rgb * (1.0 - mortar);
-    material.baseColor = float4(brick, materialParams.baseColor.a);
+    float shade = mix(1.0, 0.82 + 0.18 * sin(world.x * 0.45 + world.z * 0.31), materialParams.displayShade);
+    material.baseColor = float4(brick * shade, materialParams.baseColor.a);
 }
 """
 
@@ -82,8 +86,9 @@ private const val PLASTER_MAT = """
 void material(inout MaterialInputs material) {
     prepareMaterial(material);
     float3 world = getWorldPosition();
-    float variation = 0.035 * sin(world.x * 31.0 + world.y * 17.0 + world.z * 23.0);
-    material.baseColor = float4(materialParams.baseColor.rgb * (1.0 + variation), materialParams.baseColor.a);
+    float variation = 0.035 * sin(world.x * 31.0 + world.y * 17.0 + world.z * 23.0) * materialParams.displayShade;
+    float shade = mix(1.0, 0.82 + 0.18 * sin(world.x * 0.45 + world.z * 0.31), materialParams.displayShade);
+    material.baseColor = float4(materialParams.baseColor.rgb * (1.0 + variation) * shade, materialParams.baseColor.a);
 }
 """
 
@@ -91,8 +96,9 @@ private const val WOOD_MAT = """
 void material(inout MaterialInputs material) {
     prepareMaterial(material);
     float3 world = getWorldPosition();
-    float grain = 0.10 * sin((world.x + world.z) * 46.0 + sin(world.y * 5.0));
-    material.baseColor = float4(materialParams.baseColor.rgb * (1.0 + grain), materialParams.baseColor.a);
+    float grain = 0.10 * sin((world.x + world.z) * 46.0 + sin(world.y * 5.0)) * materialParams.displayShade;
+    float shade = mix(1.0, 0.82 + 0.18 * sin(world.x * 0.45 + world.z * 0.31), materialParams.displayShade);
+    material.baseColor = float4(materialParams.baseColor.rgb * (1.0 + grain) * shade, materialParams.baseColor.a);
 }
 """
 
@@ -100,9 +106,10 @@ private const val FLOOR_MAT = """
 void material(inout MaterialInputs material) {
     prepareMaterial(material);
     float3 world = getWorldPosition();
-    float board = step(0.94, fract((world.x + world.z * 0.18) / 0.18));
-    float grain = 0.06 * sin(world.x * 58.0 + world.z * 9.0);
-    material.baseColor = float4(materialParams.baseColor.rgb * (1.0 + grain - board * 0.20), materialParams.baseColor.a);
+    float board = step(0.94, fract((world.x + world.z * 0.18) / 0.18)) * materialParams.displayShade;
+    float grain = 0.06 * sin(world.x * 58.0 + world.z * 9.0) * materialParams.displayShade;
+    float shade = mix(1.0, 0.82 + 0.18 * sin(world.x * 0.45 + world.z * 0.31), materialParams.displayShade);
+    material.baseColor = float4(materialParams.baseColor.rgb * (1.0 + grain - board * 0.20) * shade, materialParams.baseColor.a);
 }
 """
 
@@ -110,9 +117,10 @@ private const val ROOF_MAT = """
 void material(inout MaterialInputs material) {
     prepareMaterial(material);
     float3 world = getWorldPosition();
-    float course = step(0.90, fract((world.x + world.z) / 0.28));
-    float joint = step(0.94, fract((world.x - world.z) / 0.42));
-    material.baseColor = float4(materialParams.baseColor.rgb * (1.0 - max(course, joint) * 0.24), materialParams.baseColor.a);
+    float course = step(0.90, fract((world.x + world.z) / 0.28)) * materialParams.displayShade;
+    float joint = step(0.94, fract((world.x - world.z) / 0.42)) * materialParams.displayShade;
+    float shade = mix(1.0, 0.82 + 0.18 * sin(world.x * 0.45 + world.z * 0.31), materialParams.displayShade);
+    material.baseColor = float4(materialParams.baseColor.rgb * (1.0 - max(course, joint) * 0.24) * shade, materialParams.baseColor.a);
 }
 """
 
@@ -121,8 +129,9 @@ void material(inout MaterialInputs material) {
     prepareMaterial(material);
     float3 world = getWorldPosition();
     float speckle = fract(sin(dot(world.xz, float2(12.9898, 78.233))) * 43758.5453);
-    float variation = (speckle - 0.5) * 0.10;
-    material.baseColor = float4(materialParams.baseColor.rgb * (1.0 + variation), materialParams.baseColor.a);
+    float variation = (speckle - 0.5) * 0.10 * materialParams.displayShade;
+    float shade = mix(1.0, 0.82 + 0.18 * sin(world.x * 0.45 + world.z * 0.31), materialParams.displayShade);
+    material.baseColor = float4(materialParams.baseColor.rgb * (1.0 + variation) * shade, materialParams.baseColor.a);
 }
 """
 
@@ -169,6 +178,38 @@ private data class FaceBatchEntry(
   var attached: Boolean = false,
 )
 
+/**
+ * One translation-invariant mesh shared by repeated BIM instances.
+ *
+ * Every entity keeps its own TransformManager component and culling bounds,
+ * while Filament's automatic instancing combines entities that reference the
+ * same buffers and MaterialInstance into one GPU submission.
+ */
+private data class InstanceFaceGroupEntry(
+  val kind: String,
+  val representative: SceneObject,
+  val entities: List<Int>,
+  val vertexBuffer: VertexBuffer,
+  val indexBuffer: IndexBuffer,
+  var material: Material,
+  var materialInstance: MaterialInstance,
+  val baseColor: FloatArray,
+  val bounds: SceneBounds,
+  val objectCount: Int,
+  val vertexCount: Int,
+  val indexCount: Int,
+  var attached: Boolean = false,
+)
+
+private data class InstanceFaceKey(
+  val kind: String,
+  val materialVariant: String,
+  val colorHash: Int,
+  val vertexCount: Int,
+  val indexCount: Int,
+  val shapeHash: Long,
+)
+
 private data class EdgeBatchEntry(
   val key: EdgeBatchKey,
   val entity: Int,
@@ -188,12 +229,16 @@ private data class FilamentSceneMetrics(
   val edgeBatchCount: Int,
   val edgeVertexCount: Int,
   val edgeIndexCount: Int,
+  val instanceGroupCount: Int,
+  val instancedObjectCount: Int,
+  val sharedFaceVertexCount: Int,
 )
 
 private data class NativeVisualObject(
   val elementId: Long?,
   val kind: String,
   val selectable: Boolean,
+  val metadata: Map<String, String>,
   val points: List<ScenePoint>,
   val triangles: List<IntArray>,
   val featureEdges: List<NativeVisualEdge>,
@@ -246,6 +291,12 @@ internal class RenderSceneFilamentHostView(
     val revision: Int,
     val junctionSignature: Int,
     val geometry: GeometryData,
+  )
+
+  private data class NormalizedInstanceGeometry(
+    val key: InstanceFaceKey,
+    val geometry: GeometryData,
+    val translation: ScenePoint,
   )
 
   companion object {
@@ -340,6 +391,9 @@ internal class RenderSceneFilamentHostView(
     edgeBatchCount = 0,
     edgeVertexCount = 0,
     edgeIndexCount = 0,
+    instanceGroupCount = 0,
+    instancedObjectCount = 0,
+    sharedFaceVertexCount = 0,
   )
   private var currentScene: SceneState? = initialScene
   private var currentSceneFingerprint: Long? = null
@@ -370,6 +424,7 @@ internal class RenderSceneFilamentHostView(
   private var concreteMaterial: Material? = null
   private val renderables = linkedMapOf<Long, FilamentRenderableEntry>()
   private val faceBatches = mutableListOf<FaceBatchEntry>()
+  private val instanceFaceGroups = mutableListOf<InstanceFaceGroupEntry>()
   private val edgeBatches = mutableListOf<EdgeBatchEntry>()
   private val edgeGeometryCache = linkedMapOf<Long, CachedEdgeGeometry>()
   private val attachedEntities = linkedSetOf<Int>()
@@ -435,10 +490,15 @@ internal class RenderSceneFilamentHostView(
 
     try {
       val filamentEngine = Engine.create(Engine.Backend.OPENGL)
+      // Repeated BIM types share one geometry and MaterialInstance below.
+      // Filament can then collapse their independent entities/transforms into
+      // hardware-instanced submissions automatically.
+      filamentEngine.isAutomaticInstancingEnabled = true
       engine = filamentEngine
       renderer = filamentEngine.createRenderer()
       scene = filamentEngine.createScene()
       filamentView = filamentEngine.createView()
+      filamentView?.isFrustumCullingEnabled = true
       // Windows use a transparent shaded material; include them in GPU picks
       // so tapping glass selects the window rather than the wall behind it.
       filamentView?.isTransparentPickingEnabled = true
@@ -599,7 +659,18 @@ internal class RenderSceneFilamentHostView(
   }
 
   fun setProjectionMode(mode: String) {
+    val edgeGeometryNeedsRefresh =
+      (projectionMode == "topDown") != (mode == "topDown")
     projectionMode = mode
+    if (edgeGeometryNeedsRefresh && currentScene != null && materialBuilderReady) {
+      // Edge prisms are projection-aware: top-down uses a light line weight
+      // and omits section-only reconstruction segments that become diagonal
+      // seams in a floor plan. Rebuild only the native edge batches when
+      // crossing the plan/3D boundary; keep the scene and GPU materials.
+      rebuildEdgeBatchesForProjection()
+      syncVisibility()
+      refreshTintState()
+    }
     resetCameraOrientationForProjection()
     configureCameraProjection()
     updateOrbitCamera()
@@ -682,6 +753,7 @@ internal class RenderSceneFilamentHostView(
       if (entry.material === target) continue
       val replacement = target.createInstance()
       applySectionBoxState(replacement)
+      applyDisplayStyle(replacement)
       val instance = manager.getInstance(entry.entity)
       if (instance != 0) manager.setMaterialInstanceAt(instance, 0, replacement)
       engine.destroyMaterialInstance(entry.materialInstance)
@@ -693,11 +765,31 @@ internal class RenderSceneFilamentHostView(
       if (batch.material === target) continue
       val replacement = target.createInstance()
       applySectionBoxState(replacement)
+      applyDisplayStyle(replacement)
       val instance = manager.getInstance(batch.entity)
       if (instance != 0) manager.setMaterialInstanceAt(instance, 0, replacement)
       engine.destroyMaterialInstance(batch.materialInstance)
       batch.material = target
       batch.materialInstance = replacement
+    }
+    for (group in instanceFaceGroups) {
+      val target = materialForObject(group.representative, fallback)
+      if (group.material === target) continue
+      val replacement = target.createInstance().also { instance ->
+        applySectionBoxState(instance)
+        applyDisplayStyle(instance)
+        instance.setParameter(
+          "baseColor", Colors.RgbaType.LINEAR,
+          group.baseColor[0], group.baseColor[1], group.baseColor[2], group.baseColor[3],
+        )
+      }
+      for (entity in group.entities) {
+        val instance = manager.getInstance(entity)
+        if (instance != 0) manager.setMaterialInstanceAt(instance, 0, replacement)
+      }
+      engine.destroyMaterialInstance(group.materialInstance)
+      group.material = target
+      group.materialInstance = replacement
     }
   }
 
@@ -862,6 +954,7 @@ internal class RenderSceneFilamentHostView(
       applySectionBoxState(entry.materialInstance)
     }
     for (batch in faceBatches) applySectionBoxState(batch.materialInstance)
+    for (group in instanceFaceGroups) applySectionBoxState(group.materialInstance)
     for (batch in edgeBatches) applySectionBoxState(batch.materialInstance)
     requestRender()
   }
@@ -1081,6 +1174,7 @@ internal class RenderSceneFilamentHostView(
         .culling(MaterialBuilder.CullingMode.NONE)
         .doubleSided(true)
       .uniformParameter(MaterialBuilder.UniformType.FLOAT4, "baseColor")
+        .uniformParameter(MaterialBuilder.UniformType.FLOAT, "displayShade")
         .uniformParameter(MaterialBuilder.UniformType.FLOAT, "sectionBoxEnabled")
         .uniformParameter(MaterialBuilder.UniformType.FLOAT4, "sectionBoxMin")
         .uniformParameter(MaterialBuilder.UniformType.FLOAT4, "sectionBoxMax")
@@ -1140,11 +1234,20 @@ internal class RenderSceneFilamentHostView(
     var failedObjects = 0
     val batchFaces = objects.size >= 256
     val faceChunks = linkedMapOf<FaceBatchKey, MutableList<Pair<SceneObject, GeometryData>>>()
+    val instanceChunks = linkedMapOf<InstanceFaceKey, MutableList<Triple<SceneObject, GeometryData, NormalizedInstanceGeometry>>>()
     val edgeChunks = linkedMapOf<EdgeBatchKey, MutableList<GeometryData>>()
     for (objectData in objects) {
       try {
         val geometry = objectGeometry(objectData) ?: continue
-        if (batchFaces) {
+        val normalizedInstance = if (isInstanceCandidate(objectData)) {
+          normalizedInstanceGeometry(objectData, geometry)
+        } else {
+          null
+        }
+        if (normalizedInstance != null) {
+          instanceChunks.getOrPut(normalizedInstance.key) { mutableListOf() }
+            .add(Triple(objectData, geometry, normalizedInstance))
+        } else if (batchFaces) {
           faceChunks.getOrPut(faceBatchKey(objectData, geometry.bounds)) { mutableListOf() }
             .add(objectData to geometry)
         } else {
@@ -1168,20 +1271,72 @@ internal class RenderSceneFilamentHostView(
         Log.e(TAG, "Failed to create Filament renderable for ${objectData.kind}", error)
       }
     }
+    for ((_, sources) in instanceChunks) {
+      if (sources.size >= 2) {
+        createInstanceFaceGroup(engine, scene, sources)
+      } else {
+        val (objectData, geometry, _) = sources.first()
+        if (batchFaces) {
+          faceChunks.getOrPut(faceBatchKey(objectData, geometry.bounds)) { mutableListOf() }
+            .add(objectData to geometry)
+        } else {
+          val objectMaterial = materialForObject(objectData, material)
+          val entry = createRenderable(engine, objectMaterial, objectData, geometry) ?: continue
+          renderables[objectData.elementId ?: renderables.size.toLong() + 1L] = entry
+          scene.addEntity(entry.entity)
+          entry.attached = true
+          attachedEntities.add(entry.entity)
+        }
+      }
+    }
     if (batchFaces) createFaceBatches(engine, scene, faceChunks)
     createEdgeBatches(engine, scene, edgeChunks)
     updateMetrics()
     renderDirty = true
     Log.i(
       TAG,
-      "GPU layout: objects=${sceneMetrics.objectCount}, faceDraws=${renderables.size + faceBatches.size}, " +
-        "edgeBatches=${edgeBatches.size}, draws=${renderables.size + faceBatches.size + edgeBatches.size}, " +
+      "GPU layout: objects=${sceneMetrics.objectCount}, faceDraws=${renderables.size + faceBatches.size + instanceFaceGroups.size}, " +
+        "instanceGroups=${instanceFaceGroups.size}, instancedObjects=${sceneMetrics.instancedObjectCount}, " +
+        "edgeBatches=${edgeBatches.size}, draws=${renderables.size + faceBatches.size + instanceFaceGroups.size + edgeBatches.size}, " +
         "edgeTriangles=${sceneMetrics.edgeIndexCount / 3}, cache=${edgeGeometryCache.size}",
     )
     if (failedObjects > 0) {
       statusMessage = "Filament skipped $failedObjects invalid renderables; loaded ${renderables.size}."
       Log.w(TAG, statusMessage)
     }
+  }
+
+  private fun rebuildEdgeBatchesForProjection() {
+    val engine = engine ?: return
+    val scene = scene ?: return
+    val sceneState = currentScene ?: return
+    destroyEdgeBatches(engine, scene)
+    // The cache key includes revisions, but not projection mode. Clear it
+    // when switching between plan and 3D so the lighter top-down geometry is
+    // actually regenerated.
+    edgeGeometryCache.clear()
+
+    val wallJunctionElevations = sceneState.objects
+      .filter { normalizeKind(it.kind) == "ceiling" || normalizeKind(it.kind) == "floor" }
+      .flatMap { system ->
+        system.mesh.positions.map { it.z } + listOf(system.bounds.min.z, system.bounds.max.z)
+      }
+      .distinct()
+    val edgeChunks = linkedMapOf<EdgeBatchKey, MutableList<GeometryData>>()
+    for (objectData in sceneState.objects) {
+      try {
+        val geometry = objectGeometry(objectData) ?: continue
+        edgeGeometryFor(objectData, geometry, wallJunctionElevations)?.let { edge ->
+          edgeChunks.getOrPut(edgeBatchKey(objectData, geometry.bounds)) { mutableListOf() }
+            .add(edge)
+        }
+      } catch (error: Throwable) {
+        Log.w(TAG, "Failed to refresh edge geometry for ${objectData.kind}", error)
+      }
+    }
+    createEdgeBatches(engine, scene, edgeChunks)
+    updateMetrics()
+    renderDirty = true
   }
 
   private fun materialForObject(objectData: SceneObject, fallback: Material): Material {
@@ -1205,6 +1360,30 @@ internal class RenderSceneFilamentHostView(
     }
   }
 
+  private fun applyDisplayStyle(instance: MaterialInstance) {
+    instance.setParameter("displayShade", if (displayStyle == "shaded") 1.0f else 0.0f)
+  }
+
+  private fun displayBaseColor(objectData: SceneObject): FloatArray {
+    val isWindow = normalizeKind(objectData.kind) == "window"
+    return if (displayStyle == "solid") {
+      floatArrayOf(0.98f, 0.98f, 0.98f, if (isWindow) 0.30f else 1.0f)
+    } else {
+      kindColor(normalizeKind(objectData.kind))
+    }
+  }
+
+  private fun openingVisibleInPlan(kind: String): Boolean =
+    projectionMode != "topDown" || (kind != "door" && kind != "window")
+
+  private fun faceVisible(objectData: SceneObject): Boolean =
+    displayStyle != "wireframe" && kindVisible(normalizeKind(objectData.kind)) &&
+      openingVisibleInPlan(normalizeKind(objectData.kind))
+
+  private fun edgeVisible(kind: String): Boolean =
+    (displayStyle == "solid" || displayStyle == "shaded") &&
+      kindVisible(kind) && openingVisibleInPlan(kind)
+
   private fun baseColorForObject(objectData: SceneObject): FloatArray =
     kindColor(normalizeKind(objectData.kind))
 
@@ -1213,7 +1392,16 @@ internal class RenderSceneFilamentHostView(
     geometry: GeometryData,
     wallJunctionElevations: List<Double>,
   ): GeometryData? {
-    val wallEdges = normalizeKind(objectData.kind) == "wall"
+    val kind = normalizeKind(objectData.kind)
+    // In orbit view floors/ceilings are surfaces, not architectural linework.
+    // Their coplanar borders were being composited with wall junction prisms
+    // and read as repeated heavy storey bands. Sections still get their
+    // section edges from the clipped wall geometry.
+    if (projectionMode == "isometric" && kind in setOf("floor", "ceiling", "slab")) {
+      return null
+    }
+    val wallEdges = kind == "wall"
+    val isSectionLike = projectionMode != "topDown" && projectionMode != "isometric"
     val relevantJunctions = if (wallEdges) {
       wallJunctionElevations.filter { elevation ->
         elevation >= geometry.bounds.min.y - 1.0e-5 &&
@@ -1222,7 +1410,7 @@ internal class RenderSceneFilamentHostView(
     } else {
       emptyList()
     }
-    val junctionSignature = relevantJunctions.hashCode()
+    val junctionSignature = (relevantJunctions.hashCode() * 31) + if (isSectionLike) 1 else 0
     val elementId = objectData.elementId
     if (!clipVolume.active && elementId != null) {
       val cached = edgeGeometryCache[elementId]
@@ -1239,7 +1427,7 @@ internal class RenderSceneFilamentHostView(
       points,
       edges,
       triangles,
-      wallJunctionEdges = wallEdges,
+      wallJunctionEdges = wallEdges && isSectionLike,
       wallJunctionElevations = relevantJunctions,
     ) ?: return null
     if (!clipVolume.active && elementId != null) {
@@ -1269,17 +1457,176 @@ internal class RenderSceneFilamentHostView(
     val tileSizeMeters = 24.0
     val centerX = (bounds.min.x + bounds.max.x) * 0.5
     val centerZ = (bounds.min.z + bounds.max.z) * 0.5
-    val materialVariant = if (kind == "wall") {
-      objectData.metadata["wall_type_category"] ?: "Generic"
-    } else {
-      objectData.materialCategory
-    }
+    val materialVariant = faceMaterialVariant(objectData)
     return FaceBatchKey(
       kind = kind,
       materialVariant = materialVariant,
       levelId = objectData.levelId,
       tileX = kotlin.math.floor(centerX / tileSizeMeters).toInt(),
       tileZ = kotlin.math.floor(centerZ / tileSizeMeters).toInt(),
+    )
+  }
+
+  private fun faceMaterialVariant(objectData: SceneObject): String {
+    val kind = normalizeKind(objectData.kind)
+    return if (kind == "wall") {
+      objectData.metadata["wall_type_category"] ?: "Generic"
+    } else {
+      objectData.materialCategory
+    }
+  }
+
+  private fun isInstanceCandidate(objectData: SceneObject): Boolean {
+    if (clipVolume.active) return false
+    return normalizeKind(objectData.kind) in setOf("door", "window", "column")
+  }
+
+  /**
+   * Removes translation but preserves the exact transported mesh topology and
+   * orientation. Equal family geometry therefore shares GPU buffers safely;
+   * resized or unique instances naturally receive a different signature.
+   */
+  private fun normalizedInstanceGeometry(
+    objectData: SceneObject,
+    geometry: GeometryData,
+  ): NormalizedInstanceGeometry? {
+    if (geometry.vertexCount <= 0 || geometry.indexCount <= 0) return null
+    val translation = ScenePoint(
+      (geometry.bounds.min.x + geometry.bounds.max.x) * 0.5,
+      (geometry.bounds.min.y + geometry.bounds.max.y) * 0.5,
+      (geometry.bounds.min.z + geometry.bounds.max.z) * 0.5,
+    )
+    val sourceVertices = geometry.vertexData.duplicate().order(ByteOrder.nativeOrder()).apply { rewind() }.asFloatBuffer()
+    val localVertexData = ByteBuffer.allocateDirect(geometry.vertexCount * 12).order(ByteOrder.nativeOrder())
+    var shapeHash = -0x340d631b7bdddcdbL
+    fun mix(value: Long) {
+      shapeHash = (shapeHash xor value) * 0x100000001b3L
+    }
+    repeat(geometry.vertexCount) {
+      val x = sourceVertices.get().toDouble() - translation.x
+      val y = sourceVertices.get().toDouble() - translation.y
+      val z = sourceVertices.get().toDouble() - translation.z
+      localVertexData.putFloat(x.toFloat())
+      localVertexData.putFloat(y.toFloat())
+      localVertexData.putFloat(z.toFloat())
+      mix(kotlin.math.round(x * 10000.0).toLong())
+      mix(kotlin.math.round(y * 10000.0).toLong())
+      mix(kotlin.math.round(z * 10000.0).toLong())
+    }
+    localVertexData.flip()
+    val sourceIndices = geometry.indexData.duplicate().apply { rewind() }
+    val localIndexData = ByteBuffer.allocateDirect(geometry.indexCount * Int.SIZE_BYTES)
+      .order(ByteOrder.nativeOrder()).asIntBuffer()
+    while (sourceIndices.hasRemaining()) {
+      val index = sourceIndices.get()
+      localIndexData.put(index)
+      mix(index.toLong())
+    }
+    localIndexData.flip()
+    val localBounds = SceneBounds(
+      min = ScenePoint(
+        geometry.bounds.min.x - translation.x,
+        geometry.bounds.min.y - translation.y,
+        geometry.bounds.min.z - translation.z,
+      ),
+      max = ScenePoint(
+        geometry.bounds.max.x - translation.x,
+        geometry.bounds.max.y - translation.y,
+        geometry.bounds.max.z - translation.z,
+      ),
+    )
+    val key = InstanceFaceKey(
+      kind = normalizeKind(objectData.kind),
+      materialVariant = faceMaterialVariant(objectData),
+      colorHash = baseColorForObject(objectData).contentHashCode(),
+      vertexCount = geometry.vertexCount,
+      indexCount = geometry.indexCount,
+      shapeHash = shapeHash,
+    )
+    return NormalizedInstanceGeometry(
+      key = key,
+      geometry = GeometryData(
+        vertexCount = geometry.vertexCount,
+        indexCount = geometry.indexCount,
+        vertexData = localVertexData,
+        indexData = localIndexData,
+        bounds = localBounds,
+      ),
+      translation = translation,
+    )
+  }
+
+  private fun createInstanceFaceGroup(
+    engine: Engine,
+    scene: Scene,
+    sources: List<Triple<SceneObject, GeometryData, NormalizedInstanceGeometry>>,
+  ) {
+    val fallback = material ?: return
+    val first = sources.firstOrNull() ?: return
+    val representative = first.first
+    val local = first.third.geometry
+    val sharedMaterial = materialForObject(representative, fallback)
+    val baseColor = displayBaseColor(representative)
+    val vertexBuffer = VertexBuffer.Builder()
+      .bufferCount(1)
+      .vertexCount(local.vertexCount)
+      .attribute(VertexBuffer.VertexAttribute.POSITION, 0, VertexBuffer.AttributeType.FLOAT3, 0, 12)
+      .build(engine).also { it.setBufferAt(engine, 0, local.vertexData) }
+    val indexBuffer = IndexBuffer.Builder()
+      .indexCount(local.indexCount)
+      .bufferType(IndexBuffer.Builder.IndexType.UINT)
+      .build(engine).also { it.setBuffer(engine, local.indexData) }
+    val materialInstance = sharedMaterial.createInstance().also { instance ->
+      applySectionBoxState(instance)
+      applyDisplayStyle(instance)
+      instance.setParameter(
+        "baseColor", Colors.RgbaType.LINEAR,
+        baseColor[0], baseColor[1], baseColor[2], baseColor[3],
+      )
+    }
+    val visible = faceVisible(representative)
+    val transformManager = engine.transformManager
+    val entities = ArrayList<Int>(sources.size)
+    for ((_, _, normalized) in sources) {
+      val entity = EntityManager.get().create()
+      RenderableManager.Builder(1)
+        .boundingBox(filamentBox(local.bounds))
+        .culling(true)
+        .geometry(0, PrimitiveType.TRIANGLES, vertexBuffer, indexBuffer, 0, local.indexCount)
+        .material(0, materialInstance)
+        .build(engine, entity)
+      var transformInstance = transformManager.getInstance(entity)
+      if (transformInstance == 0) transformInstance = transformManager.create(entity)
+      val transform = FloatArray(16)
+      Matrix.setIdentityM(transform, 0)
+      Matrix.translateM(
+        transform,
+        0,
+        normalized.translation.x.toFloat(),
+        normalized.translation.y.toFloat(),
+        normalized.translation.z.toFloat(),
+      )
+      transformManager.setTransform(transformInstance, transform)
+      if (visible) scene.addEntity(entity)
+      entities.add(entity)
+    }
+    val worldBounds = sources.map { it.second.bounds }.reduce(::unionBounds)
+    instanceFaceGroups.add(
+      InstanceFaceGroupEntry(
+        kind = normalizeKind(representative.kind),
+        representative = representative,
+        entities = entities,
+        vertexBuffer = vertexBuffer,
+        indexBuffer = indexBuffer,
+        material = sharedMaterial,
+        materialInstance = materialInstance,
+        baseColor = baseColor,
+        bounds = worldBounds,
+        objectCount = sources.size,
+        vertexCount = local.vertexCount,
+        indexCount = local.indexCount,
+        attached = visible,
+      )
     )
   }
 
@@ -1293,7 +1640,7 @@ internal class RenderSceneFilamentHostView(
       val representative = sources.firstOrNull()?.first ?: continue
       val geometry = combineGeometry(sources.map { it.second }) ?: continue
       val sharedMaterial = materialForObject(representative, fallback)
-      val baseColor = baseColorForObject(representative)
+      val baseColor = displayBaseColor(representative)
       val vertexBuffer = VertexBuffer.Builder()
         .bufferCount(1)
         .vertexCount(geometry.vertexCount)
@@ -1306,6 +1653,7 @@ internal class RenderSceneFilamentHostView(
       val entity = EntityManager.get().create()
       val materialInstance = sharedMaterial.createInstance().also { instance ->
         applySectionBoxState(instance)
+        applyDisplayStyle(instance)
         instance.setParameter(
           "baseColor", Colors.RgbaType.LINEAR,
           baseColor[0], baseColor[1], baseColor[2], baseColor[3],
@@ -1313,10 +1661,11 @@ internal class RenderSceneFilamentHostView(
       }
       RenderableManager.Builder(1)
         .boundingBox(filamentBox(geometry.bounds))
+        .culling(true)
         .geometry(0, PrimitiveType.TRIANGLES, vertexBuffer, indexBuffer, 0, geometry.indexCount)
         .material(0, materialInstance)
         .build(engine, entity)
-      val visible = displayStyle != "wireframe" && kindVisible(key.kind)
+      val visible = faceVisible(representative)
       if (visible) scene.addEntity(entity)
       faceBatches.add(
         FaceBatchEntry(
@@ -1357,16 +1706,18 @@ internal class RenderSceneFilamentHostView(
         .build(engine).also { it.setBuffer(engine, geometry.indexData) }
       val entity = EntityManager.get().create()
       val materialInstance = edgeMaterial.createInstance().also { instance ->
-        instance.setParameter("baseColor", Colors.RgbaType.LINEAR, 0.015f, 0.025f, 0.040f, 1.0f)
+        applyDisplayStyle(instance)
+        instance.setParameter("baseColor", Colors.RgbaType.LINEAR, 0.0f, 0.0f, 0.0f, 1.0f)
         applySectionBoxState(instance)
       }
       RenderableManager.Builder(1)
         .boundingBox(filamentBox(geometry.bounds))
+        .culling(true)
         .priority(7)
         .geometry(0, PrimitiveType.TRIANGLES, vertexBuffer, indexBuffer, 0, geometry.indexCount)
         .material(0, materialInstance)
         .build(engine, entity)
-      val visible = (displayStyle == "solid" || displayStyle == "shaded") && kindVisible(key.kind)
+      val visible = edgeVisible(key.kind)
       if (visible) scene.addEntity(entity)
       edgeBatches.add(
         EdgeBatchEntry(
@@ -1443,7 +1794,8 @@ internal class RenderSceneFilamentHostView(
     val entity = EntityManager.get().create()
     val materialInstance = sharedMaterial.createInstance()
     applySectionBoxState(materialInstance)
-    val baseColor = baseColorForObject(objectData)
+    applyDisplayStyle(materialInstance)
+    val baseColor = displayBaseColor(objectData)
     materialInstance.setParameter(
       "baseColor",
       Colors.RgbaType.LINEAR,
@@ -1461,6 +1813,7 @@ internal class RenderSceneFilamentHostView(
       // min/max makes transformed BIM meshes appear to have zero depth and
       // lets frustum culling discard the entire scene.
       .boundingBox(filamentBox(bounds))
+      .culling(true)
       .geometry(0, PrimitiveType.TRIANGLES, vertexBuffer, indexBuffer, 0, geometry.indexCount)
       .material(0, materialInstance)
       .build(engine, entity)
@@ -1668,14 +2021,23 @@ internal class RenderSceneFilamentHostView(
     wallJunctionElevations: List<Double> = emptyList(),
   ): GeometryData? {
     val validEdges = edges.filter { it.first in points.indices && it.second in points.indices }
-    // 28 mm is intentionally visual-only: it is thick enough for a tablet
-    // Solid view, but does not change the semantic BIM geometry or picking.
-    val normalRadius = 0.014
+    val isFloorPlan = projectionMode == "topDown"
+    // Floor plan uses a lighter line weight. Section/elevation keeps the
+    // existing GPU-safe border sizes; only the noisy top-down presentation is
+    // narrowed here.
+    // 3D borders remain visible, but the previous 28 mm prisms read as
+    // oversized black bars in the orbit view. Keep the lighter plan weight
+    // and use a separate, still-readable 3D weight.
+    val normalRadius = when {
+      isFloorPlan -> 0.004
+      projectionMode != "isometric" -> 0.006
+      else -> 0.006
+    }
     // Junction borders deliberately get a stronger visual treatment than
     // ordinary silhouette edges. They are the only reliable room boundary
     // after an exterior wall has been removed and an adjacent floor/ceiling
     // occupies the same depth range.
-    val junctionRadius = 0.032
+    val junctionRadius = if (isFloorPlan) 0.008 else 0.006
     val sourceBounds = boundsForPoints(points)
     data class EdgeKey(val first: Int, val second: Int)
     fun edgeKey(first: Int, second: Int) = if (first < second) {
@@ -1691,6 +2053,15 @@ internal class RenderSceneFilamentHostView(
       // directly, then draw them in the dedicated junction pass below.
       val minimumY = sourceBounds.min.y
       val maximumY = sourceBounds.max.y
+      val planEdgeUseCounts = linkedMapOf<String, Int>()
+      val planEdgeCandidates = mutableListOf<Pair<Int, Int>>()
+      fun geometricEdgeKey(first: ScenePoint, second: ScenePoint): String {
+        fun pointKey(point: ScenePoint) =
+          "${kotlin.math.round(point.x * 100000.0)}:${kotlin.math.round(point.y * 100000.0)}:${kotlin.math.round(point.z * 100000.0)}"
+        val firstKey = pointKey(first)
+        val secondKey = pointKey(second)
+        return if (firstKey <= secondKey) "$firstKey|$secondKey" else "$secondKey|$firstKey"
+      }
       fun isJunctionPoint(point: ScenePoint) =
         kotlin.math.abs(point.y - minimumY) <= 1e-5 ||
           kotlin.math.abs(point.y - maximumY) <= 1e-5
@@ -1705,6 +2076,23 @@ internal class RenderSceneFilamentHostView(
           val second = points[secondIndex]
           if (kotlin.math.abs(first.y - second.y) <= 1e-6 &&
             isJunctionPoint(first) && isJunctionPoint(second)) {
+            if (isFloorPlan) {
+              planEdgeCandidates.add(firstIndex to secondIndex)
+              val key = geometricEdgeKey(first, second)
+              planEdgeUseCounts[key] = (planEdgeUseCounts[key] ?: 0) + 1
+            } else {
+              junctionKeys.add(edgeKey(firstIndex, secondIndex))
+            }
+          }
+        }
+      }
+      if (isFloorPlan) {
+        // A diagonal shared by the two triangles of one coplanar face is an
+        // internal tessellation seam, not a wall boundary. Keep only physical
+        // perimeter edges in top-down view.
+        for ((firstIndex, secondIndex) in planEdgeCandidates) {
+          val key = geometricEdgeKey(points[firstIndex], points[secondIndex])
+          if (planEdgeUseCounts[key] == 1) {
             junctionKeys.add(edgeKey(firstIndex, secondIndex))
           }
         }
@@ -1728,7 +2116,7 @@ internal class RenderSceneFilamentHostView(
         wallJunctionEdges && junctionKeys.contains(edgeKey(edge.first, edge.second)),
       )
     }.toMutableList()
-    if (wallJunctionEdges) {
+    if (wallJunctionEdges && !isFloorPlan) {
       // A joined wall can legitimately have no (or incomplete) feature-edge
       // list after vertex welding. Its physical outline must not disappear
       // from Solid in that case: reconstruct the bottom/top sections and
@@ -1806,7 +2194,7 @@ internal class RenderSceneFilamentHostView(
       // still place its centre behind the wall face. Push a horizontal wall
       // junction just outside its nearest face. Depth testing remains on, so
       // an actually occluding wall still hides the border (unlike Wire).
-      val faceOffset = if (isHorizontalJunction) {
+      val faceOffset = if (isHorizontalJunction && !isFloorPlan) {
         wallFaceOffset(
           ScenePoint(
             (sourceFirst.x + sourceSecond.x) * 0.5,
@@ -1954,8 +2342,7 @@ internal class RenderSceneFilamentHostView(
   private fun syncVisibility() {
     val scene = scene ?: return
     for (entry in renderables.values) {
-      val visible = displayStyle != "wireframe" &&
-        kindVisible(entry.objectData.kind)
+      val visible = faceVisible(entry.objectData)
       if (visible && !entry.attached) {
         scene.addEntity(entry.entity)
         entry.attached = true
@@ -1965,7 +2352,7 @@ internal class RenderSceneFilamentHostView(
       }
     }
     for (batch in faceBatches) {
-      val visible = displayStyle != "wireframe" && kindVisible(batch.key.kind)
+      val visible = faceVisible(batch.representative)
       if (visible && !batch.attached) {
         scene.addEntity(batch.entity)
         batch.attached = true
@@ -1974,12 +2361,21 @@ internal class RenderSceneFilamentHostView(
         batch.attached = false
       }
     }
+    for (group in instanceFaceGroups) {
+      val visible = faceVisible(group.representative)
+      if (visible && !group.attached) {
+        for (entity in group.entities) scene.addEntity(entity)
+        group.attached = true
+      } else if (!visible && group.attached) {
+        for (entity in group.entities) scene.removeEntity(entity)
+        group.attached = false
+      }
+    }
     // Normal borders are chunked by category/level/spatial tile. Selection
     // feedback remains in NativeSelectionOverlay, so one border batch can
     // safely represent many BIM elements without losing per-object picking.
     for (batch in edgeBatches) {
-      val visible = (displayStyle == "solid" || displayStyle == "shaded") &&
-        kindVisible(batch.key.kind)
+      val visible = edgeVisible(batch.key.kind)
       if (visible && !batch.attached) {
         scene.addEntity(batch.entity)
         batch.attached = true
@@ -1999,13 +2395,14 @@ internal class RenderSceneFilamentHostView(
       val isWindow = normalizeKind(entry.objectData.kind) == "window"
       // Keep the requested architectural colors in both Shaded and Solid.
       // Windows use alpha 0.30, which is 70% transparent.
-      val solidColor = entry.baseColor
+      val solidColor = displayBaseColor(entry.objectData)
       val color = when {
         active -> floatArrayOf(0.08f, 0.28f, 0.82f, if (isWindow) 0.30f else 1f)
         selected -> floatArrayOf(0.18f, 0.45f, 0.95f, if (isWindow) 0.30f else 1f)
         highlighted -> floatArrayOf(0.92f, 0.34f, 0.16f, if (isWindow) 0.30f else 1f)
         else -> solidColor
       }
+      applyDisplayStyle(entry.materialInstance)
       entry.materialInstance.setParameter(
         "baseColor",
         Colors.RgbaType.LINEAR,
@@ -2015,12 +2412,24 @@ internal class RenderSceneFilamentHostView(
         color[3],
       )
     }
+    for (group in instanceFaceGroups) {
+      val color = displayBaseColor(group.representative)
+      applyDisplayStyle(group.materialInstance)
+      group.materialInstance.setParameter(
+        "baseColor", Colors.RgbaType.LINEAR,
+        color[0], color[1], color[2], color[3],
+      )
+    }
     for (batch in faceBatches) {
-      val color = batch.baseColor
+      val color = displayBaseColor(batch.representative)
+      applyDisplayStyle(batch.materialInstance)
       batch.materialInstance.setParameter(
         "baseColor", Colors.RgbaType.LINEAR,
         color[0], color[1], color[2], color[3],
       )
+    }
+    for (batch in edgeBatches) {
+      applyDisplayStyle(batch.materialInstance)
     }
     requestRender()
   }
@@ -2029,12 +2438,14 @@ internal class RenderSceneFilamentHostView(
     val engine = engine ?: run {
       renderables.clear()
       faceBatches.clear()
+      instanceFaceGroups.clear()
       edgeBatches.clear()
       attachedEntities.clear()
       return
     }
     val scene = scene
     destroyFaceBatches(engine, scene)
+    destroyInstanceFaceGroups(engine, scene)
     destroyEdgeBatches(engine, scene)
     for (entry in renderables.values) {
       if (entry.attached) {
@@ -2062,6 +2473,20 @@ internal class RenderSceneFilamentHostView(
     faceBatches.clear()
   }
 
+  private fun destroyInstanceFaceGroups(engine: Engine, scene: Scene?) {
+    for (group in instanceFaceGroups) {
+      for (entity in group.entities) {
+        if (group.attached) scene?.removeEntity(entity)
+        engine.destroyEntity(entity)
+        EntityManager.get().destroy(entity)
+      }
+      engine.destroyMaterialInstance(group.materialInstance)
+      engine.destroyVertexBuffer(group.vertexBuffer)
+      engine.destroyIndexBuffer(group.indexBuffer)
+    }
+    instanceFaceGroups.clear()
+  }
+
   private fun destroyEdgeBatches(engine: Engine, scene: Scene?) {
     for (batch in edgeBatches) {
       if (batch.attached) scene?.removeEntity(batch.entity)
@@ -2076,7 +2501,7 @@ internal class RenderSceneFilamentHostView(
 
   private fun updateMetrics() {
     val entries = renderables.values.toList()
-    val allBounds = entries.map { it.bounds } + faceBatches.map { it.bounds }
+    val allBounds = entries.map { it.bounds } + faceBatches.map { it.bounds } + instanceFaceGroups.map { it.bounds }
     val bounds = if (allBounds.isEmpty()) {
       SceneBounds(ScenePoint(0.0, 0.0, 0.0), ScenePoint(0.0, 0.0, 0.0))
     } else {
@@ -2084,12 +2509,17 @@ internal class RenderSceneFilamentHostView(
     }
     sceneMetrics = FilamentSceneMetrics(
       bounds = bounds,
-      objectCount = entries.size + faceBatches.sumOf { it.objectCount },
-      vertexCount = entries.sumOf { it.vertexBuffer.vertexCount } + faceBatches.sumOf { it.vertexCount },
-      indexCount = entries.sumOf { it.indexBuffer.indexCount } + faceBatches.sumOf { it.indexCount },
+      objectCount = entries.size + faceBatches.sumOf { it.objectCount } + instanceFaceGroups.sumOf { it.objectCount },
+      vertexCount = entries.sumOf { it.vertexBuffer.vertexCount } + faceBatches.sumOf { it.vertexCount } +
+        instanceFaceGroups.sumOf { it.vertexCount * it.objectCount },
+      indexCount = entries.sumOf { it.indexBuffer.indexCount } + faceBatches.sumOf { it.indexCount } +
+        instanceFaceGroups.sumOf { it.indexCount * it.objectCount },
       edgeBatchCount = edgeBatches.size,
       edgeVertexCount = edgeBatches.sumOf { it.vertexCount },
       edgeIndexCount = edgeBatches.sumOf { it.indexCount },
+      instanceGroupCount = instanceFaceGroups.size,
+      instancedObjectCount = instanceFaceGroups.sumOf { it.objectCount },
+      sharedFaceVertexCount = instanceFaceGroups.sumOf { it.vertexCount },
     )
     val centerX = (bounds.min.x + bounds.max.x) * 0.5
     val centerY = (bounds.min.y + bounds.max.y) * 0.5
@@ -2138,12 +2568,17 @@ internal class RenderSceneFilamentHostView(
     "inputObjects" to (currentScene?.objects?.size ?: 0),
     "renderables" to sceneMetrics.objectCount,
     "faceBatches" to faceBatches.size,
+    "instanceGroups" to sceneMetrics.instanceGroupCount,
+    "instancedObjects" to sceneMetrics.instancedObjectCount,
+    "sharedFaceVertices" to sceneMetrics.sharedFaceVertexCount,
     "vertices" to sceneMetrics.vertexCount,
     "indices" to sceneMetrics.indexCount,
     "edgeBatches" to sceneMetrics.edgeBatchCount,
     "edgeVertices" to sceneMetrics.edgeVertexCount,
     "edgeIndices" to sceneMetrics.edgeIndexCount,
-    "estimatedDrawCalls" to (renderables.size + faceBatches.size + edgeBatches.size),
+    "estimatedDrawCalls" to (renderables.size + faceBatches.size + instanceFaceGroups.size + edgeBatches.size),
+    "automaticInstancing" to (engine?.isAutomaticInstancingEnabled ?: false),
+    "frustumCulling" to (filamentView?.isFrustumCullingEnabled ?: false),
     "edgeCacheEntries" to edgeGeometryCache.size,
     "materialReady" to (material != null),
     "surfaceReady" to surfaceReady,
@@ -2607,6 +3042,7 @@ internal class RenderSceneFilamentHostView(
       elementId = objectData.elementId,
       kind = normalizeKind(objectData.kind),
       selectable = objectData.selectable,
+      metadata = objectData.metadata.mapValues { (_, value) -> value },
       points = points,
       triangles = triangles,
       featureEdges = meshFeatureEdges(
@@ -3128,6 +3564,7 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
   override fun onDraw(canvas: Canvas) {
     super.onDraw(canvas)
     drawAuthoringEdges(canvas)
+    drawPlanOpeningSymbols(canvas)
     drawSectionBox(canvas)
     val rect = rectangle ?: return
     val color = if (crossing) Color.rgb(245, 158, 11) else Color.rgb(37, 99, 235)
@@ -3209,6 +3646,90 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
       }
     }
   }
+
+  private fun drawPlanOpeningSymbols(canvas: Canvas) {
+    if (!topDown) return
+    val density = resources.displayMetrics.density
+    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+      style = Paint.Style.STROKE
+      color = Color.rgb(17, 24, 39)
+      strokeWidth = density * 1.05f
+      strokeCap = Paint.Cap.SQUARE
+      strokeJoin = Paint.Join.MITER
+    }
+    for (opening in allObjects) {
+      if (opening.kind != "door" && opening.kind != "window") continue
+      val hostId = opening.metadata["host_wall_id"]?.toLongOrNull() ?: continue
+      val host = allObjects.firstOrNull { it.kind == "wall" && it.elementId == hostId } ?: continue
+      val startX = host.metadata["start_x"]?.toDoubleOrNull() ?: continue
+      val startY = host.metadata["start_y"]?.toDoubleOrNull() ?: continue
+      val endX = host.metadata["end_x"]?.toDoubleOrNull() ?: continue
+      val endY = host.metadata["end_y"]?.toDoubleOrNull() ?: continue
+      val offset = opening.metadata["offset_meters"]?.toDoubleOrNull() ?: continue
+      val widthMeters = opening.metadata["width_meters"]?.toDoubleOrNull() ?: continue
+      if (widthMeters <= 1.0e-6) continue
+
+      val dx = endX - startX
+      val dy = endY - startY
+      val axisLength = kotlin.math.sqrt(dx * dx + dy * dy)
+      if (axisLength <= 1.0e-8) continue
+      val ux = dx / axisLength
+      val uy = dy / axisLength
+      val nx = -uy
+      val ny = ux
+      val centerX = startX + ux * offset
+      val centerY = startY + uy * offset
+      val halfWidth = widthMeters * 0.5
+      val start = sourcePlanPoint(centerX - ux * halfWidth, centerY - uy * halfWidth)
+      val end = sourcePlanPoint(centerX + ux * halfWidth, centerY + uy * halfWidth)
+      val centerPoint = sourcePlanPoint(centerX, centerY)
+      val openEnd = sourcePlanPoint(
+        centerX - ux * halfWidth + nx * widthMeters,
+        centerY - uy * halfWidth + ny * widthMeters,
+      )
+      val openOtherEnd = sourcePlanPoint(
+        centerX + ux * halfWidth + nx * widthMeters,
+        centerY + uy * halfWidth + ny * widthMeters,
+      )
+      val first = project(start) ?: continue
+      val second = project(end) ?: continue
+      val center = project(centerPoint) ?: continue
+      val open = project(openEnd) ?: continue
+      val openOther = project(openOtherEnd) ?: continue
+      val selected = opening.elementId != null && selectedIds.contains(opening.elementId)
+      paint.color = if (selected) Color.rgb(37, 99, 235) else Color.rgb(17, 24, 39)
+      if (opening.kind == "window") {
+        // Double-casement window: the centre split opens toward both sides.
+        // The two leaves form a clear V from the centre to each jamb, like a
+        // Revit plan symbol, instead of reading as a closed rectangle.
+        canvas.drawLine(center.x, center.y, open.x, open.y, paint)
+        canvas.drawLine(center.x, center.y, openOther.x, openOther.y, paint)
+        continue
+      }
+
+      // Revit-like plan door: the leaf is shown open and the swing is a
+      // quarter-circle arc from the closed wall direction to the open leaf.
+      canvas.drawLine(first.x, first.y, open.x, open.y, paint)
+      val radius = kotlin.math.hypot((second.x - first.x).toDouble(), (second.y - first.y).toDouble()).toFloat()
+      if (radius <= 1.0f) continue
+      val startAngle = Math.toDegrees(atan2((second.y - first.y).toDouble(), (second.x - first.x).toDouble())).toFloat()
+      val endAngle = Math.toDegrees(atan2((open.y - first.y).toDouble(), (open.x - first.x).toDouble())).toFloat()
+      var sweep = endAngle - startAngle
+      while (sweep > 180f) sweep -= 360f
+      while (sweep < -180f) sweep += 360f
+      if (kotlin.math.abs(sweep) < 5f) sweep = if (sweep < 0f) -90f else 90f
+      canvas.drawArc(
+        RectF(first.x - radius, first.y - radius, first.x + radius, first.y + radius),
+        startAngle,
+        sweep,
+        false,
+        paint,
+      )
+    }
+  }
+
+  private fun sourcePlanPoint(x: Double, y: Double): ScenePoint =
+    ScenePoint(x, 0.0, -y)
 
   private fun isVisibleSolidEdge(
     objectData: NativeVisualObject,

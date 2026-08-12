@@ -98,13 +98,34 @@ draw call per BIM element. Small scenes keep per-element faces for the most
 direct editing path. A disabled section/section-box replay is a no-op and must
 not trigger a full scene rebuild.
 
+Repeated doors, windows and columns additionally use translation-invariant
+shared face meshes. The renderer hashes normalized geometry and topology, then
+places matching objects with Filament transforms and a shared material
+instance. A changed size or topology naturally changes the hash and moves the
+object to another group; a one-off shape falls back to the ordinary face path.
+Do not group only by BIM category or nominal type: two instances may share a
+type name while their generated mesh differs.
+
+Filament automatic instancing and per-view frustum culling are explicitly
+enabled. Frustum culling is a render decision for the current native View; it
+must never delete or filter central RenderScene data. Section and Section Box
+cuts need physically clipped meshes and cap edges, so shared instance groups
+temporarily fall back to the existing clipped face batches while a clip volume
+is active. Clearing the clip must recreate the instance groups and restore the
+complete model.
+
 Connected-tablet production gate (Adreno 810, debug APK): the six-building,
-nine-storey template contains 1,842 BIM objects and resolves to 234 face
-batches plus 216 edge batches (450 estimated draw calls instead of roughly
-3,684 per-element face/edge calls). After interaction settles, a four-second
+nine-storey template contains 1,842 BIM objects. Normal 3D mode places 972
+repeated objects in 9 shared groups and resolves to 144 estimated face draws
+plus 216 edge batches (360 estimated draw calls instead of roughly 3,684
+per-element face/edge calls). Section Box mode intentionally returns to 234
+clipped face batches plus 216 edge batches; clearing it restores the 9 instance
+groups and 360-draw layout. The 103-object tower places 54 objects in 9 groups
+and resolves to 58 face draws plus 33 edge batches (91 estimated draws, down
+from 136 before instancing). After interaction settles, a four-second
 `gfxinfo` sample must report zero newly rendered frames. Solid, Shaded,
-selection overlay, Section Box cut and full-model restore were verified on
-this fixture.
+selection overlay, orbit, Section Box cut and full-model restore were verified
+on these fixtures.
 
 Do not replace `edgeGeometry(...)` with Canvas drawing or `PrimitiveType.LINES` merely to simplify the code. Both were tried and caused the historical failures: either Solid became full Wire, or borders disappeared / flickered on Android.
 

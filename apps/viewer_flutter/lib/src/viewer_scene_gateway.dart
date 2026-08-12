@@ -10,4 +10,9 @@ abstract interface class ViewerSceneGateway {
   Future<RenderSceneLoadResult> setActiveLevel(int levelId);
 
   Future<RenderSceneLoadResult> setFullSceneRenderScope(bool enabled);
+
+  Future<RenderSceneLoadResult> sectionScene(
+    RenderScenePoint start,
+    RenderScenePoint end,
+  );
 }

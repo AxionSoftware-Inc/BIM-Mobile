@@ -666,6 +666,10 @@ class RenderScene {
     const tolerance = 1e-6;
     final filteredObjects = objects.where(
       (object) {
+        // A roof is a separate top-level object, not part of a storey floor
+        // plan. Its footprint at the roof level used to leak into the active
+        // plan range and add a second set of heavy perimeter lines.
+        if (object.kindKey == 'roof') return false;
         // Beams are overhead framing in the floor-plan convention. Their
         // legacy meshes can be authored at local Z=0, so bounds alone
         // would incorrectly draw them through a 2 m plan cut.

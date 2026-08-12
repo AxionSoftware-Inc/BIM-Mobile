@@ -621,8 +621,11 @@ RenderSceneMeshDTO make_opening_mesh(const tbe::core::Line2& axis, const tbe::co
     const auto width = opening.width_meters;
     const auto height = opening.height_meters;
     const auto half_width = width / 2.0;
-    const auto panel_thickness = std::max(0.05, wall_thickness * 0.5);
-    const auto half_thickness = std::min(panel_thickness, wall_thickness) / 2.0;
+    // Keep hosted doors/windows just proud of the wall face. The previous
+    // half-thickness put the opening mesh entirely behind the opaque wall,
+    // leaving only its edge batch visible in the Filament renderer.
+    const auto panel_thickness = std::max(0.05, wall_thickness * 1.05);
+    const auto half_thickness = panel_thickness / 2.0;
     const auto bottom = sill;
     const auto top = sill + height;
     const auto corners = std::array<Vec3, 8>{

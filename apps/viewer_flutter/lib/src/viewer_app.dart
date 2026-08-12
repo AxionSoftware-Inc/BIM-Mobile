@@ -11,6 +11,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'authoring_command_service.dart';
+import 'documentation/document_models.dart';
+import 'documentation/documentation_workspace.dart';
+import 'documentation/sheet_canvas.dart';
+import 'documentation/sheet_workspace_controller.dart';
 import 'inspector_controller.dart';
 import 'material_layer_editor.dart';
 import 'native_viewer_session_factory.dart';
@@ -129,6 +133,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   late final ProjectPersistenceService _projectPersistence;
   late final ProjectSessionController<ViewerRepository> _projectSession;
   late final SceneViewService _sceneViews;
+  late final SheetWorkspaceController _sheetWorkspace;
 
   ViewerRepository? get _engineRepository => _projectSession.session;
   bool get _engineBackedMode => _projectSession.isEngineBacked;
@@ -143,6 +148,8 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   String? _engineLoadDiagnostic;
   int? _activeLevelId;
   RenderSceneSection? _activeSectionView;
+  final Map<String, RenderScene> _sheetViewScenes = <String, RenderScene>{};
+  RenderScene? _sheetSourceScene;
   double _planViewRangeMeters = 2.0;
 
   RenderSceneProjectionMode _projectionMode = kDefaultPlanProjectionMode;
@@ -291,6 +298,8 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       repository: () => _engineRepository,
       engineEnabled: () => _engineBackedMode,
     );
+    _sheetWorkspace = SheetWorkspaceController();
+    _sheetWorkspace.addListener(_onSheetWorkspaceChanged);
     _viewportController.addListener(_onViewportChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) {
@@ -302,6 +311,8 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
 
   @override
   void dispose() {
+    _sheetWorkspace.removeListener(_onSheetWorkspaceChanged);
+    _sheetWorkspace.dispose();
     _viewportController.removeListener(_onViewportChanged);
     _viewportController.dispose();
     _wallTool.dispose();
@@ -334,7 +345,15 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     }
   }
 
+  void _onSheetWorkspaceChanged() {
+    if (mounted) setState(() {});
+  }
+
   Future<void> _handleEscapePressed() async {
+    if (_sheetWorkspace.activeSheet != null) {
+      _closeActiveSheet();
+      return;
+    }
     final hasDraft = _wallTool.hasStart ||
         _levelTool.hasDraft ||
         _draftWallStart != null ||
@@ -543,6 +562,127 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     }
   }
 
+  Future<void> _openDocumentationWorkspace() async {
+    final scene = _scene;
+    if (scene == null || !mounted) return;
+    final composedSheet = _sheetWorkspace.activeSheet;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (context) => DocumentationWorkspacePage(
+          scene: _sheetSourceScene ?? scene,
+          activeLevelId: _activeLevelId,
+          initialProjectName: 'Tablet BIM Project',
+          composedSheet: composedSheet,
+          composedScenes: Map<String, RenderScene>.unmodifiable(
+            _sheetViewScenes,
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _createSheet() {
+    final sheet = _sheetWorkspace.createSheet();
+    setState(() {
+      _showObjectList = true;
+      _showInspector = false;
+      _statusMessage = '${sheet.number} sheet ochildi.';
+    });
+  }
+
+  void _openSheet(String sheetId) {
+    _sheetWorkspace.openSheet(sheetId);
+    final sheet = _sheetWorkspace.activeSheet;
+    setState(() {
+      _showObjectList = true;
+      _showInspector = false;
+      _statusMessage =
+          sheet == null ? _statusMessage : '${sheet.number} · ${sheet.title}';
+    });
+  }
+
+  void _closeActiveSheet() {
+    final closed = _sheetWorkspace.activeSheet;
+    _sheetWorkspace.closeSheet();
+    setState(() {
+      _statusMessage = closed == null
+          ? _statusMessage
+          : '${closed.number} yopildi · model view';
+    });
+    if (_engineBackedMode) {
+      final needsFullScene = _projectionMode.isElevation;
+      unawaited(_sceneViews.setFullSceneRenderScope(needsFullScene));
+    }
+  }
+
+  Future<bool> _placeSheetView(
+    SheetViewReference view,
+    double normalizedX,
+    double normalizedY,
+  ) async {
+    final currentScene = _scene;
+    if (currentScene == null || _sheetWorkspace.activeSheet == null) {
+      return false;
+    }
+    if (_sheetWorkspace.activeSheet!.placements
+        .any((placement) => placement.view.id == view.id)) {
+      return false;
+    }
+
+    setState(() {
+      _statusMessage = '${view.label} sheet uchun tayyorlanmoqda...';
+    });
+    try {
+      RenderScene resolvedScene;
+      if (view.kind == SheetViewKind.section &&
+          view.section != null &&
+          _engineBackedMode) {
+        final result = await _sceneViews.section(
+          view.section!.start,
+          view.section!.end,
+        );
+        resolvedScene = result.scene ?? currentScene;
+      } else {
+        var source = _sheetSourceScene;
+        if (source == null) {
+          if (_engineBackedMode) {
+            final result = await _sceneViews.setFullSceneRenderScope(true);
+            source = result.scene ?? currentScene;
+          } else {
+            source = currentScene;
+          }
+          _sheetSourceScene = source;
+        }
+        resolvedScene = view.kind == SheetViewKind.floorPlan
+            ? source.filteredByLevel(view.levelId)
+            : source;
+      }
+
+      _sheetViewScenes[view.id] = resolvedScene;
+      final placed = _sheetWorkspace.placeView(
+        view: view,
+        centerX: normalizedX,
+        centerY: normalizedY,
+      );
+      if (mounted) {
+        setState(() {
+          _statusMessage = placed
+              ? '${view.label} sheetga joylashtirildi.'
+              : '${view.label} bu sheetda allaqachon bor.';
+        });
+      }
+      return placed;
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _statusMessage = '${view.label} sheetga qo‘yilmadi.';
+          _loadError = error.toString();
+        });
+      }
+      return false;
+    }
+  }
+
   Future<void> _toggleAndroidRenderer() async {
     final next =
         _viewportController.backend == RenderSceneViewportBackend.native
@@ -565,6 +705,8 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     final scene = rawScene == null
         ? null
         : RenderSceneEditor.normalizeSceneGeometry(rawScene);
+    _sheetSourceScene = null;
+    _sheetViewScenes.clear();
 
     setState(() {
       _scene = scene;
@@ -619,6 +761,8 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         final input = diagnostics['inputObjects'] ?? 0;
         final renderables = diagnostics['renderables'] ?? 0;
         final faceBatches = diagnostics['faceBatches'] ?? renderables;
+        final instanceGroups = diagnostics['instanceGroups'] ?? 0;
+        final instancedObjects = diagnostics['instancedObjects'] ?? 0;
         final edgeBatches = diagnostics['edgeBatches'] ?? 0;
         final drawCalls = diagnostics['estimatedDrawCalls'] ?? renderables;
         final frames = diagnostics['renderedFrames'] ?? 0;
@@ -626,7 +770,8 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         setState(() {
           _statusMessage =
               'Filament: input=$input · renderables=$renderables · '
-              'face batches=$faceBatches · edge batches=$edgeBatches · '
+              'face batches=$faceBatches · instances=$instancedObjects/$instanceGroups · '
+              'edge batches=$edgeBatches · '
               'draws=$drawCalls · frames=$frames · '
               'material=${materialReady ? 'ready' : 'FAILED'}';
         });
@@ -682,7 +827,6 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         'column',
         'beam',
         'stair',
-        'roof',
       };
       final visible = preferred.intersection(available);
       if (visible.isNotEmpty) {
@@ -3777,6 +3921,8 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         : null;
     final resolvedLevelId =
         _resolveInitialLevelId(nextScene, preferred: _activeLevelId);
+    _sheetSourceScene = null;
+    _sheetViewScenes.clear();
 
     setState(() {
       _scene = nextScene;
@@ -3920,7 +4066,9 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
                       _buildLeftRail(context, scene),
                       AuthoringToolPalette(
                         mode: _interactionMode,
-                        enabled: scene != null && !_isBusy,
+                        enabled: scene != null &&
+                            !_isBusy &&
+                            _sheetWorkspace.activeSheet == null,
                         onModeChanged: _setInteractionMode,
                       ),
                       Expanded(
@@ -3967,6 +4115,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
             : _ResidentialTemplateKind.campus6x9,
       ),
       onSave: _saveCurrentProject,
+      onDocumentation: _openDocumentationWorkspace,
       onOpenMaterials: _showMaterialLayerEditor,
       onCreateSection: _showSectionDialog,
       onReload: _reloadCurrentScene,
@@ -4334,6 +4483,9 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       projectionMode: _projectionMode,
       activeLevelId: _activeLevelId,
       activeSectionName: _activeSectionView?.name,
+      sheets: _sheetWorkspace.sheets,
+      activeSheetId: _sheetWorkspace.activeSheetId,
+      onCreateSheet: _createSheet,
       onClose: () => setState(() => _showObjectList = false),
       onVisibleKindsChanged: _setVisibleKinds,
       onSelectObject: _selectObject,
@@ -4344,6 +4496,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       },
       onOpenElevation: _setProjectionMode,
       onOpenSection: _openProjectSection,
+      onOpenSheet: _openSheet,
     );
   }
 
@@ -4368,6 +4521,18 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   }
 
   Widget _buildViewportPanel(BuildContext context) {
+    final sheet = _sheetWorkspace.activeSheet;
+    final scene = _scene;
+    if (sheet != null && scene != null) {
+      return SheetCanvas(
+        controller: _sheetWorkspace,
+        fallbackScene: _sheetSourceScene ?? scene,
+        resolvedScenes: _sheetViewScenes,
+        onPlaceView: _placeSheetView,
+        onClose: _closeActiveSheet,
+        onOpenPdf: _openDocumentationWorkspace,
+      );
+    }
     return Stack(
       fit: StackFit.expand,
       children: <Widget>[

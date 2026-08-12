@@ -1714,6 +1714,7 @@ class ViewerRepository
     return parseRenderSceneJson(json, source: source);
   }
 
+  @override
   Future<RenderSceneLoadResult> sectionScene(
     RenderScenePoint start,
     RenderScenePoint end,

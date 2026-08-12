@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'documentation/document_models.dart';
 import 'render_scene_models.dart';
 import 'render_scene_viewport_planar.dart';
 import 'render_scene_viewport_types.dart';
@@ -21,6 +22,10 @@ class ProjectBrowserViews extends StatelessWidget {
     required this.onOpenFloorPlan,
     required this.onOpenElevation,
     required this.onOpenSection,
+    required this.sheets,
+    this.activeSheetId,
+    required this.onCreateSheet,
+    required this.onOpenSheet,
   });
 
   final RenderScene scene;
@@ -31,6 +36,10 @@ class ProjectBrowserViews extends StatelessWidget {
   final Future<void> Function(int levelId) onOpenFloorPlan;
   final Future<void> Function(RenderSceneProjectionMode mode) onOpenElevation;
   final Future<void> Function(RenderSceneSection section) onOpenSection;
+  final List<ProjectSheet> sheets;
+  final String? activeSheetId;
+  final VoidCallback onCreateSheet;
+  final ValueChanged<String> onOpenSheet;
 
   @override
   Widget build(BuildContext context) {
@@ -42,20 +51,43 @@ class ProjectBrowserViews extends StatelessWidget {
       required bool selected,
       required IconData icon,
       required Future<void> Function() onTap,
-    }) =>
-        Material(
-          color: Colors.transparent,
-          child: ListTile(
-            dense: true,
-            visualDensity: VisualDensity.compact,
-            minLeadingWidth: 24,
-            contentPadding: const EdgeInsets.symmetric(horizontal: 12),
-            leading: Icon(icon, size: 18),
-            selected: selected,
-            title: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
-            onTap: onTap,
+      SheetViewReference? dragView,
+    }) {
+      final tile = Material(
+        color: Colors.transparent,
+        child: ListTile(
+          dense: true,
+          visualDensity: VisualDensity.compact,
+          minLeadingWidth: 24,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+          leading: Icon(icon, size: 18),
+          selected: selected,
+          title: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+          onTap: onTap,
+        ),
+      );
+      if (dragView == null) return tile;
+      return LongPressDraggable<SheetViewReference>(
+        data: dragView,
+        delay: const Duration(milliseconds: 280),
+        hapticFeedbackOnStart: true,
+        feedback: Material(
+          elevation: 8,
+          borderRadius: BorderRadius.circular(8),
+          child: SizedBox(
+            width: 220,
+            child: ListTile(
+              dense: true,
+              leading: Icon(icon, size: 18),
+              title: Text(dragView.label),
+              subtitle: const Text('Sheetga joylashtirish'),
+            ),
           ),
-        );
+        ),
+        childWhenDragging: Opacity(opacity: 0.35, child: tile),
+        child: tile,
+      );
+    }
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 4),
@@ -71,6 +103,12 @@ class ProjectBrowserViews extends StatelessWidget {
             icon: Icons.view_in_ar_outlined,
             selected: projectionMode == RenderSceneProjectionMode.isometric,
             onTap: onOpen3d,
+            dragView: const SheetViewReference(
+              id: 'view-3d-default',
+              label: '3D View',
+              kind: SheetViewKind.threeD,
+              projectionMode: RenderSceneProjectionMode.isometric,
+            ),
           ),
           _ProjectBrowserGroup(
             storageKey: 'project-browser-floor-plans',
@@ -85,6 +123,13 @@ class ProjectBrowserViews extends StatelessWidget {
                       projectionMode == RenderSceneProjectionMode.topDown &&
                           activeLevelId == level.levelId,
                   onTap: () => onOpenFloorPlan(level.levelId),
+                  dragView: SheetViewReference(
+                    id: 'floor-plan-${level.levelId}',
+                    label: '${level.name} plan',
+                    kind: SheetViewKind.floorPlan,
+                    projectionMode: RenderSceneProjectionMode.topDown,
+                    levelId: level.levelId,
+                  ),
                 ),
             ],
           ),
@@ -104,6 +149,12 @@ class ProjectBrowserViews extends StatelessWidget {
                   icon: Icons.straighten,
                   selected: projectionMode == mode,
                   onTap: () => onOpenElevation(mode),
+                  dragView: SheetViewReference(
+                    id: 'elevation-${mode.name}',
+                    label: '${mode.shortLabel} Elevation',
+                    kind: SheetViewKind.elevation,
+                    projectionMode: mode,
+                  ),
                 ),
             ],
           ),
@@ -118,6 +169,37 @@ class ProjectBrowserViews extends StatelessWidget {
                   icon: Icons.straighten,
                   selected: activeSectionName == section.name,
                   onTap: () => onOpenSection(section),
+                  dragView: SheetViewReference(
+                    id: 'section-${section.name}',
+                    label: section.name,
+                    kind: SheetViewKind.section,
+                    projectionMode: RenderSceneProjectionMode.northElevation,
+                    section: section,
+                  ),
+                ),
+            ],
+          ),
+          _ProjectBrowserGroup(
+            storageKey: 'project-browser-sheets',
+            icon: Icons.description_outlined,
+            title: Text('Sheets (${sheets.length})'),
+            children: <Widget>[
+              ListTile(
+                dense: true,
+                visualDensity: VisualDensity.compact,
+                minLeadingWidth: 24,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+                leading: const Icon(Icons.add_box_outlined, size: 18),
+                title: const Text('New Sheet'),
+                subtitle: const Text('A3 landscape'),
+                onTap: onCreateSheet,
+              ),
+              for (final sheet in sheets)
+                viewRow(
+                  label: '${sheet.number} - ${sheet.title}',
+                  icon: Icons.insert_drive_file_outlined,
+                  selected: activeSheetId == sheet.id,
+                  onTap: () async => onOpenSheet(sheet.id),
                 ),
             ],
           ),
