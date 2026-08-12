@@ -38,6 +38,7 @@ import 'tools/surface_tool_controller.dart';
 import 'tools/stair_tool_controller.dart';
 import 'tools/trim_extend_tool_controller.dart';
 import 'tools/wall_tool_controller.dart';
+import 'view_tabs.dart';
 import 'workspace_chrome.dart';
 import 'render_scene_viewport.dart';
 import 'render_scene_viewport_planar.dart';
@@ -148,6 +149,15 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   String? _engineLoadDiagnostic;
   int? _activeLevelId;
   RenderSceneSection? _activeSectionView;
+  final List<OpenedViewTab> _openedViewTabs = <OpenedViewTab>[
+    const OpenedViewTab(
+      id: 'view-3d-default',
+      label: '3D View',
+      kind: OpenedViewKind.threeD,
+      projectionMode: RenderSceneProjectionMode.isometric,
+    ),
+  ];
+  String? _activeViewTabId = 'view-3d-default';
   final Map<String, RenderScene> _sheetViewScenes = <String, RenderScene>{};
   RenderScene? _sheetSourceScene;
   double _planViewRangeMeters = 2.0;
@@ -581,9 +591,158 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     );
   }
 
+  OpenedViewTab? _openedViewTabById(String id) {
+    for (final tab in _openedViewTabs) {
+      if (tab.id == id) return tab;
+    }
+    return null;
+  }
+
+  Future<void> _openViewTab(OpenedViewTab tab) async {
+    if (_isBusy || !mounted) return;
+    final existing = _openedViewTabById(tab.id);
+    if (existing == null) {
+      _openedViewTabs.add(tab);
+    }
+    setState(() {
+      _activeViewTabId = tab.id;
+    });
+    final target = existing ?? tab;
+    try {
+      await _activateViewTab(target);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _loadError = error.toString();
+        _statusMessage = '${target.label} ochilmadi.';
+        _isBusy = false;
+      });
+    }
+  }
+
+  Future<void> _activateViewTab(OpenedViewTab tab) async {
+    if (tab.kind != OpenedViewKind.sheet &&
+        _sheetWorkspace.activeSheet != null) {
+      _sheetWorkspace.closeSheet();
+    }
+    switch (tab.kind) {
+      case OpenedViewKind.threeD:
+        await _setProjectionMode(
+          tab.projectionMode ?? RenderSceneProjectionMode.isometric,
+        );
+      case OpenedViewKind.floorPlan:
+        if (tab.levelId != null) {
+          await _setActiveLevel(tab.levelId);
+        }
+        await _setProjectionMode(
+          tab.projectionMode ?? RenderSceneProjectionMode.topDown,
+        );
+      case OpenedViewKind.elevation:
+        await _setProjectionMode(
+          tab.projectionMode ?? RenderSceneProjectionMode.northElevation,
+        );
+      case OpenedViewKind.section:
+        final section = tab.section;
+        if (section != null) await _openProjectSection(section);
+      case OpenedViewKind.sheet:
+        if (tab.sheetId != null) _openSheet(tab.sheetId!);
+    }
+  }
+
+  Future<void> _open3dViewTab() {
+    return _openViewTab(const OpenedViewTab(
+      id: 'view-3d-default',
+      label: '3D View',
+      kind: OpenedViewKind.threeD,
+      projectionMode: RenderSceneProjectionMode.isometric,
+    ));
+  }
+
+  Future<void> _openFloorPlanViewTab(int levelId) async {
+    final level = _scene?.levelById(levelId);
+    if (level == null) return;
+    await _openViewTab(OpenedViewTab(
+      id: 'floor-plan-$levelId',
+      label: '${level.name} plan',
+      kind: OpenedViewKind.floorPlan,
+      projectionMode: RenderSceneProjectionMode.topDown,
+      levelId: levelId,
+    ));
+  }
+
+  Future<void> _openElevationViewTab(
+    RenderSceneProjectionMode mode,
+  ) {
+    return _openViewTab(OpenedViewTab(
+      id: 'elevation-${mode.name}',
+      label: mode.shortLabel,
+      kind: OpenedViewKind.elevation,
+      projectionMode: mode,
+    ));
+  }
+
+  Future<void> _openSectionViewTab(RenderSceneSection section) {
+    return _openViewTab(OpenedViewTab(
+      id: 'section-${section.name}',
+      label: section.name,
+      kind: OpenedViewKind.section,
+      projectionMode: RenderSceneProjectionMode.northElevation,
+      section: section,
+    ));
+  }
+
+  Future<void> _openSheetViewTab(String sheetId) {
+    final sheet = _sheetWorkspace.sheets.firstWhere(
+      (item) => item.id == sheetId,
+      orElse: () => const ProjectSheet(id: '', number: '', title: ''),
+    );
+    if (sheet.id.isEmpty) return Future<void>.value();
+    return _openViewTab(OpenedViewTab(
+      id: 'sheet-${sheet.id}',
+      label: '${sheet.number} - ${sheet.title}',
+      kind: OpenedViewKind.sheet,
+      sheetId: sheet.id,
+    ));
+  }
+
+  Future<void> _selectOpenedViewTab(String tabId) async {
+    final tab = _openedViewTabById(tabId);
+    if (tab == null || _activeViewTabId == tabId) return;
+    setState(() => _activeViewTabId = tabId);
+    await _activateViewTab(tab);
+  }
+
+  Future<void> _closeOpenedViewTab(String tabId) async {
+    if (_openedViewTabs.length <= 1) return;
+    final index = _openedViewTabs.indexWhere((tab) => tab.id == tabId);
+    if (index < 0) return;
+    final closing = _openedViewTabs[index];
+    final wasActive = _activeViewTabId == tabId;
+    final nextIndex =
+        index < _openedViewTabs.length - 1 ? index + 1 : index - 1;
+    final nextTab = _openedViewTabs[nextIndex];
+    setState(() {
+      _openedViewTabs.removeAt(index);
+      if (wasActive) _activeViewTabId = nextTab.id;
+    });
+    if (closing.kind == OpenedViewKind.sheet &&
+        _sheetWorkspace.activeSheetId == closing.sheetId) {
+      _sheetWorkspace.closeSheet();
+    }
+    if (wasActive) await _activateViewTab(nextTab);
+  }
+
   void _createSheet() {
     final sheet = _sheetWorkspace.createSheet();
+    final tab = OpenedViewTab(
+      id: 'sheet-${sheet.id}',
+      label: '${sheet.number} - ${sheet.title}',
+      kind: OpenedViewKind.sheet,
+      sheetId: sheet.id,
+    );
     setState(() {
+      _openedViewTabs.add(tab);
+      _activeViewTabId = tab.id;
       _showObjectList = true;
       _showInspector = false;
       _statusMessage = '${sheet.number} sheet ochildi.';
@@ -602,17 +761,8 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   }
 
   void _closeActiveSheet() {
-    final closed = _sheetWorkspace.activeSheet;
-    _sheetWorkspace.closeSheet();
-    setState(() {
-      _statusMessage = closed == null
-          ? _statusMessage
-          : '${closed.number} yopildi · model view';
-    });
-    if (_engineBackedMode) {
-      final needsFullScene = _projectionMode.isElevation;
-      unawaited(_sceneViews.setFullSceneRenderScope(needsFullScene));
-    }
+    final sheetId = _sheetWorkspace.activeSheetId;
+    if (sheetId != null) unawaited(_closeOpenedViewTab('sheet-$sheetId'));
   }
 
   Future<bool> _placeSheetView(
@@ -4060,6 +4210,18 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
             appBar: _buildAppBar(context, fullScene, scene),
             body: Column(
               children: <Widget>[
+                if (_openedViewTabs.isNotEmpty)
+                  OpenedViewTabBar(
+                    tabs: List<OpenedViewTab>.unmodifiable(_openedViewTabs),
+                    activeTabId: _activeViewTabId,
+                    enabled: !_isBusy,
+                    onSelect: (tabId) => unawaited(
+                      _selectOpenedViewTab(tabId),
+                    ),
+                    onClose: (tabId) => unawaited(
+                      _closeOpenedViewTab(tabId),
+                    ),
+                  ),
                 Expanded(
                   child: Row(
                     children: <Widget>[
@@ -4480,23 +4642,18 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       availableKinds: _availableKinds(scene),
       visibleKinds: _visibleKinds,
       selectedElementId: _viewportController.selectedElementId,
-      projectionMode: _projectionMode,
-      activeLevelId: _activeLevelId,
-      activeSectionName: _activeSectionView?.name,
+      activeViewTabId: _activeViewTabId,
       sheets: _sheetWorkspace.sheets,
       activeSheetId: _sheetWorkspace.activeSheetId,
       onCreateSheet: _createSheet,
       onClose: () => setState(() => _showObjectList = false),
       onVisibleKindsChanged: _setVisibleKinds,
       onSelectObject: _selectObject,
-      onOpen3d: () => _setProjectionMode(RenderSceneProjectionMode.isometric),
-      onOpenFloorPlan: (levelId) async {
-        await _setActiveLevel(levelId);
-        await _setProjectionMode(RenderSceneProjectionMode.topDown);
-      },
-      onOpenElevation: _setProjectionMode,
-      onOpenSection: _openProjectSection,
-      onOpenSheet: _openSheet,
+      onOpen3d: _open3dViewTab,
+      onOpenFloorPlan: _openFloorPlanViewTab,
+      onOpenElevation: _openElevationViewTab,
+      onOpenSection: _openSectionViewTab,
+      onOpenSheet: _openSheetViewTab,
     );
   }
 

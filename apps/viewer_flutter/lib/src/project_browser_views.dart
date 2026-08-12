@@ -15,9 +15,7 @@ class ProjectBrowserViews extends StatelessWidget {
   const ProjectBrowserViews({
     super.key,
     required this.scene,
-    required this.projectionMode,
-    required this.activeLevelId,
-    this.activeSectionName,
+    required this.activeViewTabId,
     required this.onOpen3d,
     required this.onOpenFloorPlan,
     required this.onOpenElevation,
@@ -29,9 +27,7 @@ class ProjectBrowserViews extends StatelessWidget {
   });
 
   final RenderScene scene;
-  final RenderSceneProjectionMode projectionMode;
-  final int? activeLevelId;
-  final String? activeSectionName;
+  final String? activeViewTabId;
   final Future<void> Function() onOpen3d;
   final Future<void> Function(int levelId) onOpenFloorPlan;
   final Future<void> Function(RenderSceneProjectionMode mode) onOpenElevation;
@@ -101,7 +97,7 @@ class ProjectBrowserViews extends StatelessWidget {
           viewRow(
             label: '3D View',
             icon: Icons.view_in_ar_outlined,
-            selected: projectionMode == RenderSceneProjectionMode.isometric,
+            selected: activeViewTabId == 'view-3d-default',
             onTap: onOpen3d,
             dragView: const SheetViewReference(
               id: 'view-3d-default',
@@ -119,9 +115,7 @@ class ProjectBrowserViews extends StatelessWidget {
                 viewRow(
                   label: '${level.name} plan',
                   icon: Icons.grid_4x4_outlined,
-                  selected:
-                      projectionMode == RenderSceneProjectionMode.topDown &&
-                          activeLevelId == level.levelId,
+                  selected: activeViewTabId == 'floor-plan-${level.levelId}',
                   onTap: () => onOpenFloorPlan(level.levelId),
                   dragView: SheetViewReference(
                     id: 'floor-plan-${level.levelId}',
@@ -147,7 +141,7 @@ class ProjectBrowserViews extends StatelessWidget {
                 viewRow(
                   label: mode.shortLabel,
                   icon: Icons.straighten,
-                  selected: projectionMode == mode,
+                  selected: activeViewTabId == 'elevation-${mode.name}',
                   onTap: () => onOpenElevation(mode),
                   dragView: SheetViewReference(
                     id: 'elevation-${mode.name}',
@@ -167,7 +161,7 @@ class ProjectBrowserViews extends StatelessWidget {
                 viewRow(
                   label: section.name,
                   icon: Icons.straighten,
-                  selected: activeSectionName == section.name,
+                  selected: activeViewTabId == 'section-${section.name}',
                   onTap: () => onOpenSection(section),
                   dragView: SheetViewReference(
                     id: 'section-${section.name}',
@@ -198,7 +192,7 @@ class ProjectBrowserViews extends StatelessWidget {
                 viewRow(
                   label: '${sheet.number} - ${sheet.title}',
                   icon: Icons.insert_drive_file_outlined,
-                  selected: activeSheetId == sheet.id,
+                  selected: activeViewTabId == 'sheet-${sheet.id}',
                   onTap: () async => onOpenSheet(sheet.id),
                 ),
             ],

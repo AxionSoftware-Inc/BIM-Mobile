@@ -16,9 +16,7 @@ class ProjectBrowserPanel extends StatelessWidget {
     required this.availableKinds,
     required this.visibleKinds,
     required this.selectedElementId,
-    required this.projectionMode,
-    required this.activeLevelId,
-    this.activeSectionName,
+    required this.activeViewTabId,
     required this.onClose,
     required this.onVisibleKindsChanged,
     required this.onSelectObject,
@@ -36,9 +34,7 @@ class ProjectBrowserPanel extends StatelessWidget {
   final List<String> availableKinds;
   final Set<String> visibleKinds;
   final String? selectedElementId;
-  final RenderSceneProjectionMode projectionMode;
-  final int? activeLevelId;
-  final String? activeSectionName;
+  final String? activeViewTabId;
   final VoidCallback onClose;
   final ValueChanged<Set<String>> onVisibleKindsChanged;
   final Future<void> Function(RenderSceneObject object) onSelectObject;
@@ -89,9 +85,7 @@ class ProjectBrowserPanel extends StatelessWidget {
                     children: <Widget>[
                       ProjectBrowserViews(
                         scene: activeScene,
-                        projectionMode: projectionMode,
-                        activeLevelId: activeLevelId,
-                        activeSectionName: activeSectionName,
+                        activeViewTabId: activeViewTabId,
                         onOpen3d: onOpen3d,
                         onOpenFloorPlan: onOpenFloorPlan,
                         onOpenElevation: onOpenElevation,
