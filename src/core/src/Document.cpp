@@ -1395,6 +1395,193 @@ void Document::set_wall_axis(ElementId wall_id, Line2 axis) {
         }
     }
     refresh_dependencies_for_wall(wall_id);
+    // Axis edits are a normal authoring path, not only a low-level geometry
+    // update. Rebuild joins immediately so a moved endpoint cannot keep the
+    // previous miter/cap relation and make the next corner look torn.
+    if (automatic_wall_join_enabled_) {
+        auto_join_walls();
+    }
+    invalidate_dependency_graph_cache();
+}
+
+void Document::set_wall_axis_with_joins(ElementId wall_id, Line2 axis) {
+    auto& wall_element = require_wall(wall_id);
+    auto* wall = wall_element.wall();
+    validate_wall_axis(axis, wall->thickness_meters, resolved_wall_height(*wall));
+
+    struct AxisUpdate {
+        ElementId id{};
+        Line2 before{};
+        Line2 after{};
+    };
+    std::vector<AxisUpdate> updates{
+        AxisUpdate{.id = wall_id, .before = wall->axis, .after = axis},
+    };
+    // Endpoint drags are allowed to be a few pixels inaccurate on touch. If
+    // the moved endpoint lands close to another wall's endpoint or line,
+    // resolve that contact before the join graph is rebuilt. Otherwise the
+    // two walls can be recorded as joined at a shallow diagonal intersection
+    // even though the user's intention was a perpendicular/T connection.
+    if (std::abs(axis.start.x - wall->axis.start.x) > epsilon ||
+        std::abs(axis.start.y - wall->axis.start.y) > epsilon ||
+        std::abs(axis.end.x - wall->axis.end.x) > epsilon ||
+        std::abs(axis.end.y - wall->axis.end.y) > epsilon) {
+        constexpr double endpoint_snap_tolerance_meters = 0.35;
+        const auto point_on_segment = [](Point2 point, Line2 line) {
+            return between(point.x, line.start.x, line.end.x) &&
+                between(point.y, line.start.y, line.end.y);
+        };
+        const auto distance = [](Point2 first, Point2 second) {
+            return std::hypot(first.x - second.x, first.y - second.y);
+        };
+        const auto moved_start = distance(axis.start, wall->axis.start) > epsilon;
+        const auto moved_end = distance(axis.end, wall->axis.end) > epsilon;
+        auto snap_endpoint = [&](Point2& endpoint, bool moved) {
+            if (!moved) return;
+            auto best_distance = endpoint_snap_tolerance_meters;
+            std::optional<Point2> best;
+            for (const auto& other_element : elements_) {
+                const auto* other_wall = other_element.wall();
+                if (other_wall == nullptr || other_element.id() == wall_id ||
+                    other_wall->level_id != wall->level_id) {
+                    continue;
+                }
+                for (const auto candidate : {other_wall->axis.start, other_wall->axis.end}) {
+                    const auto candidate_distance = distance(endpoint, candidate);
+                    if (candidate_distance < best_distance) {
+                        best_distance = candidate_distance;
+                        best = candidate;
+                    }
+                }
+                const auto intersection = line_intersection(axis, other_wall->axis);
+                if (intersection.has_value() && point_on_segment(*intersection, other_wall->axis)) {
+                    const auto intersection_distance = distance(endpoint, *intersection);
+                    if (intersection_distance < best_distance) {
+                        best_distance = intersection_distance;
+                        best = intersection;
+                    }
+                }
+            }
+            if (best.has_value()) endpoint = *best;
+        };
+        snap_endpoint(axis.start, moved_start);
+        snap_endpoint(axis.end, moved_end);
+        updates.front().after = axis;
+    }
+    const auto translate = [](Point2 point, Point2 delta) {
+        return Point2{.x = point.x + delta.x, .y = point.y + delta.y};
+    };
+    const auto source = updates.front();
+    const auto start_delta = subtract(source.after.start, source.before.start);
+    const auto end_delta = subtract(source.after.end, source.before.end);
+    const auto is_translation = std::abs(start_delta.x - end_delta.x) <= epsilon &&
+        std::abs(start_delta.y - end_delta.y) <= epsilon;
+    const auto source_axis = wall->axis;
+    const auto source_level_id = wall->level_id;
+
+    // Only a body translation carries joined endpoints with it. Endpoint
+    // edits deliberately leave neighboring walls fixed; auto_join_walls()
+    // below then rebuilds the relation at the new intersection (including a
+    // T-junction when the moved endpoint lands on another wall's middle).
+    // Spatial proximity is intentionally not enough, and the graph is not
+    // recursively walked: a body move affects immediate joined endpoints
+    // only, never the rest of the building.
+    if (is_translation) {
+        constexpr double joined_endpoint_tolerance_meters = 0.35;
+        const auto endpoint_distance = [](Point2 point, Line2 line) {
+            return std::min(
+                length(Line2{.start = point, .end = line.start}),
+                length(Line2{.start = point, .end = line.end})
+            );
+        };
+        const auto point_on_segment = [](Point2 point, Line2 line) {
+            return between(point.x, line.start.x, line.end.x) &&
+                between(point.y, line.start.y, line.end.y);
+        };
+
+        // Resolve immediate attachment from the pre-move axes instead of
+        // trusting a possibly stale serialized join list. A body move carries
+        // an attached endpoint even when it slightly overruns a T host; it
+        // never walks beyond that directly attached wall.
+        for (const auto& other_element : elements_) {
+            const auto* other_wall = other_element.wall();
+            if (other_wall == nullptr || other_element.id() == wall_id ||
+                other_wall->level_id != source_level_id) {
+                continue;
+            }
+            const auto intersection = line_intersection(source_axis, other_wall->axis);
+            if (!intersection.has_value()) continue;
+
+            const auto source_on_segment = point_on_segment(*intersection, source_axis);
+            const auto other_on_segment = point_on_segment(*intersection, other_wall->axis);
+            const auto source_near_endpoint =
+                endpoint_distance(*intersection, source_axis) <= joined_endpoint_tolerance_meters;
+            const auto other_near_endpoint =
+                endpoint_distance(*intersection, other_wall->axis) <= joined_endpoint_tolerance_meters;
+            if ((!source_on_segment && !source_near_endpoint) ||
+                (!other_on_segment && !other_near_endpoint) ||
+                !other_near_endpoint) {
+                continue;
+            }
+
+            auto other_axis = other_wall->axis;
+            const auto start_distance = length(Line2{
+                .start = other_axis.start, .end = *intersection});
+            const auto end_distance = length(Line2{
+                .start = other_axis.end, .end = *intersection});
+            if (start_distance <= end_distance &&
+                start_distance <= joined_endpoint_tolerance_meters) {
+                other_axis.start = translate(other_axis.start, start_delta);
+            } else if (end_distance <= joined_endpoint_tolerance_meters) {
+                other_axis.end = translate(other_axis.end, start_delta);
+            } else {
+                continue;
+            }
+            updates.push_back(AxisUpdate{
+                .id = other_element.id(),
+                .before = other_wall->axis,
+                .after = other_axis,
+            });
+        }
+    }
+
+    // Validate the complete connected edit before writing any axis. This
+    // prevents a bad opening or too-short wall from leaving a partial chain.
+    for (const auto& update : updates) {
+        auto& element = require_wall(update.id);
+        auto* candidate = element.wall();
+        auto checked = *candidate;
+        checked.axis = update.after;
+        validate_wall_axis(update.after, candidate->thickness_meters, resolved_wall_height(checked));
+        validate_wall_openings(checked);
+        if (update.id != wall_id) {
+            const auto before_direction = subtract(update.before.end, update.before.start);
+            const auto after_direction = subtract(update.after.end, update.after.start);
+            const auto direction_dot = (before_direction.x * after_direction.x) +
+                (before_direction.y * after_direction.y);
+            if (direction_dot <= epsilon) {
+                throw std::invalid_argument(
+                    "wall move would invert or collapse an immediately joined wall");
+            }
+        }
+    }
+
+    for (const auto& update : updates) {
+        auto& element = require_wall(update.id);
+        element.wall()->axis = update.after;
+        mark_wall_dirty(element);
+        for (auto& related : elements_) {
+            auto* roof = related.roof();
+            if (roof != nullptr && std::find(roof->source_wall_ids.begin(), roof->source_wall_ids.end(), update.id) != roof->source_wall_ids.end()) {
+                roof->generated_geometry_dirty = true;
+                related.touch();
+            }
+        }
+        refresh_dependencies_for_wall(update.id);
+    }
+    if (automatic_wall_join_enabled_) {
+        auto_join_walls();
+    }
     invalidate_dependency_graph_cache();
 }
 
@@ -1858,11 +2045,11 @@ ElementId Document::create_stair(
 ElementId Document::create_floor_system_for_room(ElementId room_id, ElementId assembly_id) {
     const auto& room_element = require_room(room_id);
     const auto* room = room_element.room();
-    const auto* assembly = get_layered_assembly(assembly_id);
-    if (assembly == nullptr) {
+    const auto* assembly = assembly_id == 0 ? nullptr : get_layered_assembly(assembly_id);
+    if (assembly_id != 0 && assembly == nullptr) {
         throw std::invalid_argument("floor assembly does not exist");
     }
-    if (assembly->kind != LayeredAssemblyKind::Floor) {
+    if (assembly != nullptr && assembly->kind != LayeredAssemblyKind::Floor) {
         throw std::invalid_argument("assembly kind must be floor");
     }
     for (auto& [system_id, system] : floor_systems_) {
@@ -1892,11 +2079,11 @@ ElementId Document::create_floor_system_for_room(ElementId room_id, ElementId as
 ElementId Document::create_ceiling_system_for_room(ElementId room_id, ElementId assembly_id, double height_offset_meters) {
     const auto& room_element = require_room(room_id);
     const auto* room = room_element.room();
-    const auto* assembly = get_layered_assembly(assembly_id);
-    if (assembly == nullptr) {
+    const auto* assembly = assembly_id == 0 ? nullptr : get_layered_assembly(assembly_id);
+    if (assembly_id != 0 && assembly == nullptr) {
         throw std::invalid_argument("ceiling assembly does not exist");
     }
-    if (assembly->kind != LayeredAssemblyKind::Ceiling) {
+    if (assembly != nullptr && assembly->kind != LayeredAssemblyKind::Ceiling) {
         throw std::invalid_argument("assembly kind must be ceiling");
     }
     height_offset_meters = normalized_ceiling_height_offset(height_offset_meters);
@@ -1936,11 +2123,11 @@ ElementId Document::create_floor_system_from_profile(
     if (level_id != 0) {
         (void)require_level(level_id);
     }
-    const auto* assembly = get_layered_assembly(assembly_id);
-    if (assembly == nullptr) {
+    const auto* assembly = assembly_id == 0 ? nullptr : get_layered_assembly(assembly_id);
+    if (assembly_id != 0 && assembly == nullptr) {
         throw std::invalid_argument("floor assembly does not exist");
     }
-    if (assembly->kind != LayeredAssemblyKind::Floor) {
+    if (assembly != nullptr && assembly->kind != LayeredAssemblyKind::Floor) {
         throw std::invalid_argument("assembly kind must be floor");
     }
     boundary_polygon = simplify_polygon(std::move(boundary_polygon));
@@ -1979,11 +2166,11 @@ ElementId Document::create_ceiling_system_from_profile(
     if (level_id != 0) {
         (void)require_level(level_id);
     }
-    const auto* assembly = get_layered_assembly(assembly_id);
-    if (assembly == nullptr) {
+    const auto* assembly = assembly_id == 0 ? nullptr : get_layered_assembly(assembly_id);
+    if (assembly_id != 0 && assembly == nullptr) {
         throw std::invalid_argument("ceiling assembly does not exist");
     }
-    if (assembly->kind != LayeredAssemblyKind::Ceiling) {
+    if (assembly != nullptr && assembly->kind != LayeredAssemblyKind::Ceiling) {
         throw std::invalid_argument("assembly kind must be ceiling");
     }
     boundary_polygon = simplify_polygon(std::move(boundary_polygon));
@@ -2233,6 +2420,8 @@ void Document::resize_window(ElementId window_id, double width_meters, double he
 }
 
 void Document::auto_join_walls() {
+    constexpr double endpoint_join_tolerance_meters = 0.35;
+
     for (auto& element : elements_) {
         if (auto* wall = element.wall()) {
             if (!wall->joins.empty()) {
@@ -2253,8 +2442,137 @@ void Document::auto_join_walls() {
             if (second_wall == nullptr) {
                 continue;
             }
+            if (first_wall->level_id != second_wall->level_id) {
+                continue;
+            }
 
-            const auto intersection = segment_intersection(first_wall->axis, second_wall->axis);
+            auto line_intersection_point = line_intersection(first_wall->axis, second_wall->axis);
+            auto parallel_endpoint_join = false;
+            if (!line_intersection_point.has_value()) {
+                // Parallel axes are normally not a join. The one safe
+                // exception is a single, almost-collinear end-to-end contact
+                // caused by hand-drawn noise. Reject overlapping parallel
+                // segments so nearby walls never become accidental joins.
+                constexpr double collinear_tolerance_meters = 0.15;
+                const auto first_length = length(first_wall->axis);
+                const auto second_length = length(second_wall->axis);
+                if (first_length > epsilon && second_length > epsilon) {
+                    const auto first_direction = unit_direction(first_wall->axis);
+                    const auto second_offset = Point2{
+                        .x = second_wall->axis.start.x - first_wall->axis.start.x,
+                        .y = second_wall->axis.start.y - first_wall->axis.start.y,
+                    };
+                    const auto parallel_error = std::abs(
+                        first_direction.x * second_offset.y - first_direction.y * second_offset.x);
+                    if (parallel_error <= collinear_tolerance_meters) {
+                        const auto project = [&](Point2 point) {
+                            return (point.x - first_wall->axis.start.x) * first_direction.x +
+                                (point.y - first_wall->axis.start.y) * first_direction.y;
+                        };
+                        const auto first_min = 0.0;
+                        const auto first_max = first_length;
+                        const auto second_a = project(second_wall->axis.start);
+                        const auto second_b = project(second_wall->axis.end);
+                        const auto second_min = std::min(second_a, second_b);
+                        const auto second_max = std::max(second_a, second_b);
+                        const auto overlap = std::min(first_max, second_max) -
+                            std::max(first_min, second_min);
+                        std::optional<Point2> first_contact;
+                        std::optional<Point2> second_contact;
+                        int contact_count = 0;
+                        for (const auto first_point : {first_wall->axis.start, first_wall->axis.end}) {
+                            for (const auto second_point : {second_wall->axis.start, second_wall->axis.end}) {
+                                if (length(Line2{.start = first_point, .end = second_point}) <=
+                                    endpoint_join_tolerance_meters) {
+                                    ++contact_count;
+                                    first_contact = first_point;
+                                    second_contact = second_point;
+                                }
+                            }
+                        }
+                        if (contact_count == 1 && overlap <= collinear_tolerance_meters &&
+                            first_contact.has_value() && second_contact.has_value()) {
+                            line_intersection_point = Point2{
+                                .x = (first_contact->x + second_contact->x) * 0.5,
+                                .y = (first_contact->y + second_contact->y) * 0.5,
+                            };
+                            parallel_endpoint_join = true;
+                        }
+                    }
+                }
+            }
+            if (!line_intersection_point.has_value()) {
+                continue;
+            }
+
+            const auto endpoint_distance = [](Point2 point, Line2 line) {
+                return std::min(length(Line2{.start = point, .end = line.start}),
+                                length(Line2{.start = point, .end = line.end}));
+            };
+            const auto first_on_segment =
+                between(line_intersection_point->x, first_wall->axis.start.x, first_wall->axis.end.x) &&
+                between(line_intersection_point->y, first_wall->axis.start.y, first_wall->axis.end.y);
+            const auto second_on_segment =
+                between(line_intersection_point->x, second_wall->axis.start.x, second_wall->axis.end.x) &&
+                between(line_intersection_point->y, second_wall->axis.start.y, second_wall->axis.end.y);
+            const auto first_near_endpoint = endpoint_distance(*line_intersection_point, first_wall->axis) <= endpoint_join_tolerance_meters;
+            const auto second_near_endpoint = endpoint_distance(*line_intersection_point, second_wall->axis) <= endpoint_join_tolerance_meters;
+            if ((!first_on_segment && !first_near_endpoint) ||
+                (!second_on_segment && !second_near_endpoint)) {
+                continue;
+            }
+
+            // Extend only the endpoint that is close to the true line
+            // intersection. This is the small automatic trim that makes a
+            // hand-drawn 10–15 degree corner join without changing the rest
+            // of either wall.
+            const auto move_nearest_endpoint = [&](Line2& axis) {
+                if (first_on_segment && second_on_segment) return;
+                const auto start_distance = length(Line2{.start = axis.start, .end = *line_intersection_point});
+                const auto end_distance = length(Line2{.start = axis.end, .end = *line_intersection_point});
+                if (start_distance <= end_distance && start_distance <= endpoint_join_tolerance_meters) {
+                    axis.start = *line_intersection_point;
+                } else if (end_distance <= endpoint_join_tolerance_meters) {
+                    axis.end = *line_intersection_point;
+                }
+            };
+            auto first_axis = first_wall->axis;
+            auto second_axis = second_wall->axis;
+            if (parallel_endpoint_join) {
+                const auto snap_nearest_endpoint = [&](Line2& axis) {
+                    const auto start_distance = length(Line2{.start = axis.start, .end = *line_intersection_point});
+                    const auto end_distance = length(Line2{.start = axis.end, .end = *line_intersection_point});
+                    if (start_distance <= end_distance && start_distance <= endpoint_join_tolerance_meters) {
+                        axis.start = *line_intersection_point;
+                    } else if (end_distance <= endpoint_join_tolerance_meters) {
+                        axis.end = *line_intersection_point;
+                    }
+                };
+                snap_nearest_endpoint(first_axis);
+                snap_nearest_endpoint(second_axis);
+            } else {
+                move_nearest_endpoint(first_axis);
+                move_nearest_endpoint(second_axis);
+            }
+            if (!(first_axis.start.x == first_wall->axis.start.x &&
+                  first_axis.start.y == first_wall->axis.start.y &&
+                  first_axis.end.x == first_wall->axis.end.x &&
+                  first_axis.end.y == first_wall->axis.end.y)) {
+                first_wall->axis = first_axis;
+                mark_wall_dirty(*first);
+            }
+            if (!(second_axis.start.x == second_wall->axis.start.x &&
+                  second_axis.start.y == second_wall->axis.start.y &&
+                  second_axis.end.x == second_wall->axis.end.x &&
+                  second_axis.end.y == second_wall->axis.end.y)) {
+                second_wall->axis = second_axis;
+                mark_wall_dirty(*second);
+            }
+
+            auto intersection = segment_intersection(first_wall->axis, second_wall->axis);
+            if (!intersection.has_value() && parallel_endpoint_join) {
+                intersection = line_intersection_point;
+            }
             if (!intersection.has_value()) {
                 continue;
             }
@@ -3201,6 +3519,12 @@ std::vector<Point2> Document::normalized_profile_polygon(const ProfileDraft& dra
 std::vector<ElementId> Document::create_elements_from_profile(const ProfileDraft& draft) {
     if (draft.level_id != 0) {
         (void)require_level(draft.level_id);
+    }
+
+    // Pick Walls is also an authoring operation: repair small touch gaps and
+    // refresh joins before the profile solver validates the selected loop.
+    if (draft.mode == ProfileDraftMode::PickWalls && automatic_wall_join_enabled_) {
+        auto_join_walls();
     }
 
     std::vector<ElementId> created_ids;

@@ -212,7 +212,7 @@ class FallbackRenderScenePainter extends CustomPainter {
           ..lineTo(triangle.c.dx, triangle.c.dy)
           ..close();
 
-        if (displayStyle == RenderSceneDisplayStyle.solid) {
+        if (displayStyle != RenderSceneDisplayStyle.wireframe) {
           canvas.drawPath(
             path,
             Paint()
@@ -423,7 +423,7 @@ class FallbackRenderScenePainter extends CustomPainter {
         triangleIndex < rawTriangles.length;
         triangleIndex += 1) {
       final triangle = rawTriangles[triangleIndex];
-      if (displayStyle == RenderSceneDisplayStyle.solid &&
+      if (displayStyle != RenderSceneDisplayStyle.wireframe &&
           !_isTriangleVisible(triangle, projection)) {
         continue;
       }
@@ -720,6 +720,32 @@ class FallbackRenderScenePainter extends CustomPainter {
       final halfWidth = width * 0.5;
       final first = center - axisUnit.scale(halfWidth);
       final second = center + axisUnit.scale(halfWidth);
+      final hostThickness = RenderSceneEditor.wallThickness(host) ?? 0.20;
+      final halfThickness = hostThickness * 0.5;
+      final cutCorners = <RenderScenePoint>[
+        first + normal.scale(halfThickness),
+        second + normal.scale(halfThickness),
+        second - normal.scale(halfThickness),
+        first - normal.scale(halfThickness),
+      ];
+      final cutScreen = cutCorners
+          .map((point) => projection.project(point).screen)
+          .toList(growable: false);
+      final cutPath = Path()
+        ..moveTo(cutScreen[0].dx, cutScreen[0].dy)
+        ..lineTo(cutScreen[1].dx, cutScreen[1].dy)
+        ..lineTo(cutScreen[2].dx, cutScreen[2].dy)
+        ..lineTo(cutScreen[3].dx, cutScreen[3].dy)
+        ..close();
+      // Openings are not rendered as a second full wall prism in plan. Paint
+      // a small background-coloured cut first, then keep the existing Revit-
+      // style door/window symbol above it.
+      canvas.drawPath(
+        cutPath,
+        Paint()
+          ..style = PaintingStyle.fill
+          ..color = const Color(0xFFF5F8F6),
+      );
       final openEnd = first + normal.scale(width);
       final p0 = projection.project(first).screen;
       final p1 = projection.project(second).screen;
@@ -2075,4 +2101,298 @@ class _EdgeRecord {
 
   final RenderScenePoint start;
   final RenderScenePoint end;
+}
+
+/// Flutter overlay for authoring feedback while the Android Filament view is
+/// underneath it. Filament renders the model, but transient drawing state is
+/// intentionally kept in Flutter so every pointer update is visible without
+/// sending a new mesh to Android.
+class NativeDraftOverlayPainter extends CustomPainter {
+  NativeDraftOverlayPainter({
+    required this.scene,
+    required this.projectionMode,
+    required this.orbitProjectionStyle,
+    required this.camera,
+    required this.planCamera,
+    required this.draftWallStart,
+    required this.draftWallEnd,
+    required this.draftOpening,
+    required this.draftSurface,
+    required this.pickedWallIds,
+    required this.wallThicknessMeters,
+    required this.activeElementId,
+  });
+
+  final RenderScene scene;
+  final RenderSceneProjectionMode projectionMode;
+  final RenderSceneOrbitProjectionStyle orbitProjectionStyle;
+  final RenderSceneCameraState camera;
+  final RenderScenePlanCameraState planCamera;
+  final RenderScenePoint? draftWallStart;
+  final RenderScenePoint? draftWallEnd;
+  final RenderSceneOpeningDraft? draftOpening;
+  final RenderSceneSurfaceDraft? draftSurface;
+  final Set<int> pickedWallIds;
+  final double wallThicknessMeters;
+  final String? activeElementId;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.width <= 1 || size.height <= 1) return;
+    final projection = RenderSceneProjection(
+      sceneBounds: scene.bounds,
+      canvasSize: size,
+      projectionMode: projectionMode,
+      orbitProjectionStyle: orbitProjectionStyle,
+      planCamera: planCamera,
+      camera: camera,
+      padding: FallbackRenderScenePainter.padding,
+    );
+
+    // The Android model is a platform view, so the regular fallback painter
+    // is not above it. Keep the same two endpoint handles in this lightweight
+    // overlay; selection and drag feedback therefore remain visible on the
+    // real tablet renderer as well.
+    if (projectionMode.supportsPlanFootprintEditing &&
+        activeElementId != null) {
+      final selected = scene.objectByStableId(activeElementId!);
+      if (selected != null && selected.kindKey == 'wall') {
+        final start = RenderSceneEditor.wallStartPoint(selected);
+        final end = RenderSceneEditor.wallEndPoint(selected);
+        if (start != null && end != null) {
+          final fill = Paint()
+            ..style = PaintingStyle.fill
+            ..color = const Color(0xFFFFFFFF);
+          final stroke = Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 2.0
+            ..color = const Color(0xFF2563EB);
+          for (final point in <RenderScenePoint>[start, end]) {
+            final screen = projection.project(point).screen;
+            canvas.drawCircle(screen, 7.0, fill);
+            canvas.drawCircle(screen, 7.0, stroke);
+          }
+        }
+      }
+    }
+
+    final surface = draftSurface;
+    if (surface != null && surface.points.length >= 2) {
+      final points = surface.points
+          .map((point) => projection.project(point).screen)
+          .toList(growable: false);
+      final path = Path()..moveTo(points.first.dx, points.first.dy);
+      for (final point in points.skip(1)) {
+        path.lineTo(point.dx, point.dy);
+      }
+      if (surface.closed && points.length >= 3) path.close();
+      canvas.drawPath(
+        path,
+        Paint()
+          ..style = PaintingStyle.fill
+          ..color = const Color(0xFF2563EB).withValues(alpha: 0.10),
+      );
+      canvas.drawPath(
+        path,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.2
+          ..strokeJoin = StrokeJoin.round
+          ..color = const Color(0xFF2563EB).withValues(alpha: 0.9),
+      );
+    }
+
+    // Keep each picked wall visible independently. This is important before
+    // a closed footprint exists, and makes an accidental repeated pick clear.
+    for (final wall in scene.objects) {
+      if (wall.kindKey != 'wall' ||
+          wall.elementId == null ||
+          !pickedWallIds.contains(wall.elementId)) {
+        continue;
+      }
+      final start = RenderSceneEditor.wallStartPoint(wall);
+      final end = RenderSceneEditor.wallEndPoint(wall);
+      final thickness = RenderSceneEditor.wallThickness(wall);
+      if (start == null || end == null || thickness == null) continue;
+      _drawWallBand(
+        canvas,
+        projection,
+        start,
+        end,
+        thickness,
+        fillColor: const Color(0xFF2563EB).withValues(alpha: 0.34),
+        strokeColor: const Color(0xFF1D4ED8),
+        strokeWidth: 3.0,
+      );
+    }
+
+    final opening = draftOpening;
+    if (opening != null && opening.hostWallId != null) {
+      final host = scene.objectById(opening.hostWallId);
+      final start =
+          host == null ? null : RenderSceneEditor.wallStartPoint(host);
+      final end = host == null ? null : RenderSceneEditor.wallEndPoint(host);
+      final thickness =
+          host == null ? null : RenderSceneEditor.wallThickness(host);
+      if (start != null && end != null && thickness != null) {
+        final axis = end - start;
+        final length = axis.distanceTo(RenderScenePoint.zero());
+        if (length > 1e-8) {
+          final axisUnit = axis.scale(1.0 / length);
+          final normal = RenderScenePoint(
+            x: -axisUnit.y,
+            y: axisUnit.x,
+            z: 0,
+          );
+          final center = start + axisUnit.scale(opening.offsetMeters);
+          final halfWidth = opening.widthMeters * 0.5;
+          final first = center - axisUnit.scale(halfWidth);
+          final second = center + axisUnit.scale(halfWidth);
+          final halfThickness = thickness * 0.5;
+          final corners = <RenderScenePoint>[
+            first + normal.scale(halfThickness),
+            second + normal.scale(halfThickness),
+            second - normal.scale(halfThickness),
+            first - normal.scale(halfThickness),
+          ].map((point) => projection.project(point).screen).toList();
+          final cutPath = Path()
+            ..moveTo(corners[0].dx, corners[0].dy)
+            ..lineTo(corners[1].dx, corners[1].dy)
+            ..lineTo(corners[2].dx, corners[2].dy)
+            ..lineTo(corners[3].dx, corners[3].dy)
+            ..close();
+          canvas.drawPath(
+            cutPath,
+            Paint()
+              ..style = PaintingStyle.fill
+              ..color = const Color(0xFFF5F8F6),
+          );
+          final p0 = projection.project(first).screen;
+          final p1 = projection.project(second).screen;
+          final pc = projection.project(center).screen;
+          final openEnd = projection
+              .project(first + normal.scale(opening.widthMeters))
+              .screen;
+          final paint = Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 2.0
+            ..strokeCap = StrokeCap.square
+            ..color = opening.valid
+                ? const Color(0xFF2563EB)
+                : const Color(0xFFD97706);
+          canvas.drawLine(p0, p1, paint);
+          if (opening.kind.toLowerCase() == 'window') {
+            final leftOpen =
+                projection.project(first + normal.scale(halfWidth)).screen;
+            final rightOpen =
+                projection.project(second + normal.scale(halfWidth)).screen;
+            canvas.drawLine(p0, leftOpen, paint);
+            canvas.drawLine(p1, rightOpen, paint);
+          } else {
+            canvas.drawLine(p0, openEnd, paint);
+            final radius = (p1 - p0).distance;
+            if (radius > 1.0) {
+              final startAngle = math.atan2(p1.dy - p0.dy, p1.dx - p0.dx);
+              final endAngle =
+                  math.atan2(openEnd.dy - p0.dy, openEnd.dx - p0.dx);
+              var sweep = endAngle - startAngle;
+              while (sweep > math.pi) {
+                sweep -= math.pi * 2;
+              }
+              while (sweep < -math.pi) {
+                sweep += math.pi * 2;
+              }
+              canvas.drawArc(
+                Rect.fromCircle(center: p0, radius: radius),
+                startAngle,
+                sweep,
+                false,
+                paint,
+              );
+            }
+          }
+          canvas.drawCircle(pc, 3.0, Paint()..color = paint.color);
+        }
+      }
+    }
+
+    final start = draftWallStart;
+    final end = draftWallEnd;
+    if (start == null || end == null || start.distanceTo(end) <= 1e-6) {
+      return;
+    }
+    _drawWallBand(
+      canvas,
+      projection,
+      start,
+      end,
+      wallThicknessMeters,
+      fillColor: const Color(0xFF0EA5E9).withValues(alpha: 0.28),
+      strokeColor: const Color(0xFF0284C7),
+      strokeWidth: 2.6,
+    );
+    final a = projection.project(start).screen;
+    final b = projection.project(end).screen;
+    final endpointPaint = Paint()..color = const Color(0xFF0369A1);
+    canvas.drawCircle(a, 5.5, endpointPaint);
+    canvas.drawCircle(b, 5.5, endpointPaint);
+    canvas.drawLine(
+      a,
+      b,
+      Paint()
+        ..color = const Color(0xFFE0F2FE)
+        ..strokeWidth = 1.4,
+    );
+  }
+
+  void _drawWallBand(
+    Canvas canvas,
+    RenderSceneProjection projection,
+    RenderScenePoint start,
+    RenderScenePoint end,
+    double thickness, {
+    required Color fillColor,
+    required Color strokeColor,
+    required double strokeWidth,
+  }) {
+    final delta = end - start;
+    final length = math.sqrt(delta.x * delta.x + delta.y * delta.y);
+    if (length <= 1e-6) return;
+    final normal = RenderScenePoint(
+      x: -delta.y / length,
+      y: delta.x / length,
+      z: 0,
+    ).scale(thickness.abs() * 0.5);
+    final corners = <RenderScenePoint>[
+      start + normal,
+      end + normal,
+      end - normal,
+      start - normal,
+    ];
+    final points = corners
+        .map((point) => projection.project(point).screen)
+        .toList(growable: false);
+    final path = Path()..moveTo(points.first.dx, points.first.dy);
+    for (final point in points.skip(1)) {
+      path.lineTo(point.dx, point.dy);
+    }
+    path.close();
+    canvas.drawPath(
+      path,
+      Paint()
+        ..style = PaintingStyle.fill
+        ..color = fillColor,
+    );
+    canvas.drawPath(
+      path,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = strokeWidth
+        ..strokeJoin = StrokeJoin.round
+        ..color = strokeColor,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant NativeDraftOverlayPainter oldDelegate) => true;
 }

@@ -4,6 +4,7 @@ import 'documentation/document_models.dart';
 import 'project_browser_views.dart';
 import 'render_scene_models.dart';
 import 'render_scene_viewport_types.dart';
+import 'view_tabs.dart';
 
 /// Complete Project Browser presentation feature.
 ///
@@ -22,6 +23,7 @@ class ProjectBrowserPanel extends StatelessWidget {
     required this.onOpenFloorPlan,
     required this.onOpenElevation,
     required this.onOpenSection,
+    required this.viewPresentationById,
     required this.sheets,
     this.activeSheetId,
     required this.onCreateSheet,
@@ -38,6 +40,7 @@ class ProjectBrowserPanel extends StatelessWidget {
   final Future<void> Function(int levelId) onOpenFloorPlan;
   final Future<void> Function(RenderSceneProjectionMode mode) onOpenElevation;
   final Future<void> Function(RenderSceneSection section) onOpenSection;
+  final Map<String, OpenedViewTab> viewPresentationById;
   final List<ProjectSheet> sheets;
   final String? activeSheetId;
   final VoidCallback onCreateSheet;
@@ -63,7 +66,7 @@ class ProjectBrowserPanel extends StatelessWidget {
               IconButton(
                 tooltip: 'Collapse project browser',
                 onPressed: onClose,
-                icon: const Icon(Icons.chevron_left),
+                icon: const Icon(Icons.chevron_right),
               ),
             ],
           ),
@@ -83,6 +86,7 @@ class ProjectBrowserPanel extends StatelessWidget {
                         onOpenFloorPlan: onOpenFloorPlan,
                         onOpenElevation: onOpenElevation,
                         onOpenSection: onOpenSection,
+                        viewPresentationById: viewPresentationById,
                         sheets: sheets,
                         activeSheetId: activeSheetId,
                         onCreateSheet: onCreateSheet,

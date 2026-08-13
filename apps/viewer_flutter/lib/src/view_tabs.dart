@@ -26,6 +26,9 @@ class OpenedViewTab {
     this.levelId,
     this.section,
     this.sheetId,
+    this.displayStyle = RenderSceneDisplayStyle.solid,
+    this.shadowsEnabled = false,
+    this.orbitProjectionStyle = RenderSceneOrbitProjectionStyle.perspective,
   });
 
   final String id;
@@ -35,6 +38,29 @@ class OpenedViewTab {
   final int? levelId;
   final RenderSceneSection? section;
   final String? sheetId;
+  final RenderSceneDisplayStyle displayStyle;
+  final bool shadowsEnabled;
+  final RenderSceneOrbitProjectionStyle orbitProjectionStyle;
+
+  OpenedViewTab copyWith({
+    RenderSceneProjectionMode? projectionMode,
+    RenderSceneDisplayStyle? displayStyle,
+    bool? shadowsEnabled,
+    RenderSceneOrbitProjectionStyle? orbitProjectionStyle,
+  }) {
+    return OpenedViewTab(
+      id: id,
+      label: label,
+      kind: kind,
+      projectionMode: projectionMode ?? this.projectionMode,
+      levelId: levelId,
+      section: section,
+      sheetId: sheetId,
+      displayStyle: displayStyle ?? this.displayStyle,
+      shadowsEnabled: shadowsEnabled ?? this.shadowsEnabled,
+      orbitProjectionStyle: orbitProjectionStyle ?? this.orbitProjectionStyle,
+    );
+  }
 }
 
 /// Revit-like persistent view strip displayed above the viewport.

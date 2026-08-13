@@ -146,6 +146,9 @@ public:
     void set_beam_column_join(ElementId beam_id, ElementId column_id, bool enabled);
     void set_wall_properties(ElementId wall_id, double thickness_meters, double height_meters, ElementId wall_type_id = 0);
     void set_wall_axis(ElementId wall_id, Line2 axis);
+    /// Applies an axis edit transactionally. A rigid body move carries only
+    /// immediate joined endpoints; an endpoint-handle edit stays local.
+    void set_wall_axis_with_joins(ElementId wall_id, Line2 axis);
     /// Atomically trims or extends the explicitly chosen endpoint of two
     /// same-storey wall axes to their infinite-line intersection.
     void trim_extend_walls(

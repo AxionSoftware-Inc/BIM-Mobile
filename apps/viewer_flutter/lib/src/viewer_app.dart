@@ -3,9 +3,9 @@
 // ignore_for_file: unused_element, unused_element_parameter
 
 import 'dart:async';
-import 'dart:convert';
 import 'dart:math' as math;
 
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -16,7 +16,6 @@ import 'documentation/documentation_workspace.dart';
 import 'documentation/sheet_canvas.dart';
 import 'documentation/sheet_workspace_controller.dart';
 import 'inspector_controller.dart';
-import 'material_layer_editor.dart';
 import 'native_viewer_session_factory.dart';
 import 'property_editor.dart';
 import 'project_lifecycle_service.dart';
@@ -30,6 +29,7 @@ import 'render_scene_repository.dart';
 import 'scene_mutation_service.dart';
 import 'scene_view_service.dart';
 import 'selection_controller.dart';
+import 'start_screen.dart';
 import 'tbe_ffi.dart';
 import 'tools/level_tool_controller.dart';
 import 'tools/opening_tool_controller.dart';
@@ -39,6 +39,7 @@ import 'tools/stair_tool_controller.dart';
 import 'tools/trim_extend_tool_controller.dart';
 import 'tools/wall_tool_controller.dart';
 import 'view_tabs.dart';
+import 'viewer_authoring_gateway.dart';
 import 'workspace_chrome.dart';
 import 'render_scene_viewport.dart';
 import 'render_scene_viewport_planar.dart';
@@ -50,6 +51,7 @@ enum _WallMoveMode {
 }
 
 enum _ResidentialTemplateKind {
+  default3,
   tower9,
   campus6x9,
 }
@@ -78,11 +80,127 @@ class ViewerApp extends StatelessWidget {
         useMaterial3: true,
         visualDensity: VisualDensity.standard,
       ),
-      home: ViewerHomePage(
-        source: source ?? const AssetRenderSceneSource(),
-        preferEngineBackedBundledSample: preferEngineBackedBundledSample,
-      ),
+      home: source == null
+          ? _StartScreenGate(
+              preferEngineBackedBundledSample: preferEngineBackedBundledSample,
+            )
+          : ViewerHomePage(
+              source: source!,
+              preferEngineBackedBundledSample: preferEngineBackedBundledSample,
+            ),
     );
+  }
+}
+
+class _StartScreenGate extends StatefulWidget {
+  const _StartScreenGate({required this.preferEngineBackedBundledSample});
+
+  final bool preferEngineBackedBundledSample;
+
+  @override
+  State<_StartScreenGate> createState() => _StartScreenGateState();
+}
+
+class _StartScreenGateState extends State<_StartScreenGate> {
+  WorkspaceTemplate? _selectedTemplate;
+  String? _projectJson;
+  String? _projectName;
+  String? _projectPath;
+  String? _errorMessage;
+  bool _createBlank = false;
+  bool _busy = false;
+
+  Future<void> _openProject() async {
+    if (_busy) return;
+    try {
+      const typeGroup = XTypeGroup(
+        label: 'BIM projects',
+        extensions: <String>['json', 'tbe.json'],
+      );
+      final file = await openFile(acceptedTypeGroups: <XTypeGroup>[typeGroup]);
+      if (file == null) return;
+      final json = await file.readAsString();
+      if (!mounted) return;
+      setState(() {
+        _errorMessage = null;
+        _projectJson = json;
+        _projectName = file.name;
+        _projectPath = file.path;
+        _selectedTemplate = null;
+        _createBlank = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _errorMessage = 'Projectni ochib bo‘lmadi: $error');
+    }
+  }
+
+  Future<void> _createProject() async {
+    if (_busy) return;
+    setState(() {
+      _errorMessage = null;
+      _selectedTemplate = null;
+      _projectJson = null;
+      _projectName = null;
+      _projectPath = null;
+      _createBlank = true;
+    });
+  }
+
+  void _selectTemplate(WorkspaceTemplate template) {
+    if (_busy) return;
+    setState(() {
+      _errorMessage = null;
+      _selectedTemplate = template;
+      _projectJson = null;
+      _projectName = null;
+      _projectPath = null;
+      _busy = true;
+    });
+    // Keep the loading state visible for the transition, then let the
+    // workspace perform the authoritative native template creation.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) setState(() => _busy = false);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final template = _selectedTemplate;
+    final json = _projectJson;
+    if (template != null || json != null || _createBlank) {
+      final Object gateKey = template ?? json ?? 'blank-project';
+      return ViewerHomePage(
+        key: ValueKey<Object>(gateKey),
+        source: const AssetRenderSceneSource(),
+        preferEngineBackedBundledSample: true,
+        initialTemplate: template,
+        initialBlankProject: _createBlank,
+        initialProjectJson: json,
+        initialProjectName: _projectName,
+        initialProjectPath: _projectPath,
+        onReturnToStart: _returnToStart,
+      );
+    }
+    return StartScreen(
+      onOpen: _openProject,
+      onCreate: _createProject,
+      onSelectTemplate: _selectTemplate,
+      busy: _busy,
+      errorMessage: _errorMessage,
+    );
+  }
+
+  void _returnToStart() {
+    if (_busy) return;
+    setState(() {
+      _selectedTemplate = null;
+      _projectJson = null;
+      _projectName = null;
+      _projectPath = null;
+      _errorMessage = null;
+      _createBlank = false;
+    });
   }
 }
 
@@ -91,10 +209,22 @@ class ViewerHomePage extends StatefulWidget {
     super.key,
     required this.source,
     this.preferEngineBackedBundledSample = false,
+    this.initialTemplate,
+    this.initialProjectJson,
+    this.initialProjectName,
+    this.initialProjectPath,
+    this.initialBlankProject = false,
+    this.onReturnToStart,
   });
 
   final RenderSceneSource source;
   final bool preferEngineBackedBundledSample;
+  final WorkspaceTemplate? initialTemplate;
+  final String? initialProjectJson;
+  final String? initialProjectName;
+  final String? initialProjectPath;
+  final bool initialBlankProject;
+  final VoidCallback? onReturnToStart;
 
   @override
   State<ViewerHomePage> createState() => _ViewerHomePageState();
@@ -143,8 +273,8 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   String? _statusMessage;
   String? _loadError;
   bool _isBusy = false;
-  bool _showInspector = true;
-  bool _showObjectList = false;
+  bool _showInspector = false;
+  bool _showObjectList = true;
   bool _showDiagnostics = false;
   String? _engineLoadDiagnostic;
   int? _activeLevelId;
@@ -158,6 +288,8 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     ),
   ];
   String? _activeViewTabId = 'view-3d-default';
+  final Map<String, OpenedViewTab> _viewPresentationById =
+      <String, OpenedViewTab>{};
   final Map<String, RenderScene> _sheetViewScenes = <String, RenderScene>{};
   RenderScene? _sheetSourceScene;
   double _planViewRangeMeters = 2.0;
@@ -180,6 +312,9 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   String? _editStatusMessage;
   bool _snapDraftToGrid = true;
   final List<String> _androidMutationTrace = <String>[];
+  // Wall gestures can arrive before the previous engine mutation has
+  // finished. Keep the commits ordered instead of dropping the next segment.
+  Future<void> _wallCommitTail = Future<void>.value();
 
   RenderSceneObject? get _draftHostWall => _openingTool.hostWall;
   set _draftHostWall(RenderSceneObject? value) =>
@@ -232,7 +367,10 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         RenderSceneInteractionMode.addRoof =>
           switch (_surfaceDrawMode) {
             RenderSceneSurfaceDrawMode.pickWalls => const <String>{'wall'},
-            RenderSceneSurfaceDrawMode.autoRoom => const <String>{'room'},
+            // Room previews are generated client-side and are not guaranteed
+            // to exist in the native pick index. Keep the plan point available
+            // so Auto Room can resolve the enclosure under the user's finger.
+            RenderSceneSurfaceDrawMode.autoRoom => const <String>{},
             _ => const <String>{},
           },
         _ => const <String>{},
@@ -269,6 +407,45 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       // when a legacy engine does not expose the spatial query.
     }
     return null;
+  }
+
+  RenderSceneObject? _findWallNearPlanPoint(
+    RenderScene scene,
+    RenderScenePoint point, {
+    double toleranceMeters = 0.45,
+  }) {
+    RenderSceneObject? best;
+    var bestDistance = double.infinity;
+    for (final wall in scene.objects) {
+      if (wall.kindKey != 'wall') continue;
+      final start = RenderSceneEditor.wallStartPoint(wall);
+      final end = RenderSceneEditor.wallEndPoint(wall);
+      if (start == null || end == null) continue;
+      final axis = end - start;
+      final lengthSquared = axis.x * axis.x + axis.y * axis.y;
+      if (lengthSquared <= 1e-9) continue;
+      final rawT =
+          ((point.x - start.x) * axis.x + (point.y - start.y) * axis.y) /
+              lengthSquared;
+      final t = rawT.clamp(0.0, 1.0);
+      final projected = RenderScenePoint(
+        x: start.x + axis.x * t,
+        y: start.y + axis.y * t,
+        z: point.z,
+      );
+      final dx = projected.x - point.x;
+      final dy = projected.y - point.y;
+      final distance = math.sqrt(dx * dx + dy * dy);
+      final wallTolerance = math.max(
+        toleranceMeters,
+        (RenderSceneEditor.wallThickness(wall) ?? 0.30) * 0.5 + 0.12,
+      );
+      if (distance <= wallTolerance && distance < bestDistance) {
+        best = wall;
+        bestDistance = distance;
+      }
+    }
+    return best;
   }
 
   void _traceAndroidMutation(String message) {
@@ -315,8 +492,68 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       if (!mounted) {
         return;
       }
-      _loadBundledSample();
+      final initialTemplate = widget.initialTemplate;
+      final initialProjectJson = widget.initialProjectJson;
+      if (widget.initialBlankProject) {
+        _createBlankProject();
+      } else if (initialTemplate != null) {
+        _createResidentialTemplate(_residentialTemplateKind(initialTemplate));
+      } else if (initialProjectJson != null) {
+        _loadProjectJson(
+          initialProjectJson,
+          projectName: widget.initialProjectName ?? 'Opened project',
+          sourcePath: widget.initialProjectPath,
+        );
+      } else {
+        _loadBundledSample();
+      }
     });
+  }
+
+  _ResidentialTemplateKind _residentialTemplateKind(
+    WorkspaceTemplate template,
+  ) {
+    switch (template) {
+      case WorkspaceTemplate.default3:
+        return _ResidentialTemplateKind.default3;
+      case WorkspaceTemplate.tower9:
+        return _ResidentialTemplateKind.tower9;
+      case WorkspaceTemplate.campus6x9:
+        return _ResidentialTemplateKind.campus6x9;
+    }
+  }
+
+  Future<void> _createBlankProject() async {
+    if (_isBusy) return;
+    setState(() {
+      _isBusy = true;
+      _loadError = null;
+      _activeSectionView = null;
+      _statusMessage = 'Creating a new project...';
+    });
+    try {
+      final launch = await _projectLifecycle.createBlankProject(
+        existingSession: _engineRepository,
+        projectName: 'New Project',
+      );
+      if (!mounted) {
+        if (launch.createdSession) launch.session.dispose();
+        return;
+      }
+      _projectSession.activate(launch.session);
+      _engineLoadDiagnostic = null;
+      await _applyLoadResult(
+        launch.renderScene!,
+        sourceLabel: 'New Project',
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _loadError = error.toString();
+        _statusMessage = 'New project yaratilmadi.';
+        _isBusy = false;
+      });
+    }
   }
 
   @override
@@ -436,15 +673,56 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     }
   }
 
+  Future<void> _loadProjectJson(
+    String json, {
+    required String projectName,
+    String? sourcePath,
+  }) async {
+    if (_isBusy) return;
+    setState(() {
+      _isBusy = true;
+      _loadError = null;
+      _activeSectionView = null;
+      _statusMessage = 'Opening $projectName...';
+    });
+
+    try {
+      final launch = await _projectLifecycle.loadJson(
+        projectName: projectName,
+        json: json,
+        sourcePath: sourcePath,
+      );
+      if (!mounted) {
+        launch.session.dispose();
+        return;
+      }
+      _projectSession.activate(launch.session);
+      _engineLoadDiagnostic = null;
+      final result = await _sceneViews.refresh();
+      await _applyLoadResult(result, sourceLabel: projectName);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _loadError = error.toString();
+        _statusMessage = 'Projectni ochib bo‘lmadi.';
+        _isBusy = false;
+      });
+    }
+  }
+
   Future<void> _createResidentialTemplate(
     _ResidentialTemplateKind template,
   ) async {
     if (_isBusy) return;
-    final buildingCount = template == _ResidentialTemplateKind.tower9 ? 1 : 6;
-    const storyCount = 9;
-    final label = buildingCount == 1
-        ? '9-qavatli turar-joy binosi'
-        : '6 ta 9-qavatli turar-joy shaharchasi';
+    final buildingCount =
+        template == _ResidentialTemplateKind.campus6x9 ? 6 : 1;
+    final storyCount = template == _ResidentialTemplateKind.default3 ? 3 : 9;
+    final label = switch (template) {
+      _ResidentialTemplateKind.default3 => '3-qavatli oddiy bino',
+      _ResidentialTemplateKind.tower9 => '9-qavatli turar-joy binosi',
+      _ResidentialTemplateKind.campus6x9 =>
+        '6 ta 9-qavatli turar-joy shaharchasi',
+    };
     setState(() {
       _isBusy = true;
       _loadError = null;
@@ -598,16 +876,94 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     return null;
   }
 
+  void _updateViewPresentation(
+    String viewId, {
+    RenderSceneDisplayStyle? displayStyle,
+    bool? shadowsEnabled,
+    RenderSceneOrbitProjectionStyle? orbitProjectionStyle,
+  }) {
+    if (!mounted) return;
+    final index = _openedViewTabs.indexWhere((tab) => tab.id == viewId);
+    if (index < 0) return;
+    final current = _openedViewTabs[index];
+    final updated = current.copyWith(
+      displayStyle: displayStyle,
+      shadowsEnabled: shadowsEnabled,
+      orbitProjectionStyle: orbitProjectionStyle,
+    );
+    _viewPresentationById[viewId] = updated;
+    _sheetWorkspace.updateViewPresentation(
+      viewId,
+      displayStyle: updated.displayStyle,
+      shadowsEnabled: updated.shadowsEnabled,
+      orbitProjectionStyle: updated.orbitProjectionStyle,
+    );
+    if (updated.displayStyle == current.displayStyle &&
+        updated.shadowsEnabled == current.shadowsEnabled &&
+        updated.orbitProjectionStyle == current.orbitProjectionStyle) {
+      return;
+    }
+    setState(() => _openedViewTabs[index] = updated);
+  }
+
+  void _updateActiveViewPresentation({
+    RenderSceneDisplayStyle? displayStyle,
+    bool? shadowsEnabled,
+    RenderSceneOrbitProjectionStyle? orbitProjectionStyle,
+  }) {
+    final activeId = _activeViewTabId;
+    if (activeId == null) return;
+    _updateViewPresentation(
+      activeId,
+      displayStyle: displayStyle,
+      shadowsEnabled: shadowsEnabled,
+      orbitProjectionStyle: orbitProjectionStyle,
+    );
+  }
+
+  void _saveActiveViewPresentation() {
+    _updateActiveViewPresentation(
+      displayStyle: _displayStyle,
+      shadowsEnabled: _viewportController.shadowsEnabled,
+      orbitProjectionStyle: _orbitProjectionStyle,
+    );
+  }
+
+  Future<void> _restoreViewPresentation(OpenedViewTab tab) async {
+    setState(() {
+      _displayStyle = tab.displayStyle;
+      _usesProjectionDefaultDisplayStyle = false;
+      _orbitProjectionStyle = tab.orbitProjectionStyle;
+    });
+    await _viewportController.setOrbitProjectionStyle(
+      tab.orbitProjectionStyle,
+    );
+    await _viewportController.setDisplayStyle(tab.displayStyle);
+    await _viewportController.setShadowsEnabled(tab.shadowsEnabled);
+  }
+
+  OpenedViewTab _tabWithSavedPresentation(OpenedViewTab tab) {
+    final saved = _viewPresentationById[tab.id];
+    if (saved == null) return tab;
+    return tab.copyWith(
+      displayStyle: saved.displayStyle,
+      shadowsEnabled: saved.shadowsEnabled,
+      orbitProjectionStyle: saved.orbitProjectionStyle,
+    );
+  }
+
   Future<void> _openViewTab(OpenedViewTab tab) async {
     if (_isBusy || !mounted) return;
-    final existing = _openedViewTabById(tab.id);
+    _saveActiveViewPresentation();
+    final requested = _tabWithSavedPresentation(tab);
+    final existing = _openedViewTabById(requested.id);
     if (existing == null) {
-      _openedViewTabs.add(tab);
+      _openedViewTabs.add(requested);
     }
     setState(() {
-      _activeViewTabId = tab.id;
+      _activeViewTabId = requested.id;
     });
-    final target = existing ?? tab;
+    final target = existing ?? requested;
     try {
       await _activateViewTab(target);
     } catch (error) {
@@ -646,6 +1002,9 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         if (section != null) await _openProjectSection(section);
       case OpenedViewKind.sheet:
         if (tab.sheetId != null) _openSheet(tab.sheetId!);
+    }
+    if (tab.kind != OpenedViewKind.sheet) {
+      await _restoreViewPresentation(tab);
     }
   }
 
@@ -708,12 +1067,14 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   Future<void> _selectOpenedViewTab(String tabId) async {
     final tab = _openedViewTabById(tabId);
     if (tab == null || _activeViewTabId == tabId) return;
+    _saveActiveViewPresentation();
     setState(() => _activeViewTabId = tabId);
     await _activateViewTab(tab);
   }
 
   Future<void> _closeOpenedViewTab(String tabId) async {
     if (_openedViewTabs.length <= 1) return;
+    _saveActiveViewPresentation();
     final index = _openedViewTabs.indexWhere((tab) => tab.id == tabId);
     if (index < 0) return;
     final closing = _openedViewTabs[index];
@@ -831,20 +1192,6 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       }
       return false;
     }
-  }
-
-  Future<void> _toggleAndroidRenderer() async {
-    final next =
-        _viewportController.backend == RenderSceneViewportBackend.native
-            ? RenderSceneViewportBackend.fallback
-            : RenderSceneViewportBackend.native;
-    await _viewportController.setBackend(next);
-    if (!mounted) return;
-    setState(() {
-      _statusMessage = next == RenderSceneViewportBackend.native
-          ? 'Filament renderer enabled. Interaction stays Flutter-owned.'
-          : 'Flutter fallback renderer enabled.';
-    });
   }
 
   Future<void> _applyLoadResult(
@@ -974,6 +1321,8 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         'door',
         'window',
         'room',
+        'floor',
+        'ceiling',
         'column',
         'beam',
         'stair',
@@ -1205,9 +1554,30 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       await _viewportController.setSectionView(null);
     }
     if (_projectionMode == mode && !wasGeneratedSection) {
-      // Project Browser can be used after a renderer reload. Reassert the
-      // controller state even when the Flutter state already has this mode.
-      await _viewportController.setProjectionMode(mode);
+      // A nearby-level plan snapshot can still be active even though the
+      // selected tab is already 3D/elevation. Re-fetch the intended scope so
+      // the roof is not lost when the user returns to the same view tab.
+      final repository = _engineRepository;
+      final scene = _scene;
+      if (_engineBackedMode &&
+          repository != null &&
+          scene != null &&
+          (mode.isElevation || mode.is3D)) {
+        final is3d = mode == RenderSceneProjectionMode.isometric;
+        final isLargeScene = scene.objectCount > 120;
+        final useFullScene = mode.isElevation || (is3d && !isLargeScene);
+        final result = await _sceneViews.setFullSceneRenderScope(useFullScene);
+        await _applyLoadResult(
+          result,
+          sourceLabel: useFullScene
+              ? (mode.isElevation ? 'Full building elevation' : 'Full tower 3D')
+              : 'Nearby levels',
+        );
+      } else {
+        // Project Browser can be used after a renderer reload. Reassert the
+        // controller state even when the Flutter state already has this mode.
+        await _viewportController.setProjectionMode(mode);
+      }
       return;
     }
 
@@ -1296,6 +1666,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       return;
     }
 
+    final viewId = _activeViewTabId;
     setState(() {
       _orbitProjectionStyle = style;
       _statusMessage = style == RenderSceneOrbitProjectionStyle.perspective
@@ -1304,6 +1675,9 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     });
 
     await _viewportController.setOrbitProjectionStyle(style);
+    if (viewId != null) {
+      _updateViewPresentation(viewId, orbitProjectionStyle: style);
+    }
     await _viewportController.fitCamera();
   }
 
@@ -1312,6 +1686,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       return;
     }
 
+    final viewId = _activeViewTabId;
     setState(() {
       _displayStyle = style;
       _usesProjectionDefaultDisplayStyle = false;
@@ -1323,13 +1698,21 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     });
 
     await _viewportController.setDisplayStyle(style);
+    if (viewId != null) {
+      _updateViewPresentation(viewId, displayStyle: style);
+    }
   }
 
   Future<void> _setShadowsEnabled(bool enabled) async {
+    final viewId = _activeViewTabId;
     await _viewportController.setShadowsEnabled(enabled);
+    if (viewId != null) {
+      _updateViewPresentation(viewId, shadowsEnabled: enabled);
+    }
     if (!mounted) return;
     setState(() {
-      _statusMessage = enabled ? 'Real shadows enabled' : 'Real shadows disabled';
+      _statusMessage =
+          enabled ? 'Real shadows enabled' : 'Real shadows disabled';
     });
   }
 
@@ -2045,6 +2428,18 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     await _viewportController.setInteractionMode(mode);
     await _clearDraft();
 
+    if (mode == RenderSceneInteractionMode.addFloor ||
+        mode == RenderSceneInteractionMode.addCeiling ||
+        mode == RenderSceneInteractionMode.addRoof) {
+      _surfaceTool.drawMode = RenderSceneSurfaceDrawMode.pickWalls;
+      if (mounted) {
+        setState(() {
+          _editStatusMessage =
+              'Pick Walls: tap each enclosing wall. Selected walls turn blue; use Undo to remove the last one.';
+        });
+      }
+    }
+
     if ((mode == RenderSceneInteractionMode.moveOpening ||
             mode == RenderSceneInteractionMode.addDoor ||
             mode == RenderSceneInteractionMode.addWindow) &&
@@ -2605,18 +3000,57 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   }
 
   Future<void> _commitWallDraft({required bool autoContinue}) async {
-    final scene = _scene;
     final start = _wallTool.start;
     final end = _wallTool.end;
-    if (scene == null || start == null || end == null) {
+    if (start == null || end == null) {
+      return;
+    }
+
+    // Advance the authoring cursor before awaiting the engine. This makes the
+    // next finger gesture independent of native commit latency and preserves
+    // the exact endpoint that the user just released.
+    if (autoContinue) {
+      _wallTool.continueFrom(end);
+      if (mounted) {
+        setState(() {
+          _editStatusMessage =
+              'Wall draft ready. Continue from the last endpoint.';
+        });
+      }
+      _viewportController.setWallDraft(end, end);
+    }
+
+    final queued = _wallCommitTail.then<void>((_) async {
+      try {
+        await _commitWallSegment(start, end);
+      } catch (error) {
+        if (mounted) {
+          setState(() {
+            _editStatusMessage = 'Wall mutation failed: $error';
+          });
+        }
+      }
+    });
+    _wallCommitTail = queued;
+    await queued;
+  }
+
+  Future<void> _commitWallSegment(
+    RenderScenePoint start,
+    RenderScenePoint end,
+  ) async {
+    final scene = _scene;
+    if (scene == null) {
       return;
     }
 
     final length = start.distanceTo(end);
     if (length < 0.1) {
-      setState(() {
-        _editStatusMessage = 'Wall is too short.';
-      });
+      if (mounted) {
+        setState(() {
+          _editStatusMessage = 'Wall is too short.';
+        });
+      }
       return;
     }
 
@@ -2630,12 +3064,12 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       'end=${end.x.toStringAsFixed(2)},${end.y.toStringAsFixed(2)} '
       'base=$activeLevelId top=${topLevel?.levelId} sceneWalls=${scene.kindCounts['wall'] ?? 0}',
     );
-    if (activeLevelId == null || topLevel == null) {
-      setState(() {
-        _editStatusMessage = activeLevelId == null
-            ? 'Wall chizish uchun Base Level tanlang.'
-            : 'Wall chizish uchun ${_activeLevel(scene)?.name}dan yuqori Top Level kerak.';
-      });
+    if (activeLevelId == null) {
+      if (mounted) {
+        setState(() {
+          _editStatusMessage = 'Wall chizish uchun Base Level tanlang.';
+        });
+      }
       return;
     }
     final mutation = SceneMutationService(
@@ -2647,7 +3081,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         start: RenderScenePoint(x: start.x, y: start.y, z: baseElevation),
         end: RenderScenePoint(x: end.x, y: end.y, z: baseElevation),
         baseLevelId: activeLevelId,
-        topLevelId: topLevel.levelId,
+        topLevelId: topLevel?.levelId ?? 0,
         heightMeters: wallHeight,
         thicknessMeters: _defaultWallThicknessMeters,
       ),
@@ -2656,14 +3090,18 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       _traceAndroidMutation(entry);
     }
     if (!outcome.success || outcome.scene == null) {
-      setState(() {
-        _editStatusMessage = outcome.error ?? 'Wall yaratilmadi.';
-      });
+      if (mounted) {
+        setState(() {
+          _editStatusMessage = outcome.error ?? 'Wall yaratilmadi.';
+        });
+      }
       return;
     }
     await _applySceneChange(
       outcome.scene!,
-      message: 'Wall created and constrained to ${topLevel.name}.',
+      message: topLevel == null
+          ? 'Wall created with the active level height.'
+          : 'Wall created and constrained to ${topLevel.name}.',
       authoritative: true,
     );
     if (outcome.createdElementId != null) {
@@ -2671,20 +3109,6 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
           .selectElement(outcome.createdElementId.toString());
       await _viewportController
           .highlightElement(outcome.createdElementId.toString());
-    }
-
-    if (autoContinue) {
-      _wallTool.continueFrom(end);
-      setState(() {
-        _editStatusMessage =
-            'Wall created. Tap next point to continue, or Cancel to stop.';
-      });
-      _viewportController.setWallDraft(end, end);
-    } else {
-      await _clearDraft();
-      setState(() {
-        _editStatusMessage = 'Wall created.';
-      });
     }
   }
 
@@ -2775,7 +3199,10 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       return;
     }
     if (_draftMoveTarget?.elementId != wall.elementId) {
-      await _selectObject(wall);
+      // Selection is visual state; it must not delay the first move sample on
+      // a tablet. The draft is initialized below before the Inspector update
+      // is allowed to rebuild the scene.
+      unawaited(_selectObject(wall));
     }
     if (_moveAnchorPoint == null) {
       final start = RenderSceneEditor.wallStartPoint(wall);
@@ -2787,9 +3214,18 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       final startDistance = anchor.distanceTo(start);
       final endDistance = anchor.distanceTo(end);
       var moveMode = _WallMoveMode.translate;
-      if (startDistance <= 0.45 && startDistance <= endDistance) {
+      final wallLength = start.distanceTo(end);
+      // A fixed 45 cm hit radius made the middle of short walls look like an
+      // endpoint. Keep the handles touchable, but make their hit area scale
+      // with the wall so a body drag always translates the whole wall.
+      final handleTolerance = math.min(
+        0.32,
+        math.max(0.12, wallLength * 0.22),
+      );
+      if (startDistance <= handleTolerance && startDistance <= endDistance) {
         moveMode = _WallMoveMode.startHandle;
-      } else if (endDistance <= 0.45 && endDistance < startDistance) {
+      } else if (endDistance <= handleTolerance &&
+          endDistance < startDistance) {
         moveMode = _WallMoveMode.endHandle;
       }
       setState(() {
@@ -2977,8 +3413,37 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     }
     RenderScenePoint nextStart;
     RenderScenePoint nextEnd;
+    // A body drag is a wall offset: movement along the wall changes neither
+    // its length nor its position in the useful direction. Endpoint handles
+    // are different: the selected wall endpoint may move freely, while the
+    // native transaction keeps every joined neighbor fixed and rebuilds the
+    // new intersection.
+    final constrainedPoint = _wallMoveMode == _WallMoveMode.translate
+        ? _projectPointToWallNormal(
+            point,
+            anchor: anchor,
+            start: originalStart,
+            end: originalEnd,
+          )
+        : point;
     if (_wallMoveMode == _WallMoveMode.translate) {
-      final delta = point - anchor;
+      // Snap the grabbed point once, then apply one shared delta to both
+      // endpoints. Snapping each endpoint independently changes the wall's
+      // angle and is the source of the old one-edge/diagonal jump.
+      final snappedPoint = _snapMovedWallPoint(
+        scene,
+        wall,
+        constrainedPoint,
+        anchor,
+        snapToGrid: false,
+      );
+      final delta = _projectPointToWallNormal(
+            snappedPoint,
+            anchor: anchor,
+            start: originalStart,
+            end: originalEnd,
+          ) -
+          anchor;
       nextStart = RenderScenePoint(
         x: originalStart.x + delta.x,
         y: originalStart.y + delta.y,
@@ -2989,25 +3454,45 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         y: originalEnd.y + delta.y,
         z: originalEnd.z,
       );
-      nextStart = _snapMovedWallPoint(scene, wall, nextStart, originalStart);
-      nextEnd = _snapMovedWallPoint(scene, wall, nextEnd, originalEnd);
     } else if (_wallMoveMode == _WallMoveMode.startHandle) {
-      nextStart = _draftLinePoint(rawPoint: point, referenceStart: originalEnd);
+      nextStart = _draftLinePoint(
+        rawPoint: constrainedPoint,
+        referenceStart: originalEnd,
+        excludeWallId: wall.elementId,
+      );
       nextStart = _snapMovedWallPoint(scene, wall, nextStart, originalStart);
       nextEnd = originalEnd;
     } else {
       nextStart = originalStart;
-      nextEnd = _draftLinePoint(rawPoint: point, referenceStart: originalStart);
+      nextEnd = _draftLinePoint(
+        rawPoint: constrainedPoint,
+        referenceStart: originalStart,
+        excludeWallId: wall.elementId,
+      );
       nextEnd = _snapMovedWallPoint(scene, wall, nextEnd, originalEnd);
     }
-    setState(() {
-      _draftWallStart = nextStart;
-      _draftWallEnd = nextEnd;
-      _editStatusMessage = _wallMoveMode == _WallMoveMode.translate
-          ? 'Wall move preview: ${(nextEnd - nextStart).distanceTo(const RenderScenePoint(x: 0, y: 0, z: 0)).toStringAsFixed(2)} m'
-          : 'Wall reshape preview: ${(nextEnd - nextStart).distanceTo(const RenderScenePoint(x: 0, y: 0, z: 0)).toStringAsFixed(2)} m';
-    });
+    // The viewport controller owns this transient draft. Avoid rebuilding the
+    // whole editor for every pointer sample on a tablet.
+    _draftWallStart = nextStart;
+    _draftWallEnd = nextEnd;
     _viewportController.setWallDraft(nextStart, nextEnd);
+  }
+
+  Future<RenderSceneLoadResult> _setWallAxisKeepingJoins({
+    required ViewerAuthoringGateway repository,
+    required RenderScene scene,
+    required RenderSceneObject wall,
+    required RenderScenePoint start,
+    required RenderScenePoint end,
+  }) async {
+    // The native repository applies endpoint-connected walls atomically and
+    // rebuilds joins once. Sending the derived neighbours one by one caused
+    // the first mutation to invalidate the join used by the next one.
+    return repository.setWallAxis(
+      wallId: wall.elementId!,
+      start: start,
+      end: end,
+    );
   }
 
   void _updateMoveOpeningPreview({
@@ -3173,62 +3658,133 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     RenderScenePoint? modelPoint,
   ) async {
     if (_surfaceDrawMode == RenderSceneSurfaceDrawMode.autoRoom &&
-        tappedObject?.kindKey == 'room' &&
         _surfaceSupportsRoomAutoPick) {
-      final room = tappedObject!;
+      var detectedScene = RenderSceneEditor.detectRooms(scene);
+      // The engine room graph is authoritative and already understands
+      // interior partitions/T-junctions. It is computed only when Auto Room
+      // is invoked, keeping normal viewport navigation lightweight.
       final repository = _engineRepository;
+      if (_engineBackedMode && repository != null) {
+        try {
+          final detected = await repository.detectRooms();
+          if (detected.scene != null) {
+            detectedScene = detected.scene!;
+          }
+        } catch (_) {
+          // Legacy engines can still use the local closed-cell detector.
+        }
+      }
+      var room = tappedObject?.kindKey == 'room'
+          ? tappedObject
+          : (modelPoint == null
+              ? null
+              : RenderSceneEditor.roomContainingPoint(
+                  detectedScene,
+                  modelPoint,
+                  levelId: _activeLevelId,
+                ));
+      if (room != null &&
+          RenderSceneEditor.roomBoundaryWallIds(room).length < 3 &&
+          modelPoint != null) {
+        room = RenderSceneEditor.roomContainingPoint(
+          detectedScene,
+          modelPoint,
+          levelId: _activeLevelId,
+        );
+      }
+      if (room == null) {
+        setState(() {
+          _editStatusMessage =
+              'Yopiq devorlar orasidagi xona ichiga bosing. Auto Room shu xonani topadi.';
+        });
+        return;
+      }
+      final boundaryWallIds = RenderSceneEditor.roomBoundaryWallIds(room);
+      final polygon = RenderSceneEditor.roomBoundaryPolygon(
+        detectedScene,
+        room,
+      );
       if (_engineBackedMode &&
           repository != null &&
-          room.elementId != null &&
-          _activeLevelId != null) {
+          _activeLevelId != null &&
+          boundaryWallIds.length >= 3 &&
+          polygon != null &&
+          polygon.length >= 3) {
+        // A blank project intentionally has no material catalog yet. The
+        // native document supports assemblyId=0 and creates a valid plain
+        // slab in that case; do not make Finish a no-op just because the
+        // optional layered assembly has not been created yet.
         final assemblyId = repository.defaultAssemblyId(
-          _interactionMode == RenderSceneInteractionMode.addFloor
-              ? 'Floor'
-              : 'Ceiling',
-        );
-        if (assemblyId == null) {
+              _interactionMode == RenderSceneInteractionMode.addFloor
+                  ? 'Floor'
+                  : 'Ceiling',
+            ) ??
+            0;
+        try {
+          final result = await repository.createProfile(
+            targetKind: _surfaceTargetKind(),
+            draftMode: 3,
+            levelId: _activeLevelId!,
+            points: polygon,
+            wallIds: const <int>[],
+            closed: true,
+            thicknessMeters: _draftSurfaceThicknessMeters,
+            heightMeters: _draftSurfaceHeightMeters,
+            verticalOffsetMeters:
+                _interactionMode == RenderSceneInteractionMode.addFloor
+                    ? _draftFloorTopElevationMeters
+                    : _draftCeilingHeightOffsetMeters,
+            assemblyId: assemblyId,
+          );
+          final createdId = repository.lastCreatedElementId;
+          final created =
+              createdId == null ? null : result.scene?.objectById(createdId);
+          if (created == null) {
+            throw StateError(
+                'Engine ${_surfaceKindLabel()} yaratganini tasdiqlamadi.');
+          }
+          await _applyEngineSceneResult(
+            result,
+            message: '${_surfaceKindLabel()} #$createdId created by Auto Room.',
+          );
+          await _viewportController.selectElement(createdId.toString());
+          await _viewportController.highlightElement(createdId.toString());
+        } catch (error) {
+          if (!mounted) return;
           setState(() {
             _editStatusMessage =
-                'Engine project assembly topilmadi for ${_surfaceKindLabel()}.';
+                'Auto Room ${_surfaceKindLabel()} yaratolmadi: $error';
+            _statusMessage = _editStatusMessage;
           });
           return;
         }
-        final result = _interactionMode == RenderSceneInteractionMode.addFloor
-            ? await repository.createFloorSystemForRoom(
-                roomId: room.elementId!,
-                assemblyId: assemblyId,
-              )
-            : await repository.createCeilingSystemForRoom(
-                roomId: room.elementId!,
-                assemblyId: assemblyId,
-                heightOffsetMeters: _draftCeilingHeightOffsetMeters,
-              );
-        await _applyEngineSceneResult(
-          result,
-          message:
-              '${_surfaceKindLabel()} created for room #${room.elementId}.',
-        );
       } else {
+        if (polygon == null || polygon.length < 3) {
+          setState(() {
+            _editStatusMessage =
+                'Xona konturi yopilmagan yoki devor geometriyasi yetarli emas.';
+          });
+          return;
+        }
         final nextScene =
             _interactionMode == RenderSceneInteractionMode.addFloor
-                ? RenderSceneEditor.addFloorForRoom(
+                ? RenderSceneEditor.addFloorFromPolygon(
                     scene: scene,
-                    room: room,
+                    polygon: polygon,
                     thicknessMeters: _draftSurfaceThicknessMeters,
                     topElevationMeters: _draftFloorTopElevationMeters,
                     levelId: room.levelId ?? _activeLevelId,
                   )
-                : RenderSceneEditor.addCeilingForRoom(
+                : RenderSceneEditor.addCeilingFromPolygon(
                     scene: scene,
-                    room: room,
+                    polygon: polygon,
                     thicknessMeters: _draftSurfaceThicknessMeters,
                     heightMeters: _draftCeilingHeightOffsetMeters,
                     levelId: room.levelId ?? _activeLevelId,
                   );
         await _applySceneChange(
           nextScene,
-          message:
-              '${_surfaceKindLabel()} created for room #${room.elementId}.',
+          message: '${_surfaceKindLabel()} created by Auto Room.',
         );
         final created =
             nextScene.objects.isNotEmpty ? nextScene.objects.last : null;
@@ -3244,25 +3800,64 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       return;
     }
 
-    if (_surfaceDrawMode == RenderSceneSurfaceDrawMode.pickWalls &&
-        tappedObject != null &&
-        tappedObject.kindKey == 'wall') {
-      final wallId = tappedObject.elementId;
-      if (wallId != null) {
+    if (_surfaceDrawMode == RenderSceneSurfaceDrawMode.pickWalls) {
+      // Native Filament owns the visible plan camera on Android, so its ray
+      // hit-test must be preferred while Pick Walls is active. Flutter's
+      // logical-pixel projection can differ from the PlatformView's physical
+      // camera scale on a large blank workspace; use the model-space search as
+      // a fallback for platforms without a native hit result.
+      // In a top-down plan the wall is a thin line, while the native Android
+      // view and the Flutter overlay can have slightly different physical
+      // pixel scales. Resolve Pick Walls from the model-space tap first. The
+      // projected object is only a fallback; otherwise a neighbouring wall
+      // can win the hit-test and leave Finish disabled even though the user
+      // visibly tapped the wall under their finger.
+      final pick = modelPoint == null
+          ? (tappedObject?.kindKey == 'wall' ? tappedObject : null)
+          : (_findWallNearPlanPoint(
+                scene,
+                modelPoint,
+                toleranceMeters: 0.65,
+              ) ??
+              (tappedObject?.kindKey == 'wall'
+                  ? tappedObject
+                  : _resolvePlanPick(
+                      modelPoint,
+                      const <String>{'wall'},
+                      0.65,
+                    )));
+      if (pick == null || pick.kindKey != 'wall') {
         setState(() {
-          if (_draftSurfaceWallIds.contains(wallId)) {
-            _draftSurfaceWallIds.remove(wallId);
-          } else {
-            _draftSurfaceWallIds.add(wallId);
-          }
+          _editStatusMessage =
+              'Wall chizig‘iga yaqinroq bosing. Pick Walls rectangle chizmaydi.';
+        });
+        return;
+      }
+      final wallId = pick.elementId;
+      if (wallId != null) {
+        if (_draftSurfaceWallIds.contains(wallId)) {
+          setState(() {
+            _editStatusMessage =
+                'Wall #$wallId is already selected. Use Undo to remove the last picked wall.';
+          });
+          await _viewportController.highlightElement(wallId.toString());
+          return;
+        }
+        setState(() {
+          _draftSurfaceWallIds.add(wallId);
           _draftSurfacePoints.clear();
           _editStatusMessage =
-              '${_draftSurfaceWallIds.length} wall selected for ${_surfaceKindLabel()} boundary.';
+              '${_draftSurfaceWallIds.length} wall picked for ${_surfaceKindLabel()} boundary. Blue walls are selected.';
         });
-        await _selectObject(tappedObject);
+        await _selectObject(pick);
+        await _viewportController.highlightElement(wallId.toString());
         _syncSurfaceDraftFromWalls(scene);
         return;
       }
+    }
+
+    if (_surfaceDrawMode == RenderSceneSurfaceDrawMode.pickWalls) {
+      return;
     }
 
     if (modelPoint == null) {
@@ -3460,18 +4055,95 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   RenderScenePoint _draftLinePoint({
     required RenderScenePoint rawPoint,
     required RenderScenePoint? referenceStart,
+    bool useOrthogonalSnap = true,
+    int? excludeWallId,
   }) {
     final scene = _scene;
+    final snapLevelId = scene == null
+        ? null
+        : _wallSnapLevelId(scene, excludeWallId: excludeWallId);
+    final candidatePoints = scene == null
+        ? const <RenderScenePoint>[]
+        : scene.objects
+            .where(
+              (wall) =>
+                  wall.kindKey == 'wall' &&
+                  (snapLevelId == null || wall.levelId == snapLevelId) &&
+                  wall.elementId != excludeWallId,
+            )
+            .expand<RenderScenePoint?>((wall) => <RenderScenePoint?>[
+                  RenderSceneEditor.wallStartPoint(wall),
+                  RenderSceneEditor.wallEndPoint(wall),
+                ])
+            .whereType<RenderScenePoint>()
+            .where((candidate) {
+            // Once a chained wall starts at an endpoint, dragging away from
+            // it must not snap the new endpoint back to the same point. Keep
+            // all other wall endpoints available for T/L joins and closure.
+            if (referenceStart == null) return true;
+            return candidate.distanceTo(referenceStart) > 0.08;
+          });
+    final projectedCandidates = scene == null
+        ? const <RenderScenePoint>[]
+        : _wallSnapCandidates(
+            scene,
+            rawPoint,
+            excludeWallId: excludeWallId,
+            levelId: snapLevelId,
+          );
     return PlanSketchGeometry.resolveLineEndpoint(
       rawPoint: rawPoint,
       referenceStart: referenceStart,
-      candidatePoints: scene == null
-          ? const <RenderScenePoint>[]
-          : RenderSceneEditor.wallSnapPoints(scene),
+      candidatePoints: <RenderScenePoint>[
+        ...candidatePoints,
+        ...projectedCandidates,
+      ],
       useGridSnap: _snapDraftToGrid,
       lockElevationAxis: _projectionMode.isElevation,
       snapVertical: _projectionMode.isElevation,
+      orthogonalDominance: useOrthogonalSnap &&
+              (_interactionMode == RenderSceneInteractionMode.addWall ||
+                  _interactionMode == RenderSceneInteractionMode.moveWall)
+          ? PlanSketchGeometry.wallOrthogonalDominance
+          : null,
     );
+  }
+
+  /// Adds a bounded perpendicular-foot snap for T-junctions. Endpoint-only
+  /// snapping is not enough when a wall is joined to the middle of another
+  /// wall; snapping the whole infinite line would be too aggressive and can
+  /// pull a finger gesture across a nearby room.
+  Iterable<RenderScenePoint> _wallSnapCandidates(
+    RenderScene scene,
+    RenderScenePoint point, {
+    int? excludeWallId,
+    int? levelId,
+    double toleranceMeters = 0.35,
+  }) sync* {
+    for (final wall in scene.objects) {
+      if (wall.kindKey != 'wall' ||
+          wall.elementId == excludeWallId ||
+          (levelId != null && wall.levelId != levelId)) {
+        continue;
+      }
+      final start = RenderSceneEditor.wallStartPoint(wall);
+      final end = RenderSceneEditor.wallEndPoint(wall);
+      if (start == null || end == null) continue;
+      final axis = end - start;
+      final lengthSquared = axis.x * axis.x + axis.y * axis.y;
+      if (lengthSquared <= 1e-9) continue;
+      final t = (((point.x - start.x) * axis.x + (point.y - start.y) * axis.y) /
+              lengthSquared)
+          .clamp(0.0, 1.0);
+      final projection = RenderScenePoint(
+        x: start.x + axis.x * t,
+        y: start.y + axis.y * t,
+        z: point.z,
+      );
+      if (projection.distanceTo(point) <= toleranceMeters) {
+        yield projection;
+      }
+    }
   }
 
   RenderScenePoint _snapMovedWallPoint(
@@ -3480,31 +4152,99 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     RenderScenePoint point,
     RenderScenePoint originalPoint, {
     double toleranceMeters = 0.45,
+    bool snapToGrid = true,
   }) {
-    if (!_snapDraftToGrid) {
-      return point;
+    var bestPoint = point;
+    if (snapToGrid && _snapDraftToGrid) {
+      bestPoint = _snapPoint(point);
     }
-    RenderScenePoint bestPoint = _snapPoint(point);
     var bestDistance = toleranceMeters;
+    final projectedCandidates = <RenderScenePoint>[
+      ..._wallSnapCandidates(
+        scene,
+        point,
+        excludeWallId: wall.elementId,
+        levelId: wall.levelId,
+      ),
+    ];
+    final candidates = <RenderScenePoint?>[...projectedCandidates];
     for (final object in scene.objects) {
-      if (object.kindKey != 'wall' || object.elementId == wall.elementId) {
+      if (object.kindKey != 'wall' ||
+          object.elementId == wall.elementId ||
+          (wall.levelId != null && object.levelId != wall.levelId)) {
         continue;
       }
-      for (final candidate in <RenderScenePoint?>[
-        RenderSceneEditor.wallStartPoint(object),
-        RenderSceneEditor.wallEndPoint(object),
-      ]) {
-        if (candidate == null) {
-          continue;
-        }
-        final distance = candidate.distanceTo(point);
-        if (distance < bestDistance) {
-          bestDistance = distance;
-          bestPoint = candidate;
-        }
+      candidates
+        ..add(RenderSceneEditor.wallStartPoint(object))
+        ..add(RenderSceneEditor.wallEndPoint(object));
+    }
+    for (final candidate in candidates) {
+      if (candidate == null) {
+        continue;
+      }
+      final distance = candidate.distanceTo(point);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestPoint = candidate;
       }
     }
     return RenderScenePoint(x: bestPoint.x, y: bestPoint.y, z: originalPoint.z);
+  }
+
+  int? _wallSnapLevelId(RenderScene scene, {int? excludeWallId}) {
+    if (excludeWallId != null) {
+      for (final object in scene.objects) {
+        if (object.kindKey == 'wall' && object.elementId == excludeWallId) {
+          return object.levelId ?? _activeLevelId;
+        }
+      }
+    }
+    return _activeLevelId;
+  }
+
+  RenderScenePoint _projectPointToWallAxis(
+    RenderScenePoint point, {
+    required RenderScenePoint anchor,
+    required RenderScenePoint start,
+    required RenderScenePoint end,
+  }) {
+    final axis = end - start;
+    final lengthSquared = axis.x * axis.x + axis.y * axis.y;
+    if (lengthSquared <= 1e-9) {
+      return RenderScenePoint(x: anchor.x, y: anchor.y, z: point.z);
+    }
+    final fromAnchor = point - anchor;
+    final t = (fromAnchor.x * axis.x + fromAnchor.y * axis.y) / lengthSquared;
+    return RenderScenePoint(
+      x: anchor.x + axis.x * t,
+      y: anchor.y + axis.y * t,
+      z: point.z,
+    );
+  }
+
+  RenderScenePoint _projectPointToWallNormal(
+    RenderScenePoint point, {
+    required RenderScenePoint anchor,
+    required RenderScenePoint start,
+    required RenderScenePoint end,
+  }) {
+    final axis = end - start;
+    final lengthSquared = axis.x * axis.x + axis.y * axis.y;
+    if (lengthSquared <= 1e-9) {
+      return RenderScenePoint(x: anchor.x, y: anchor.y, z: point.z);
+    }
+    // Rotate the wall axis by 90 degrees. This makes an X-aligned wall move
+    // only in Y and a Y-aligned wall move only in X, while preserving the
+    // same intuitive perpendicular offset for angled walls.
+    final normal = RenderScenePoint(x: -axis.y, y: axis.x, z: 0);
+    final fromAnchor = point - anchor;
+    final t =
+        (fromAnchor.x * normal.x + fromAnchor.y * normal.y) / lengthSquared;
+    return RenderScenePoint(
+      x: anchor.x + normal.x * t,
+      y: anchor.y + normal.y * t,
+      z: point.z,
+    );
   }
 
   double _snapDouble(double value, double step) {
@@ -3547,7 +4287,11 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       case RenderSceneInteractionMode.addCeiling:
       case RenderSceneInteractionMode.addRoof:
         if (_surfaceDrawMode == RenderSceneSurfaceDrawMode.pickWalls) {
-          return _draftSurfaceWallIds.length >= 3;
+          final draft = _viewportController.draftSurface;
+          return _draftSurfaceWallIds.length >= 3 &&
+              draft != null &&
+              draft.closed &&
+              draft.points.length >= 3;
         }
         if (_surfaceDrawMode == RenderSceneSurfaceDrawMode.polyline) {
           return _draftSurfacePoints.length >= 3;
@@ -3654,8 +4398,10 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         }
         final repository = _engineRepository;
         if (_engineBackedMode && repository != null && wall.elementId != null) {
-          final result = await repository.setWallAxis(
-            wallId: wall.elementId!,
+          final result = await _setWallAxisKeepingJoins(
+            repository: repository,
+            scene: scene,
+            wall: wall,
             start: start,
             end: end,
           );
@@ -3729,14 +4475,8 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
                           ? 'Floor'
                           : 'Ceiling',
                     );
-          if (_interactionMode != RenderSceneInteractionMode.addRoof &&
-              assemblyId == null) {
-            setState(() {
-              _editStatusMessage =
-                  'Engine project assembly topilmadi for ${_surfaceKindLabel()}.';
-            });
-            return;
-          }
+          // assemblyId=0 is valid for a new blank project: the engine then
+          // creates a plain floor/ceiling with the requested thickness.
           if (_surfaceDrawMode == RenderSceneSurfaceDrawMode.autoRoom) {
             setState(() {
               _editStatusMessage =
@@ -3744,51 +4484,71 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
             });
             return;
           }
-          final result = _surfaceDrawMode ==
-                  RenderSceneSurfaceDrawMode.pickWalls
-              ? await repository.createProfile(
-                  targetKind: targetKind,
-                  draftMode: 2,
-                  levelId: _activeLevelId!,
-                  points: const <RenderScenePoint>[],
-                  wallIds: _draftSurfaceWallIds.toList(growable: false),
-                  closed: true,
-                  thicknessMeters: _draftSurfaceThicknessMeters,
-                  heightMeters: _draftSurfaceHeightMeters,
-                  verticalOffsetMeters:
-                      _interactionMode == RenderSceneInteractionMode.addFloor
-                          ? _draftFloorTopElevationMeters
-                          : _interactionMode ==
-                                  RenderSceneInteractionMode.addCeiling
-                              ? _draftCeilingHeightOffsetMeters
-                              : 0.0,
-                  assemblyId: assemblyId ?? 0,
-                )
-              : await repository.createProfile(
-                  targetKind: targetKind,
-                  draftMode:
-                      _surfaceDrawMode == RenderSceneSurfaceDrawMode.rectangle
-                          ? 1
-                          : 0,
-                  levelId: _activeLevelId!,
-                  points: _surfaceProfilePointsForCommit(),
-                  closed: true,
-                  thicknessMeters: _draftSurfaceThicknessMeters,
-                  heightMeters: _draftSurfaceHeightMeters,
-                  verticalOffsetMeters:
-                      _interactionMode == RenderSceneInteractionMode.addFloor
-                          ? _draftFloorTopElevationMeters
-                          : _interactionMode ==
-                                  RenderSceneInteractionMode.addCeiling
-                              ? _draftCeilingHeightOffsetMeters
-                              : 0.0,
-                  assemblyId: assemblyId ?? 0,
-                );
-          await _applyEngineSceneResult(
-            result,
-            message: '${_surfaceKindLabel()} created.',
-          );
-          await _clearDraft();
+          final pickedWallProfile = _viewportController.draftSurface;
+          final keepSemanticRoofWalls =
+              _surfaceDrawMode == RenderSceneSurfaceDrawMode.pickWalls &&
+                  _interactionMode == RenderSceneInteractionMode.addRoof;
+          final resolvedPickPolygon =
+              _surfaceDrawMode == RenderSceneSurfaceDrawMode.pickWalls &&
+                      !keepSemanticRoofWalls
+                  ? pickedWallProfile?.points ?? const <RenderScenePoint>[]
+                  : const <RenderScenePoint>[];
+          if (_surfaceDrawMode == RenderSceneSurfaceDrawMode.pickWalls &&
+              !keepSemanticRoofWalls &&
+              resolvedPickPolygon.length < 3) {
+            setState(() {
+              _editStatusMessage =
+                  'Picked wall loop yopilmagan. Barcha devorlar uzluksiz ko‘k kontur hosil qilishi kerak.';
+            });
+            return;
+          }
+          try {
+            final result = await repository.createProfile(
+              targetKind: targetKind,
+              draftMode: keepSemanticRoofWalls
+                  ? 2
+                  : _surfaceDrawMode == RenderSceneSurfaceDrawMode.rectangle
+                      ? 1
+                      : 0,
+              levelId: _activeLevelId!,
+              points: resolvedPickPolygon.isNotEmpty
+                  ? resolvedPickPolygon
+                  : _surfaceProfilePointsForCommit(),
+              wallIds: keepSemanticRoofWalls
+                  ? _draftSurfaceWallIds.toList(growable: false)
+                  : const <int>[],
+              closed: true,
+              thicknessMeters: _draftSurfaceThicknessMeters,
+              heightMeters: _draftSurfaceHeightMeters,
+              verticalOffsetMeters: _interactionMode ==
+                      RenderSceneInteractionMode.addFloor
+                  ? _draftFloorTopElevationMeters
+                  : _interactionMode == RenderSceneInteractionMode.addCeiling
+                      ? _draftCeilingHeightOffsetMeters
+                      : 0.0,
+              assemblyId: assemblyId ?? 0,
+            );
+            final createdId = repository.lastCreatedElementId;
+            final created =
+                createdId == null ? null : result.scene?.objectById(createdId);
+            if (created == null) {
+              throw StateError(
+                  'Engine ${_surfaceKindLabel()} yaratganini tasdiqlamadi.');
+            }
+            await _applyEngineSceneResult(
+              result,
+              message: '${_surfaceKindLabel()} #$createdId created.',
+            );
+            await _viewportController.selectElement(createdId.toString());
+            await _viewportController.highlightElement(createdId.toString());
+            await _clearDraft();
+          } catch (error) {
+            if (!mounted) return;
+            setState(() {
+              _editStatusMessage = '${_surfaceKindLabel()} yaratilmadi: $error';
+              _statusMessage = _editStatusMessage;
+            });
+          }
           return;
         }
         if (_interactionMode == RenderSceneInteractionMode.addRoof) {
@@ -3799,31 +4559,38 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
           return;
         }
         RenderScene nextScene;
-        if (_draftSurfaceWallIds.length >= 2) {
+        if (_surfaceDrawMode == RenderSceneSurfaceDrawMode.pickWalls) {
           final walls = scene.objects
               .where(
                   (object) => _draftSurfaceWallIds.contains(object.elementId))
               .where((object) => object.kindKey == 'wall')
               .toList(growable: false);
+          final polygon = RenderSceneEditor.surfacePolygonForWalls(walls);
+          if (polygon == null || polygon.length < 3) {
+            setState(() {
+              _editStatusMessage =
+                  'Pick all connected boundary walls until the blue outline closes. Bounding rectangle ishlatilmaydi.';
+            });
+            return;
+          }
           nextScene = _interactionMode == RenderSceneInteractionMode.addFloor
-              ? RenderSceneEditor.addFloorFromWalls(
+              ? RenderSceneEditor.addFloorFromPolygon(
                   scene: scene,
-                  walls: walls,
+                  polygon: polygon,
                   thicknessMeters: _draftSurfaceThicknessMeters,
                   topElevationMeters: _draftFloorTopElevationMeters,
                   levelId: _activeLevelId,
                 )
-              : RenderSceneEditor.addCeilingFromWalls(
+              : RenderSceneEditor.addCeilingFromPolygon(
                   scene: scene,
-                  walls: walls,
+                  polygon: polygon,
                   thicknessMeters: _draftSurfaceThicknessMeters,
                   heightMeters: _draftCeilingHeightOffsetMeters,
                   levelId: _activeLevelId,
                 );
           if (identical(nextScene, scene)) {
             setState(() {
-              _editStatusMessage =
-                  'At least 2 valid walls are required for wall-bound floor/ceiling.';
+              _editStatusMessage = 'Closed wall loop topilmadi.';
             });
             return;
           }
@@ -3997,7 +4764,20 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         .where((object) => _draftSurfaceWallIds.contains(object.elementId))
         .where((object) => object.kindKey == 'wall')
         .toList(growable: false);
-    final polygon = RenderSceneEditor.surfacePolygonForWalls(walls);
+    // Tablet touch authoring can leave a small endpoint gap even when the
+    // wall faces visibly meet. Try the precise topology first, then a
+    // bounded architectural tolerance so Finish is not disabled for a room
+    // whose walls were drawn with a finger. The fallback still requires all
+    // picked segments to form one closed loop; it cannot create a bounding
+    // rectangle from an incomplete selection.
+    final polygon = RenderSceneEditor.surfacePolygonForWalls(
+          walls,
+          toleranceMeters: 0.45,
+        ) ??
+        RenderSceneEditor.surfacePolygonForWalls(
+          walls,
+          toleranceMeters: 1.5,
+        );
     if (polygon != null && polygon.length >= 3) {
       _viewportController.setSurfaceDraft(
         RenderSceneSurfaceDraft(
@@ -4008,28 +4788,32 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       );
       return;
     }
-    final bounds = RenderSceneEditor.surfaceBoundsForWalls(walls);
-    if (bounds == null) {
-      _viewportController.setSurfaceDraft(null);
-      return;
-    }
-    _draftSurfaceStart = RenderScenePoint(
-      x: bounds.min.x,
-      y: bounds.min.y,
-      z: bounds.min.z,
-    );
-    _draftSurfaceEnd = RenderScenePoint(
-      x: bounds.max.x,
-      y: bounds.max.y,
-      z: bounds.max.z,
-    );
-    _syncSurfaceDraftPreview();
+    // Pick Walls must never fall back to the union bounding rectangle. A
+    // two-wall partial selection is not a room footprint and would silently
+    // create the wrong floor for L-, U- or angled plans.
+    _draftSurfaceStart = null;
+    _draftSurfaceEnd = null;
+    _viewportController.setSurfaceDraft(null);
   }
 
   Future<void> _deleteSelectedObject() async {
     final scene = _scene;
-    final selected = _selectedObject(scene);
-    if (scene == null || selected == null) {
+    if (scene == null) {
+      setState(() {
+        _editStatusMessage = 'Delete uchun avval obyektni tanlang.';
+      });
+      return;
+    }
+
+    final selectedIds = _viewportController.selectedElementIds
+        .map(int.tryParse)
+        .whereType<int>()
+        .toSet();
+    if (selectedIds.isEmpty) {
+      final selected = _selectedObject(scene);
+      if (selected?.elementId != null) selectedIds.add(selected!.elementId!);
+    }
+    if (selectedIds.isEmpty) {
       setState(() {
         _editStatusMessage = 'Delete uchun avval obyektni tanlang.';
       });
@@ -4037,24 +4821,39 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     }
 
     final repository = _engineRepository;
-    if (_engineBackedMode && repository != null && selected.elementId != null) {
-      final result = await repository.deleteElement(
-        elementId: selected.elementId!,
-      );
+    if (_engineBackedMode && repository != null) {
+      final selectedObjects = scene.objects
+          .where((object) => selectedIds.contains(object.elementId))
+          .toList(growable: false)
+        ..sort((a, b) {
+          final aOpening = a.kindKey == 'door' || a.kindKey == 'window';
+          final bOpening = b.kindKey == 'door' || b.kindKey == 'window';
+          return aOpening == bOpening ? 0 : (aOpening ? -1 : 1);
+        });
+      RenderSceneLoadResult? result;
+      for (final object in selectedObjects) {
+        if (object.elementId == null) continue;
+        result = await repository.deleteElement(elementId: object.elementId!);
+      }
+      if (result == null) return;
       await _applyEngineSceneResult(
         result,
-        message: '${prettySceneKind(selected.kind)} o‘chirildi.',
+        message: '${selectedIds.length} ta obyekt o‘chirildi.',
       );
       return;
     }
 
-    final nextScene = RenderSceneEditor.deleteObject(
-      scene: scene,
-      target: selected,
-    );
+    var nextScene = scene;
+    for (final id in selectedIds) {
+      final target = nextScene.objectByStableId(id.toString());
+      if (target != null) {
+        nextScene =
+            RenderSceneEditor.deleteObject(scene: nextScene, target: target);
+      }
+    }
     await _applySceneChange(
       nextScene,
-      message: '${prettySceneKind(selected.kind)} o‘chirildi.',
+      message: '${selectedIds.length} ta obyekt o‘chirildi.',
     );
   }
 
@@ -4233,7 +5032,6 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
                 Expanded(
                   child: Row(
                     children: <Widget>[
-                      _buildLeftRail(context, scene),
                       AuthoringToolPalette(
                         mode: _interactionMode,
                         enabled: scene != null &&
@@ -4244,8 +5042,8 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
                       Expanded(
                         child: _buildViewportPanel(context),
                       ),
-                      if (_showInspector)
-                        _buildRightPanel(
+                      if (_showObjectList || _showInspector)
+                        _buildWorkspaceSidePanel(
                           context: context,
                           scene: fullScene,
                           inspectorTarget: inspectorTarget,
@@ -4280,13 +5078,10 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
           ? null
           : () => _setProjectionMode(RenderSceneProjectionMode.isometric),
       onCreateTemplate: (template) => _createResidentialTemplate(
-        template == WorkspaceTemplate.tower9
-            ? _ResidentialTemplateKind.tower9
-            : _ResidentialTemplateKind.campus6x9,
+        _residentialTemplateKind(template),
       ),
       onSave: _saveCurrentProject,
       onDocumentation: _openDocumentationWorkspace,
-      onOpenMaterials: _showMaterialLayerEditor,
       onCreateSection: _showSectionDialog,
       onReload: _reloadCurrentScene,
       onClearSelection: _clearSelection,
@@ -4296,10 +5091,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       onToggleInspector: () => setState(() {
         _showInspector = !_showInspector;
       }),
-      rendererToggleVisible: defaultTargetPlatform == TargetPlatform.android,
-      rendererIsNative:
-          _viewportController.backend == RenderSceneViewportBackend.native,
-      onToggleRenderer: _toggleAndroidRenderer,
+      onReturnToStart: widget.onReturnToStart,
     );
   }
 
@@ -4399,6 +5191,20 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
                   onPressed: scene == null || _isBusy ? null : _fitCamera,
                   icon: const Icon(Icons.fit_screen, size: 18),
                   label: const Text('Fit'),
+                ),
+                const SizedBox(width: 8),
+                FilledButton.tonalIcon(
+                  onPressed: scene == null ||
+                          _isBusy ||
+                          _viewportController.selectedElementIds.isEmpty
+                      ? null
+                      : _deleteSelectedObject,
+                  icon: const Icon(Icons.delete_outline, size: 18),
+                  label: Text(
+                    _viewportController.selectedElementIds.length > 1
+                        ? 'Delete (${_viewportController.selectedElementIds.length})'
+                        : 'Delete',
+                  ),
                 ),
                 if (scene != null) ...<Widget>[
                   const SizedBox(width: 10),
@@ -4610,41 +5416,10 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     );
   }
 
-  Widget _buildLeftRail(BuildContext context, RenderScene? scene) {
-    final theme = Theme.of(context);
-
-    return Container(
-      width: _showObjectList ? 280 : 72,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border(
-          right: BorderSide(color: theme.colorScheme.outlineVariant),
-        ),
-      ),
-      child: _showObjectList
-          ? _buildObjectListPanel(context, scene)
-          : _buildCollapsedRail(context),
-    );
-  }
-
-  Widget _buildCollapsedRail(BuildContext context) {
-    return Column(
-      children: <Widget>[
-        const SizedBox(height: 8),
-        IconButton(
-          tooltip: 'Show project browser',
-          onPressed: () {
-            setState(() {
-              _showObjectList = true;
-            });
-          },
-          icon: const Icon(Icons.view_list),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildObjectListPanel(BuildContext context, RenderScene? scene) {
+  Widget _buildProjectBrowserPanel(
+    BuildContext context,
+    RenderScene? scene,
+  ) {
     return ProjectBrowserPanel(
       scene: scene,
       availableKinds: _availableKinds(scene),
@@ -4659,6 +5434,8 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       onOpenFloorPlan: _openFloorPlanViewTab,
       onOpenElevation: _openElevationViewTab,
       onOpenSection: _openSectionViewTab,
+      viewPresentationById:
+          Map<String, OpenedViewTab>.unmodifiable(_viewPresentationById),
       onOpenSheet: _openSheetViewTab,
     );
   }
@@ -4715,6 +5492,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
                 _surfaceDrawMode == RenderSceneSurfaceDrawMode.rectangle,
             planPickResolver: _engineBackedMode ? _resolvePlanPick : null,
             onLevelElevationSubmitted: _moveSelectedLevelElevation,
+            draftSurfaceWallIds: _draftSurfaceWallIds,
             draftWallThicknessMeters: _defaultWallThicknessMeters,
             draftWallHeightMeters: _defaultWallHeightMeters,
           ),
@@ -4755,13 +5533,6 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
               ),
               onCancel: _cancelDraft,
             ),
-          ),
-        if (kDebugMode && _androidMutationTrace.isNotEmpty)
-          Positioned(
-            left: 8,
-            right: 8,
-            top: 8,
-            child: _AndroidMutationTrace(entries: _androidMutationTrace),
           ),
         // The Section Box is drawn and manipulated in the native Filament
         // overlay so its border and clipping planes share one camera matrix.
@@ -4812,7 +5583,49 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     );
   }
 
-  Widget _buildRightPanel({
+  Widget _buildWorkspaceSidePanel({
+    required BuildContext context,
+    required RenderScene? scene,
+    required InspectorTarget inspectorTarget,
+  }) {
+    final theme = Theme.of(context);
+    final showBrowser = _showObjectList;
+    final showInspector = _showInspector;
+
+    return SizedBox(
+      width: 340,
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          border: Border(
+            left: BorderSide(color: theme.colorScheme.outlineVariant),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            if (showBrowser)
+              Expanded(
+                flex: showInspector ? 3 : 1,
+                child: _buildProjectBrowserPanel(context, scene),
+              ),
+            if (showBrowser && showInspector) const Divider(height: 1),
+            if (showInspector)
+              Expanded(
+                flex: showBrowser ? 2 : 1,
+                child: _buildInspectorPanel(
+                  context: context,
+                  scene: scene,
+                  inspectorTarget: inspectorTarget,
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInspectorPanel({
     required BuildContext context,
     required RenderScene? scene,
     required InspectorTarget inspectorTarget,
@@ -5002,38 +5815,6 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     if (scene != null && _projectionMode == RenderSceneProjectionMode.topDown) {
       await _viewportController.updateRenderScene(_sceneForViewport(scene));
       await _viewportController.setVisibleKinds(_visibleKinds);
-    }
-  }
-
-  Future<void> _showMaterialLayerEditor() async {
-    final repository = _engineRepository;
-    if (repository == null || !_engineBackedMode || !mounted) return;
-    try {
-      final json = await _projectPersistence.exportJson();
-      final decoded = jsonDecode(json);
-      if (decoded is! Map) return;
-      if (!mounted) return;
-      await showDialog<void>(
-        context: context,
-        builder: (context) => MaterialLayerEditor(
-          projectJson: decoded.cast<String, dynamic>(),
-          onApply: (updatedProject) async {
-            final updatedJson = jsonEncode(updatedProject);
-            await _projectPersistence.replaceFromJson(
-              projectName: 'Material Layer Project',
-              json: updatedJson,
-            );
-            final result = await _sceneViews.refresh();
-            if (mounted) {
-              await _applyLoadResult(result, sourceLabel: 'Material layers');
-            }
-          },
-        ),
-      );
-    } catch (error) {
-      if (mounted) {
-        setState(() => _editStatusMessage = 'Material editor failed: $error');
-      }
     }
   }
 
@@ -5248,6 +6029,27 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
               : 'Drag to draw, or tap the next wall corner.';
         });
         return;
+      case RenderSceneInteractionMode.addDoor:
+      case RenderSceneInteractionMode.addWindow:
+        final point = details.modelPoint;
+        final hostWall = details.pickedObject?.kindKey == 'wall'
+            ? details.pickedObject
+            : (point == null ? null : _findWallNearPlanPoint(scene, point));
+        if (hostWall == null || point == null) {
+          setState(() {
+            _editStatusMessage =
+                'Opening uchun wall ustiga bosib ushlab turing.';
+            _draftHostWall = null;
+          });
+          return;
+        }
+        _updateOpeningDraftPreview(
+          scene: scene,
+          hostWall: hostWall,
+          point: point,
+          announce: true,
+        );
+        return;
       case RenderSceneInteractionMode.addFloor:
       case RenderSceneInteractionMode.addCeiling:
       case RenderSceneInteractionMode.addRoof:
@@ -5343,6 +6145,10 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
               scene: scene, opening: target, point: point);
         }
         return;
+      case RenderSceneInteractionMode.addDoor:
+      case RenderSceneInteractionMode.addWindow:
+        _handleSceneHover(details);
+        return;
       case RenderSceneInteractionMode.addWall:
       case RenderSceneInteractionMode.addFloor:
       case RenderSceneInteractionMode.addCeiling:
@@ -5361,6 +6167,21 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         _handleSceneHover(details);
         if (_wallTool.hasSegment) {
           await _commitWallDraft(autoContinue: true);
+        }
+        return;
+      case RenderSceneInteractionMode.addDoor:
+      case RenderSceneInteractionMode.addWindow:
+        _handleSceneHover(details);
+        final scene = _scene;
+        final hostWall = _draftHostWall;
+        final draft = _viewportController.draftOpening;
+        if (scene == null || hostWall == null || draft == null) return;
+        if (draft.valid) {
+          await _commitOpeningDraft(scene, hostWall);
+        } else if (mounted) {
+          setState(() {
+            _editStatusMessage = draft.message;
+          });
         }
         return;
       case RenderSceneInteractionMode.addFloor:
@@ -5406,10 +6227,13 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
           if (_engineBackedMode &&
               repository != null &&
               wall.elementId != null) {
-            final result = await repository.setWallAxis(
-                wallId: wall.elementId!,
-                start: _draftWallStart!,
-                end: _draftWallEnd!);
+            final result = await _setWallAxisKeepingJoins(
+              repository: repository,
+              scene: _scene!,
+              wall: wall,
+              start: _draftWallStart!,
+              end: _draftWallEnd!,
+            );
             await _applyEngineSceneResult(result, message: 'Wall moved.');
           }
           await _clearDraft();

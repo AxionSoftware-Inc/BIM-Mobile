@@ -369,10 +369,20 @@ WallProfile2D GeometryService::build_wall_profile(const WallData& wall) const {
     };
     std::optional<EndpointMiter> start_miter;
     std::optional<EndpointMiter> end_miter;
+    bool tee_at_start = false;
+    bool tee_at_end = false;
 
     for (const auto& join : wall.joins) {
         if (join.kind == WallJoinKind::Tee || join.kind == WallJoinKind::Cross) {
             ++profile.t_junction_placeholders;
+            if (join.kind == WallJoinKind::Tee) {
+                const auto join_x = local_x(join.point, wall.axis);
+                if (std::abs(join_x) <= 1.0e-6) {
+                    tee_at_start = true;
+                } else if (std::abs(join_x - length) <= 1.0e-6) {
+                    tee_at_end = true;
+                }
+            }
             continue;
         }
 
@@ -416,6 +426,22 @@ WallProfile2D GeometryService::build_wall_profile(const WallData& wall) const {
     };
     if (start_miter.has_value()) apply_miter(*start_miter, false);
     if (end_miter.has_value()) apply_miter(*end_miter, true);
+
+    // A Tee is different from an end-to-end corner: the branch wall must stop
+    // at the face of the continuous wall, not run through its centreline.
+    // Otherwise both wall meshes occupy the same half-thickness and their
+    // coincident edges show as doubled lines in plan/3D. Keep the host wall
+    // untouched and retract only the endpoint wall by half its thickness.
+    if (tee_at_start) {
+        const auto trimmed_start = half_thickness;
+        profile.polygon[0].x = std::max(profile.polygon[0].x, trimmed_start);
+        profile.polygon[3].x = std::max(profile.polygon[3].x, trimmed_start);
+    }
+    if (tee_at_end) {
+        const auto trimmed_end = length - half_thickness;
+        profile.polygon[1].x = std::min(profile.polygon[1].x, trimmed_end);
+        profile.polygon[2].x = std::min(profile.polygon[2].x, trimmed_end);
+    }
 
     for (const auto& opening : wall.openings) {
         const auto x_min = opening.offset_meters - (opening.width_meters / 2.0);

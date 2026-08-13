@@ -149,6 +149,14 @@ typedef _ProjectLoadJsonDart = int Function(
   ffi.Pointer<ffi.Void>,
   ffi.Pointer<Utf8>,
 );
+typedef _ProjectNewNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Pointer<Utf8>,
+);
+typedef _ProjectNewDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Pointer<Utf8>,
+);
 typedef _CreateLevelNative = ffi.Int32 Function(
   ffi.Pointer<ffi.Void>,
   ffi.Pointer<Utf8>,
@@ -468,6 +476,14 @@ typedef _CreateCeilingSystemForRoomDart = int Function(
   double,
   ffi.Pointer<ffi.Uint64>,
 );
+typedef _DetectRoomsNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Pointer<ffi.Uint64>,
+);
+typedef _DetectRoomsDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Pointer<ffi.Uint64>,
+);
 typedef _DeleteElementNative = ffi.Int32 Function(
   ffi.Pointer<ffi.Void>,
   ffi.Uint64,
@@ -606,6 +622,9 @@ class TbeViewerApi {
                 'tbe_get_schema_version'),
         _projectLoadJson = library.lookupFunction<_ProjectLoadJsonNative,
             _ProjectLoadJsonDart>('tbe_project_load_json'),
+        _projectNew =
+            library.lookupFunction<_ProjectNewNative, _ProjectNewDart>(
+                'tbe_project_new'),
         _projectSaveJson =
             library.lookupFunction<_StringGetterNative, _StringGetterDart>(
                 'tbe_project_save_json'),
@@ -673,6 +692,9 @@ class TbeViewerApi {
                 _CreateCeilingSystemForRoomNative,
                 _CreateCeilingSystemForRoomDart>(
             'tbe_create_ceiling_system_for_room'),
+        _detectRooms =
+            library.lookupFunction<_DetectRoomsNative, _DetectRoomsDart>(
+                'tbe_detect_rooms'),
         _deleteElement =
             library.lookupFunction<_DeleteElementNative, _DeleteElementDart>(
                 'tbe_delete_element'),
@@ -720,6 +742,7 @@ class TbeViewerApi {
   final _CreateResidentialTemplateDart _createResidentialTemplate;
   final _SchemaVersionDart _getSchemaVersion;
   final _ProjectLoadJsonDart _projectLoadJson;
+  final _ProjectNewDart _projectNew;
   final _StringGetterDart _projectSaveJson;
   final _CreateLevelDart _createLevel;
   final _UpdateLevelDart _updateLevel;
@@ -744,6 +767,7 @@ class TbeViewerApi {
   final _CreateProfileDart _createProfile;
   final _CreateFloorSystemForRoomDart _createFloorSystemForRoom;
   final _CreateCeilingSystemForRoomDart _createCeilingSystemForRoom;
+  final _DetectRoomsDart _detectRooms;
   final _DeleteElementDart _deleteElement;
   final _ProjectImportPackageDart _importProjectPackage;
   final _ValidateDart _validate;
@@ -887,6 +911,15 @@ class TbeViewerApi {
       _check(handle, _projectLoadJson(handle, jsonPtr));
     } finally {
       calloc.free(jsonPtr);
+    }
+  }
+
+  void newProject(ffi.Pointer<ffi.Void> handle, String projectName) {
+    final namePtr = projectName.toNativeUtf8();
+    try {
+      _check(handle, _projectNew(handle, namePtr));
+    } finally {
+      calloc.free(namePtr);
     }
   }
 
@@ -1368,6 +1401,16 @@ class TbeViewerApi {
     }
   }
 
+  int detectRooms(ffi.Pointer<ffi.Void> handle) {
+    final count = calloc<ffi.Uint64>();
+    try {
+      _check(handle, _detectRooms(handle, count));
+      return count.value;
+    } finally {
+      calloc.free(count);
+    }
+  }
+
   void deleteElement(ffi.Pointer<ffi.Void> handle, int elementId) {
     _check(handle, _deleteElement(handle, elementId));
   }
@@ -1556,6 +1599,33 @@ class ViewerRepository
       snapshot: snapshot,
       hitCandidates: const <HitCandidateView>[],
     );
+  }
+
+  @override
+  Future<RenderSceneLoadResult> createBlankProject({
+    String projectName = 'New Project',
+  }) async {
+    _handle ??= _api.createSession();
+    final handle = _handle!;
+    _api.configureInteractiveSession(handle);
+    _api.newProject(handle, projectName);
+    _projectName = projectName;
+    _currentJson = null;
+    _currentJsonPath = null;
+    _currentPackagePath = null;
+    _activeLevelId = _api.createLevel(
+      handle,
+      'Level 1',
+      0.0,
+      3.2,
+    );
+    _api.createLevel(
+      handle,
+      'Level 2',
+      3.2,
+      3.2,
+    );
+    return currentRenderScene();
   }
 
   @override
@@ -2143,6 +2213,16 @@ class ViewerRepository
       roofType: roofType,
     );
     _lastCreatedElementId = createdIds.isEmpty ? null : createdIds.first;
+    await _buildSnapshot(handle, _projectName ?? 'Project');
+    return currentRenderScene();
+  }
+
+  Future<RenderSceneLoadResult> detectRooms() async {
+    final handle = _handle;
+    if (handle == null) {
+      throw TbeApiException('No loaded project');
+    }
+    _api.detectRooms(handle);
     await _buildSnapshot(handle, _projectName ?? 'Project');
     return currentRenderScene();
   }

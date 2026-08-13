@@ -337,10 +337,14 @@ class _PlacedSheetViewport extends StatelessWidget {
         children: <Widget>[
           Positioned.fill(
             bottom: 24,
-            child: ClipRect(
-              child: _SheetViewPreview(
-                scene: scene,
-                reference: placement.view,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onPanUpdate: (details) => onMove(details.delta),
+              child: ClipRect(
+                child: _SheetViewPreview(
+                  scene: scene,
+                  reference: placement.view,
+                ),
               ),
             ),
           ),
@@ -446,8 +450,8 @@ class _SheetViewPreview extends StatelessWidget {
             selectedLevelId: reference.levelId,
             highlightedElementId: null,
             projectionMode: reference.projectionMode,
-            orbitProjectionStyle: RenderSceneOrbitProjectionStyle.perspective,
-            displayStyle: RenderSceneDisplayStyle.solid,
+            orbitProjectionStyle: reference.orbitProjectionStyle,
+            displayStyle: reference.displayStyle,
             camera: camera,
             planCamera: planCamera,
             draftWallStart: null,

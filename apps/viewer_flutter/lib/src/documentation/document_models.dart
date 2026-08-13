@@ -82,6 +82,9 @@ class SheetViewReference {
     required this.projectionMode,
     this.levelId,
     this.section,
+    this.displayStyle = RenderSceneDisplayStyle.solid,
+    this.shadowsEnabled = false,
+    this.orbitProjectionStyle = RenderSceneOrbitProjectionStyle.perspective,
   });
 
   final String id;
@@ -90,6 +93,27 @@ class SheetViewReference {
   final RenderSceneProjectionMode projectionMode;
   final int? levelId;
   final RenderSceneSection? section;
+  final RenderSceneDisplayStyle displayStyle;
+  final bool shadowsEnabled;
+  final RenderSceneOrbitProjectionStyle orbitProjectionStyle;
+
+  SheetViewReference copyWith({
+    RenderSceneDisplayStyle? displayStyle,
+    bool? shadowsEnabled,
+    RenderSceneOrbitProjectionStyle? orbitProjectionStyle,
+  }) {
+    return SheetViewReference(
+      id: id,
+      label: label,
+      kind: kind,
+      projectionMode: projectionMode,
+      levelId: levelId,
+      section: section,
+      displayStyle: displayStyle ?? this.displayStyle,
+      shadowsEnabled: shadowsEnabled ?? this.shadowsEnabled,
+      orbitProjectionStyle: orbitProjectionStyle ?? this.orbitProjectionStyle,
+    );
+  }
 }
 
 class SheetViewportPlacement {
@@ -113,6 +137,7 @@ class SheetViewportPlacement {
   final double height;
 
   SheetViewportPlacement copyWith({
+    SheetViewReference? view,
     double? left,
     double? top,
     double? width,
@@ -120,7 +145,7 @@ class SheetViewportPlacement {
   }) {
     return SheetViewportPlacement(
       id: id,
-      view: view,
+      view: view ?? this.view,
       left: left ?? this.left,
       top: top ?? this.top,
       width: width ?? this.width,

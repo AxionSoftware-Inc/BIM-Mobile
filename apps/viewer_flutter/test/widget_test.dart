@@ -140,6 +140,17 @@ class _RecordingProjectSession extends _RecordingProjectGateway
   bool disposed = false;
 
   @override
+  Future<RenderSceneLoadResult> createBlankProject({
+    String projectName = 'New Project',
+  }) async {
+    return const RenderSceneLoadResult(
+      scene: null,
+      warnings: <String>[],
+      errors: <String>[],
+    );
+  }
+
+  @override
   Future<RenderSceneLoadResult> createResidentialTemplate({
     required int buildingCount,
     required int storyCount,
@@ -198,6 +209,128 @@ void main() {
     for (final object in scene.objects) {
       expect(object.bounds.isFinite, isTrue);
     }
+  });
+
+  test('Pick Walls and Auto Room resolve a closed wall loop', () {
+    final scene = parseRenderSceneJson(
+      File('test/fixtures/render_scene_sample.json').readAsStringSync(),
+      source: 'pick walls test',
+    ).scene!;
+    final walls = scene.objects
+        .where((object) => object.kindKey == 'wall')
+        .toList(growable: false);
+
+    final polygon = RenderSceneEditor.surfacePolygonForWalls(walls);
+    expect(polygon, isNotNull);
+    expect(polygon!.length, greaterThanOrEqualTo(4));
+
+    final detected = RenderSceneEditor.detectRooms(scene);
+    final room = RenderSceneEditor.roomContainingPoint(
+      detected,
+      const RenderScenePoint(x: 3, y: 2, z: 0),
+    );
+    expect(room, isNotNull);
+    expect(
+      RenderSceneEditor.roomBoundaryWallIds(room!),
+      containsAll(walls.map((wall) => wall.elementId)),
+    );
+  });
+
+  test('Auto Room ignores an open wall boundary', () {
+    final scene = parseRenderSceneJson(
+      File('test/fixtures/render_scene_sample.json').readAsStringSync(),
+      source: 'open room test',
+    ).scene!;
+    final opened = RenderSceneEditor.deleteObject(
+      scene: scene,
+      target: scene.objectById(4)!,
+    );
+    final detected = RenderSceneEditor.detectRooms(opened);
+    expect(
+      RenderSceneEditor.roomContainingPoint(
+        detected,
+        const RenderScenePoint(x: 3, y: 2, z: 0),
+      ),
+      isNull,
+    );
+  });
+
+  test('Auto Room keeps an L-shaped boundary instead of its bounding box', () {
+    var scene = parseRenderSceneJson(
+      File('test/fixtures/render_scene_sample.json').readAsStringSync(),
+      source: 'L room test',
+    ).scene!;
+    for (final wall in scene.objects
+        .where((object) => object.kindKey == 'wall')
+        .toList(growable: false)) {
+      scene = RenderSceneEditor.deleteObject(scene: scene, target: wall);
+    }
+    const points = <RenderScenePoint>[
+      RenderScenePoint(x: 0, y: 0, z: 0),
+      RenderScenePoint(x: 6, y: 0, z: 0),
+      RenderScenePoint(x: 6, y: 3, z: 0),
+      RenderScenePoint(x: 3, y: 3, z: 0),
+      RenderScenePoint(x: 3, y: 6, z: 0),
+      RenderScenePoint(x: 0, y: 6, z: 0),
+    ];
+    for (var index = 0; index < points.length; index += 1) {
+      scene = RenderSceneEditor.addWall(
+        scene: scene,
+        start: points[index],
+        end: points[(index + 1) % points.length],
+        levelId: 1,
+        topLevelId: 2,
+      );
+    }
+    final detected = RenderSceneEditor.detectRooms(scene);
+    final room = RenderSceneEditor.roomContainingPoint(
+      detected,
+      const RenderScenePoint(x: 1, y: 1, z: 0),
+      levelId: 1,
+    );
+    expect(room, isNotNull);
+    final polygon = RenderSceneEditor.roomBoundaryPolygon(detected, room!);
+    expect(polygon, isNotNull);
+    expect(polygon!.length, 6);
+    expect(
+        RenderSceneEditor.roomContainingPoint(
+          detected,
+          const RenderScenePoint(x: 5, y: 5, z: 0),
+          levelId: 1,
+        ),
+        isNull);
+  });
+
+  test('wall move propagation is immediate and endpoint edits stay local', () {
+    final scene = parseRenderSceneJson(
+      File('test/fixtures/render_scene_sample.json').readAsStringSync(),
+      source: 'wall propagation test',
+    ).scene!;
+    final walls = scene.objects
+        .where((object) => object.kindKey == 'wall')
+        .toList(growable: false);
+    final bottom = walls.firstWhere((wall) => wall.elementId == 2);
+    final start = RenderSceneEditor.wallStartPoint(bottom)!;
+    final end = RenderSceneEditor.wallEndPoint(bottom)!;
+    const delta = RenderScenePoint(x: 0, y: 1, z: 0);
+
+    final bodyUpdates = RenderSceneEditor.wallAxisUpdatesForJoin(
+      scene: scene,
+      wall: bottom,
+      start: start + delta,
+      end: end + delta,
+    );
+    expect(bodyUpdates.keys, containsAll(<int>[2, 3, 5]));
+    expect(bodyUpdates.keys, isNot(contains(4)));
+    expect(bodyUpdates.length, 3);
+
+    final endpointUpdates = RenderSceneEditor.wallAxisUpdatesForJoin(
+      scene: scene,
+      wall: bottom,
+      start: start,
+      end: RenderScenePoint(x: end.x - 1, y: end.y, z: end.z),
+    );
+    expect(endpointUpdates.keys, <int>[2]);
   });
 
   test('RenderScene parser reports invalid JSON cleanly', () {
@@ -410,6 +543,110 @@ void main() {
     expect(saved, contains('Residential Campus'));
     expect(saved, contains('Building 6 exterior wall'));
     expect(saved, contains('source_wall_ids'));
+  });
+
+  test('engine authoring creates a picked-wall floor in the render scene',
+      () async {
+    final repository = ViewerRepository(TbeViewerApi.load());
+    addTearDown(repository.dispose);
+    final result = await repository.createResidentialTemplate(
+      buildingCount: 1,
+      storyCount: 3,
+    );
+    final levelId = result.scene!.levels.first.levelId;
+    const polygon = <RenderScenePoint>[
+      RenderScenePoint(x: 20, y: 0, z: 0),
+      RenderScenePoint(x: 24, y: 0, z: 0),
+      RenderScenePoint(x: 24, y: 4, z: 0),
+      RenderScenePoint(x: 20, y: 4, z: 0),
+    ];
+    final assemblyId = repository.defaultAssemblyId('Floor');
+    expect(assemblyId, isNotNull);
+    final created = await repository.createProfile(
+      targetKind: 1,
+      draftMode: 0,
+      levelId: levelId,
+      points: polygon,
+      closed: true,
+      thicknessMeters: 0.18,
+      heightMeters: 0,
+      verticalOffsetMeters: 0,
+      assemblyId: assemblyId!,
+    );
+    final createdId = repository.lastCreatedElementId;
+    expect(createdId, isNotNull);
+    expect(created.scene!.objectById(createdId)!.kindKey, 'floor');
+  });
+
+  test('blank project creates a picked-wall floor without an assembly',
+      () async {
+    final repository = ViewerRepository(TbeViewerApi.load());
+    addTearDown(repository.dispose);
+    final blank = await repository.createBlankProject(
+      projectName: 'Blank picked-wall floor',
+    );
+    final levelId = blank.scene!.levels.first.levelId;
+    const points = <RenderScenePoint>[
+      RenderScenePoint(x: 0, y: 0, z: 0),
+      RenderScenePoint(x: 8, y: 0, z: 0),
+      RenderScenePoint(x: 8, y: 6, z: 0),
+      RenderScenePoint(x: 0, y: 6, z: 0),
+    ];
+    final wallIds = <int>[];
+    for (var index = 0; index < points.length; index += 1) {
+      await repository.createWall(
+        name: 'Blank boundary wall $index',
+        levelId: levelId,
+        start: points[index],
+        end: points[(index + 1) % points.length],
+        thicknessMeters: 0.2,
+        heightMeters: 3.2,
+      );
+      wallIds.add(repository.lastCreatedElementId!);
+    }
+
+    final created = await repository.createProfile(
+      targetKind: 1,
+      draftMode: 2,
+      levelId: levelId,
+      points: const <RenderScenePoint>[],
+      wallIds: wallIds,
+      closed: true,
+      thicknessMeters: 0.18,
+      heightMeters: 0,
+      verticalOffsetMeters: 0,
+      assemblyId: 0,
+    );
+    final createdId = repository.lastCreatedElementId;
+    expect(createdId, isNotNull);
+    expect(created.scene!.objectById(createdId)!.kindKey, 'floor');
+  });
+
+  test('engine Auto Room exposes exact room boundaries to the viewer',
+      () async {
+    final repository = ViewerRepository(TbeViewerApi.load());
+    addTearDown(repository.dispose);
+    final loaded = await repository.createResidentialTemplate(
+      buildingCount: 1,
+      storyCount: 3,
+    );
+    final levelId = loaded.scene!.levels.first.levelId;
+    await repository.setActiveLevel(levelId);
+
+    final detected = await repository.detectRooms();
+    final rooms = detected.scene!.objects
+        .where(
+            (object) => object.kindKey == 'room' && object.levelId == levelId)
+        .toList(growable: false);
+    expect(rooms, isNotEmpty);
+    for (final room in rooms) {
+      expect(RenderSceneEditor.roomBoundaryWallIds(room).length,
+          greaterThanOrEqualTo(3));
+      expect(
+        RenderSceneEditor.roomBoundaryPolygon(detected.scene!, room)!.length,
+        greaterThanOrEqualTo(3),
+      );
+    }
   });
 
   test('level move updates a wall constrained to that level', () async {
@@ -1442,7 +1679,7 @@ void main() {
     expect(tool.end, isNull);
     expect(tool.points, isEmpty);
     expect(tool.wallIds, isEmpty);
-    expect(tool.drawMode, RenderSceneSurfaceDrawMode.rectangle);
+    expect(tool.drawMode, RenderSceneSurfaceDrawMode.pickWalls);
     expect(tool.floorTopMeters, closeTo(4.2, 1e-9));
     expect(tool.heightMeters, closeTo(3.6, 1e-9));
   });
@@ -1487,9 +1724,28 @@ void main() {
       referenceStart: start,
       candidatePoints: const <RenderScenePoint>[wallEnd],
     );
-    expect(endpoint.x, closeTo(0, 1e-9));
+    // A diagonal continuation is preserved; only a small hand wobble is
+    // corrected to an axis.
+    expect(endpoint.x, closeTo(2, 1e-9));
     expect(endpoint.y, closeTo(3, 1e-9));
     expect(endpoint.z, closeTo(3.2, 1e-9));
+
+    final slightWobble = PlanSketchGeometry.resolveLineEndpoint(
+      rawPoint: const RenderScenePoint(x: 2.10, y: 0.08, z: 3.2),
+      referenceStart: start,
+      useGridSnap: false,
+    );
+    expect(slightWobble.x, closeTo(2.10, 1e-9));
+    expect(slightWobble.y, closeTo(0, 1e-9));
+
+    final wallWobble = PlanSketchGeometry.resolveLineEndpoint(
+      rawPoint: const RenderScenePoint(x: 2.10, y: 0.30, z: 3.2),
+      referenceStart: start,
+      useGridSnap: false,
+      orthogonalDominance: PlanSketchGeometry.wallOrthogonalDominance,
+    );
+    expect(wallWobble.x, closeTo(2.10, 1e-9));
+    expect(wallWobble.y, closeTo(0, 1e-9));
 
     final rectangle = PlanSketchGeometry.rectangle(
       const RenderScenePoint(x: 4, y: 6, z: 1),
@@ -1583,6 +1839,21 @@ void main() {
     expect(find.byTooltip('Documentation and PDF'), findsOneWidget);
   });
 
+  testWidgets('App launch shows the project start screen',
+      (WidgetTester tester) async {
+    await tester.binding.setSurfaceSize(const Size(1600, 1000));
+    await tester.pumpWidget(const ViewerApp());
+    await tester.pumpAndSettle();
+
+    expect(find.text('Start a project'), findsOneWidget);
+    expect(find.text('Open project'), findsOneWidget);
+    expect(find.text('Create new'), findsOneWidget);
+    expect(find.text('Default building'), findsOneWidget);
+    expect(find.text('Residential tower'), findsOneWidget);
+    expect(find.text('Residential campus'), findsOneWidget);
+    expect(find.text('Wall #11'), findsNothing);
+  });
+
   testWidgets('Roof tool exposes contextual boundary and Trim controls',
       (WidgetTester tester) async {
     final json = File('assets/render_scene.json').readAsStringSync();
@@ -1620,9 +1891,6 @@ void main() {
         preferEngineBackedBundledSample: false,
       ),
     );
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.byTooltip('Show project browser').first);
     await tester.pumpAndSettle();
 
     expect(find.text('Sections (2)'), findsOneWidget);
@@ -1693,6 +1961,50 @@ void main() {
     controller.dispose();
   });
 
+  test('sheet placements follow their own view presentation metadata', () {
+    final controller = SheetWorkspaceController();
+    controller.createSheet(title: 'Presentation metadata');
+    const floorPlan = SheetViewReference(
+      id: 'floor-plan-1',
+      label: 'Level 1 plan',
+      kind: SheetViewKind.floorPlan,
+      projectionMode: RenderSceneProjectionMode.topDown,
+      levelId: 1,
+      displayStyle: RenderSceneDisplayStyle.shaded,
+    );
+    const threeD = SheetViewReference(
+      id: 'view-3d-default',
+      label: '3D View',
+      kind: SheetViewKind.threeD,
+      projectionMode: RenderSceneProjectionMode.isometric,
+      displayStyle: RenderSceneDisplayStyle.solid,
+    );
+    controller.placeView(view: floorPlan, centerX: 0.35, centerY: 0.35);
+    controller.placeView(view: threeD, centerX: 0.7, centerY: 0.35);
+
+    controller.updateViewPresentation(
+      'floor-plan-1',
+      displayStyle: RenderSceneDisplayStyle.solid,
+    );
+
+    final placements = controller.activeSheet!.placements;
+    expect(
+      placements
+          .singleWhere((item) => item.view.id == 'floor-plan-1')
+          .view
+          .displayStyle,
+      RenderSceneDisplayStyle.solid,
+    );
+    expect(
+      placements
+          .singleWhere((item) => item.view.id == 'view-3d-default')
+          .view
+          .displayStyle,
+      RenderSceneDisplayStyle.solid,
+    );
+    controller.dispose();
+  });
+
   testWidgets('Project Browser opens a blank A3 sheet in the main workspace',
       (WidgetTester tester) async {
     final json = File('assets/render_scene.json').readAsStringSync();
@@ -1703,8 +2015,6 @@ void main() {
         preferEngineBackedBundledSample: false,
       ),
     );
-    await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Show project browser').first);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Sheets (0)'));
     await tester.pumpAndSettle();

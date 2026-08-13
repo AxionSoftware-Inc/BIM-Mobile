@@ -17,7 +17,6 @@ class WorkspaceAppBar extends StatelessWidget implements PreferredSizeWidget {
     required this.onCreateTemplate,
     required this.onSave,
     required this.onDocumentation,
-    required this.onOpenMaterials,
     required this.onCreateSection,
     required this.onReload,
     required this.onClearSelection,
@@ -25,9 +24,7 @@ class WorkspaceAppBar extends StatelessWidget implements PreferredSizeWidget {
     required this.onToggleInspector,
     this.activeSectionName,
     this.onExitSection,
-    this.rendererToggleVisible = false,
-    this.rendererIsNative = true,
-    this.onToggleRenderer,
+    this.onReturnToStart,
   });
 
   final String? statusMessage;
@@ -40,7 +37,6 @@ class WorkspaceAppBar extends StatelessWidget implements PreferredSizeWidget {
   final ValueChanged<WorkspaceTemplate> onCreateTemplate;
   final VoidCallback onSave;
   final VoidCallback onDocumentation;
-  final VoidCallback onOpenMaterials;
   final VoidCallback onCreateSection;
   final VoidCallback onReload;
   final VoidCallback onClearSelection;
@@ -48,9 +44,7 @@ class WorkspaceAppBar extends StatelessWidget implements PreferredSizeWidget {
   final VoidCallback onToggleInspector;
   final String? activeSectionName;
   final VoidCallback? onExitSection;
-  final bool rendererToggleVisible;
-  final bool rendererIsNative;
-  final VoidCallback? onToggleRenderer;
+  final VoidCallback? onReturnToStart;
 
   @override
   Size get preferredSize => const Size.fromHeight(64);
@@ -65,7 +59,17 @@ class WorkspaceAppBar extends StatelessWidget implements PreferredSizeWidget {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          const Text('Tablet BIM'),
+          if (onReturnToStart == null)
+            const Text('Tablet BIM')
+          else
+            InkWell(
+              onTap: busy ? null : onReturnToStart,
+              borderRadius: BorderRadius.circular(8),
+              child: const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                child: Text('Tablet BIM'),
+              ),
+            ),
           if (subtitle != null && subtitle.isNotEmpty)
             Text(
               subtitle,
@@ -93,6 +97,10 @@ class WorkspaceAppBar extends StatelessWidget implements PreferredSizeWidget {
               child: Text('9-storey residential tower'),
             ),
             PopupMenuItem<WorkspaceTemplate>(
+              value: WorkspaceTemplate.default3,
+              child: Text('3-storey default building'),
+            ),
+            PopupMenuItem<WorkspaceTemplate>(
               value: WorkspaceTemplate.campus6x9,
               child: Text('6 × 9-storey campus'),
             ),
@@ -109,16 +117,17 @@ class WorkspaceAppBar extends StatelessWidget implements PreferredSizeWidget {
           icon: const Icon(Icons.description_outlined),
         ),
         IconButton(
-          tooltip: 'Materials and assemblies',
-          onPressed:
-              busy || !engineBacked || !hasScene ? null : onOpenMaterials,
-          icon: const Icon(Icons.layers_outlined),
-        ),
-        IconButton(
           tooltip: 'Create section',
           onPressed:
               busy || !engineBacked || !hasScene ? null : onCreateSection,
           icon: const Icon(Icons.content_cut_outlined),
+        ),
+        IconButton(
+          tooltip: inspectorVisible ? 'Hide Inspector' : 'Show Inspector',
+          onPressed: busy ? null : onToggleInspector,
+          icon: Icon(
+            inspectorVisible ? Icons.tune : Icons.tune_outlined,
+          ),
         ),
         PopupMenuButton<_WorkspaceMoreAction>(
           tooltip: 'Workspace actions',
@@ -131,10 +140,6 @@ class WorkspaceAppBar extends StatelessWidget implements PreferredSizeWidget {
                 onClearSelection();
               case _WorkspaceMoreAction.toggleBrowser:
                 onToggleBrowser();
-              case _WorkspaceMoreAction.toggleInspector:
-                onToggleInspector();
-              case _WorkspaceMoreAction.toggleRenderer:
-                onToggleRenderer?.call();
             }
           },
           itemBuilder: (context) => <PopupMenuEntry<_WorkspaceMoreAction>>[
@@ -160,35 +165,10 @@ class WorkspaceAppBar extends StatelessWidget implements PreferredSizeWidget {
                     ? Icons.vertical_split_outlined
                     : Icons.account_tree_outlined),
                 title: Text(browserVisible
-                    ? 'Hide Project Browser'
-                    : 'Show Project Browser'),
+                    ? 'Hide project browser'
+                    : 'Show project browser'),
               ),
             ),
-            PopupMenuItem(
-              value: _WorkspaceMoreAction.toggleInspector,
-              child: ListTile(
-                leading: Icon(inspectorVisible
-                    ? Icons.tune_outlined
-                    : Icons.tune_outlined),
-                title: Text(
-                    inspectorVisible ? 'Hide Inspector' : 'Show Inspector'),
-              ),
-            ),
-            if (rendererToggleVisible && onToggleRenderer != null)
-              PopupMenuItem(
-                value: _WorkspaceMoreAction.toggleRenderer,
-                enabled: !busy,
-                child: ListTile(
-                  leading: Icon(
-                    rendererIsNative ? Icons.layers_outlined : Icons.memory,
-                  ),
-                  title: Text(
-                    rendererIsNative
-                        ? 'Use Flutter fallback renderer'
-                        : 'Use Filament renderer',
-                  ),
-                ),
-              ),
           ],
         ),
         const SizedBox(width: 8),
@@ -197,14 +177,12 @@ class WorkspaceAppBar extends StatelessWidget implements PreferredSizeWidget {
   }
 }
 
-enum WorkspaceTemplate { tower9, campus6x9 }
+enum WorkspaceTemplate { default3, tower9, campus6x9 }
 
 enum _WorkspaceMoreAction {
   reload,
   clearSelection,
   toggleBrowser,
-  toggleInspector,
-  toggleRenderer,
 }
 
 /// Icon-first authoring palette. Rare editing commands remain in the overflow.
@@ -223,47 +201,55 @@ class AuthoringToolPalette extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Container(
-      width: 64,
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surface,
-        border: Border(
-          right: BorderSide(color: theme.colorScheme.outlineVariant),
-        ),
-      ),
-      child: Column(
-        children: <Widget>[
-          const SizedBox(height: 8),
-          for (final tool in _primaryTools)
-            _PaletteToolButton(
-              tool: tool,
-              selected: mode == tool.mode,
-              enabled: enabled,
-              onPressed: () => onModeChanged(tool.mode),
-            ),
-          const Divider(height: 20),
-          PopupMenuButton<RenderSceneInteractionMode>(
-            tooltip: 'Edit tools · Trim / Extend',
-            enabled: enabled,
-            icon: const Icon(Icons.construction_outlined),
-            onSelected: onModeChanged,
-            itemBuilder: (context) =>
-                <PopupMenuEntry<RenderSceneInteractionMode>>[
-              for (final tool in _secondaryTools)
-                CheckedPopupMenuItem<RenderSceneInteractionMode>(
-                  value: tool.mode,
-                  checked: mode == tool.mode,
-                  child: Row(
-                    children: <Widget>[
-                      Icon(tool.icon, size: 18),
-                      const SizedBox(width: 10),
-                      Text(tool.label),
+    return Align(
+      alignment: Alignment.topCenter,
+      child: Padding(
+        padding: const EdgeInsets.only(top: 28),
+        child: SizedBox(
+          width: 64,
+          child: Material(
+            elevation: 3,
+            color: theme.colorScheme.surface.withValues(alpha: 0.90),
+            borderRadius: BorderRadius.circular(14),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  for (final tool in _primaryTools)
+                    _PaletteToolButton(
+                      tool: tool,
+                      selected: mode == tool.mode,
+                      enabled: enabled,
+                      onPressed: () => onModeChanged(tool.mode),
+                    ),
+                  const Divider(height: 20),
+                  PopupMenuButton<RenderSceneInteractionMode>(
+                    tooltip: 'Edit tools · Trim / Extend',
+                    enabled: enabled,
+                    icon: const Icon(Icons.construction_outlined),
+                    onSelected: onModeChanged,
+                    itemBuilder: (context) =>
+                        <PopupMenuEntry<RenderSceneInteractionMode>>[
+                      for (final tool in _secondaryTools)
+                        CheckedPopupMenuItem<RenderSceneInteractionMode>(
+                          value: tool.mode,
+                          checked: mode == tool.mode,
+                          child: Row(
+                            children: <Widget>[
+                              Icon(tool.icon, size: 18),
+                              const SizedBox(width: 10),
+                              Text(tool.label),
+                            ],
+                          ),
+                        ),
                     ],
                   ),
-                ),
-            ],
+                ],
+              ),
+            ),
           ),
-        ],
+        ),
       ),
     );
   }
@@ -371,9 +357,9 @@ class SurfaceDrawingContextBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final modes = <RenderSceneSurfaceDrawMode>[
+      RenderSceneSurfaceDrawMode.pickWalls,
       RenderSceneSurfaceDrawMode.polyline,
       RenderSceneSurfaceDrawMode.rectangle,
-      RenderSceneSurfaceDrawMode.pickWalls,
       if (_supportsAutoRoom) RenderSceneSurfaceDrawMode.autoRoom,
     ];
 
@@ -448,8 +434,10 @@ class SurfaceDrawingContextBar extends StatelessWidget {
               drawMode == RenderSceneSurfaceDrawMode.rectangle
                   ? 'Drag one finger · two fingers navigate'
                   : drawMode == RenderSceneSurfaceDrawMode.pickWalls
-                      ? 'Tap walls · tap again to remove'
-                      : 'Tap corners · Finish closes the loop',
+                      ? 'Tap walls · selected walls turn blue · Undo removes last'
+                      : drawMode == RenderSceneSurfaceDrawMode.autoRoom
+                          ? 'Tap inside a closed room · created immediately'
+                          : 'Tap corners · Finish closes the loop',
               style: theme.textTheme.labelSmall?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
               ),
@@ -570,12 +558,11 @@ class ViewportControlDeck extends StatelessWidget {
             ),
             if (is3D)
               _DeckIconButton(
-                tooltip: shadowsEnabled ? 'Turn shadows off' : 'Turn shadows on',
+                tooltip:
+                    shadowsEnabled ? 'Turn shadows off' : 'Turn shadows on',
                 selected: shadowsEnabled,
                 enabled: hasScene,
-                icon: shadowsEnabled
-                    ? Icons.wb_sunny_outlined
-                    : Icons.wb_sunny,
+                icon: shadowsEnabled ? Icons.wb_sunny_outlined : Icons.wb_sunny,
                 onPressed: () => onShadowsChanged(!shadowsEnabled),
               ),
             if (is3D)

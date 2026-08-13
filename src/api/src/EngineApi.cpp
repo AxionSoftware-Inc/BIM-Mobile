@@ -1397,6 +1397,38 @@ RenderSceneDTO build_render_scene(
             }
             continue;
         }
+        if (const auto* room = element.room(); room != nullptr) {
+            const auto& polygon = room->interior_boundary_polygon.empty()
+                ? room->centerline_boundary_polygon
+                : room->interior_boundary_polygon;
+            if (polygon.size() >= 3) {
+                const auto elevation = level_elevation(elevations, room->level_id, 0.0);
+                auto boundary_ids = std::string{};
+                for (std::size_t index = 0; index < room->boundary_wall_ids.size(); ++index) {
+                    if (index != 0) boundary_ids += ',';
+                    boundary_ids += std::to_string(room->boundary_wall_ids[index]);
+                }
+                auto boundary_polygon = std::string{};
+                for (std::size_t index = 0; index < polygon.size(); ++index) {
+                    if (index != 0) boundary_polygon += ';';
+                    boundary_polygon += std::to_string(polygon[index].x) + ',' +
+                        std::to_string(polygon[index].y);
+                }
+                append_object(make_object_dto(
+                    element.id(),
+                    ApiElementKind::Room,
+                    room->level_id,
+                    element.revision(),
+                    make_flat_polygon_mesh(polygon, elevation + 0.01, 0.01),
+                    material_category_name(ApiElementKind::Room),
+                    {
+                        {"boundary_wall_ids", boundary_ids},
+                        {"boundary_polygon", boundary_polygon},
+                    }
+                ));
+            }
+            continue;
+        }
         if (const auto* slab = element.slab(); slab != nullptr) {
             const auto elevation = level_elevation(elevations, slab->level_id, 0.0) + slab->elevation_offset_meters;
             append_object(make_object_dto(
@@ -3415,7 +3447,7 @@ ApiVoidResult EngineSession::auto_join_walls() {
 
 ApiVoidResult EngineSession::set_wall_axis(std::uint64_t wall_id, Vec2 start, Vec2 end) {
     return apply_mutation(*impl_, "set_wall_axis", [&](Document& document) {
-        document.set_wall_axis(wall_id, Line2{.start = to_point(start), .end = to_point(end)});
+        document.set_wall_axis_with_joins(wall_id, Line2{.start = to_point(start), .end = to_point(end)});
     });
 }
 

@@ -3,6 +3,10 @@ import 'viewer_project_gateway.dart';
 
 /// Native command required to create an engine-owned starter project.
 abstract interface class ViewerTemplateGateway {
+  Future<RenderSceneLoadResult> createBlankProject({
+    String projectName,
+  });
+
   Future<RenderSceneLoadResult> createResidentialTemplate({
     required int buildingCount,
     required int storyCount,

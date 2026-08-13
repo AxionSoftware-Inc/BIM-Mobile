@@ -319,6 +319,79 @@ class RenderSceneEditor {
     return _parseSceneMap(map, source: scene.source);
   }
 
+  /// Rebuilds the lightweight plan-room graph from the current wall geometry.
+  ///
+  /// Native engine snapshots do not necessarily contain Room objects until a
+  /// room mutation has been requested. Authoring tools still need a preview,
+  /// so this intentionally creates temporary room objects without changing
+  /// the document.
+  static RenderScene detectRooms(RenderScene scene) {
+    final map = _sceneMap(scene);
+    final objects = _objectsFromSceneMap(map);
+    if (objects.isEmpty) return scene;
+    RenderSceneLevelBinding.normalizeObjects(objects, _levelsFromSceneMap(map));
+    _rebuildDetectedRooms(objects);
+    map['objects'] = objects;
+    return _parseSceneMap(map, source: '${scene.source} ~ detected rooms');
+  }
+
+  static List<int> roomBoundaryWallIds(RenderSceneObject room) {
+    final raw = room.metadata['boundary_wall_ids'];
+    if (raw is List) {
+      return raw.map(_toInt).whereType<int>().toSet().toList(growable: false);
+    }
+    if (raw is String && raw.isNotEmpty) {
+      return raw
+          .split(',')
+          .map((value) => int.tryParse(value.trim()))
+          .whereType<int>()
+          .toSet()
+          .toList(growable: false);
+    }
+    return const <int>[];
+  }
+
+  static List<RenderScenePoint>? roomBoundaryPolygon(
+    RenderScene scene,
+    RenderSceneObject room, {
+    double toleranceMeters = 0.45,
+  }) {
+    final rawPolygon = room.metadata['boundary_polygon'];
+    if (rawPolygon is List) {
+      final polygon = rawPolygon
+          .map(RenderScenePoint.fromJson)
+          .whereType<RenderScenePoint>()
+          .toList(growable: false);
+      if (polygon.length >= 3 && _polygonArea2d(polygon).abs() > 1e-6) {
+        return polygon;
+      }
+    }
+    if (rawPolygon is String && rawPolygon.isNotEmpty) {
+      final polygon = rawPolygon
+          .split(';')
+          .map((entry) {
+            final coordinates = entry.split(',');
+            if (coordinates.length != 2) return null;
+            final x = double.tryParse(coordinates[0].trim());
+            final y = double.tryParse(coordinates[1].trim());
+            if (x == null || y == null) return null;
+            return RenderScenePoint(x: x, y: y, z: room.bounds.min.z);
+          })
+          .whereType<RenderScenePoint>()
+          .toList(growable: false);
+      if (polygon.length >= 3 && _polygonArea2d(polygon).abs() > 1e-6) {
+        return polygon;
+      }
+    }
+    final ids = roomBoundaryWallIds(room).toSet();
+    if (ids.length < 3) return null;
+    final walls = scene.objects
+        .where((object) => ids.contains(object.elementId))
+        .where((object) => object.kindKey == 'wall')
+        .toList(growable: false);
+    return surfacePolygonForWalls(walls, toleranceMeters: toleranceMeters);
+  }
+
   static bool _needsWallGeometryRepair(List<Map<String, Object?>> objects) {
     for (final object in objects) {
       final kind = (object['kind']?.toString() ?? '').toLowerCase();
@@ -463,13 +536,13 @@ class RenderSceneEditor {
     double topElevationMeters = 0.0,
     int? levelId,
   }) {
-    final bounds = surfaceBoundsForWalls(walls);
-    if (bounds == null) {
+    final polygon = surfacePolygonForWalls(walls);
+    if (polygon == null) {
       return scene;
     }
-    return addFloorFromBounds(
+    return addFloorFromPolygon(
       scene: scene,
-      bounds: bounds,
+      polygon: polygon,
       thicknessMeters: thicknessMeters,
       topElevationMeters: topElevationMeters,
       levelId: levelId,
@@ -483,15 +556,51 @@ class RenderSceneEditor {
     double heightMeters = 3.0,
     int? levelId,
   }) {
-    final bounds = surfaceBoundsForWalls(walls);
-    if (bounds == null) {
+    final polygon = surfacePolygonForWalls(walls);
+    if (polygon == null) {
       return scene;
     }
-    return addCeilingFromBounds(
+    return addCeilingFromPolygon(
       scene: scene,
-      bounds: bounds,
+      polygon: polygon,
       thicknessMeters: thicknessMeters,
       heightMeters: heightMeters,
+      levelId: levelId,
+    );
+  }
+
+  static RenderScene addFloorFromPolygon({
+    required RenderScene scene,
+    required List<RenderScenePoint> polygon,
+    double thicknessMeters = 0.18,
+    double topElevationMeters = 0.0,
+    int? levelId,
+  }) {
+    return _addHorizontalSystemForPolygon(
+      scene: scene,
+      polygon: polygon,
+      kind: 'Floor',
+      materialCategory: 'floor',
+      thicknessMeters: thicknessMeters,
+      baseZ: topElevationMeters - thicknessMeters,
+      levelId: levelId,
+    );
+  }
+
+  static RenderScene addCeilingFromPolygon({
+    required RenderScene scene,
+    required List<RenderScenePoint> polygon,
+    double thicknessMeters = 0.05,
+    double heightMeters = 3.0,
+    int? levelId,
+  }) {
+    return _addHorizontalSystemForPolygon(
+      scene: scene,
+      polygon: polygon,
+      kind: 'Ceiling',
+      materialCategory: 'ceiling',
+      thicknessMeters: thicknessMeters,
+      baseZ: heightMeters - thicknessMeters,
       levelId: levelId,
     );
   }
@@ -567,13 +676,17 @@ class RenderSceneEditor {
 
   static RenderSceneObject? roomContainingPoint(
     RenderScene scene,
-    RenderScenePoint point,
-  ) {
+    RenderScenePoint point, {
+    int? levelId,
+  }) {
     RenderSceneObject? bestRoom;
     var bestArea = double.infinity;
 
     for (final object in scene.objects) {
       if (object.kindKey != 'room') {
+        continue;
+      }
+      if (levelId != null && object.levelId != levelId) {
         continue;
       }
 
@@ -588,7 +701,13 @@ class RenderSceneEditor {
         continue;
       }
 
-      final area = bounds.width * bounds.depth;
+      final polygon = roomBoundaryPolygon(scene, object);
+      if (polygon != null && !_pointInPlanPolygon(point, polygon)) {
+        continue;
+      }
+      final area = polygon == null
+          ? bounds.width * bounds.depth
+          : _polygonArea2d(polygon).abs();
       if (area < bestArea) {
         bestArea = area;
         bestRoom = object;
@@ -736,7 +855,7 @@ class RenderSceneEditor {
 
   static List<RenderScenePoint>? surfacePolygonForWalls(
     List<RenderSceneObject> walls, {
-    double toleranceMeters = 0.05,
+    double toleranceMeters = 0.45,
   }) {
     final segments = <({RenderScenePoint start, RenderScenePoint end})>[];
     for (final wall in walls) {
@@ -754,73 +873,92 @@ class RenderSceneEditor {
       return null;
     }
 
-    List<RenderScenePoint>? traceFrom(
-      RenderScenePoint firstStart,
-      RenderScenePoint firstEnd,
-      List<bool> used,
-    ) {
-      final points = <RenderScenePoint>[firstStart, firstEnd];
+    List<RenderScenePoint>? traceFrom(bool reverseFirst) {
+      final first = segments.first;
+      final oriented = <({RenderScenePoint start, RenderScenePoint end})>[
+        reverseFirst
+            ? (start: first.end, end: first.start)
+            : (start: first.start, end: first.end),
+      ];
+      final used = <bool>[...List<bool>.filled(segments.length, false)];
       used[0] = true;
-      var current = firstEnd;
-      while (points.length <= segments.length + 1) {
-        if (_samePlanPoint(current, firstStart, toleranceMeters)) {
-          break;
-        }
-        var matched = false;
+
+      while (oriented.length < segments.length) {
+        final current = oriented.last.end;
+        var bestIndex = -1;
+        var bestDistance = double.infinity;
+        var reverse = false;
         for (var index = 1; index < segments.length; index += 1) {
-          if (used[index]) {
-            continue;
-          }
+          if (used[index]) continue;
           final segment = segments[index];
-          if (_samePlanPoint(segment.start, current, toleranceMeters)) {
-            points.add(segment.end);
-            current = segment.end;
-            used[index] = true;
-            matched = true;
-            break;
-          }
-          if (_samePlanPoint(segment.end, current, toleranceMeters)) {
-            points.add(segment.start);
-            current = segment.start;
-            used[index] = true;
-            matched = true;
-            break;
+          final startDistance = _planDistance2(segment.start, current);
+          final endDistance = _planDistance2(segment.end, current);
+          final candidateDistance = math.min(startDistance, endDistance);
+          if (candidateDistance <= toleranceMeters &&
+              candidateDistance < bestDistance) {
+            bestIndex = index;
+            bestDistance = candidateDistance;
+            reverse = endDistance < startDistance;
           }
         }
-        if (!matched) {
-          return null;
-        }
+        if (bestIndex < 0) return null;
+        final segment = segments[bestIndex];
+        oriented.add(
+          reverse
+              ? (start: segment.end, end: segment.start)
+              : (start: segment.start, end: segment.end),
+        );
+        used[bestIndex] = true;
       }
-      if (!_samePlanPoint(points.first, points.last, toleranceMeters)) {
+
+      if (_planDistance2(oriented.last.end, oriented.first.start) >
+          toleranceMeters) {
         return null;
       }
-      points.removeLast();
+
+      final polygon = <RenderScenePoint>[];
+      for (var index = 0; index < oriented.length; index += 1) {
+        final previous =
+            oriented[(index - 1 + oriented.length) % oriented.length];
+        final current = oriented[index];
+        final intersection = _planLineIntersection(
+          previous.start,
+          previous.end,
+          current.start,
+          current.end,
+        );
+        final corner = intersection != null &&
+                _planDistance2(intersection, previous.end) <=
+                    toleranceMeters * 4.0 &&
+                _planDistance2(intersection, current.start) <=
+                    toleranceMeters * 4.0
+            ? intersection
+            : RenderScenePoint(
+                x: (previous.end.x + current.start.x) * 0.5,
+                y: (previous.end.y + current.start.y) * 0.5,
+                z: current.start.z,
+              );
+        polygon.add(corner);
+      }
+
       final simplified = <RenderScenePoint>[];
-      for (final point in points) {
+      for (final point in polygon) {
         if (simplified.isEmpty ||
             !_samePlanPoint(simplified.last, point, toleranceMeters)) {
           simplified.add(point);
         }
       }
-      if (simplified.length < 3) {
-        return null;
+      if (simplified.length >= 2 &&
+          _samePlanPoint(simplified.first, simplified.last, toleranceMeters)) {
+        simplified.removeLast();
       }
-      if (_polygonArea2d(simplified).abs() <= 1e-6) {
+      if (simplified.length < 3 || _polygonArea2d(simplified).abs() <= 1e-6) {
         return null;
       }
       return simplified;
     }
 
-    return traceFrom(
-          segments.first.start,
-          segments.first.end,
-          List<bool>.filled(segments.length, false),
-        ) ??
-        traceFrom(
-          segments.first.end,
-          segments.first.start,
-          List<bool>.filled(segments.length, false),
-        );
+    return traceFrom(false) ?? traceFrom(true);
   }
 
   static RenderScene deleteObject({
@@ -890,55 +1028,12 @@ class RenderSceneEditor {
     if (originalGeometry == null) {
       return scene;
     }
-    final startDelta = start - originalGeometry.start;
-    final endDelta = end - originalGeometry.end;
-
-    final updates = <int, _WallGeometry>{};
-    for (final object in objects) {
-      final objectId =
-          _toInt(object['element_id']) ?? _toInt(object['elementId']);
-      final kind = (object['kind']?.toString() ?? '').toLowerCase();
-      if (objectId == null || kind != 'wall') {
-        continue;
-      }
-      final geometry = _wallGeometryFromMap(object);
-      if (geometry == null) {
-        continue;
-      }
-      if (objectId == wallId) {
-        updates[objectId] = _WallGeometry(
-          start: start,
-          end: end,
-          thickness: geometry.thickness,
-        );
-        continue;
-      }
-
-      var nextStart = geometry.start;
-      var nextEnd = geometry.end;
-      var changed = false;
-      if (_samePoint2(geometry.start, originalGeometry.start)) {
-        nextStart = geometry.start + startDelta;
-        changed = true;
-      } else if (_samePoint2(geometry.start, originalGeometry.end)) {
-        nextStart = geometry.start + endDelta;
-        changed = true;
-      }
-      if (_samePoint2(geometry.end, originalGeometry.start)) {
-        nextEnd = geometry.end + startDelta;
-        changed = true;
-      } else if (_samePoint2(geometry.end, originalGeometry.end)) {
-        nextEnd = geometry.end + endDelta;
-        changed = true;
-      }
-      if (changed) {
-        updates[objectId] = _WallGeometry(
-          start: nextStart,
-          end: nextEnd,
-          thickness: geometry.thickness,
-        );
-      }
-    }
+    final updates = wallAxisUpdatesForJoin(
+      scene: scene,
+      wall: wall,
+      start: start,
+      end: end,
+    );
 
     for (var index = 0; index < objects.length; index += 1) {
       final objectId = _toInt(objects[index]['element_id']) ??
@@ -988,6 +1083,71 @@ class RenderSceneEditor {
     _rebuildDetectedRooms(objects);
     map['objects'] = objects;
     return _parseSceneMap(map, source: '${scene.source} ~ wall');
+  }
+
+  /// Returns the selected wall axis and, for a rigid body translation, only
+  /// the immediately connected wall endpoints that must follow it.
+  ///
+  /// Endpoint-handle edits deliberately remain local. Walking the complete
+  /// endpoint graph here used to let one drag move an entire storey of walls.
+  static Map<int, ({RenderScenePoint start, RenderScenePoint end})>
+      wallAxisUpdatesForJoin({
+    required RenderScene scene,
+    required RenderSceneObject wall,
+    required RenderScenePoint start,
+    required RenderScenePoint end,
+    // Native scenes carry exact semantic axes. Legacy scenes may only have
+    // miter-expanded bounds, so allow half a typical wall thickness while
+    // still limiting propagation to immediate neighbours.
+    double toleranceMeters = 0.15,
+  }) {
+    if (wall.kindKey != 'wall' || wall.elementId == null) {
+      return const <int, ({RenderScenePoint start, RenderScenePoint end})>{};
+    }
+    final originalStart = wallStartPoint(wall);
+    final originalEnd = wallEndPoint(wall);
+    if (originalStart == null || originalEnd == null) {
+      return const <int, ({RenderScenePoint start, RenderScenePoint end})>{};
+    }
+    final updates = <int, ({RenderScenePoint start, RenderScenePoint end})>{
+      wall.elementId!: (start: start, end: end),
+    };
+    final startDelta = start - originalStart;
+    final endDelta = end - originalEnd;
+    final isRigidTranslation = (startDelta.x - endDelta.x).abs() <= 1e-6 &&
+        (startDelta.y - endDelta.y).abs() <= 1e-6;
+    if (!isRigidTranslation) {
+      return updates;
+    }
+
+    for (final other in scene.objects) {
+      final otherId = other.elementId;
+      if (other.kindKey != 'wall' ||
+          otherId == null ||
+          otherId == wall.elementId) {
+        continue;
+      }
+      final otherStart = wallStartPoint(other);
+      final otherEnd = wallEndPoint(other);
+      if (otherStart == null || otherEnd == null) continue;
+      var nextStart = otherStart;
+      var nextEnd = otherEnd;
+      var changed = false;
+      if (_samePoint2(otherStart, originalStart, toleranceMeters) ||
+          _samePoint2(otherStart, originalEnd, toleranceMeters)) {
+        nextStart = otherStart + startDelta;
+        changed = true;
+      }
+      if (_samePoint2(otherEnd, originalStart, toleranceMeters) ||
+          _samePoint2(otherEnd, originalEnd, toleranceMeters)) {
+        nextEnd = otherEnd + startDelta;
+        changed = true;
+      }
+      if (changed) {
+        updates[otherId] = (start: nextStart, end: nextEnd);
+      }
+    }
+    return updates;
   }
 
   static RenderScene moveOpening({
@@ -1183,6 +1343,13 @@ class RenderSceneEditor {
         (a.y - b.y).abs() <= toleranceMeters;
   }
 
+  static double _planDistance2(
+      RenderScenePoint first, RenderScenePoint second) {
+    final dx = first.x - second.x;
+    final dy = first.y - second.y;
+    return math.sqrt(dx * dx + dy * dy);
+  }
+
   static double _polygonArea2d(List<RenderScenePoint> polygon) {
     if (polygon.length < 3) {
       return 0.0;
@@ -1194,6 +1361,27 @@ class RenderSceneEditor {
       twiceArea += a.x * b.y - b.x * a.y;
     }
     return twiceArea * 0.5;
+  }
+
+  static RenderScenePoint? _planLineIntersection(
+    RenderScenePoint firstStart,
+    RenderScenePoint firstEnd,
+    RenderScenePoint secondStart,
+    RenderScenePoint secondEnd,
+  ) {
+    final firstDelta = firstEnd - firstStart;
+    final secondDelta = secondEnd - secondStart;
+    final denominator =
+        firstDelta.x * secondDelta.y - firstDelta.y * secondDelta.x;
+    if (denominator.abs() <= 1e-9) return null;
+    final offset = secondStart - firstStart;
+    final t =
+        (offset.x * secondDelta.y - offset.y * secondDelta.x) / denominator;
+    return RenderScenePoint(
+      x: firstStart.x + firstDelta.x * t,
+      y: firstStart.y + firstDelta.y * t,
+      z: firstStart.z,
+    );
   }
 
   static double _levelDefaultWallHeightMeters(RenderScene scene, int? levelId) {
@@ -1593,6 +1781,75 @@ class RenderSceneEditor {
     return _parseSceneMap(map, source: '${scene.source} + $kind');
   }
 
+  static RenderScene _addHorizontalSystemForPolygon({
+    required RenderScene scene,
+    required List<RenderScenePoint> polygon,
+    required String kind,
+    required String materialCategory,
+    required double thicknessMeters,
+    required double baseZ,
+    required int? levelId,
+  }) {
+    final resolvedLevelId = levelId ?? _primaryLevelId(scene);
+    final footprint = polygon
+        .map((point) => RenderScenePoint(x: point.x, y: point.y, z: 0.0))
+        .toList(growable: false);
+    if (footprint.length < 3 ||
+        resolvedLevelId == null ||
+        resolvedLevelId <= 0 ||
+        _polygonArea2d(footprint).abs() <= 1e-6) {
+      return scene;
+    }
+
+    final z0 = baseZ;
+    final z1 = baseZ + math.max(thicknessMeters, 0.02);
+    final positions = <RenderScenePoint>[];
+    final indices = <int>[];
+    _appendExtrudedPolygonMesh(
+      positions: positions,
+      indices: indices,
+      worldPoint: (x, y, z) => RenderScenePoint(x: x, y: y, z: z),
+      polygon: footprint,
+      z0: z0,
+      z1: z1,
+    );
+    if (positions.isEmpty || indices.isEmpty) return scene;
+
+    final nextId = _nextElementId(_objectsFromSceneMap(_sceneMap(scene)));
+    final object = <String, Object?>{
+      'element_id': nextId,
+      'kind': kind,
+      'level_id': resolvedLevelId,
+      'selectable': true,
+      'visible_by_default': true,
+      'revision': 1,
+      'bounds': RenderSceneBounds.union(
+        <RenderSceneBounds>[
+          for (final point in positions)
+            RenderSceneBounds.normalized(min: point, max: point)
+        ],
+      ).toJson(),
+      'mesh': <String, Object?>{
+        'positions': positions.map((point) => point.toJson()).toList(),
+        'indices': indices,
+      },
+      'material_category': materialCategory,
+      'metadata': <String, Object?>{
+        'thickness_meters': thicknessMeters,
+        'level_locked': true,
+        'base_level_id': resolvedLevelId.toString(),
+        'kind': kind.toLowerCase(),
+        'footprint_mode': 'picked_wall_polygon',
+        'footprint_points': footprint.map((point) => point.toJson()).toList(),
+      },
+    };
+
+    final map = _sceneMap(scene);
+    final objects = _objectsFromSceneMap(map)..add(object);
+    map['objects'] = objects;
+    return _parseSceneMap(map, source: '${scene.source} + $kind polygon');
+  }
+
   static Map<String, Object?> _buildWallObject({
     required int elementId,
     required RenderScenePoint start,
@@ -1889,6 +2146,20 @@ class RenderSceneEditor {
         continue;
       }
 
+      // Flood fill needs a real exterior cell. With only the wall-axis
+      // coordinates, a simple four-wall room consists of one boundary cell
+      // and was incorrectly seeded as "outside". Add a cheap envelope around
+      // the storey so closed cells remain enclosed and open cells still leak
+      // to the exterior through missing walls.
+      final xPadding = math.max(1.0, (xs.last - xs.first).abs() * 0.05);
+      final yPadding = math.max(1.0, (ys.last - ys.first).abs() * 0.05);
+      xs
+        ..insert(0, xs.first - xPadding)
+        ..add(xs.last + xPadding);
+      ys
+        ..insert(0, ys.first - yPadding)
+        ..add(ys.last + yPadding);
+
       final cellColumns = xs.length - 1;
       final cellRows = ys.length - 1;
       final validCell = List<List<bool>>.generate(
@@ -2109,6 +2380,12 @@ class RenderSceneEditor {
       min: RenderScenePoint(x: minX, y: minY, z: baseZ),
       max: RenderScenePoint(x: maxX, y: maxY, z: baseZ + 0.02),
     );
+    final boundaryPolygon = _roomBoundaryPolygonFromCells(cells, xs, ys)
+        .map((point) => RenderScenePoint(x: point.x, y: point.y, z: baseZ))
+        .toList(growable: false);
+    if (boundaryPolygon.length < 3) {
+      return null;
+    }
     return <String, Object?>{
       'element_id': elementId,
       'kind': 'Room',
@@ -2126,10 +2403,102 @@ class RenderSceneEditor {
         'area_m2': area,
         'perimeter_m': perimeter,
         'boundary_wall_ids': boundaryWallIds.toList()..sort(),
+        'boundary_polygon':
+            boundaryPolygon.map((point) => point.toJson()).toList(),
         'cell_count': cells.length,
         'level_locked': true,
       },
     };
+  }
+
+  static List<RenderScenePoint> _roomBoundaryPolygonFromCells(
+    List<_GridCell> cells,
+    List<double> xs,
+    List<double> ys,
+  ) {
+    final edges = <String, ({int si, int sj, int ei, int ej})>{};
+    String key(int si, int sj, int ei, int ej) => '$si:$sj>$ei:$ej';
+    void addEdge(int si, int sj, int ei, int ej) {
+      final reverse = key(ei, ej, si, sj);
+      if (edges.remove(reverse) != null) return;
+      edges[key(si, sj, ei, ej)] = (si: si, sj: sj, ei: ei, ej: ej);
+    }
+
+    for (final cell in cells) {
+      addEdge(cell.i, cell.j, cell.i + 1, cell.j);
+      addEdge(cell.i + 1, cell.j, cell.i + 1, cell.j + 1);
+      addEdge(cell.i + 1, cell.j + 1, cell.i, cell.j + 1);
+      addEdge(cell.i, cell.j + 1, cell.i, cell.j);
+    }
+    if (edges.length < 3) return const <RenderScenePoint>[];
+
+    final byStart = <String, List<({int si, int sj, int ei, int ej})>>{};
+    for (final edge in edges.values) {
+      byStart.putIfAbsent('${edge.si}:${edge.sj}', () => []).add(edge);
+    }
+    final start = edges.values.reduce((left, right) {
+      if (right.sj != left.sj) return right.sj < left.sj ? right : left;
+      return right.si < left.si ? right : left;
+    });
+    final polygon = <RenderScenePoint>[];
+    var current = start;
+    final visited = <String>{};
+    while (visited.length < edges.length) {
+      final currentKey = key(current.si, current.sj, current.ei, current.ej);
+      if (!visited.add(currentKey)) break;
+      polygon.add(RenderScenePoint(
+        x: xs[current.si],
+        y: ys[current.sj],
+        z: 0,
+      ));
+      if (current.ei == start.si && current.ej == start.sj) break;
+      final candidates = byStart['${current.ei}:${current.ej}'];
+      if (candidates == null) return const <RenderScenePoint>[];
+      ({int si, int sj, int ei, int ej})? next;
+      for (final candidate in candidates) {
+        if (!visited.contains(
+            key(candidate.si, candidate.sj, candidate.ei, candidate.ej))) {
+          next = candidate;
+          break;
+        }
+      }
+      if (next == null) return const <RenderScenePoint>[];
+      current = next;
+    }
+
+    final simplified = <RenderScenePoint>[];
+    for (var index = 0; index < polygon.length; index += 1) {
+      final previous = polygon[(index - 1 + polygon.length) % polygon.length];
+      final point = polygon[index];
+      final next = polygon[(index + 1) % polygon.length];
+      final cross = (point.x - previous.x) * (next.y - point.y) -
+          (point.y - previous.y) * (next.x - point.x);
+      if (cross.abs() > 1e-9) simplified.add(point);
+    }
+    return simplified;
+  }
+
+  static bool _pointInPlanPolygon(
+    RenderScenePoint point,
+    List<RenderScenePoint> polygon,
+  ) {
+    var inside = false;
+    for (var index = 0, previous = polygon.length - 1;
+        index < polygon.length;
+        previous = index++) {
+      final a = polygon[index];
+      final b = polygon[previous];
+      final crosses = (a.y > point.y) != (b.y > point.y);
+      if (crosses &&
+          point.x <
+              (b.x - a.x) *
+                      (point.y - a.y) /
+                      ((b.y - a.y).abs() <= 1e-12 ? 1e-12 : b.y - a.y) +
+                  a.x) {
+        inside = !inside;
+      }
+    }
+    return inside;
   }
 
   static void _shiftObjectZInPlace(Map<String, Object?> object, double delta) {
@@ -2784,14 +3153,17 @@ class RenderSceneEditor {
     ];
   }
 
-  static bool _samePoint2(RenderScenePoint a, RenderScenePoint b) {
+  static bool _samePoint2(
+    RenderScenePoint a,
+    RenderScenePoint b, [
+    double toleranceMeters = 0.15,
+  ]) {
     // Authoring points come through touch coordinates and JSON round-trips;
     // an exact floating-point comparison leaves visually connected walls as
     // two overlapping solids. Keep the tolerance well below normal wall
     // thickness while allowing endpoint joins to receive their miter profile.
-    const joinToleranceMeters = 0.005;
-    return (a.x - b.x).abs() <= joinToleranceMeters &&
-        (a.y - b.y).abs() <= joinToleranceMeters;
+    return (a.x - b.x).abs() <= toleranceMeters &&
+        (a.y - b.y).abs() <= toleranceMeters;
   }
 
   static RenderScenePoint _directionAwayFrom(

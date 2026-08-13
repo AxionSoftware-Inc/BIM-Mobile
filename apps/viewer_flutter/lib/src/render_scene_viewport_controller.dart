@@ -25,6 +25,10 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
                 : RenderSceneViewportBackend.fallback);
 
   static const double _planPadding = 48;
+  // Blank projects have no geometry yet. Do not treat their zero-sized bounds
+  // as a one-metre object: that makes the first wall fill the tablet and
+  // leaves no comfortable working area for subsequent segments.
+  static const double _emptyPlanMeters = 30.0;
 
   RenderScene? _scene;
   Set<String> _visibleKinds;
@@ -40,7 +44,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
   RenderSceneOrbitProjectionStyle _orbitProjectionStyle =
       RenderSceneOrbitProjectionStyle.orthographic;
   RenderSceneDisplayStyle _displayStyle = RenderSceneDisplayStyle.solid;
-  bool _shadowsEnabled = true;
+  bool _shadowsEnabled = false;
   RenderSceneViewportBackend _backend;
   RenderSceneInteractionMode _interactionMode =
       RenderSceneInteractionMode.select;
@@ -285,6 +289,14 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
   }
 
   void _resetPlanForBounds(RenderSceneBounds bounds) {
+    if (bounds.width <= 1e-6 && bounds.depth <= 1e-6) {
+      // The zoom is derived from the actual post-layout viewport size.
+      _planCamera = RenderScenePlanCameraState(
+        center: const RenderScenePoint(x: 0, y: 0, z: 0),
+        zoom: _emptyPlanZoomForViewport(_viewportSize),
+      );
+      return;
+    }
     final center = RenderScenePoint(
       x: bounds.center.x,
       y: bounds.center.y,
@@ -294,6 +306,17 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
       center: center,
       zoom: _zoomToFitBounds(bounds, _viewportSize),
     );
+  }
+
+  static double _emptyPlanZoomForViewport(Size viewportSize) {
+    if (viewportSize.height <= _planPadding * 2) {
+      // The first scene update can happen before PlatformView layout. The
+      // post-layout refit replaces this provisional value with the exact
+      // 30-metre viewport scale.
+      return 40.0;
+    }
+    final usableHeight = math.max(viewportSize.height - _planPadding * 2, 1.0);
+    return usableHeight / _emptyPlanMeters;
   }
 
   double _zoomToFitBounds(RenderSceneBounds bounds, Size viewportSize) {
@@ -497,10 +520,17 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     if (_viewportRefitScheduled) {
       return;
     }
+    // The first layout of a newly opened project can schedule a refit while
+    // the user is already drawing its first wall. Do not apply that stale
+    // callback to a newer authoritative scene: it changes the plan zoom under
+    // the finger and makes the next chained wall start at a different model
+    // point than the one visible on screen.
+    final scheduledSceneRevision = _sceneRevision;
     _viewportRefitScheduled = true;
     SchedulerBinding.instance.addPostFrameCallback((_) {
       _viewportRefitScheduled = false;
-      if (_viewportSize == Size.zero) {
+      if (_viewportSize == Size.zero ||
+          _sceneRevision != scheduledSceneRevision) {
         return;
       }
       _resetPlanForBounds(_scene?.bounds ?? _sceneBounds);

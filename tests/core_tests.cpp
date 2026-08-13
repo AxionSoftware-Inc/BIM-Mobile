@@ -762,6 +762,314 @@ int main() {
     assert(tolerance_document.find_ptr(tolerance_wall_a)->wall()->joins.size() == 1);
     assert(tolerance_document.find_ptr(tolerance_wall_b)->wall()->joins.size() == 1);
 
+    // A non-orthogonal corner with a small hand-drawn gap must be repaired to
+    // one exact intersection, not left as two overlapping wall caps.
+    tbe::core::Document angled_tolerance_document{"Angled Tolerance Join"};
+    const auto angled_level = angled_tolerance_document.create_level("Level 1", 0.0, 3.0);
+    const auto angled_wall_a = angled_tolerance_document.create_wall(
+        "Angled A", {{0.0, 0.0}, {4.0, 0.0}}, 0.2, 3.0, angled_level
+    );
+    const auto angled_wall_b = angled_tolerance_document.create_wall(
+        "Angled B", {{4.18, 0.08}, {6.0, 2.0}}, 0.2, 3.0, angled_level
+    );
+    angled_tolerance_document.auto_join_walls();
+    const auto* angled_a = angled_tolerance_document.find_ptr(angled_wall_a)->wall();
+    const auto* angled_b = angled_tolerance_document.find_ptr(angled_wall_b)->wall();
+    assert(angled_a != nullptr && angled_b != nullptr);
+    assert(angled_a->joins.size() == 1);
+    assert(angled_b->joins.size() == 1);
+    assert(near(angled_a->axis.end.x, angled_b->axis.start.x));
+    assert(near(angled_a->axis.end.y, angled_b->axis.start.y));
+
+    // A small collinear hand-drawn gap is repaired only when the walls meet
+    // end-to-end. This protects the common wall-chain case without turning
+    // overlapping parallel walls into false joins.
+    tbe::core::Document collinear_document{"Collinear Endpoint Join"};
+    const auto collinear_level = collinear_document.create_level("Level 1", 0.0, 3.0);
+    const auto collinear_a = collinear_document.create_wall(
+        "Collinear A", {{0.0, 0.0}, {4.0, 0.0}}, 0.2, 3.0, collinear_level
+    );
+    const auto collinear_b = collinear_document.create_wall(
+        "Collinear B", {{4.18, 0.0}, {8.0, 0.0}}, 0.2, 3.0, collinear_level
+    );
+    collinear_document.auto_join_walls();
+    const auto* repaired_collinear_a = collinear_document.find_ptr(collinear_a)->wall();
+    const auto* repaired_collinear_b = collinear_document.find_ptr(collinear_b)->wall();
+    assert(repaired_collinear_a != nullptr && repaired_collinear_b != nullptr);
+    assert(repaired_collinear_a->joins.size() == 1);
+    assert(repaired_collinear_b->joins.size() == 1);
+    assert(near(repaired_collinear_a->axis.end.x, repaired_collinear_b->axis.start.x));
+    assert(near(repaired_collinear_a->axis.end.y, repaired_collinear_b->axis.start.y));
+
+    // Joins are level-local even when two floors share the same plan-space
+    // coordinates. Moving one floor must never mutate the other floor's wall.
+    tbe::core::Document level_isolation_document{"Level Isolated Joins"};
+    const auto isolation_level_one = level_isolation_document.create_level("Level 1", 0.0, 3.0);
+    const auto isolation_level_two = level_isolation_document.create_level("Level 2", 3.0, 3.0);
+    const auto isolation_wall_one = level_isolation_document.create_wall(
+        "Level 1 Wall", {{0.0, 0.0}, {4.0, 0.0}}, 0.2, 3.0, isolation_level_one
+    );
+    const auto isolation_wall_two = level_isolation_document.create_wall(
+        "Level 2 Wall", {{4.0, 0.0}, {4.0, 3.0}}, 0.2, 3.0, isolation_level_two
+    );
+    level_isolation_document.auto_join_walls();
+    assert(level_isolation_document.find_ptr(isolation_wall_one)->wall()->joins.empty());
+    assert(level_isolation_document.find_ptr(isolation_wall_two)->wall()->joins.empty());
+
+    // Direct axis editing must rebuild the relation as well; otherwise the
+    // old miter remains attached after a wall is moved from its endpoint.
+    angled_tolerance_document.set_wall_axis(
+        angled_wall_b, {{4.0, 0.0}, {6.0, 2.0}}
+    );
+    assert(angled_tolerance_document.find_ptr(angled_wall_a)->wall()->joins.size() == 1);
+    assert(angled_tolerance_document.find_ptr(angled_wall_b)->wall()->joins.size() == 1);
+
+    const auto angled_wall_c = angled_tolerance_document.create_wall(
+        "Angled C", {{6.0, 2.0}, {6.5, 3.0}}, 0.2, 3.0, angled_level
+    );
+    angled_tolerance_document.auto_join_walls();
+    angled_tolerance_document.set_wall_axis_with_joins(
+        angled_wall_b, {{4.0, 0.0}, {6.5, 2.5}}
+    );
+    const auto* moved_angled_b = angled_tolerance_document.find_ptr(angled_wall_b)->wall();
+    const auto* moved_angled_c = angled_tolerance_document.find_ptr(angled_wall_c)->wall();
+    assert(moved_angled_b != nullptr && moved_angled_c != nullptr);
+    assert(near(moved_angled_c->axis.start.x, 6.0));
+    assert(near(moved_angled_c->axis.start.y, 2.0));
+    assert(near(moved_angled_c->axis.end.x, 6.5));
+    assert(near(moved_angled_c->axis.end.y, 3.0));
+    assert(moved_angled_b->joins.size() == 2);
+    assert(moved_angled_c->joins.size() == 1);
+
+    // Proximity alone is not a join: a nearby parallel wall must stay put.
+    tbe::core::Document isolated_nearby_document{"Isolated Nearby Wall"};
+    const auto isolated_level = isolated_nearby_document.create_level("Level 1", 0.0, 3.0);
+    const auto isolated_base = isolated_nearby_document.create_wall(
+        "Base", {{0.0, 0.0}, {4.0, 0.0}}, 0.2, 3.0, isolated_level
+    );
+    const auto isolated_parallel = isolated_nearby_document.create_wall(
+        "Parallel", {{0.0, 0.1}, {4.0, 0.1}}, 0.2, 3.0, isolated_level
+    );
+    isolated_nearby_document.auto_join_walls();
+    isolated_nearby_document.set_wall_axis_with_joins(
+        isolated_base, {{0.0, 1.0}, {4.0, 1.0}}
+    );
+    const auto* isolated_wall = isolated_nearby_document.find_ptr(isolated_parallel)->wall();
+    assert(isolated_wall != nullptr);
+    assert(near(isolated_wall->axis.start.y, 0.1));
+
+    // Resizing from an endpoint must not drag the joined neighbor with it.
+    // The native join rebuild is responsible for recognizing the new
+    // intersection, rather than preserving the old corner by moving both
+    // walls together.
+    tbe::core::Document endpoint_document{"Endpoint Resize Join"};
+    const auto endpoint_level = endpoint_document.create_level("Level 1", 0.0, 3.0);
+    const auto endpoint_base = endpoint_document.create_wall(
+        "Base",
+        tbe::core::Line2{.start = {.x = 0.0, .y = 0.0}, .end = {.x = 4.0, .y = 0.0}},
+        0.2,
+        3.0,
+        endpoint_level
+    );
+    const auto endpoint_branch = endpoint_document.create_wall(
+        "Branch",
+        tbe::core::Line2{.start = {.x = 4.0, .y = 0.0}, .end = {.x = 4.0, .y = 3.0}},
+        0.2,
+        3.0,
+        endpoint_level
+    );
+    endpoint_document.auto_join_walls();
+    endpoint_document.set_wall_axis_with_joins(
+        endpoint_base, tbe::core::Line2{.start = {.x = 0.0, .y = 0.0}, .end = {.x = 2.0, .y = 0.0}}
+    );
+    const auto* resized_base = endpoint_document.find_ptr(endpoint_base)->wall();
+    const auto* fixed_branch = endpoint_document.find_ptr(endpoint_branch)->wall();
+    assert(resized_base != nullptr && fixed_branch != nullptr);
+    assert(near(fixed_branch->axis.start.x, 4.0));
+    assert(near(fixed_branch->axis.start.y, 0.0));
+    assert(near(fixed_branch->axis.end.x, 4.0));
+    assert(near(fixed_branch->axis.end.y, 3.0));
+
+    // A T-junction remains a real join after moving its perpendicular branch:
+    // the base wall stays fixed and the branch endpoint becomes a new
+    // interior intersection on it.
+    tbe::core::Document tee_move_document{"T Move Join"};
+    const auto tee_move_level = tee_move_document.create_level("Level 1", 0.0, 3.0);
+    const auto tee_move_base = tee_move_document.create_wall(
+        "Base",
+        tbe::core::Line2{.start = {.x = -2.0, .y = 0.0}, .end = {.x = 2.0, .y = 0.0}},
+        0.2,
+        3.0,
+        tee_move_level
+    );
+    const auto tee_move_branch = tee_move_document.create_wall(
+        "Branch",
+        tbe::core::Line2{.start = {.x = 0.0, .y = 0.0}, .end = {.x = 0.0, .y = 2.0}},
+        0.2,
+        3.0,
+        tee_move_level
+    );
+    tee_move_document.auto_join_walls();
+    const auto* initial_tee_base = tee_move_document.find_ptr(tee_move_base)->wall();
+    const auto* initial_tee_branch = tee_move_document.find_ptr(tee_move_branch)->wall();
+    assert(initial_tee_base != nullptr && initial_tee_branch != nullptr);
+    assert(initial_tee_base->joins.size() == 1);
+    assert(initial_tee_branch->joins.size() == 1);
+    assert(initial_tee_branch->joins.front().kind == tbe::core::WallJoinKind::Tee);
+    tee_move_document.set_wall_axis_with_joins(
+        tee_move_branch,
+        tbe::core::Line2{.start = {.x = 1.0, .y = 0.0}, .end = {.x = 1.0, .y = 2.0}}
+    );
+    const auto* moved_tee_base = tee_move_document.find_ptr(tee_move_base)->wall();
+    const auto* moved_tee_branch = tee_move_document.find_ptr(tee_move_branch)->wall();
+    assert(moved_tee_base != nullptr && moved_tee_branch != nullptr);
+    assert(near(moved_tee_base->axis.start.x, -2.0));
+    assert(near(moved_tee_base->axis.end.x, 2.0));
+    assert(moved_tee_base->joins.size() == 1);
+    assert(moved_tee_branch->joins.size() == 1);
+    assert(moved_tee_branch->joins.front().kind == tbe::core::WallJoinKind::Tee);
+    assert(near(moved_tee_branch->joins.front().point.x, 1.0));
+    assert(near(moved_tee_branch->joins.front().point.y, 0.0));
+
+    tbe::core::GeometryService tee_move_geometry;
+    const auto tee_branch_profile = tee_move_geometry.build_wall_profile(*moved_tee_branch);
+    assert(tee_branch_profile.t_junction_placeholders == 1);
+    assert(near(tee_branch_profile.polygon[0].x, 0.1));
+    assert(near(tee_branch_profile.polygon[3].x, 0.1));
+
+    // Moving one side of a closed room inward/outward stretches only the two
+    // adjacent walls. The opposite side and the rest of the model stay fixed,
+    // while the join graph and room enclosure remain valid.
+    tbe::core::Document room_move_document{"Room Wall Move"};
+    const auto room_move_level = room_move_document.create_level("Level 1", 0.0, 3.0);
+    const auto room_bottom = room_move_document.create_wall(
+        "Bottom", {{0.0, 0.0}, {6.0, 0.0}}, 0.2, 3.0, room_move_level);
+    const auto room_right = room_move_document.create_wall(
+        "Right", {{6.0, 0.0}, {6.0, 4.0}}, 0.2, 3.0, room_move_level);
+    const auto room_top = room_move_document.create_wall(
+        "Top", {{6.0, 4.0}, {0.0, 4.0}}, 0.2, 3.0, room_move_level);
+    const auto room_left = room_move_document.create_wall(
+        "Left", {{0.0, 4.0}, {0.0, 0.0}}, 0.2, 3.0, room_move_level);
+    room_move_document.auto_join_walls();
+    room_move_document.set_wall_axis_with_joins(
+        room_top, {{6.0, 2.5}, {0.0, 2.5}});
+    assert(near(room_move_document.find_ptr(room_bottom)->wall()->axis.start.y, 0.0));
+    assert(near(room_move_document.find_ptr(room_bottom)->wall()->axis.end.y, 0.0));
+    assert(near(room_move_document.find_ptr(room_right)->wall()->axis.end.y, 2.5));
+    assert(near(room_move_document.find_ptr(room_left)->wall()->axis.start.y, 2.5));
+    assert(room_move_document.find_ptr(room_top)->wall()->joins.size() == 2);
+    assert(room_move_document.detect_rooms().size() == 1);
+
+    room_move_document.set_wall_axis_with_joins(
+        room_top, {{6.0, 5.0}, {0.0, 5.0}});
+    assert(near(room_move_document.find_ptr(room_right)->wall()->axis.end.y, 5.0));
+    assert(near(room_move_document.find_ptr(room_left)->wall()->axis.start.y, 5.0));
+    assert(room_move_document.detect_rooms().size() == 1);
+
+    // A loaded/stale document may have no serialized join graph even though
+    // its wall axes are attached. Body move still derives the two immediate
+    // endpoint attachments from geometry and preserves the enclosure.
+    tbe::core::Document stale_join_document{"Stale Join Body Move"};
+    stale_join_document.set_automatic_wall_join_enabled(false);
+    const auto stale_level = stale_join_document.create_level("Level 1", 0.0, 3.0);
+    const auto stale_bottom = stale_join_document.create_wall(
+        "Bottom", {{0.0, 0.0}, {6.0, 0.0}}, 0.2, 3.0, stale_level);
+    const auto stale_right = stale_join_document.create_wall(
+        "Right", {{6.0, 0.0}, {6.0, 5.0}}, 0.2, 3.0, stale_level);
+    const auto stale_top = stale_join_document.create_wall(
+        "Top", {{6.0, 5.0}, {0.0, 5.0}}, 0.2, 3.0, stale_level);
+    const auto stale_left = stale_join_document.create_wall(
+        "Left", {{0.0, 5.0}, {0.0, 0.0}}, 0.2, 3.0, stale_level);
+    (void)stale_bottom;
+    stale_join_document.set_automatic_wall_join_enabled(true);
+    stale_join_document.set_wall_axis_with_joins(
+        stale_top, {{6.0, 3.5}, {0.0, 3.5}});
+    assert(near(stale_join_document.find_ptr(stale_right)->wall()->axis.end.y, 3.5));
+    assert(near(stale_join_document.find_ptr(stale_left)->wall()->axis.start.y, 3.5));
+    assert(stale_join_document.find_ptr(stale_top)->wall()->joins.size() == 2);
+    assert(stale_join_document.detect_rooms().size() == 1);
+
+    // Dragging through the fixed ends would invert both side walls. Reject
+    // the whole mutation so no wall is left partially moved.
+    bool rejected_inverting_room_move = false;
+    try {
+        room_move_document.set_wall_axis_with_joins(
+            room_top, {{6.0, -1.0}, {0.0, -1.0}});
+    } catch (const std::invalid_argument&) {
+        rejected_inverting_room_move = true;
+    }
+    assert(rejected_inverting_room_move);
+    assert(near(room_move_document.find_ptr(room_top)->wall()->axis.start.y, 5.0));
+    assert(near(room_move_document.find_ptr(room_right)->wall()->axis.end.y, 5.0));
+    assert(near(room_move_document.find_ptr(room_left)->wall()->axis.start.y, 5.0));
+
+    // An endpoint handle edit on a long connected chain must remain local.
+    tbe::core::Document chain_move_document{"Local Endpoint Edit"};
+    const auto chain_level = chain_move_document.create_level("Level 1", 0.0, 3.0);
+    std::vector<tbe::core::ElementId> chain_walls;
+    std::vector<tbe::core::Line2> chain_axes;
+    tbe::core::Point2 chain_point{0.0, 0.0};
+    for (int index = 0; index < 50; ++index) {
+        const auto next = index % 2 == 0
+            ? tbe::core::Point2{chain_point.x + 1.0, chain_point.y}
+            : tbe::core::Point2{chain_point.x, chain_point.y + 1.0};
+        const tbe::core::Line2 axis{.start = chain_point, .end = next};
+        chain_axes.push_back(axis);
+        chain_walls.push_back(chain_move_document.create_wall(
+            "Chain", axis, 0.2, 3.0, chain_level));
+        chain_point = next;
+    }
+    chain_move_document.auto_join_walls();
+    chain_move_document.set_wall_axis_with_joins(
+        chain_walls.front(), {{0.0, 0.0}, {0.5, 0.0}});
+    for (std::size_t index = 1; index < chain_walls.size(); ++index) {
+        const auto* unchanged = chain_move_document.find_ptr(chain_walls[index])->wall();
+        assert(unchanged != nullptr);
+        assert(near(unchanged->axis.start.x, chain_axes[index].start.x));
+        assert(near(unchanged->axis.start.y, chain_axes[index].start.y));
+        assert(near(unchanged->axis.end.x, chain_axes[index].end.x));
+        assert(near(unchanged->axis.end.y, chain_axes[index].end.y));
+    }
+
+    // A slightly skewed hand-drawn connector gets exact endpoint joins, but
+    // auto-join must not globally rotate/square semantic wall axes.
+    tbe::core::Document parallel_connector_document{"Parallel Connector Repair"};
+    const auto parallel_connector_level = parallel_connector_document.create_level("Level 1", 0.0, 3.0);
+    const auto parallel_lower = parallel_connector_document.create_wall(
+        "Lower",
+        tbe::core::Line2{.start = {.x = 0.0, .y = 0.0}, .end = {.x = 4.0, .y = 0.0}},
+        0.2,
+        3.0,
+        parallel_connector_level
+    );
+    const auto parallel_upper = parallel_connector_document.create_wall(
+        "Upper",
+        tbe::core::Line2{.start = {.x = 0.0, .y = 3.0}, .end = {.x = 3.75, .y = 3.0}},
+        0.2,
+        3.0,
+        parallel_connector_level
+    );
+    const auto skew_connector = parallel_connector_document.create_wall(
+        "Skew Connector",
+        tbe::core::Line2{.start = {.x = 3.98, .y = 0.04}, .end = {.x = 3.76, .y = 2.96}},
+        0.2,
+        3.0,
+        parallel_connector_level
+    );
+    parallel_connector_document.auto_join_walls();
+    const auto* repaired_lower = parallel_connector_document.find_ptr(parallel_lower)->wall();
+    const auto* repaired_upper = parallel_connector_document.find_ptr(parallel_upper)->wall();
+    const auto* repaired_connector = parallel_connector_document.find_ptr(skew_connector)->wall();
+    assert(repaired_lower != nullptr && repaired_upper != nullptr && repaired_connector != nullptr);
+    assert(near(repaired_lower->axis.end.x, repaired_connector->axis.start.x));
+    assert(near(repaired_lower->axis.end.y, repaired_connector->axis.start.y));
+    assert(near(repaired_upper->axis.end.x, repaired_connector->axis.end.x));
+    assert(near(repaired_upper->axis.end.y, repaired_connector->axis.end.y));
+    assert(std::abs(repaired_connector->axis.start.x - repaired_connector->axis.end.x) > 0.1);
+    assert(repaired_lower->joins.size() == 1);
+    assert(repaired_upper->joins.size() == 1);
+    assert(repaired_connector->joins.size() == 2);
+
     tbe::core::Document t_junction_document{"T Junction"};
     const auto t_level = t_junction_document.create_level("Level 1", 0.0, 3.0);
     const auto t_base = t_junction_document.create_wall(

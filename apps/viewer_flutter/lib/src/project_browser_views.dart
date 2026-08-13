@@ -4,6 +4,7 @@ import 'documentation/document_models.dart';
 import 'render_scene_models.dart';
 import 'render_scene_viewport_planar.dart';
 import 'render_scene_viewport_types.dart';
+import 'view_tabs.dart';
 
 /// Presentation-only view tree for the Project Browser.
 ///
@@ -20,6 +21,7 @@ class ProjectBrowserViews extends StatelessWidget {
     required this.onOpenFloorPlan,
     required this.onOpenElevation,
     required this.onOpenSection,
+    required this.viewPresentationById,
     required this.sheets,
     this.activeSheetId,
     required this.onCreateSheet,
@@ -32,6 +34,7 @@ class ProjectBrowserViews extends StatelessWidget {
   final Future<void> Function(int levelId) onOpenFloorPlan;
   final Future<void> Function(RenderSceneProjectionMode mode) onOpenElevation;
   final Future<void> Function(RenderSceneSection section) onOpenSection;
+  final Map<String, OpenedViewTab> viewPresentationById;
   final List<ProjectSheet> sheets;
   final String? activeSheetId;
   final VoidCallback onCreateSheet;
@@ -41,6 +44,31 @@ class ProjectBrowserViews extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final sections = projectBrowserSections(scene);
+
+    SheetViewReference viewReference({
+      required String id,
+      required String label,
+      required SheetViewKind kind,
+      required RenderSceneProjectionMode projectionMode,
+      int? levelId,
+      RenderSceneSection? section,
+    }) {
+      final presentation = viewPresentationById[id];
+      return SheetViewReference(
+        id: id,
+        label: label,
+        kind: kind,
+        projectionMode: projectionMode,
+        levelId: levelId,
+        section: section,
+        displayStyle:
+            presentation?.displayStyle ?? RenderSceneDisplayStyle.solid,
+        shadowsEnabled:
+            projectionMode.is3D && (presentation?.shadowsEnabled ?? false),
+        orbitProjectionStyle: presentation?.orbitProjectionStyle ??
+            RenderSceneOrbitProjectionStyle.perspective,
+      );
+    }
 
     Widget viewRow({
       required String label,
@@ -99,7 +127,7 @@ class ProjectBrowserViews extends StatelessWidget {
             icon: Icons.view_in_ar_outlined,
             selected: activeViewTabId == 'view-3d-default',
             onTap: onOpen3d,
-            dragView: const SheetViewReference(
+            dragView: viewReference(
               id: 'view-3d-default',
               label: '3D View',
               kind: SheetViewKind.threeD,
@@ -117,7 +145,7 @@ class ProjectBrowserViews extends StatelessWidget {
                   icon: Icons.grid_4x4_outlined,
                   selected: activeViewTabId == 'floor-plan-${level.levelId}',
                   onTap: () => onOpenFloorPlan(level.levelId),
-                  dragView: SheetViewReference(
+                  dragView: viewReference(
                     id: 'floor-plan-${level.levelId}',
                     label: '${level.name} plan',
                     kind: SheetViewKind.floorPlan,
@@ -143,7 +171,7 @@ class ProjectBrowserViews extends StatelessWidget {
                   icon: Icons.straighten,
                   selected: activeViewTabId == 'elevation-${mode.name}',
                   onTap: () => onOpenElevation(mode),
-                  dragView: SheetViewReference(
+                  dragView: viewReference(
                     id: 'elevation-${mode.name}',
                     label: '${mode.shortLabel} Elevation',
                     kind: SheetViewKind.elevation,
@@ -163,7 +191,7 @@ class ProjectBrowserViews extends StatelessWidget {
                   icon: Icons.straighten,
                   selected: activeViewTabId == 'section-${section.name}',
                   onTap: () => onOpenSection(section),
-                  dragView: SheetViewReference(
+                  dragView: viewReference(
                     id: 'section-${section.name}',
                     label: section.name,
                     kind: SheetViewKind.section,

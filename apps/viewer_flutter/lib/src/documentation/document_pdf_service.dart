@@ -258,8 +258,8 @@ class DocumentPdfService {
       selectedLevelId: reference.levelId,
       highlightedElementId: null,
       projectionMode: reference.projectionMode,
-      orbitProjectionStyle: RenderSceneOrbitProjectionStyle.perspective,
-      displayStyle: RenderSceneDisplayStyle.solid,
+      orbitProjectionStyle: reference.orbitProjectionStyle,
+      displayStyle: reference.displayStyle,
       camera: RenderSceneCameraState(
         center: scene.bounds.center,
         distance: math.max(maxExtent * 2.6, 10),

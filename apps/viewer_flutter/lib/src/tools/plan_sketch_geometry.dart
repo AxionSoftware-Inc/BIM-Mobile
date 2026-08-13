@@ -73,7 +73,19 @@ class PlanSketchGeometry {
   static const double defaultGridStepMeters = 0.25;
   static const double defaultEndpointToleranceMeters = 0.45;
   static const double minimumSegmentMeters = 0.10;
-  static const double _orthogonalDominance = 1.35;
+  // Only remove a small hand wobble. A 10–15° intentional bend must remain a
+  // bend; the old 1.35 ratio forced almost every diagonal continuation onto
+  // the nearest horizontal/vertical axis and broke joined wall chains.
+  static const double _orthogonalDominance = 10.0;
+  // Wall authoring is deliberately a little more forgiving than the generic
+  // sketch tools: a hand wobble up to roughly ten degrees should still make a
+  // clean horizontal/vertical wall. Intentional diagonals remain available
+  // once they are clearly diagonal.
+  static const double wallOrthogonalDominance = 5.5;
+  // When a line is clearly horizontal/vertical, an endpoint candidate must
+  // also be close to that same axis. Otherwise a nearby corner from the
+  // previous segment can pull a straight continuation into a diagonal.
+  static const double _orthogonalEndpointTolerance = 0.18;
   static const double _epsilon = 1e-9;
 
   static double planDistance(RenderScenePoint first, RenderScenePoint second) {
@@ -135,14 +147,20 @@ class PlanSketchGeometry {
     bool constrainOrtho = true,
     bool lockElevationAxis = false,
     bool snapVertical = false,
+    double? orthogonalDominance,
   }) {
-    var point = snapToCandidate(rawPoint, candidatePoints);
+    RenderScenePoint point;
     if (useGridSnap) {
-      point = snapToGrid(point, snapVertical: snapVertical);
+      point = snapToGrid(rawPoint, snapVertical: snapVertical);
+    } else {
+      point = rawPoint;
     }
-
     final start = referenceStart;
-    if (start == null) return point;
+    if (start == null) {
+      // Endpoint snapping is last on purpose. Grid snapping a point that has
+      // already matched a real wall endpoint moves it away from the join.
+      return snapToCandidate(point, candidatePoints);
+    }
     if (lockElevationAxis) {
       return RenderScenePoint(x: point.x, y: point.y, z: start.z);
     }
@@ -151,13 +169,53 @@ class PlanSketchGeometry {
     final dx = point.x - start.x;
     final dy = point.y - start.y;
     if (dx.abs() < _epsilon && dy.abs() < _epsilon) return point;
-    if (dx.abs() > dy.abs() * _orthogonalDominance) {
-      return RenderScenePoint(x: point.x, y: start.y, z: point.z);
+    final dominance = orthogonalDominance ?? _orthogonalDominance;
+    if (dx.abs() > dy.abs() * dominance) {
+      final horizontal = _snapOrthogonalCandidate(
+        point: point,
+        start: start,
+        candidates: candidatePoints,
+        horizontal: true,
+      );
+      return RenderScenePoint(
+          x: horizontal?.x ?? point.x, y: start.y, z: point.z);
     }
-    if (dy.abs() > dx.abs() * _orthogonalDominance) {
-      return RenderScenePoint(x: start.x, y: point.y, z: point.z);
+    if (dy.abs() > dx.abs() * dominance) {
+      final vertical = _snapOrthogonalCandidate(
+        point: point,
+        start: start,
+        candidates: candidatePoints,
+        horizontal: false,
+      );
+      return RenderScenePoint(
+          x: start.x, y: vertical?.y ?? point.y, z: point.z);
     }
-    return point;
+    return snapToCandidate(point, candidatePoints);
+  }
+
+  static RenderScenePoint? _snapOrthogonalCandidate({
+    required RenderScenePoint point,
+    required RenderScenePoint start,
+    required Iterable<RenderScenePoint> candidates,
+    required bool horizontal,
+  }) {
+    RenderScenePoint? best;
+    var bestDistance = defaultEndpointToleranceMeters;
+    for (final candidate in candidates) {
+      if (!candidate.isFinite) continue;
+      final axisDistance = horizontal
+          ? (candidate.y - start.y).abs()
+          : (candidate.x - start.x).abs();
+      if (axisDistance > _orthogonalEndpointTolerance) continue;
+      final alongDistance = horizontal
+          ? (candidate.x - point.x).abs()
+          : (candidate.y - point.y).abs();
+      if (alongDistance < bestDistance) {
+        bestDistance = alongDistance;
+        best = candidate;
+      }
+    }
+    return best;
   }
 
   static List<RenderScenePoint> rectangle(

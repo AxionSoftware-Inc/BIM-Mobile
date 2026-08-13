@@ -95,12 +95,21 @@ int main() {
 
         const auto moved = session->set_wall_axis(wall_b.value->value, {.x = 5.0, .y = 0.0}, {.x = 5.0, .y = 3.0});
         assert(moved.ok());
+        const auto moved_bottom = session->get_wall(wall_a.value->value);
+        const auto moved_top = session->get_wall(wall_c.value->value);
+        assert(moved_bottom.ok() && moved_bottom.value.has_value());
+        assert(moved_top.ok() && moved_top.value.has_value());
+        assert(nearly_equal(moved_bottom.value->end.x, 5.0));
+        assert(nearly_equal(moved_top.value->start.x, 5.0));
         const auto freshness_after_move = session->get_freshness_summary();
         assert(freshness_after_move.ok());
         assert(freshness_after_move.value->room_metrics != tbe::api::FreshnessState::Clean);
         assert(freshness_after_move.value->schedules != tbe::api::FreshnessState::Clean);
         assert(freshness_after_move.value->material_takeoff != tbe::api::FreshnessState::Clean);
         assert(freshness_after_move.value->validation_report != tbe::api::FreshnessState::Clean);
+        const auto moved_rooms = session->detect_rooms();
+        assert(moved_rooms.ok() && moved_rooms.value.has_value());
+        assert(moved_rooms.value->size() == 1);
         const auto cached_room_schedule = session->get_cached_room_schedule();
         assert(cached_room_schedule.freshness != tbe::api::FreshnessState::Clean);
         const auto regenerated_room_schedule = session->generate_room_schedule();

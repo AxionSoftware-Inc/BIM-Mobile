@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import 'document_models.dart';
+import '../render_scene_viewport_types.dart';
 
 /// Owns sheet composition state independently from the model viewport.
 ///
@@ -105,6 +106,44 @@ class SheetWorkspaceController extends ChangeNotifier {
           placement,
     ];
     _replaceSheet(sheet.copyWith(placements: next));
+  }
+
+  void updateViewPresentation(
+    String viewId, {
+    RenderSceneDisplayStyle? displayStyle,
+    bool? shadowsEnabled,
+    RenderSceneOrbitProjectionStyle? orbitProjectionStyle,
+  }) {
+    var changed = false;
+    for (var sheetIndex = 0; sheetIndex < _sheets.length; sheetIndex++) {
+      final sheet = _sheets[sheetIndex];
+      final next = <SheetViewportPlacement>[
+        for (final placement in sheet.placements) ...[
+          if (placement.view.id != viewId) placement,
+          if (placement.view.id == viewId)
+            placement.copyWith(
+              view: placement.view.copyWith(
+                displayStyle: displayStyle,
+                shadowsEnabled: shadowsEnabled,
+                orbitProjectionStyle: orbitProjectionStyle,
+              ),
+            ),
+        ],
+      ];
+      final sheetChanged = next.indexed.any((entry) {
+        final placement = entry.$2;
+        final previous = sheet.placements[entry.$1];
+        return placement.view.displayStyle != previous.view.displayStyle ||
+            placement.view.shadowsEnabled != previous.view.shadowsEnabled ||
+            placement.view.orbitProjectionStyle !=
+                previous.view.orbitProjectionStyle;
+      });
+      if (sheetChanged) {
+        changed = true;
+        _sheets[sheetIndex] = sheet.copyWith(placements: next);
+      }
+    }
+    if (changed) notifyListeners();
   }
 
   void resizePlacement(

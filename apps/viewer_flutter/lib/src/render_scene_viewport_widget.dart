@@ -36,6 +36,7 @@ class RenderSceneViewport extends StatefulWidget {
     this.directSurfaceDrag = false,
     this.planPickResolver,
     this.onLevelElevationSubmitted,
+    this.draftSurfaceWallIds = const <int>{},
     this.draftWallThicknessMeters =
         RenderSceneEditor.defaultWallThicknessMeters,
     this.draftWallHeightMeters = RenderSceneEditor.defaultWallHeightMeters,
@@ -54,6 +55,7 @@ class RenderSceneViewport extends StatefulWidget {
   final RenderScenePlanPickResolver? planPickResolver;
   final Future<void> Function(RenderSceneLevel level, String value)?
       onLevelElevationSubmitted;
+  final Set<int> draftSurfaceWallIds;
   final double draftWallThicknessMeters;
   final double draftWallHeightMeters;
 
@@ -104,6 +106,10 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
     }
 
     if (_shouldUseNativeAndroidView) {
+      final nativeClipOwnsInteraction = (widget.controller.hasSectionBox &&
+              widget.controller.projectionMode.is3D) ||
+          (widget.controller.hasSectionView &&
+              widget.controller.projectionMode.isElevation);
       return _FallbackRenderSceneView(
         controller: widget.controller,
         interactionMode: widget.interactionMode,
@@ -117,14 +123,16 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
         directSurfaceDrag: widget.directSurfaceDrag,
         planPickResolver: widget.planPickResolver,
         onLevelElevationSubmitted: widget.onLevelElevationSubmitted,
+        draftSurfaceWallIds: widget.draftSurfaceWallIds,
         draftWallThicknessMeters: widget.draftWallThicknessMeters,
         draftWallHeightMeters: widget.draftWallHeightMeters,
         nativeRenderer: true,
         rendererChild: IgnorePointer(
-          // ClipVolume handles and native orbit must share the exact Filament
-          // camera while a Section Box is active. Outside that mode Flutter
-          // keeps its existing authoring/navigation gesture authority.
-          ignoring: !widget.controller.hasSectionBox,
+          // Native Filament owns camera gestures for section views and the
+          // Section Box only in their matching projection. A stale clip state
+          // must never swallow plan-authoring taps such as Auto Room/Pick Walls.
+          ignoring: !nativeClipOwnsInteraction &&
+              !widget.controller.projectionMode.is3D,
           child: _AndroidRenderSceneView(controller: widget.controller),
         ),
       );
@@ -143,6 +151,7 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
       directSurfaceDrag: widget.directSurfaceDrag,
       planPickResolver: widget.planPickResolver,
       onLevelElevationSubmitted: widget.onLevelElevationSubmitted,
+      draftSurfaceWallIds: widget.draftSurfaceWallIds,
       draftWallThicknessMeters: widget.draftWallThicknessMeters,
       draftWallHeightMeters: widget.draftWallHeightMeters,
     );
@@ -158,8 +167,10 @@ class _AndroidRenderSceneView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final nativeClipOwnsInteraction = (controller.hasSectionBox &&
+            controller.projectionMode.is3D) ||
+        (controller.hasSectionView && controller.projectionMode.isElevation);
     return AndroidView(
-      key: ValueKey<int>(controller.sceneRevision),
       viewType: 'tbe/render_scene_view',
       layoutDirection: TextDirection.ltr,
       // Scene transfer is intentionally deferred to the per-view channel as
@@ -167,13 +178,14 @@ class _AndroidRenderSceneView extends StatelessWidget {
       // deeply nested mesh arrays on several Android devices.
       creationParams: const <String, Object?>{},
       creationParamsCodec: const StandardMessageCodec(),
-      gestureRecognizers: controller.hasSectionBox
-          ? <Factory<OneSequenceGestureRecognizer>>{
-              Factory<OneSequenceGestureRecognizer>(
-                () => EagerGestureRecognizer(),
-              ),
-            }
-          : const <Factory<OneSequenceGestureRecognizer>>{},
+      gestureRecognizers:
+          nativeClipOwnsInteraction || controller.projectionMode.is3D
+              ? <Factory<OneSequenceGestureRecognizer>>{
+                  Factory<OneSequenceGestureRecognizer>(
+                    () => EagerGestureRecognizer(),
+                  ),
+                }
+              : const <Factory<OneSequenceGestureRecognizer>>{},
       onPlatformViewCreated: controller.attachNativeBridge,
     );
   }
@@ -193,6 +205,7 @@ class _FallbackRenderSceneView extends StatefulWidget {
     required this.directSurfaceDrag,
     required this.planPickResolver,
     required this.onLevelElevationSubmitted,
+    required this.draftSurfaceWallIds,
     required this.draftWallThicknessMeters,
     required this.draftWallHeightMeters,
     this.rendererChild,
@@ -212,6 +225,7 @@ class _FallbackRenderSceneView extends StatefulWidget {
   final RenderScenePlanPickResolver? planPickResolver;
   final Future<void> Function(RenderSceneLevel level, String value)?
       onLevelElevationSubmitted;
+  final Set<int> draftSurfaceWallIds;
   final double draftWallThicknessMeters;
   final double draftWallHeightMeters;
   final Widget? rendererChild;
@@ -355,7 +369,9 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
 
   bool get _usesDirectAuthoringDrag => switch (widget.interactionMode) {
         RenderSceneInteractionMode.addWall ||
-        RenderSceneInteractionMode.addStair =>
+        RenderSceneInteractionMode.addStair ||
+        RenderSceneInteractionMode.addDoor ||
+        RenderSceneInteractionMode.addWindow =>
           true,
         RenderSceneInteractionMode.addFloor ||
         RenderSceneInteractionMode.addCeiling ||
@@ -371,6 +387,31 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
     bool touchFriendly = false,
   }) {
     final resolver = widget.planPickResolver;
+    final isPlanAuthoring = controller.projectionMode.isPlanar &&
+        widget.interactionMode != RenderSceneInteractionMode.select &&
+        widget.authoringPickKinds.isNotEmpty;
+    // During plan authoring the fallback projection is the same logical-pixel
+    // camera used by the Flutter draft overlay. Prefer it over the native
+    // hit-test: on a large blank 30m workspace Android's physical PlatformView
+    // scale can otherwise return a neighbouring wall on the far edge.
+    if (isPlanAuthoring) {
+      final projected = pickObjectAt(
+        scene: scene,
+        size: size,
+        localPosition: position,
+        projectionMode: controller.projectionMode,
+        orbitProjectionStyle: controller.orbitProjectionStyle,
+        planCamera: controller.planCamera,
+        camera: controller.camera,
+        visibleKinds: controller.visibleKinds,
+        padding: FallbackRenderScenePainter.padding,
+        allowedKinds: widget.authoringPickKinds,
+        additionalHitSlop: touchFriendly ? 24.0 : 16.0,
+      );
+      if (projected != null) {
+        return projected;
+      }
+    }
     if (resolver != null && controller.projectionMode.isPlanar) {
       final modelPoint = controller.screenToModelPlan(position, size);
       if (modelPoint != null) {
@@ -438,7 +479,10 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
         final size = constraints.biggest;
-        final nativeClipInteraction = controller.hasSectionBox;
+        final nativeOwnedInteraction =
+            (controller.hasSectionBox && controller.projectionMode.is3D) ||
+                (controller.hasSectionView &&
+                    controller.projectionMode.isElevation);
         controller.setViewportSize(size);
         RenderSceneLevel? inlineLevel;
         Offset? inlineLevelOrigin;
@@ -469,12 +513,12 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
         return GestureDetector(
           behavior: HitTestBehavior.opaque,
           onScaleStart: (ScaleStartDetails details) {
-            if (nativeClipInteraction) return;
+            if (nativeOwnedInteraction) return;
             _gesturePreviousScale = 1.0;
             _gesturePreviousFocalPoint = details.localFocalPoint;
           },
           onScaleUpdate: (ScaleUpdateDetails details) {
-            if (nativeClipInteraction) return;
+            if (nativeOwnedInteraction) return;
             if (details.pointerCount < 2) {
               return;
             }
@@ -509,14 +553,14 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
             _gesturePreviousFocalPoint = details.localFocalPoint;
           },
           onScaleEnd: (_) {
-            if (nativeClipInteraction) return;
+            if (nativeOwnedInteraction) return;
             _gesturePreviousScale = 1.0;
             _gesturePreviousFocalPoint = null;
           },
           child: Listener(
             behavior: HitTestBehavior.opaque,
             onPointerSignal: (PointerSignalEvent event) {
-              if (nativeClipInteraction) return;
+              if (nativeOwnedInteraction) return;
               if (event is! PointerScrollEvent) {
                 return;
               }
@@ -533,7 +577,7 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
               }
             },
             onPointerDown: (PointerDownEvent event) {
-              if (nativeClipInteraction) return;
+              if (nativeOwnedInteraction) return;
               _activePointerCount += 1;
               _activePointer = event.pointer;
               _pointerDownPosition = event.localPosition;
@@ -620,11 +664,11 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
               }
             },
             onPointerPanZoomStart: (_) {
-              if (nativeClipInteraction) return;
+              if (nativeOwnedInteraction) return;
               _trackpadPreviousScale = 1.0;
             },
             onPointerPanZoomUpdate: (PointerPanZoomUpdateEvent event) {
-              if (nativeClipInteraction) return;
+              if (nativeOwnedInteraction) return;
               if (controller.projectionMode.isPlanar) {
                 if (event.panDelta.distanceSquared > 0.0) {
                   controller.panPlanBy(event.panDelta);
@@ -652,14 +696,14 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
               _trackpadPreviousScale = event.scale;
             },
             onPointerPanZoomEnd: (_) {
-              if (nativeClipInteraction) return;
+              if (nativeOwnedInteraction) return;
               _trackpadPreviousScale = 1.0;
             },
             onPointerHover: (PointerHoverEvent event) {
               _emitHover(scene, size, event.localPosition, event.position);
             },
             onPointerMove: (PointerMoveEvent event) {
-              if (nativeClipInteraction) return;
+              if (nativeOwnedInteraction) return;
               if (_activePointer != event.pointer) {
                 return;
               }
@@ -755,24 +799,12 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                 );
               } else if (_isSecondaryDrag) {
                 controller.panOrbitBy(delta, size);
-              } else if (widget.interactionMode ==
-                      RenderSceneInteractionMode.select &&
-                  _usesTouchNavigation(event) &&
-                  !_sceneDragStarted) {
-                // One finger on empty tablet space navigates the view. Objects
-                // retain direct manipulation in plan/elevation through the
-                // branch above.
-                if (controller.projectionMode.is3D) {
-                  controller.orbitBy(delta, size);
-                } else {
-                  controller.panPlanBy(delta);
-                }
               }
 
               _lastPointerPosition = event.localPosition;
             },
             onPointerUp: (PointerUpEvent event) async {
-              if (nativeClipInteraction) {
+              if (nativeOwnedInteraction) {
                 _clearPointerState();
                 return;
               }
@@ -941,6 +973,26 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                       key: ValueKey<int>(inlineLevel.levelId),
                       level: inlineLevel,
                       onSubmitted: widget.onLevelElevationSubmitted,
+                    ),
+                  ),
+                if (widget.nativeRenderer)
+                  IgnorePointer(
+                    child: CustomPaint(
+                      painter: NativeDraftOverlayPainter(
+                        scene: scene,
+                        projectionMode: controller.projectionMode,
+                        orbitProjectionStyle: controller.orbitProjectionStyle,
+                        camera: controller.camera,
+                        planCamera: controller.planCamera,
+                        draftWallStart: controller.draftWallStart,
+                        draftWallEnd: controller.draftWallEnd,
+                        draftOpening: controller.draftOpening,
+                        draftSurface: controller.draftSurface,
+                        pickedWallIds: widget.draftSurfaceWallIds,
+                        wallThicknessMeters: widget.draftWallThicknessMeters,
+                        activeElementId: controller.activeElementId,
+                      ),
+                      size: Size.infinite,
                     ),
                   ),
                 if (kDebugMode)

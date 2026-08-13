@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.PointF
 import android.graphics.RectF
 import android.opengl.Matrix
@@ -484,7 +485,7 @@ internal class RenderSceneFilamentHostView(
   private var projectionMode = "topDown"
   private var orbitProjectionStyle = "orthographic"
   private var displayStyle = "solid"
-  private var shadowsEnabled = true
+  private var shadowsEnabled = false
   private var clipVolume = ClipVolumeState.none()
   private val sectionBoxEnabled get() = clipVolume.isSectionBox
   private val sectionBoxMin get() = clipVolume.boxMin
@@ -837,11 +838,11 @@ internal class RenderSceneFilamentHostView(
     } else if (orbitCenterPayload != null) {
       orbitCenter = toFilamentPoint(orbitCenterPayload)
     }
-    // Flutter uses X/Y plan with Z up; Filament receives X/Z/-Y. Mirror yaw
-    // at this single conversion point so a two-finger side-pan follows the
-    // same camera-right vector in both renderers.
+    // Flutter and Filament now use the same orbit yaw convention.  Do not
+    // mirror it here: doing so made a horizontal drag rotate the model in the
+    // opposite direction in the native 3D viewport.
     if (projectionMode == "isometric") {
-      orbitYawRadians = toDouble(payload?.get("orbitYawRadians"))?.unaryMinus()
+      orbitYawRadians = toDouble(payload?.get("orbitYawRadians"))
         ?: orbitYawRadians
       orbitPitchRadians = toDouble(payload?.get("orbitPitchRadians")) ?: orbitPitchRadians
     }
@@ -3459,6 +3460,10 @@ internal class RenderSceneFilamentHostView(
         x = orbitCenter.x - dx * metersPerPixel,
         y = orbitCenter.y + dy * metersPerPixel,
       )
+      "section" -> orbitCenter.copy(
+        x = orbitCenter.x - dx * metersPerPixel,
+        y = orbitCenter.y + dy * metersPerPixel,
+      )
       "eastElevation", "westElevation" -> orbitCenter.copy(
         z = orbitCenter.z + dx * metersPerPixel,
         y = orbitCenter.y + dy * metersPerPixel,
@@ -4263,6 +4268,47 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
       val start = sourcePlanPoint(centerX - ux * halfWidth, centerY - uy * halfWidth)
       val end = sourcePlanPoint(centerX + ux * halfWidth, centerY + uy * halfWidth)
       val centerPoint = sourcePlanPoint(centerX, centerY)
+      val wallThickness = host.metadata["thickness_meters"]?.toDoubleOrNull() ?: 0.20
+      val halfThickness = wallThickness * 0.5
+      val cutStart = project(
+        sourcePlanPoint(
+          centerX - ux * halfWidth + nx * halfThickness,
+          centerY - uy * halfWidth + ny * halfThickness,
+        ),
+      ) ?: continue
+      val cutEnd = project(
+        sourcePlanPoint(
+          centerX + ux * halfWidth + nx * halfThickness,
+          centerY + uy * halfWidth + ny * halfThickness,
+        ),
+      ) ?: continue
+      val cutEndBack = project(
+        sourcePlanPoint(
+          centerX + ux * halfWidth - nx * halfThickness,
+          centerY + uy * halfWidth - ny * halfThickness,
+        ),
+      ) ?: continue
+      val cutStartBack = project(
+        sourcePlanPoint(
+          centerX - ux * halfWidth - nx * halfThickness,
+          centerY - uy * halfWidth - ny * halfThickness,
+        ),
+      ) ?: continue
+      // The opening objects are hidden as full prisms in top-down mode. Clear
+      // their host wall footprint here before drawing the familiar symbol so
+      // the wall itself visibly contains the opening.
+      val cutPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        color = Color.rgb(244, 247, 245)
+      }
+      val cutPath = Path().apply {
+        moveTo(cutStart.x, cutStart.y)
+        lineTo(cutEnd.x, cutEnd.y)
+        lineTo(cutEndBack.x, cutEndBack.y)
+        lineTo(cutStartBack.x, cutStartBack.y)
+        close()
+      }
+      canvas.drawPath(cutPath, cutPaint)
       val openEnd = sourcePlanPoint(
         centerX - ux * halfWidth + nx * widthMeters,
         centerY - uy * halfWidth + ny * widthMeters,

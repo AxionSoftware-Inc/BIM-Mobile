@@ -370,7 +370,7 @@ internal class RenderScenePlatformView(
       }
 
       "setShadowsEnabled" -> {
-        view.setShadowsEnabled(call.arguments as? Boolean ?: true)
+        view.setShadowsEnabled(call.arguments as? Boolean ?: false)
         result.success(null)
       }
 

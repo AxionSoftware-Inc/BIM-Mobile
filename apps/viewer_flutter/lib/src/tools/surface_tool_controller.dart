@@ -9,7 +9,10 @@ class SurfaceToolController extends ChangeNotifier {
   RenderScenePoint? _end;
   final List<RenderScenePoint> _points = <RenderScenePoint>[];
   final Set<int> _wallIds = <int>{};
-  RenderSceneSurfaceDrawMode _drawMode = RenderSceneSurfaceDrawMode.rectangle;
+  // Picking the enclosing walls is the safest default on a touch screen: it
+  // avoids an accidental rectangle when the user intended to follow the
+  // building footprint.
+  RenderSceneSurfaceDrawMode _drawMode = RenderSceneSurfaceDrawMode.pickWalls;
   double _thicknessMeters = 0.18;
   double _heightMeters = 3.0;
   double _floorTopMeters = 0.0;
@@ -103,7 +106,7 @@ class SurfaceToolController extends ChangeNotifier {
     _end = null;
     _points.clear();
     _wallIds.clear();
-    _drawMode = RenderSceneSurfaceDrawMode.rectangle;
+    _drawMode = RenderSceneSurfaceDrawMode.pickWalls;
     _thicknessMeters = 0.18;
     _heightMeters = defaultHeight;
     _floorTopMeters = levelElevation;

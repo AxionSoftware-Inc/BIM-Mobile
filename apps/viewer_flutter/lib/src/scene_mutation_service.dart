@@ -112,27 +112,32 @@ class SceneMutationService {
         );
       }
 
-      final constrained = await engine.setWallLevelConstraints(
-        wallId: wallId,
-        baseLevelId: request.baseLevelId,
-        topLevelId: request.topLevelId,
-        heightMode: 1,
-      );
-      final finalScene = constrained.scene;
-      trace.add(
-        'engine constraints walls=${finalScene?.kindCounts['wall']} '
-        'exists=${finalScene?.objectById(wallId) != null} '
-        'errors=${constrained.errors.join('|')}',
-      );
+      RenderSceneLoadResult finalResult = created;
+      if (request.topLevelId != 0) {
+        finalResult = await engine.setWallLevelConstraints(
+          wallId: wallId,
+          baseLevelId: request.baseLevelId,
+          topLevelId: request.topLevelId,
+          heightMode: 1,
+        );
+        trace.add(
+          'engine constraints walls=${finalResult.scene?.kindCounts['wall']} '
+          'exists=${finalResult.scene?.objectById(wallId) != null} '
+          'errors=${finalResult.errors.join('|')}',
+        );
+      } else {
+        trace.add('single-level wall: keeping explicit wall height');
+      }
+      final finalScene = finalResult.scene;
       if (finalScene == null || finalScene.objectById(wallId) == null) {
         return SceneMutationOutcome(
           scene: finalScene,
           createdElementId: wallId,
           success: false,
           trace: trace,
-          error: constrained.errors.isEmpty
-              ? 'Constraintdan keyin wall snapshotda yo‘q.'
-              : constrained.errors.join(' '),
+          error: finalResult.errors.isEmpty
+              ? 'Wall snapshotda yo‘q.'
+              : finalResult.errors.join(' '),
         );
       }
       return SceneMutationOutcome(

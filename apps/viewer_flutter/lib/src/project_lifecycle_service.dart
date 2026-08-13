@@ -27,6 +27,27 @@ class ProjectLifecycleService<T extends ViewerProjectSession> {
 
   final ViewerSessionFactory<T> _sessionFactory;
 
+  Future<ProjectSessionResult<T>> createBlankProject({
+    T? existingSession,
+    String projectName = 'New Project',
+  }) async {
+    final createdSession = existingSession == null;
+    final session = existingSession ?? await _sessionFactory.create();
+    try {
+      final renderScene = await session.createBlankProject(
+        projectName: projectName,
+      );
+      return ProjectSessionResult<T>(
+        session: session,
+        createdSession: createdSession,
+        renderScene: renderScene,
+      );
+    } catch (_) {
+      if (createdSession) session.dispose();
+      rethrow;
+    }
+  }
+
   Future<ProjectSessionResult<T>> createResidentialTemplate({
     T? existingSession,
     required int buildingCount,
