@@ -488,7 +488,8 @@ class RenderSceneEditor {
       kind: 'Ceiling',
       materialCategory: 'ceiling',
       thicknessMeters: thicknessMeters,
-      baseZ: room.bounds.min.z + math.max(heightMeters - thicknessMeters, 0.02),
+      baseZ: _levelElevation(scene, levelId ?? room.levelId) +
+          math.max(heightMeters - thicknessMeters, 0.02),
       levelId: levelId,
     );
   }
@@ -524,7 +525,8 @@ class RenderSceneEditor {
       kind: 'Ceiling',
       materialCategory: 'ceiling',
       thicknessMeters: thicknessMeters,
-      baseZ: bounds.min.z + math.max(heightMeters - thicknessMeters, 0.02),
+      baseZ: _levelElevation(scene, levelId) +
+          math.max(heightMeters - thicknessMeters, 0.02),
       levelId: levelId,
     );
   }
@@ -600,7 +602,8 @@ class RenderSceneEditor {
       kind: 'Ceiling',
       materialCategory: 'ceiling',
       thicknessMeters: thicknessMeters,
-      baseZ: heightMeters - thicknessMeters,
+      baseZ: _levelElevation(scene, levelId) +
+          math.max(heightMeters - thicknessMeters, 0.02),
       levelId: levelId,
     );
   }
@@ -1332,6 +1335,10 @@ class RenderSceneEditor {
     }
 
     return counts.entries.reduce((a, b) => a.value >= b.value ? a : b).key;
+  }
+
+  static double _levelElevation(RenderScene scene, int? levelId) {
+    return scene.levelById(levelId)?.elevationMeters ?? 0.0;
   }
 
   static bool _samePlanPoint(

@@ -236,6 +236,35 @@ void main() {
     );
   });
 
+  test('ceiling Pick Walls follows the floor polygon and level height', () {
+    final scene = parseRenderSceneJson(
+      File('test/fixtures/render_scene_sample.json').readAsStringSync(),
+      source: 'ceiling pick walls test',
+    ).scene!;
+    final walls = scene.objects
+        .where((object) => object.kindKey == 'wall')
+        .toList(growable: false);
+    final polygon = RenderSceneEditor.surfacePolygonForWalls(walls);
+    expect(polygon, isNotNull);
+
+    final level = scene.levels.first;
+    final ceiling = RenderSceneEditor.addCeilingFromPolygon(
+      scene: scene,
+      polygon: polygon!,
+      levelId: level.levelId,
+      heightMeters: 2.6,
+    );
+    final created = ceiling.objects.lastWhere(
+      (object) => object.kindKey == 'ceiling',
+    );
+    expect(created.levelId, level.levelId);
+    expect(
+      created.bounds.min.z,
+      closeTo(level.elevationMeters + 2.6 - 0.05, 1e-9),
+    );
+    expect(created.metadata['footprint_mode'], 'picked_wall_polygon');
+  });
+
   test('Auto Room ignores an open wall boundary', () {
     final scene = parseRenderSceneJson(
       File('test/fixtures/render_scene_sample.json').readAsStringSync(),
@@ -578,7 +607,7 @@ void main() {
     expect(created.scene!.objectById(createdId)!.kindKey, 'floor');
   });
 
-  test('blank project creates a picked-wall floor without an assembly',
+  test('blank project creates picked-wall floor and ceiling without assemblies',
       () async {
     final repository = ViewerRepository(TbeViewerApi.load());
     addTearDown(repository.dispose);
@@ -620,6 +649,22 @@ void main() {
     final createdId = repository.lastCreatedElementId;
     expect(createdId, isNotNull);
     expect(created.scene!.objectById(createdId)!.kindKey, 'floor');
+
+    final createdCeiling = await repository.createProfile(
+      targetKind: 2,
+      draftMode: 2,
+      levelId: levelId,
+      points: const <RenderScenePoint>[],
+      wallIds: wallIds,
+      closed: true,
+      thicknessMeters: 0.05,
+      heightMeters: 3.0,
+      verticalOffsetMeters: 2.6,
+      assemblyId: 0,
+    );
+    final ceilingId = repository.lastCreatedElementId;
+    expect(ceilingId, isNotNull);
+    expect(createdCeiling.scene!.objectById(ceilingId)!.kindKey, 'ceiling');
   });
 
   test('engine Auto Room exposes exact room boundaries to the viewer',

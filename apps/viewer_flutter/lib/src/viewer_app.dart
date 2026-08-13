@@ -417,7 +417,10 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     RenderSceneObject? best;
     var bestDistance = double.infinity;
     for (final wall in scene.objects) {
-      if (wall.kindKey != 'wall') continue;
+      if (wall.kindKey != 'wall' ||
+          (_activeLevelId != null && wall.levelId != _activeLevelId)) {
+        continue;
+      }
       final start = RenderSceneEditor.wallStartPoint(wall);
       final end = RenderSceneEditor.wallEndPoint(wall);
       if (start == null || end == null) continue;
