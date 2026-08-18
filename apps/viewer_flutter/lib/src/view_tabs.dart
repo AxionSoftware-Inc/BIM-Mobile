@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'render_scene_models.dart';
 import 'render_scene_viewport_types.dart';
+import 'view_presentation.dart';
 
 /// A view that has been opened in the model workspace.
 ///
@@ -18,7 +19,7 @@ enum OpenedViewKind {
 
 @immutable
 class OpenedViewTab {
-  const OpenedViewTab({
+  OpenedViewTab({
     required this.id,
     required this.label,
     required this.kind,
@@ -26,10 +27,15 @@ class OpenedViewTab {
     this.levelId,
     this.section,
     this.sheetId,
-    this.displayStyle = RenderSceneDisplayStyle.solid,
-    this.shadowsEnabled = false,
-    this.orbitProjectionStyle = RenderSceneOrbitProjectionStyle.perspective,
-  });
+    RenderSceneDisplayStyle displayStyle = RenderSceneDisplayStyle.solid,
+    bool shadowsEnabled = false,
+    RenderSceneOrbitProjectionStyle orbitProjectionStyle =
+        RenderSceneOrbitProjectionStyle.perspective,
+  }) : presentation = ViewPresentation(
+          displayStyle: displayStyle,
+          shadowsEnabled: shadowsEnabled,
+          orbitProjectionStyle: orbitProjectionStyle,
+        );
 
   final String id;
   final String label;
@@ -38,9 +44,12 @@ class OpenedViewTab {
   final int? levelId;
   final RenderSceneSection? section;
   final String? sheetId;
-  final RenderSceneDisplayStyle displayStyle;
-  final bool shadowsEnabled;
-  final RenderSceneOrbitProjectionStyle orbitProjectionStyle;
+  final ViewPresentation presentation;
+
+  RenderSceneDisplayStyle get displayStyle => presentation.displayStyle;
+  bool get shadowsEnabled => presentation.shadowsEnabled;
+  RenderSceneOrbitProjectionStyle get orbitProjectionStyle =>
+      presentation.orbitProjectionStyle;
 
   OpenedViewTab copyWith({
     RenderSceneProjectionMode? projectionMode,

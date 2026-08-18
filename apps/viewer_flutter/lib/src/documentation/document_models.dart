@@ -1,5 +1,6 @@
 import '../render_scene_models.dart';
 import '../render_scene_viewport_types.dart';
+import '../view_presentation.dart';
 
 enum DocumentationScope {
   currentFloorPlan,
@@ -75,17 +76,22 @@ enum SheetViewKind {
 /// outside the document model so a sheet cannot accidentally become a second
 /// source of truth for building geometry.
 class SheetViewReference {
-  const SheetViewReference({
+  SheetViewReference({
     required this.id,
     required this.label,
     required this.kind,
     required this.projectionMode,
     this.levelId,
     this.section,
-    this.displayStyle = RenderSceneDisplayStyle.solid,
-    this.shadowsEnabled = false,
-    this.orbitProjectionStyle = RenderSceneOrbitProjectionStyle.perspective,
-  });
+    RenderSceneDisplayStyle displayStyle = RenderSceneDisplayStyle.solid,
+    bool shadowsEnabled = false,
+    RenderSceneOrbitProjectionStyle orbitProjectionStyle =
+        RenderSceneOrbitProjectionStyle.perspective,
+  }) : presentation = ViewPresentation(
+          displayStyle: displayStyle,
+          shadowsEnabled: shadowsEnabled,
+          orbitProjectionStyle: orbitProjectionStyle,
+        );
 
   final String id;
   final String label;
@@ -93,9 +99,12 @@ class SheetViewReference {
   final RenderSceneProjectionMode projectionMode;
   final int? levelId;
   final RenderSceneSection? section;
-  final RenderSceneDisplayStyle displayStyle;
-  final bool shadowsEnabled;
-  final RenderSceneOrbitProjectionStyle orbitProjectionStyle;
+  final ViewPresentation presentation;
+
+  RenderSceneDisplayStyle get displayStyle => presentation.displayStyle;
+  bool get shadowsEnabled => presentation.shadowsEnabled;
+  RenderSceneOrbitProjectionStyle get orbitProjectionStyle =>
+      presentation.orbitProjectionStyle;
 
   SheetViewReference copyWith({
     RenderSceneDisplayStyle? displayStyle,

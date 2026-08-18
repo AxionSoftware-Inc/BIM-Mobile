@@ -113,6 +113,29 @@ extension RenderSceneProjectionEditingModeX on RenderSceneProjectionMode {
   bool get supportsPlanFootprintEditing => this == kDefaultPlanProjectionMode;
 }
 
+/// Camera-only contract shared by fallback canvas, native overlays, sheets,
+/// sections, and any future viewport host.
+///
+/// Authoring and selection are deliberately absent. A new viewport can reuse
+/// this module without inheriting wall/floor/editor behavior.
+abstract interface class ViewportCameraTarget {
+  RenderSceneProjectionMode get projectionMode;
+
+  void panPlanBy(Offset delta);
+
+  void zoomPlanBy(
+    double scaleDelta, {
+    Offset? focalPoint,
+    Size? viewportSize,
+  });
+
+  void orbitBy(Offset delta, Size viewportSize);
+
+  void panOrbitBy(Offset delta, Size viewportSize);
+
+  void zoomOrbit(double scaleDelta);
+}
+
 @immutable
 class RenderSceneTapDetails {
   const RenderSceneTapDetails({
@@ -215,7 +238,8 @@ class RenderScenePlanCameraState {
   }
 }
 
-abstract class RenderSceneViewportActions extends ChangeNotifier {
+abstract class RenderSceneViewportActions extends ChangeNotifier
+    implements ViewportCameraTarget {
   RenderScene? get scene;
   Set<String> get visibleKinds;
   Set<String> get selectedElementIds;
@@ -225,6 +249,7 @@ abstract class RenderSceneViewportActions extends ChangeNotifier {
   String? get highlightedElementId;
   int get fitRevision;
   int get sceneRevision;
+  @override
   RenderSceneProjectionMode get projectionMode;
   RenderSceneOrbitProjectionStyle get orbitProjectionStyle;
   RenderSceneDisplayStyle get displayStyle;
@@ -253,14 +278,19 @@ abstract class RenderSceneViewportActions extends ChangeNotifier {
   void setSurfaceDraft(RenderSceneSurfaceDraft? draft);
   void clearDraft();
   void setViewportSize(Size size);
+  @override
   void panPlanBy(Offset delta);
+  @override
   void zoomPlanBy(
     double scaleDelta, {
     Offset? focalPoint,
     Size? viewportSize,
   });
+  @override
   void orbitBy(Offset delta, Size viewportSize);
+  @override
   void panOrbitBy(Offset delta, Size viewportSize);
+  @override
   void zoomOrbit(double scaleDelta);
   RenderScenePoint? screenToModelPlan(Offset localPosition, Size viewportSize);
   Future<void> selectElement(String? elementId);

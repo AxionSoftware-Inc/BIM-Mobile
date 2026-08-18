@@ -148,6 +148,7 @@ class PlanSketchGeometry {
     bool lockElevationAxis = false,
     bool snapVertical = false,
     double? orthogonalDominance,
+    double endpointToleranceMeters = defaultEndpointToleranceMeters,
   }) {
     RenderScenePoint point;
     if (useGridSnap) {
@@ -159,7 +160,11 @@ class PlanSketchGeometry {
     if (start == null) {
       // Endpoint snapping is last on purpose. Grid snapping a point that has
       // already matched a real wall endpoint moves it away from the join.
-      return snapToCandidate(point, candidatePoints);
+      return snapToCandidate(
+        point,
+        candidatePoints,
+        toleranceMeters: endpointToleranceMeters,
+      );
     }
     if (lockElevationAxis) {
       return RenderScenePoint(x: point.x, y: point.y, z: start.z);
@@ -176,6 +181,7 @@ class PlanSketchGeometry {
         start: start,
         candidates: candidatePoints,
         horizontal: true,
+        endpointToleranceMeters: endpointToleranceMeters,
       );
       return RenderScenePoint(
           x: horizontal?.x ?? point.x, y: start.y, z: point.z);
@@ -186,11 +192,16 @@ class PlanSketchGeometry {
         start: start,
         candidates: candidatePoints,
         horizontal: false,
+        endpointToleranceMeters: endpointToleranceMeters,
       );
       return RenderScenePoint(
           x: start.x, y: vertical?.y ?? point.y, z: point.z);
     }
-    return snapToCandidate(point, candidatePoints);
+    return snapToCandidate(
+      point,
+      candidatePoints,
+      toleranceMeters: endpointToleranceMeters,
+    );
   }
 
   static RenderScenePoint? _snapOrthogonalCandidate({
@@ -198,9 +209,10 @@ class PlanSketchGeometry {
     required RenderScenePoint start,
     required Iterable<RenderScenePoint> candidates,
     required bool horizontal,
+    required double endpointToleranceMeters,
   }) {
     RenderScenePoint? best;
-    var bestDistance = defaultEndpointToleranceMeters;
+    var bestDistance = endpointToleranceMeters;
     for (final candidate in candidates) {
       if (!candidate.isFinite) continue;
       final axisDistance = horizontal

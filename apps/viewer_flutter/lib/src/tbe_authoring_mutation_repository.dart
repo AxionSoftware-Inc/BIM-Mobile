@@ -1,0 +1,409 @@
+part of 'tbe_ffi.dart';
+
+/// Native document mutation boundary.
+///
+/// This service owns only semantic authoring commands and their DTO mapping.
+/// Session lifecycle, scene reads and project checkpoints are supplied as
+/// narrow callbacks by the FFI composition adapter.
+final class TbeAuthoringMutationRepository {
+  TbeAuthoringMutationRepository({
+    required TbeViewerApi api,
+    required ffi.Pointer<ffi.Void>? Function() handle,
+    required Future<RenderSceneLoadResult> Function() refresh,
+    required Future<void> Function() warmSnapshot,
+    required Future<void> Function() beforeLevelMove,
+    required void Function(int? id) setLastCreatedElementId,
+  })  : _api = api,
+        _handle = handle,
+        _refresh = refresh,
+        _warmSnapshot = warmSnapshot,
+        _beforeLevelMove = beforeLevelMove,
+        _setLastCreatedElementId = setLastCreatedElementId;
+
+  final TbeViewerApi _api;
+  final ffi.Pointer<ffi.Void>? Function() _handle;
+  final Future<RenderSceneLoadResult> Function() _refresh;
+  final Future<void> Function() _warmSnapshot;
+  final Future<void> Function() _beforeLevelMove;
+  final void Function(int? id) _setLastCreatedElementId;
+
+  Future<RenderSceneLoadResult> createLevel({
+    required String name,
+    required double elevationMeters,
+    required double defaultWallHeightMeters,
+  }) async {
+    _api.createLevel(
+      _requireHandle(),
+      name,
+      elevationMeters,
+      defaultWallHeightMeters,
+    );
+    return _afterMutation();
+  }
+
+  Future<RenderSceneLoadResult> moveLevelElevation({
+    required int levelId,
+    required double elevationMeters,
+  }) async {
+    await _beforeLevelMove();
+    _api.moveLevelElevation(_requireHandle(), levelId, elevationMeters);
+    return _afterMutation();
+  }
+
+  Future<RenderSceneLoadResult> updateLevel({
+    required int levelId,
+    String? name,
+    double? elevationMeters,
+    double? defaultWallHeightMeters,
+  }) async {
+    _api.updateLevel(
+      _requireHandle(),
+      levelId,
+      name: name,
+      elevationMeters: elevationMeters,
+      defaultWallHeightMeters: defaultWallHeightMeters,
+    );
+    return _afterMutation();
+  }
+
+  Future<RenderSceneLoadResult> createWall({
+    required String name,
+    required int levelId,
+    required RenderScenePoint start,
+    required RenderScenePoint end,
+    required double thicknessMeters,
+    required double heightMeters,
+  }) async {
+    final id = _api.createWall(
+      _requireHandle(),
+      name,
+      levelId,
+      start.x,
+      start.y,
+      end.x,
+      end.y,
+      thicknessMeters,
+      heightMeters,
+    );
+    _setLastCreatedElementId(id);
+    return _afterMutation();
+  }
+
+  Future<RenderSceneLoadResult> createStair({
+    required int baseLevelId,
+    required int topLevelId,
+    required RenderScenePoint start,
+    required RenderScenePoint direction,
+    required double widthMeters,
+    required double totalRiseMeters,
+    required double totalRunMeters,
+    required int riserCount,
+    required int treadCount,
+  }) async {
+    final id = _api.createStair(
+      _requireHandle(),
+      baseLevelId: baseLevelId,
+      topLevelId: topLevelId,
+      startX: start.x,
+      startY: start.y,
+      directionX: direction.x,
+      directionY: direction.y,
+      widthMeters: widthMeters,
+      totalRiseMeters: totalRiseMeters,
+      totalRunMeters: totalRunMeters,
+      riserCount: riserCount,
+      treadCount: treadCount,
+    );
+    _setLastCreatedElementId(id);
+    return _afterMutation();
+  }
+
+  Future<RenderSceneLoadResult> setWallLevelConstraints({
+    required int wallId,
+    required int baseLevelId,
+    int topLevelId = 0,
+    double baseOffsetMeters = 0.0,
+    double topOffsetMeters = 0.0,
+    int heightMode = 0,
+  }) async {
+    _api.setWallLevelConstraints(
+      _requireHandle(),
+      wallId: wallId,
+      baseLevelId: baseLevelId,
+      topLevelId: topLevelId,
+      baseOffsetMeters: baseOffsetMeters,
+      topOffsetMeters: topOffsetMeters,
+      heightMode: heightMode,
+    );
+    return _afterMutation();
+  }
+
+  Future<RenderSceneLoadResult> setWallAxis({
+    required int wallId,
+    required RenderScenePoint start,
+    required RenderScenePoint end,
+  }) async {
+    _api.setWallAxis(
+      _requireHandle(),
+      wallId: wallId,
+      startX: start.x,
+      startY: start.y,
+      endX: end.x,
+      endY: end.y,
+    );
+    return _afterMutation();
+  }
+
+  Future<RenderSceneLoadResult> trimExtendWalls({
+    required int firstWallId,
+    required bool firstUsesStart,
+    required int secondWallId,
+    required bool secondUsesStart,
+  }) async {
+    _api.trimExtendWalls(
+      _requireHandle(),
+      firstWallId: firstWallId,
+      firstUsesStart: firstUsesStart,
+      secondWallId: secondWallId,
+      secondUsesStart: secondUsesStart,
+    );
+    return _afterMutation();
+  }
+
+  Future<RenderSceneLoadResult> createDoor({
+    required String name,
+    required int hostWallId,
+    required double offsetMeters,
+    required double widthMeters,
+    required double heightMeters,
+  }) async {
+    _api.createDoor(
+      _requireHandle(),
+      name,
+      hostWallId,
+      offsetMeters,
+      widthMeters,
+      heightMeters,
+    );
+    return _afterMutation();
+  }
+
+  Future<RenderSceneLoadResult> createWindow({
+    required String name,
+    required int hostWallId,
+    required double offsetMeters,
+    required double widthMeters,
+    required double heightMeters,
+    required double sillHeightMeters,
+  }) async {
+    _api.createWindow(
+      _requireHandle(),
+      name,
+      hostWallId,
+      offsetMeters,
+      widthMeters,
+      heightMeters,
+      sillHeightMeters,
+    );
+    return _afterMutation();
+  }
+
+  Future<RenderSceneLoadResult> setOpeningLevelLock({
+    required int openingId,
+    required bool locked,
+  }) async {
+    _api.setOpeningLevelLock(_requireHandle(), openingId, locked);
+    return _afterMutation();
+  }
+
+  Future<RenderSceneLoadResult> setOpeningLevel({
+    required int openingId,
+    required int levelId,
+  }) async {
+    _api.setOpeningLevel(_requireHandle(), openingId, levelId);
+    return _afterMutation();
+  }
+
+  Future<RenderSceneLoadResult> setOpeningLevelConstraint({
+    required int openingId,
+    required int levelId,
+    required double levelOffsetMeters,
+  }) async {
+    _api.setOpeningLevelConstraint(
+      _requireHandle(),
+      openingId,
+      levelId,
+      levelOffsetMeters,
+    );
+    return _afterMutation();
+  }
+
+  Future<RenderSceneLoadResult> moveHostedOpening({
+    required int openingId,
+    required double offsetMeters,
+  }) async {
+    _api.moveHostedOpening(_requireHandle(), openingId, offsetMeters);
+    return _afterMutation();
+  }
+
+  Future<RenderSceneLoadResult> resizeOpening({
+    required int openingId,
+    required String kind,
+    required double widthMeters,
+    required double heightMeters,
+    double sillHeightMeters = 0.0,
+  }) async {
+    final handle = _requireHandle();
+    if (kind == 'door') {
+      _api.resizeDoor(
+        handle,
+        doorId: openingId,
+        widthMeters: widthMeters,
+        heightMeters: heightMeters,
+      );
+    } else if (kind == 'window') {
+      _api.resizeWindow(
+        handle,
+        windowId: openingId,
+        widthMeters: widthMeters,
+        heightMeters: heightMeters,
+        sillHeightMeters: sillHeightMeters,
+      );
+    } else {
+      throw TbeApiException('Unsupported opening kind: $kind');
+    }
+    return _afterMutation();
+  }
+
+  Future<RenderSceneLoadResult> createProfile({
+    required int targetKind,
+    required int draftMode,
+    required int levelId,
+    required List<RenderScenePoint> points,
+    List<int> wallIds = const <int>[],
+    required bool closed,
+    required double thicknessMeters,
+    required double heightMeters,
+    required double verticalOffsetMeters,
+    int materialId = 0,
+    int assemblyId = 0,
+    int roofType = 0,
+  }) async {
+    final ids = _api.createProfile(
+      _requireHandle(),
+      targetKind: targetKind,
+      draftMode: draftMode,
+      levelId: levelId,
+      points: points,
+      wallIds: wallIds,
+      closed: closed,
+      thicknessMeters: thicknessMeters,
+      heightMeters: heightMeters,
+      verticalOffsetMeters: verticalOffsetMeters,
+      materialId: materialId,
+      assemblyId: assemblyId,
+      roofType: roofType,
+    );
+    _setLastCreatedElementId(ids.isEmpty ? null : ids.first);
+    return _afterMutation();
+  }
+
+  Future<RenderSceneLoadResult> detectRooms() async {
+    _api.detectRooms(_requireHandle());
+    return _afterMutation();
+  }
+
+  Future<RenderSceneLoadResult> createFloorSystemForRoom({
+    required int roomId,
+    required int assemblyId,
+  }) async {
+    _api.createFloorSystemForRoom(_requireHandle(), roomId, assemblyId);
+    return _afterMutation();
+  }
+
+  Future<RenderSceneLoadResult> createCeilingSystemForRoom({
+    required int roomId,
+    required int assemblyId,
+    required double heightOffsetMeters,
+  }) async {
+    _api.createCeilingSystemForRoom(
+      _requireHandle(),
+      roomId,
+      assemblyId,
+      heightOffsetMeters,
+    );
+    return _afterMutation();
+  }
+
+  Future<RenderSceneLoadResult> setElementAssembly({
+    required int elementId,
+    required int assemblyId,
+  }) async {
+    _api.setElementAssembly(_requireHandle(), elementId, assemblyId);
+    return _afterMutation();
+  }
+
+  Future<RenderSceneLoadResult> updateRoofProperties({
+    required int roofId,
+    required int roofType,
+    double? slopeDegrees,
+    double? overhangMeters,
+  }) async {
+    _api.updateRoofProperties(
+      _requireHandle(),
+      roofId: roofId,
+      roofType: roofType,
+      slopeDegrees: slopeDegrees,
+      overhangMeters: overhangMeters,
+    );
+    return _afterMutation();
+  }
+
+  Future<RenderSceneLoadResult> setStructuralWallCut({
+    required int wallId,
+    required int cutterId,
+    required bool enabled,
+    double clearanceMeters = 0.0,
+  }) async {
+    _api.setStructuralWallCut(
+      _requireHandle(),
+      wallId: wallId,
+      cutterId: cutterId,
+      enabled: enabled,
+      clearanceMeters: clearanceMeters,
+    );
+    return _afterMutation();
+  }
+
+  Future<RenderSceneLoadResult> setBeamColumnJoin({
+    required int beamId,
+    required int columnId,
+    required bool enabled,
+  }) async {
+    _api.setBeamColumnJoin(
+      _requireHandle(),
+      beamId: beamId,
+      columnId: columnId,
+      enabled: enabled,
+    );
+    return _afterMutation();
+  }
+
+  Future<RenderSceneLoadResult> deleteElement({required int elementId}) async {
+    _api.deleteElement(_requireHandle(), elementId);
+    return _afterMutation();
+  }
+
+  Future<RenderSceneLoadResult> _afterMutation() async {
+    await _warmSnapshot();
+    return _refresh();
+  }
+
+  ffi.Pointer<ffi.Void> _requireHandle() {
+    final handle = _handle();
+    if (handle == null) {
+      throw TbeApiException('No loaded project');
+    }
+    return handle;
+  }
+}

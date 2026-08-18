@@ -2,6 +2,13 @@ import 'package:flutter/foundation.dart';
 
 import '../render_scene_models.dart';
 
+/// Which part of a wall the move tool owns.
+enum WallMoveMode {
+  translate,
+  startHandle,
+  endHandle,
+}
+
 /// State-only controller for the chained wall tool.
 ///
 /// It deliberately has no engine or widget dependency. Creating a wall stays

@@ -1,0 +1,822 @@
+// ignore_for_file: unused_element, unused_element_parameter
+
+part of 'viewer_app.dart';
+
+extension _ViewerViewCommands on _ViewerHomePageState {
+  Future<void> _fitCamera() async {
+    _updateViewportState(() {
+      _statusMessage = _projectionMode.fitLabel;
+    });
+
+    await _viewportController.fitCamera();
+  }
+
+  Future<void> _setProjectionMode(RenderSceneProjectionMode mode) async {
+    final wasGeneratedSection = _activeSectionView != null;
+    if (wasGeneratedSection) {
+      await _viewportController.setSectionView(null);
+    }
+    final scene = _scene;
+    final navigationScope = ViewNavigationPolicy.scopeFor(
+      mode: mode,
+      objectCount: scene?.objectCount ?? 0,
+      generatedSection: wasGeneratedSection,
+    );
+    if (_projectionMode == mode && !wasGeneratedSection) {
+      // A nearby-level plan snapshot can still be active even though the
+      // selected tab is already 3D/elevation. Re-fetch the intended scope so
+      // the roof is not lost when the user returns to the same view tab.
+      final repository = _engineRepository;
+      if (_engineBackedMode &&
+          repository != null &&
+          scene != null &&
+          navigationScope.refreshSceneScope) {
+        final result = await _sceneViews.setFullSceneRenderScope(
+          navigationScope.useFullScene,
+        );
+        await _applyLoadResult(
+          result,
+          sourceLabel: navigationScope.sourceLabel,
+        );
+      } else {
+        // Project Browser can be used after a renderer reload. Reassert the
+        // controller state even when the Flutter state already has this mode.
+        await _viewportController.setProjectionMode(mode);
+      }
+      return;
+    }
+
+    _updateViewportState(() {
+      // A normal plan, elevation, or 3D navigation intentionally leaves the
+      // generated section snapshot and reloads the authoritative model view.
+      _activeSectionView = null;
+      _projectionMode = mode;
+      _statusMessage = mode.statusLabel;
+      if (scene != null && _usesProjectionDefaultVisibility) {
+        _visibleKinds = _defaultVisibleKindsForProjection(scene);
+      } else if (scene != null) {
+        _visibleKinds = _sanitizeVisibleKinds(
+          visibleKinds: _visibleKinds,
+          scene: _sceneForViewport(scene),
+        );
+      }
+      if (scene != null) {
+        _visibleKinds = _ensurePlanCoreVisibility(_visibleKinds, scene);
+      }
+      if (_usesProjectionDefaultDisplayStyle) {
+        _displayStyle = _defaultDisplayStyleForProjection();
+      }
+    });
+
+    final repository = _engineRepository;
+    if (_engineBackedMode && repository != null) {
+      final scope = ViewNavigationPolicy.scopeFor(
+        mode: mode,
+        objectCount: scene?.objectCount ?? 0,
+        generatedSection: wasGeneratedSection,
+      );
+      if (!scope.refreshSceneScope) {
+        if (scene != null) {
+          await _viewportController.updateRenderScene(_sceneForViewport(scene));
+          await _viewportController.setVisibleKinds(_visibleKinds);
+        }
+        await _viewportController.setProjectionMode(mode);
+        await _viewportController.setDisplayStyle(_displayStyle);
+        await _viewportController.fitCamera();
+        return;
+      }
+      final result = await _sceneViews.setFullSceneRenderScope(
+        scope.useFullScene,
+      );
+      await _applyLoadResult(
+        result,
+        sourceLabel: scope.sourceLabel,
+      );
+      return;
+    }
+
+    if (scene != null) {
+      await _viewportController.updateRenderScene(_sceneForViewport(scene));
+      await _viewportController.setVisibleKinds(_visibleKinds);
+    }
+    await _viewportController.setProjectionMode(mode);
+    await _viewportController.setDisplayStyle(_displayStyle);
+    await _viewportController.fitCamera();
+  }
+
+  Future<void> _activateSectionView(
+    RenderSceneSection section,
+    RenderSceneLoadResult result,
+  ) async {
+    if (result.scene == null) {
+      _updateViewportState(() {
+        _activeSectionView = null;
+      });
+      await _applyLoadResult(result, sourceLabel: section.name);
+      return;
+    }
+
+    // A section snapshot has its own X/Z coordinate system. Set the
+    // projection first, then apply the scene once; calling the normal
+    // elevation navigation here would reload and overwrite this cut view.
+    _updateViewportState(() {
+      _activeSectionView = section;
+      _projectionMode = RenderSceneProjectionMode.northElevation;
+      _statusMessage = 'Opening ${section.name} cut...';
+      if (_usesProjectionDefaultDisplayStyle) {
+        _displayStyle = _defaultDisplayStyleForProjection();
+      }
+    });
+    await _applyLoadResult(result, sourceLabel: '${section.name} cut');
+    await _viewportController.setSectionView(section);
+  }
+
+  Future<void> _setOrbitProjectionStyle(
+    RenderSceneOrbitProjectionStyle style,
+  ) async {
+    if (_orbitProjectionStyle == style) {
+      return;
+    }
+
+    final viewId = _activeViewTabId;
+    _updateViewportState(() {
+      _orbitProjectionStyle = style;
+      _statusMessage = style == RenderSceneOrbitProjectionStyle.perspective
+          ? '3D perspective view'
+          : '3D orthographic view';
+    });
+
+    await _viewportController.setOrbitProjectionStyle(style);
+    if (viewId != null) {
+      _updateViewPresentation(viewId, orbitProjectionStyle: style);
+    }
+    await _viewportController.fitCamera();
+  }
+
+  Future<void> _setDisplayStyle(RenderSceneDisplayStyle style) async {
+    if (_displayStyle == style) {
+      return;
+    }
+
+    final viewId = _activeViewTabId;
+    _updateViewportState(() {
+      _displayStyle = style;
+      _usesProjectionDefaultDisplayStyle = false;
+      _statusMessage = switch (style) {
+        RenderSceneDisplayStyle.shaded => 'Shaded display',
+        RenderSceneDisplayStyle.solid => 'Solid display',
+        RenderSceneDisplayStyle.wireframe => 'Wireframe display',
+      };
+    });
+
+    await _viewportController.setDisplayStyle(style);
+    if (viewId != null) {
+      _updateViewPresentation(viewId, displayStyle: style);
+    }
+  }
+
+  Future<void> _setShadowsEnabled(bool enabled) async {
+    final viewId = _activeViewTabId;
+    await _viewportController.setShadowsEnabled(enabled);
+    if (viewId != null) {
+      _updateViewPresentation(viewId, shadowsEnabled: enabled);
+    }
+    if (!mounted) return;
+    _updateViewportState(() {
+      _statusMessage =
+          enabled ? 'Real shadows enabled' : 'Real shadows disabled';
+    });
+  }
+
+  Future<void> _showSectionBoxDialog() async {
+    final bounds = _viewportController.sceneBounds;
+    if (!bounds.isFinite || _projectionMode.is3D == false) return;
+    // Keep the box visibly outside the model, like Revit's Section Box, while
+    // padding each axis independently so a tall building does not make the
+    // whole cube unnecessarily huge in orbit.
+    const marginX = 5.0;
+    const marginY = 5.0;
+    const marginZ = 5.0;
+    final next = _viewportController.hasSectionBox
+        ? null
+        : RenderSceneBounds(
+            min: RenderScenePoint(
+              x: bounds.min.x - marginX,
+              y: bounds.min.y - marginY,
+              z: bounds.min.z - marginZ,
+            ),
+            max: RenderScenePoint(
+              x: bounds.max.x + marginX,
+              y: bounds.max.y + marginY,
+              z: bounds.max.z + marginZ,
+            ),
+          );
+    await _viewportController.setSectionBox(next);
+    if (mounted) {
+      _updateViewportState(() => _statusMessage = next == null
+          ? '3D Section Box cleared'
+          : '3D Section Box active — drag viewport handles');
+    }
+  }
+
+  Future<void> _showCreateLevelDialog() async {
+    final scene = _scene;
+    if (scene == null) {
+      return;
+    }
+    final suggestedIndex = scene.levels.length + 1;
+    final currentLevel = _activeLevel(scene);
+    final defaultElevation = currentLevel == null
+        ? 0.0
+        : currentLevel.elevationMeters + currentLevel.defaultWallHeightMeters;
+    final nameController = TextEditingController(text: 'Level $suggestedIndex');
+    final elevationController =
+        TextEditingController(text: defaultElevation.toStringAsFixed(2));
+    final heightController = TextEditingController(
+      text: (currentLevel?.defaultWallHeightMeters ??
+              _ViewerHomePageState._defaultWallHeightMeters)
+          .toStringAsFixed(2),
+    );
+
+    final payload =
+        await showDialog<({String name, double elevation, double wallHeight})>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Create level'),
+          content: SizedBox(
+            width: 360,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                TextField(
+                  controller: nameController,
+                  decoration: const InputDecoration(
+                    labelText: 'Name',
+                    isDense: true,
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                _NumericField(
+                  label: 'Elevation (m)',
+                  controller: elevationController,
+                  onChanged: (_) {},
+                ),
+                _NumericField(
+                  label: 'Default wall height (m)',
+                  controller: heightController,
+                  onChanged: (_) {},
+                ),
+              ],
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final name = nameController.text.trim();
+                final elevation =
+                    double.tryParse(elevationController.text.trim());
+                final wallHeight =
+                    double.tryParse(heightController.text.trim());
+                if (name.isEmpty ||
+                    elevation == null ||
+                    wallHeight == null ||
+                    wallHeight <= 0) {
+                  return;
+                }
+                Navigator.of(context).pop((
+                  name: name,
+                  elevation: elevation,
+                  wallHeight: wallHeight,
+                ));
+              },
+              child: const Text('Create'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (!mounted || payload == null) {
+      return;
+    }
+
+    final repository = _engineRepository;
+    if (_engineBackedMode && repository != null) {
+      final result = await _authoringCommands.createLevel(
+        name: payload.name,
+        elevationMeters: payload.elevation,
+        defaultWallHeightMeters: payload.wallHeight,
+      );
+      await _applyEngineSceneResult(result, message: 'Level created.');
+      return;
+    }
+    final nextScene = RenderSceneEditor.createLevel(
+      scene: scene,
+      name: payload.name,
+      elevationMeters: payload.elevation,
+      defaultWallHeightMeters: payload.wallHeight,
+    );
+    await _applySceneChange(nextScene, message: 'Level created.');
+  }
+
+  Future<void> _showWallLevelConstraintsDialog(RenderSceneObject object) async {
+    final repository = _engineRepository;
+    final scene = _scene;
+    final wallId = object.elementId;
+    if (!_engineBackedMode ||
+        repository == null ||
+        scene == null ||
+        wallId == null) {
+      _updateViewportState(() {
+        _editStatusMessage =
+            'Wall level constraints engine-backed mode talab qiladi.';
+      });
+      return;
+    }
+    final levels = scene.levels;
+    if (levels.isEmpty) {
+      return;
+    }
+
+    int baseLevelId = _metadataInt(object, 'base_level_id') ??
+        object.levelId ??
+        levels.first.levelId;
+    int topLevelId = _metadataInt(object, 'top_level_id') ?? 0;
+    int heightMode =
+        ((object.metadata['height_mode']?.toString() ?? 'Unconnected') ==
+                'TopLevel')
+            ? 1
+            : 0;
+    final baseOffsetController = TextEditingController(
+      text: (_metadataDouble(object, 'base_offset_meters') ?? 0.0)
+          .toStringAsFixed(2),
+    );
+    final topOffsetController = TextEditingController(
+      text: (_metadataDouble(object, 'top_offset_meters') ?? 0.0)
+          .toStringAsFixed(2),
+    );
+
+    final payload = await showDialog<
+        ({
+          int baseLevelId,
+          int topLevelId,
+          int heightMode,
+          double baseOffset,
+          double topOffset
+        })>(
+      context: context,
+      builder: (BuildContext context) {
+        return StatefulBuilder(
+          builder: (context, setLocalState) {
+            return AlertDialog(
+              title: Text('Wall #$wallId levels'),
+              content: SizedBox(
+                width: 380,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    DropdownButtonFormField<int>(
+                      initialValue: baseLevelId,
+                      decoration: const InputDecoration(
+                        labelText: 'Base level',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      items: levels
+                          .map((level) => DropdownMenuItem<int>(
+                                value: level.levelId,
+                                child: Text(level.name),
+                              ))
+                          .toList(growable: false),
+                      onChanged: (value) {
+                        if (value != null) {
+                          setLocalState(() {
+                            baseLevelId = value;
+                          });
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<int>(
+                      initialValue: heightMode,
+                      decoration: const InputDecoration(
+                        labelText: 'Height mode',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      items: const <DropdownMenuItem<int>>[
+                        DropdownMenuItem(value: 0, child: Text('Unconnected')),
+                        DropdownMenuItem(value: 1, child: Text('Top level')),
+                      ],
+                      onChanged: (value) {
+                        if (value != null) {
+                          setLocalState(() {
+                            heightMode = value;
+                            if (heightMode == 0) {
+                              topLevelId = 0;
+                            }
+                          });
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<int>(
+                      initialValue: topLevelId == 0 ? null : topLevelId,
+                      decoration: const InputDecoration(
+                        labelText: 'Top level',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      items: levels
+                          .map((level) => DropdownMenuItem<int>(
+                                value: level.levelId,
+                                child: Text(level.name),
+                              ))
+                          .toList(growable: false),
+                      onChanged: heightMode == 0
+                          ? null
+                          : (value) {
+                              setLocalState(() {
+                                topLevelId = value ?? 0;
+                              });
+                            },
+                    ),
+                    const SizedBox(height: 8),
+                    _NumericField(
+                      label: 'Base offset (m)',
+                      controller: baseOffsetController,
+                      onChanged: (_) {},
+                    ),
+                    _NumericField(
+                      label: 'Top offset (m)',
+                      controller: topOffsetController,
+                      onChanged: (_) {},
+                    ),
+                  ],
+                ),
+              ),
+              actions: <Widget>[
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    final baseOffset =
+                        double.tryParse(baseOffsetController.text.trim());
+                    final topOffset =
+                        double.tryParse(topOffsetController.text.trim());
+                    if (baseOffset == null ||
+                        topOffset == null ||
+                        (heightMode == 1 && topLevelId == 0)) {
+                      return;
+                    }
+                    Navigator.of(context).pop((
+                      baseLevelId: baseLevelId,
+                      topLevelId: topLevelId,
+                      heightMode: heightMode,
+                      baseOffset: baseOffset,
+                      topOffset: topOffset,
+                    ));
+                  },
+                  child: const Text('Apply'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (!mounted || payload == null) {
+      return;
+    }
+
+    final result = await repository.setWallLevelConstraints(
+      wallId: wallId,
+      baseLevelId: payload.baseLevelId,
+      topLevelId: payload.topLevelId,
+      baseOffsetMeters: payload.baseOffset,
+      topOffsetMeters: payload.topOffset,
+      heightMode: payload.heightMode,
+    );
+    await _applyEngineSceneResult(result,
+        message: 'Wall level constraints updated.');
+  }
+
+  Future<void> _showOpeningLevelDialog(RenderSceneObject object) async {
+    final scene = _scene;
+    final repository = _engineRepository;
+    final openingId = object.elementId;
+    if (scene == null ||
+        repository == null ||
+        !_engineBackedMode ||
+        openingId == null ||
+        (object.kindKey != 'door' && object.kindKey != 'window')) {
+      _updateViewportState(() {
+        _editStatusMessage =
+            'Opening level move engine-backed mode talab qiladi.';
+      });
+      return;
+    }
+    final levels = scene.levels;
+    if (levels.isEmpty) {
+      return;
+    }
+    int selectedLevelId =
+        object.levelId ?? _activeLevelId ?? levels.first.levelId;
+    final levelOffsetController = TextEditingController(
+      text: (_metadataDouble(object, 'level_offset_meters') ?? 0.0)
+          .toStringAsFixed(2),
+    );
+    final resultConstraint = await showDialog<({int levelId, double offset})>(
+      context: context,
+      builder: (BuildContext context) {
+        return StatefulBuilder(
+          builder: (context, setLocalState) {
+            return AlertDialog(
+              title: Text('Move ${prettySceneKind(object.kind)} to level'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  DropdownButtonFormField<int>(
+                    initialValue: selectedLevelId,
+                    decoration: const InputDecoration(
+                      labelText: 'Base level',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                    items: levels
+                        .map((level) => DropdownMenuItem<int>(
+                              value: level.levelId,
+                              child: Text(
+                                '${level.name} (${level.elevationMeters.toStringAsFixed(2)} m)',
+                              ),
+                            ))
+                        .toList(growable: false),
+                    onChanged: (value) {
+                      if (value != null) {
+                        setLocalState(() {
+                          selectedLevelId = value;
+                        });
+                      }
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: levelOffsetController,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    decoration: const InputDecoration(
+                      labelText: 'Offset from level (m)',
+                      helperText: 'Masalan 0.30 = leveldan 30 sm yuqori',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                  ),
+                ],
+              ),
+              actions: <Widget>[
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    final offset = double.tryParse(levelOffsetController.text);
+                    if (offset == null) {
+                      return;
+                    }
+                    Navigator.of(context).pop(
+                      (levelId: selectedLevelId, offset: offset),
+                    );
+                  },
+                  child: const Text('Apply'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    levelOffsetController.dispose();
+    if (!mounted || resultConstraint == null) {
+      return;
+    }
+
+    final result = await repository.setOpeningLevelConstraint(
+      openingId: openingId,
+      levelId: resultConstraint.levelId,
+      levelOffsetMeters: resultConstraint.offset,
+    );
+    await _applyEngineSceneResult(
+      result,
+      message:
+          '${prettySceneKind(object.kind)} ${scene.levelById(resultConstraint.levelId)?.name ?? 'level'} + ${resultConstraint.offset.toStringAsFixed(2)} m ga biriktirildi.',
+    );
+  }
+
+  Future<void> _showEditLevelDialog(RenderSceneLevel level) async {
+    final scene = _scene;
+    final repository = _engineRepository;
+    if (scene == null || !_engineBackedMode || repository == null) {
+      _updateViewportState(() {
+        _editStatusMessage = 'Level edit engine-backed mode talab qiladi.';
+      });
+      return;
+    }
+
+    final nameController = TextEditingController(text: level.name);
+    final elevationController =
+        TextEditingController(text: level.elevationMeters.toStringAsFixed(2));
+    final heightController = TextEditingController(
+      text: level.defaultWallHeightMeters.toStringAsFixed(2),
+    );
+
+    final payload =
+        await showDialog<({String name, double elevation, double wallHeight})>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text('Edit ${level.name}'),
+          content: SizedBox(
+            width: 360,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                TextField(
+                  controller: nameController,
+                  decoration: const InputDecoration(
+                    labelText: 'Name',
+                    isDense: true,
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                _NumericField(
+                  label: 'Elevation (m)',
+                  controller: elevationController,
+                  onChanged: (_) {},
+                ),
+                _NumericField(
+                  label: 'Default wall height (m)',
+                  controller: heightController,
+                  onChanged: (_) {},
+                ),
+              ],
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final name = nameController.text.trim();
+                final elevation =
+                    double.tryParse(elevationController.text.trim());
+                final wallHeight =
+                    double.tryParse(heightController.text.trim());
+                if (name.isEmpty ||
+                    elevation == null ||
+                    wallHeight == null ||
+                    wallHeight <= 0) {
+                  return;
+                }
+                Navigator.of(context).pop((
+                  name: name,
+                  elevation: elevation,
+                  wallHeight: wallHeight,
+                ));
+              },
+              child: const Text('Apply'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (!mounted || payload == null) {
+      return;
+    }
+
+    final result = await repository.updateLevel(
+      levelId: level.levelId,
+      name: payload.name,
+      elevationMeters: payload.elevation,
+      defaultWallHeightMeters: payload.wallHeight,
+    );
+    await _applyEngineSceneResult(
+      result,
+      message: '${payload.name} updated.',
+    );
+  }
+
+  Future<void> _moveSelectedLevelElevation(
+    RenderSceneLevel level,
+    String value,
+  ) async {
+    final elevation = double.tryParse(value.trim());
+    if (elevation == null) {
+      _updateViewportState(() {
+        _editStatusMessage = 'Balandlik raqamini to‘g‘ri kiriting.';
+      });
+      return;
+    }
+    if ((elevation - level.elevationMeters).abs() < 0.0001) {
+      return;
+    }
+    final repository = _engineRepository;
+    if (_engineBackedMode && repository != null) {
+      final result = await _authoringCommands.moveLevelElevation(
+        levelId: level.levelId,
+        elevationMeters: elevation,
+      );
+      final updated = result.scene?.levelById(level.levelId);
+      if (updated == null ||
+          (updated.elevationMeters - elevation).abs() > 0.0001) {
+        _updateViewportState(() {
+          _editStatusMessage =
+              'Engine level elevation qaytarmadi: ${result.errors.join(' ')}';
+        });
+        return;
+      }
+      await _applyEngineSceneResult(
+        result,
+        message: '${level.name} elevation: ${elevation.toStringAsFixed(2)} m.',
+      );
+      return;
+    }
+
+    // Mac development fallback must remain editable when the native dylib is
+    // unavailable; otherwise the UI accepts input but the scene can never move.
+    final scene = _scene;
+    if (scene == null) {
+      return;
+    }
+    final nextScene = RenderSceneEditor.setLevelElevation(
+      scene: scene,
+      levelId: level.levelId,
+      elevationMeters: elevation,
+    );
+    await _applySceneChange(
+      nextScene,
+      message: '${level.name} elevation: ${elevation.toStringAsFixed(2)} m.',
+      authoritative: true,
+    );
+  }
+
+  Future<void> _setSelectedObjectLevelLock(
+    RenderSceneObject object,
+    bool locked,
+  ) async {
+    final scene = _scene;
+    if (scene == null) {
+      return;
+    }
+    final repository = _engineRepository;
+    final elementId = object.elementId;
+    if (_engineBackedMode &&
+        repository != null &&
+        elementId != null &&
+        (object.kindKey == 'door' || object.kindKey == 'window')) {
+      final result = await repository.setOpeningLevelLock(
+        openingId: elementId,
+        locked: locked,
+      );
+      await _applyEngineSceneResult(
+        result,
+        message: locked
+            ? '${prettySceneKind(object.kind)} levelga lock qilindi.'
+            : '${prettySceneKind(object.kind)} leveldan unlock qilindi.',
+      );
+      return;
+    }
+    if (_engineBackedMode && repository != null && object.kindKey == 'wall') {
+      _updateViewportState(() {
+        _editStatusMessage =
+            'Wall level lock engine mode uchun constraint inspector keyingi bosqichda ulanadi.';
+      });
+      return;
+    }
+    final nextScene = RenderSceneEditor.setElementLevelLock(
+      scene: scene,
+      object: object,
+      locked: locked,
+    );
+    await _applySceneChange(
+      nextScene,
+      message: locked
+          ? '${prettySceneKind(object.kind)} levelga lock qilindi.'
+          : '${prettySceneKind(object.kind)} leveldan unlock qilindi.',
+    );
+  }
+}
