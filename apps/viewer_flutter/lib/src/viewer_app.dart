@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'drawing_kernel.dart';
+import 'drawing_layer.dart';
 import 'render_scene_models.dart';
 import 'render_scene_repository.dart';
 import 'render_scene_viewport.dart';
@@ -44,6 +46,8 @@ class ViewerHomePage extends StatefulWidget {
 class _ViewerHomePageState extends State<ViewerHomePage> {
   final RenderSceneViewportController _viewportController =
       RenderSceneViewportController();
+  final DrawingInteractionController _drawingController =
+      DrawingInteractionController();
   late final ViewerDocumentController _documentController;
 
   String? _statusMessage;
@@ -57,14 +61,22 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     super.initState();
     _documentController = ViewerDocumentController(source: widget.source)
       ..addListener(_handleDocumentChanged);
+    _drawingController.addListener(_handleDrawingChanged);
     _loadBundledSample();
   }
 
   RenderScene? get _scene => _documentController.scene;
   String? get _loadError => _documentController.errorMessage;
   bool get _isBusy => _documentController.isBusy;
+  bool get _canEdit => widget.source is EngineRenderSceneSource;
 
   void _handleDocumentChanged() {
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  void _handleDrawingChanged() {
     if (mounted) {
       setState(() {});
     }
@@ -73,7 +85,9 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   @override
   void dispose() {
     _documentController.removeListener(_handleDocumentChanged);
+    _drawingController.removeListener(_handleDrawingChanged);
     _documentController.dispose();
+    _drawingController.dispose();
     _viewportController.dispose();
     super.dispose();
   }
@@ -109,12 +123,64 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
           : 'Loaded ${scene.objectCount} objects from $sourceLabel';
     });
     if (scene != null) {
+      _drawingController.setScene(scene);
       await _viewportController.loadRenderScene(scene);
       await _viewportController.setProjectionMode(_projectionMode);
       await _viewportController.fitCamera();
     } else {
+      _drawingController.setScene(null);
       await _viewportController.clearScene();
     }
+  }
+
+  int _activeLevelId(RenderScene? scene) {
+    for (final object in scene?.objects ?? const <RenderSceneObject>[]) {
+      if (object.levelId != null && object.kindKey == 'wall') {
+        return object.levelId!;
+      }
+    }
+    return 0;
+  }
+
+  Future<bool> _commitWall(DrawingSegment segment) async {
+    final source = widget.source;
+    if (source is! EngineRenderSceneSource) {
+      setState(() => _statusMessage = 'Engine editing is unavailable for this source');
+      return false;
+    }
+    try {
+      await source.createWall(
+        name: 'Wall',
+        levelId: _activeLevelId(_scene),
+        startX: segment.start.x,
+        startY: segment.start.y,
+        endX: segment.end.x,
+        endY: segment.end.y,
+        thicknessMeters: segment.thickness,
+        heightMeters: 3.0,
+      );
+      final refreshed = await source.refreshFromEngine();
+      await _applyLoadResult(refreshed, sourceLabel: 'engine current model');
+      return true;
+    } catch (error) {
+      if (mounted) {
+        setState(() => _statusMessage = 'Wall was rejected: $error');
+      }
+      return false;
+    }
+  }
+
+  Future<bool> _commitPolygon(
+    DrawingToolKind tool,
+    List<RenderScenePoint> polygon,
+  ) async {
+    if (mounted) {
+      setState(() {
+        _statusMessage =
+            '${tool == DrawingToolKind.floor ? 'Floor' : 'Ceiling'} outline captured; semantic commit adapter is next.';
+      });
+    }
+    return false;
   }
 
   Future<void> _setProjectionMode(RenderSceneProjectionMode mode) async {
@@ -270,7 +336,78 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
           Expanded(
             child: Container(
               color: const Color(0xFFF4F7F5),
-              child: RenderSceneViewport(controller: _viewportController),
+              child: Stack(
+                fit: StackFit.expand,
+                children: <Widget>[
+                  RenderSceneViewport(controller: _viewportController),
+                  if (_canEdit)
+                    DrawingLayer(
+                      controller: _drawingController,
+                      viewport: _viewportController,
+                      onWallCommit: _commitWall,
+                      onPolygonCommit: _commitPolygon,
+                    ),
+                  if (_canEdit)
+                    Positioned(
+                      left: 12,
+                      top: 12,
+                      child: Card(
+                        child: Padding(
+                          padding: const EdgeInsets.all(6),
+                          child: Wrap(
+                            spacing: 4,
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            children: <Widget>[
+                              IconButton(
+                                tooltip: 'Drawing mode',
+                                onPressed: _drawingController.toggle,
+                                color: _drawingController.enabled
+                                    ? Theme.of(context).colorScheme.primary
+                                    : null,
+                                icon: const Icon(Icons.edit_road),
+                              ),
+                              if (_drawingController.enabled)
+                                SegmentedButton<DrawingToolKind>(
+                                  segments: const <ButtonSegment<DrawingToolKind>>[
+                                    ButtonSegment<DrawingToolKind>(
+                                      value: DrawingToolKind.wall,
+                                      label: Text('Wall'),
+                                      icon: Icon(Icons.straighten),
+                                    ),
+                                    ButtonSegment<DrawingToolKind>(
+                                      value: DrawingToolKind.floor,
+                                      label: Text('Floor'),
+                                      icon: Icon(Icons.crop_square),
+                                    ),
+                                    ButtonSegment<DrawingToolKind>(
+                                      value: DrawingToolKind.ceiling,
+                                      label: Text('Ceiling'),
+                                      icon: Icon(Icons.grid_on),
+                                    ),
+                                  ],
+                                  selected: <DrawingToolKind>{
+                                    _drawingController.tool,
+                                  },
+                                  onSelectionChanged:
+                                      (Set<DrawingToolKind> selection) {
+                                    if (selection.isNotEmpty) {
+                                      _drawingController.setTool(selection.first);
+                                    }
+                                  },
+                                ),
+                              if (_drawingController.enabled)
+                                IconButton(
+                                  tooltip: 'Cancel drawing',
+                                  onPressed: _drawingController.cancel,
+                                  icon: const Icon(Icons.close),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
             ),
           ),
           Container(

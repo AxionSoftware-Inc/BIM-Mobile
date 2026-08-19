@@ -140,6 +140,62 @@ std::optional<Point2> segment_intersection(Line2 first, Line2 second) {
     return Point2{.x = px, .y = py};
 }
 
+bool point_on_segment(Point2 point, Line2 line) {
+    const auto dx = line.end.x - line.start.x;
+    const auto dy = line.end.y - line.start.y;
+    const auto length_squared = (dx * dx) + (dy * dy);
+    if (length_squared <= epsilon) {
+        return same_point(point, line.start);
+    }
+    const auto cross = ((point.x - line.start.x) * dy) - ((point.y - line.start.y) * dx);
+    if (std::abs(cross) > 1.0e-8) {
+        return false;
+    }
+    const auto projection = ((point.x - line.start.x) * dx + (point.y - line.start.y) * dy) / length_squared;
+    return projection >= -1.0e-8 && projection <= 1.0 + 1.0e-8;
+}
+
+std::vector<Point2> collinear_segment_contacts(Line2 first, Line2 second) {
+    const auto first_direction = Point2{
+        .x = first.end.x - first.start.x,
+        .y = first.end.y - first.start.y,
+    };
+    const auto second_direction = Point2{
+        .x = second.end.x - second.start.x,
+        .y = second.end.y - second.start.y,
+    };
+    const auto cross_directions = (first_direction.x * second_direction.y) -
+        (first_direction.y * second_direction.x);
+    if (std::abs(cross_directions) > 1.0e-8) {
+        return {};
+    }
+    const auto cross_offset = ((second.start.x - first.start.x) * first_direction.y) -
+        ((second.start.y - first.start.y) * first_direction.x);
+    if (std::abs(cross_offset) > 1.0e-8) {
+        return {};
+    }
+
+    std::vector<Point2> contacts;
+    const auto append_unique_contact = [&](Point2 point) {
+        if (std::find_if(contacts.begin(), contacts.end(), [&](Point2 existing) {
+                return same_point(existing, point);
+            }) == contacts.end()) {
+            contacts.push_back(point);
+        }
+    };
+    for (const auto point : {first.start, first.end}) {
+        if (point_on_segment(point, second)) {
+            append_unique_contact(point);
+        }
+    }
+    for (const auto point : {second.start, second.end}) {
+        if (point_on_segment(point, first)) {
+            append_unique_contact(point);
+        }
+    }
+    return contacts;
+}
+
 bool is_endpoint(Point2 point, Line2 line) {
     return same_point(point, line.start) || same_point(point, line.end);
 }
@@ -1247,35 +1303,48 @@ void Document::auto_join_walls() {
                 continue;
             }
 
-            const auto intersection = segment_intersection(first_wall->axis, second_wall->axis);
-            if (!intersection.has_value()) {
+            // A wall join is a level-local relationship. Joining coincident
+            // axes from different storeys creates invalid 2D miter metadata.
+            if (first_wall->level_id != second_wall->level_id) {
                 continue;
             }
 
-            const auto kind = join_kind(*intersection, first_wall->axis, second_wall->axis);
-            const auto duplicate_join = [&](const std::vector<WallJoin>& joins, ElementId other_wall_id) {
-                return std::any_of(joins.begin(), joins.end(), [&](const WallJoin& join) {
-                    return join.other_wall_id == other_wall_id && same_point(join.point, *intersection);
-                });
-            };
-            if (!duplicate_join(first_wall->joins, second->id())) {
-                first_wall->joins.push_back(WallJoin{
-                    .other_wall_id = second->id(),
-                    .point = *intersection,
-                    .other_axis = second_wall->axis,
-                    .kind = kind,
-                });
+            std::vector<Point2> contacts;
+            if (const auto intersection = segment_intersection(first_wall->axis, second_wall->axis); intersection.has_value()) {
+                contacts.push_back(*intersection);
+            } else {
+                // Parallel/collinear walls are common when a user continues
+                // a wall from an existing endpoint. The old solver silently
+                // ignored these contacts, so the next wall could drift or
+                // receive incomplete join metadata.
+                contacts = collinear_segment_contacts(first_wall->axis, second_wall->axis);
             }
-            if (!duplicate_join(second_wall->joins, first->id())) {
-                second_wall->joins.push_back(WallJoin{
-                    .other_wall_id = first->id(),
-                    .point = *intersection,
-                    .other_axis = first_wall->axis,
-                    .kind = kind,
-                });
+            for (const auto contact : contacts) {
+                const auto kind = join_kind(contact, first_wall->axis, second_wall->axis);
+                const auto duplicate_join = [&](const std::vector<WallJoin>& joins, ElementId other_wall_id) {
+                    return std::any_of(joins.begin(), joins.end(), [&](const WallJoin& join) {
+                        return join.other_wall_id == other_wall_id && same_point(join.point, contact);
+                    });
+                };
+                if (!duplicate_join(first_wall->joins, second->id())) {
+                    first_wall->joins.push_back(WallJoin{
+                        .other_wall_id = second->id(),
+                        .point = contact,
+                        .other_axis = second_wall->axis,
+                        .kind = kind,
+                    });
+                }
+                if (!duplicate_join(second_wall->joins, first->id())) {
+                    second_wall->joins.push_back(WallJoin{
+                        .other_wall_id = first->id(),
+                        .point = contact,
+                        .other_axis = first_wall->axis,
+                        .kind = kind,
+                    });
+                }
+                mark_wall_dirty(*first);
+                mark_wall_dirty(*second);
             }
-            mark_wall_dirty(*first);
-            mark_wall_dirty(*second);
         }
     }
 

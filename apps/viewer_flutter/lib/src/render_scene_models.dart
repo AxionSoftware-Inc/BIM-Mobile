@@ -202,6 +202,38 @@ class RenderSceneMesh {
 }
 
 @immutable
+class RenderSceneAxis {
+  const RenderSceneAxis({
+    required this.start,
+    required this.end,
+    required this.thickness,
+  });
+
+  final RenderScenePoint start;
+  final RenderScenePoint end;
+  final double thickness;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+        'start': start.toJson(),
+        'end': end.toJson(),
+        'thickness': thickness,
+      };
+
+  static RenderSceneAxis? fromJson(Object? value) {
+    if (value is! Map) {
+      return null;
+    }
+    final start = RenderScenePoint.fromJson(value['start']);
+    final end = RenderScenePoint.fromJson(value['end']);
+    final thickness = _toFiniteDouble(value['thickness']);
+    if (start == null || end == null || thickness == null || thickness <= 0) {
+      return null;
+    }
+    return RenderSceneAxis(start: start, end: end, thickness: thickness);
+  }
+}
+
+@immutable
 class RenderSceneObject {
   const RenderSceneObject({
     required this.elementId,
@@ -213,6 +245,7 @@ class RenderSceneObject {
     required this.bounds,
     required this.mesh,
     required this.materialCategory,
+    required this.axis,
   });
 
   final int? elementId;
@@ -224,6 +257,7 @@ class RenderSceneObject {
   final RenderSceneBounds bounds;
   final RenderSceneMesh mesh;
   final String materialCategory;
+  final RenderSceneAxis? axis;
 
   String get kindKey => normalizeSceneKind(kind);
 
@@ -237,6 +271,7 @@ class RenderSceneObject {
         'bounds': bounds.toJson(),
         'mesh': mesh.toJson(),
         'material_category': materialCategory,
+        if (axis != null) 'axis': axis!.toJson(),
       };
 
   static RenderSceneObject fromJson(
@@ -259,6 +294,7 @@ class RenderSceneObject {
         ),
         mesh: RenderSceneMesh.empty(),
         materialCategory: 'generic',
+        axis: null,
       );
     }
     final mesh = RenderSceneMesh.fromJson(value['mesh'], warnings);
@@ -284,6 +320,7 @@ class RenderSceneObject {
       mesh: mesh,
       materialCategory:
           toSceneString(value['material_category'], fallback: 'generic'),
+      axis: RenderSceneAxis.fromJson(value['axis']),
     );
   }
 }

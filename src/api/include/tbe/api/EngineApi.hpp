@@ -187,6 +187,12 @@ struct RenderSceneMeshDTO {
     std::optional<std::vector<Vec3>> normals{};
 };
 
+struct RenderSceneAxisDTO {
+    Vec2 start{};
+    Vec2 end{};
+    double thickness_meters{};
+};
+
 struct RenderSceneObjectDTO {
     ElementIdDTO element_id{};
     ApiElementKind kind{ApiElementKind::Unknown};
@@ -197,6 +203,7 @@ struct RenderSceneObjectDTO {
     AABB3D bounds{};
     RenderSceneMeshDTO mesh{};
     std::string material_category{};
+    std::optional<RenderSceneAxisDTO> axis{};
 };
 
 struct RenderSceneDTO {

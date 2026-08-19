@@ -16,9 +16,11 @@ diagnostics, and hosts a renderer-neutral viewport contract.
 - highlight/select elements from the object list
 - host the native Android Filament platform view
 - use the verified Flutter fallback viewport on non-Android platforms
+- use a shared 2D drawing kernel for wall, floor-outline and ceiling-outline tools
+- draw walls with endpoint, finite-intersection, grid, orthogonal and
+  parallel/perpendicular snapping; wall commits go through the engine worker
 
-It does **not** implement BIM editing, cloud sync, schedules, or photorealistic
-rendering.
+It does **not** implement cloud sync, schedules, or photorealistic rendering.
 
 ## Why Flutter + Filament
 
@@ -47,6 +49,20 @@ The renderer contract is intentionally neutral:
 - `setProjectionMode`
 - `setOrbitProjectionStyle`
 - `setDisplayStyle`
+
+## Tablet drafting flow
+
+In 2D mode, the drawing toolbar switches the viewport into a touch-first
+drafting surface. A wall can be dragged from an existing endpoint and the tool
+stays chained at the committed endpoint, so adjoining walls do not require
+pixel-perfect finger placement. The same `DrawingKernel` is used for wall
+segments and polygon outlines; floor and ceiling outline commit adapters remain
+separate because the semantic engine currently creates those systems from
+rooms, not arbitrary polygons.
+
+The 2D Flutter surface is intentionally used on Android while the native
+Filament view remains the 3D inspection path. This keeps tablet drafting and
+the preview/snap coordinate system aligned.
 
 ## Native renderer status
 
@@ -200,9 +216,10 @@ doors, windows, and the rest of the RenderScene diagnostics data.
 
 - the desktop preview is a fallback, not the final renderer
 - Android/iOS device builds still need toolchain smoke tests
-- editing commands are exposed through the worker/repository layer, but editing
-  UI tools are not implemented yet
-- selection is still list-driven rather than full viewport picking
+- floor/ceiling outlines currently stop at a shared-kernel preview until the
+  engine receives arbitrary polygon system commands
+- Android/iOS device builds still need toolchain smoke tests
+- selection/picking needs final device calibration for stylus-size tolerances
 
 ## Manual Android checklist
 
@@ -221,6 +238,6 @@ show:
 
 ## Future work
 
-- add viewport-to-engine picking and snap feedback
+- add arbitrary polygon floor/ceiling semantic commands
 - add editing panels and save/export actions
 - add an iOS native Metal renderer if native GPU parity is required

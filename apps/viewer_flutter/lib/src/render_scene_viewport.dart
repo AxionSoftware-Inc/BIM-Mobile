@@ -104,6 +104,75 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
 
   double get planZoom => _planZoom;
 
+  Offset worldToPlanScreen(RenderScenePoint point, Size size) {
+    final scene = _scene;
+    if (scene == null) {
+      return Offset.zero;
+    }
+    final projectedBounds = _projectSceneBoundsView(
+      scene.bounds,
+      projectionMode: RenderSceneProjectionMode.topDown,
+      orbitProjectionStyle: _orbitProjectionStyle,
+      orbitCenter: _orbitCenter,
+      orbitYawRadians: _orbitYawRadians,
+      orbitPitchRadians: _orbitPitchRadians,
+      orbitDistance: _orbitDistance,
+      planPanOffset: _planPanOffset,
+      planZoom: _planZoom,
+    );
+    final scaleX = (size.width - _FallbackRenderScenePainter._padding * 2) /
+        math.max(projectedBounds.width, 1e-3);
+    final scaleY = (size.height - _FallbackRenderScenePainter._padding * 2) /
+        math.max(projectedBounds.height, 1e-3);
+    final scale = math.min(scaleX, scaleY);
+    final offsetX = _FallbackRenderScenePainter._padding +
+        (size.width - projectedBounds.width * scale) * 0.5;
+    final offsetY = _FallbackRenderScenePainter._padding +
+        (size.height - projectedBounds.height * scale) * 0.5;
+    final projected = Offset(point.x * _planZoom, -point.y * _planZoom) +
+        _planPanOffset;
+    return Offset(
+      offsetX + (projected.dx - projectedBounds.left) * scale,
+      offsetY + (projected.dy - projectedBounds.top) * scale,
+    );
+  }
+
+  RenderScenePoint planScreenToWorld(Offset position, Size size) {
+    final scene = _scene;
+    if (scene == null) {
+      return RenderScenePoint.zero();
+    }
+    final projectedBounds = _projectSceneBoundsView(
+      scene.bounds,
+      projectionMode: RenderSceneProjectionMode.topDown,
+      orbitProjectionStyle: _orbitProjectionStyle,
+      orbitCenter: _orbitCenter,
+      orbitYawRadians: _orbitYawRadians,
+      orbitPitchRadians: _orbitPitchRadians,
+      orbitDistance: _orbitDistance,
+      planPanOffset: _planPanOffset,
+      planZoom: _planZoom,
+    );
+    final scaleX = (size.width - _FallbackRenderScenePainter._padding * 2) /
+        math.max(projectedBounds.width, 1e-3);
+    final scaleY = (size.height - _FallbackRenderScenePainter._padding * 2) /
+        math.max(projectedBounds.height, 1e-3);
+    final scale = math.min(scaleX, scaleY);
+    final offsetX = _FallbackRenderScenePainter._padding +
+        (size.width - projectedBounds.width * scale) * 0.5;
+    final offsetY = _FallbackRenderScenePainter._padding +
+        (size.height - projectedBounds.height * scale) * 0.5;
+    final projected = Offset(
+      (position.dx - offsetX) / scale + projectedBounds.left,
+      (position.dy - offsetY) / scale + projectedBounds.top,
+    );
+    return RenderScenePoint(
+      x: (projected.dx - _planPanOffset.dx) / _planZoom,
+      y: -(projected.dy - _planPanOffset.dy) / _planZoom,
+      z: 0,
+    );
+  }
+
   int get sceneRevision => _sceneRevision;
 
   bool get hasNativeBridge => _channel != null;
@@ -363,7 +432,12 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
 
   @override
   Widget build(BuildContext context) {
-    if (Platform.isAndroid) {
+    // Keep 2D drafting in Flutter so the same coordinate transform, touch
+    // hit targets and preview overlays work on Android tablets. Native
+    // Filament remains the 3D inspection path.
+    if (Platform.isAndroid &&
+        widget.controller.projectionMode ==
+            RenderSceneProjectionMode.isometric) {
       return _buildAndroidPlatformViewport(context);
     }
     return _buildFallbackViewport(context);
@@ -1114,17 +1188,70 @@ RenderSceneObject? _pickObjectAt({
       offsetX + (rect.right - projectedBounds.left) * scale,
       offsetY + (rect.bottom - projectedBounds.top) * scale,
     );
-    if (!canvasRect.inflate(18).contains(localPosition)) {
-      continue;
+    final double score;
+    if (projectionMode == RenderSceneProjectionMode.topDown &&
+        object.axis != null) {
+      final axisStart = _projectScenePointView(
+        object.axis!.start,
+        projectionMode: projectionMode,
+        orbitProjectionStyle: orbitProjectionStyle,
+        orbitCenter: orbitCenter,
+        orbitYawRadians: orbitYawRadians,
+        orbitPitchRadians: orbitPitchRadians,
+        orbitDistance: orbitDistance,
+        planPanOffset: planPanOffset,
+        planZoom: planZoom,
+      ).screen;
+      final axisEnd = _projectScenePointView(
+        object.axis!.end,
+        projectionMode: projectionMode,
+        orbitProjectionStyle: orbitProjectionStyle,
+        orbitCenter: orbitCenter,
+        orbitYawRadians: orbitYawRadians,
+        orbitPitchRadians: orbitPitchRadians,
+        orbitDistance: orbitDistance,
+        planPanOffset: planPanOffset,
+        planZoom: planZoom,
+      ).screen;
+      final canvasStart = Offset(
+        offsetX + (axisStart.dx - projectedBounds.left) * scale,
+        offsetY + (axisStart.dy - projectedBounds.top) * scale,
+      );
+      final canvasEnd = Offset(
+        offsetX + (axisEnd.dx - projectedBounds.left) * scale,
+        offsetY + (axisEnd.dy - projectedBounds.top) * scale,
+      );
+      score = _distanceToScreenSegment(localPosition, canvasStart, canvasEnd);
+      final wallTolerance = math.max(18.0, object.axis!.thickness * scale * 0.5 + 10);
+      if (score > wallTolerance) {
+        continue;
+      }
+    } else {
+      if (!canvasRect.inflate(18).contains(localPosition)) {
+        continue;
+      }
+      score = (canvasRect.center - localPosition).distance;
     }
-    final center = canvasRect.center;
-    final score = (center - localPosition).distance;
     if (score < bestScore) {
       bestScore = score;
       bestObject = object;
     }
   }
   return bestObject;
+}
+
+double _distanceToScreenSegment(Offset point, Offset start, Offset end) {
+  final delta = end - start;
+  final lengthSquared = delta.dx * delta.dx + delta.dy * delta.dy;
+  if (lengthSquared <= 1e-9) {
+    return (point - start).distance;
+  }
+  final t = (((point.dx - start.dx) * delta.dx) +
+          ((point.dy - start.dy) * delta.dy)) /
+      lengthSquared;
+  final clamped = t.clamp(0.0, 1.0).toDouble();
+  final projected = start + delta * clamped;
+  return (point - projected).distance;
 }
 
 Rect _projectSceneBoundsView(

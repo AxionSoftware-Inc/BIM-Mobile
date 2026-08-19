@@ -50,6 +50,29 @@ class TbeEngineWorker {
 
   Future<String> saveProjectJson() => _call<String>('saveProjectJson');
 
+  Future<SnapResult> bestSnap({
+    required int levelId,
+    required double x,
+    required double y,
+    required double toleranceMeters,
+  }) {
+    return _call<Map<Object?, Object?>>('bestSnap', <String, Object?>{
+      'levelId': levelId,
+      'x': x,
+      'y': y,
+      'toleranceMeters': toleranceMeters,
+    }).then(
+      (value) => SnapResult(
+        x: value['x']! as double,
+        y: value['y']! as double,
+        type: value['type']! as int,
+        sourceElementId: value['sourceElementId']! as int,
+        distanceMeters: value['distanceMeters']! as double,
+        priority: value['priority']! as int,
+      ),
+    );
+  }
+
   Future<int> createWall({
     required String name,
     required int levelId,
@@ -225,6 +248,23 @@ Object? _executeWorkerOperation(
       return api.getRenderSceneJson(handle);
     case 'saveProjectJson':
       return api.saveProjectJson(handle);
+    case 'bestSnap': {
+      final snap = api.bestSnap(
+        handle,
+        levelId: args['levelId']! as int,
+        x: args['x']! as double,
+        y: args['y']! as double,
+        toleranceMeters: args['toleranceMeters']! as double,
+      );
+      return <String, Object?>{
+        'x': snap.x,
+        'y': snap.y,
+        'type': snap.type,
+        'sourceElementId': snap.sourceElementId,
+        'distanceMeters': snap.distanceMeters,
+        'priority': snap.priority,
+      };
+    }
     case 'createWall':
       return api.createWall(
         handle,

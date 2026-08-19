@@ -374,6 +374,33 @@ int main() {
         assert(nearly_equal(grid_only_snap.value->point.x, 8.0));
         assert(nearly_equal(grid_only_snap.value->point.y, 7.5));
 
+        const auto short_vertical = session->create_wall(
+            "Short vertical",
+            {.x = 7.0, .y = -1.0},
+            {.x = 7.0, .y = 1.0},
+            0.2,
+            3.0,
+            level_id
+        );
+        assert(short_vertical.ok());
+        const auto finite_intersection_candidates = session->get_snap_candidates(
+            {.value = level_id},
+            {.x = 7.0, .y = 0.0},
+            0.2,
+            tbe::api::SnapOptionsDTO{
+                .enable_grid = false,
+                .enable_endpoints = false,
+                .enable_midpoints = false,
+                .enable_intersections = true,
+                .enable_wall_axis = false,
+                .enable_orthogonal_projection = false,
+                .enable_room_corners = false,
+            }
+        );
+        assert(finite_intersection_candidates.ok());
+        assert(finite_intersection_candidates.value.has_value());
+        assert(finite_intersection_candidates.value->empty());
+
         const auto free_intervals = session->compute_wall_free_intervals(wall_a.value->value, 1.0, 0.1);
         assert(free_intervals.ok());
         assert(free_intervals.value.has_value());

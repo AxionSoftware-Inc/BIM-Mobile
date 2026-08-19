@@ -45,6 +45,21 @@ final class TbeVec2 extends ffi.Struct {
   external double y;
 }
 
+final class TbeSnapResult extends ffi.Struct {
+  @ffi.Double()
+  external double x;
+  @ffi.Double()
+  external double y;
+  @ffi.Int32()
+  external int snapType;
+  @ffi.Uint64()
+  external int sourceElementId;
+  @ffi.Double()
+  external double distanceMeters;
+  @ffi.Int32()
+  external int priority;
+}
+
 final class TbeHitTestCandidate extends ffi.Struct {
   @ffi.Uint64()
   external int elementId;
@@ -150,6 +165,24 @@ final class HitCandidateView {
   final int elementId;
   final int elementKind;
   final int hitKind;
+  final double distanceMeters;
+  final int priority;
+}
+
+final class SnapResult {
+  SnapResult({
+    required this.x,
+    required this.y,
+    required this.type,
+    required this.sourceElementId,
+    required this.distanceMeters,
+    required this.priority,
+  });
+
+  final double x;
+  final double y;
+  final int type;
+  final int sourceElementId;
   final double distanceMeters;
   final int priority;
 }
@@ -332,6 +365,20 @@ typedef _HitTestCandidatesDart = int Function(
   double,
   ffi.Pointer<TbeHitTestCandidatesResult>,
 );
+typedef _BestSnapNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Uint64,
+  TbeVec2,
+  ffi.Double,
+  ffi.Pointer<TbeSnapResult>,
+);
+typedef _BestSnapDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  int,
+  TbeVec2,
+  double,
+  ffi.Pointer<TbeSnapResult>,
+);
 typedef _SchemaVersionNative = ffi.Int32 Function(
   ffi.Pointer<ffi.Void>,
   ffi.Pointer<ffi.Int32>,
@@ -400,6 +447,8 @@ class TbeViewerApi {
             _ProjectExportPathDart>('tbe_export_project_package'),
         _hitTestCandidates = library.lookupFunction<_HitTestCandidatesNative,
             _HitTestCandidatesDart>('tbe_hit_test_candidates'),
+        _bestSnap = library.lookupFunction<_BestSnapNative, _BestSnapDart>(
+            'tbe_best_snap'),
         _lastError = library.lookupFunction<_LastErrorNative, _LastErrorDart>(
             'tbe_get_last_error'),
         _freeString =
@@ -495,6 +544,7 @@ class TbeViewerApi {
   final _ProjectExportPathDart _exportSvg;
   final _ProjectExportPathDart _exportPackage;
   final _HitTestCandidatesDart _hitTestCandidates;
+  final _BestSnapDart _bestSnap;
   final _LastErrorDart _lastError;
   final _FreeStringDart _freeString;
   final _FreeMemoryDart _freeMemory;
@@ -559,6 +609,37 @@ class TbeViewerApi {
 
   String getRenderSceneJson(ffi.Pointer<ffi.Void> handle) =>
       _readOwnedString(handle, _getRenderSceneJson);
+
+  SnapResult bestSnap(
+    ffi.Pointer<ffi.Void> handle, {
+    required int levelId,
+    required double x,
+    required double y,
+    required double toleranceMeters,
+  }) {
+    final result = calloc<TbeSnapResult>();
+    final point = calloc<TbeVec2>();
+    point.ref
+      ..x = x
+      ..y = y;
+    try {
+      _check(
+        handle,
+        _bestSnap(handle, levelId, point.ref, toleranceMeters, result),
+      );
+      return SnapResult(
+        x: result.ref.x,
+        y: result.ref.y,
+        type: result.ref.snapType,
+        sourceElementId: result.ref.sourceElementId,
+        distanceMeters: result.ref.distanceMeters,
+        priority: result.ref.priority,
+      );
+    } finally {
+      calloc.free(point);
+      calloc.free(result);
+    }
+  }
 
   void importProjectPackage(
     ffi.Pointer<ffi.Void> handle,

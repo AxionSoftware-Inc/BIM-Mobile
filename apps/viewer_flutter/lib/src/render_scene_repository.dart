@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import 'render_scene_models.dart';
 import 'tbe_engine_worker.dart';
+import 'tbe_ffi.dart';
 
 abstract interface class RenderSceneSource {
   Future<RenderSceneLoadResult> loadBundledSample();
@@ -98,6 +99,20 @@ class EngineRenderSceneSource implements RenderSceneSource {
         errors: <String>['Engine refresh failed: $error'],
       );
     }
+  }
+
+  Future<SnapResult> bestSnap({
+    required int levelId,
+    required double x,
+    required double y,
+    double toleranceMeters = 0.18,
+  }) async {
+    return (await _engineWorker()).bestSnap(
+      levelId: levelId,
+      x: x,
+      y: y,
+      toleranceMeters: toleranceMeters,
+    );
   }
 
   Future<int> createWall({

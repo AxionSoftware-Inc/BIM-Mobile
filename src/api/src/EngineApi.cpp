@@ -416,7 +416,8 @@ RenderSceneObjectDTO make_object_dto(
     RenderSceneMeshDTO mesh,
     std::string material_category,
     bool selectable = true,
-    bool visible_by_default = true
+    bool visible_by_default = true,
+    std::optional<RenderSceneAxisDTO> axis = std::nullopt
 ) {
     RenderSceneObjectDTO object;
     object.element_id = to_id(element_id);
@@ -427,6 +428,7 @@ RenderSceneObjectDTO make_object_dto(
     object.revision = revision;
     object.mesh = std::move(mesh);
     object.material_category = std::move(material_category);
+    object.axis = std::move(axis);
     object.bounds = make_bounds3d(object.mesh.positions);
     return object;
 }
@@ -461,7 +463,14 @@ RenderSceneDTO build_render_scene(const Document& document) {
                 wall->level_id,
                 element.revision(),
                 mesh_dto_from_mesh_buffer(wall->geometry.mesh),
-                material_category_name(ApiElementKind::Wall)
+                material_category_name(ApiElementKind::Wall),
+                true,
+                true,
+                RenderSceneAxisDTO{
+                    .start = to_vec2(wall->axis.start),
+                    .end = to_vec2(wall->axis.end),
+                    .thickness_meters = wall->thickness_meters,
+                }
             ));
             for (const auto& opening : wall->openings) {
                 const auto opening_kind = opening.kind == tbe::core::OpeningKind::Door ? ApiElementKind::Door : ApiElementKind::Window;
@@ -591,6 +600,13 @@ std::string render_scene_to_json(const RenderSceneDTO& scene) {
         out << "\"visible_by_default\":" << (object.visible_by_default ? "true" : "false") << ',';
         out << "\"revision\":" << object.revision << ',';
         out << "\"material_category\":\"" << escape_json(object.material_category) << "\",";
+        if (object.axis.has_value()) {
+            const auto& axis = *object.axis;
+            out << "\"axis\":{";
+            out << "\"start\":{\"x\":" << safe_value(axis.start.x) << ",\"y\":" << safe_value(axis.start.y) << "},";
+            out << "\"end\":{\"x\":" << safe_value(axis.end.x) << ",\"y\":" << safe_value(axis.end.y) << "},";
+            out << "\"thickness\":" << safe_value(axis.thickness_meters) << "},";
+        }
         out << "\"bounds\":{\"min\":{\"x\":" << safe_value(object.bounds.min.x) << ",\"y\":" << safe_value(object.bounds.min.y) << ",\"z\":" << safe_value(object.bounds.min.z)
             << "},\"max\":{\"x\":" << safe_value(object.bounds.max.x) << ",\"y\":" << safe_value(object.bounds.max.y) << ",\"z\":" << safe_value(object.bounds.max.z) << "}},";
         out << "\"mesh\":{\"positions\":[";
@@ -2565,7 +2581,16 @@ ApiResult<std::vector<SnapCandidateDTO>> EngineSession::get_snap_candidates(Elem
                 const auto y4 = second.axis.end.y;
                 const auto px = (((x1 * y2) - (y1 * x2)) * (x3 - x4) - (x1 - x2) * ((x3 * y4) - (y3 * x4))) / denominator;
                 const auto py = (((x1 * y2) - (y1 * x2)) * (y3 - y4) - (y1 - y2) * ((x3 * y4) - (y3 * x4))) / denominator;
-                push_snap(Point2{.x = px, .y = py}, SnapType::WallIntersection, first.element_id);
+                const auto intersection = Point2{.x = px, .y = py};
+                // The line-line formula above describes infinite lines. A
+                // snap must never jump to an intersection outside either
+                // finite wall segment; that was the source of many
+                // "teleporting" snaps on L-shaped and diagonal plans.
+                if (distance_point_to_segment(intersection, first.axis) > 1.0e-7 ||
+                    distance_point_to_segment(intersection, second.axis) > 1.0e-7) {
+                    continue;
+                }
+                push_snap(intersection, SnapType::WallIntersection, first.element_id);
             }
         }
         }
