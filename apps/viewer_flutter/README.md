@@ -1,23 +1,21 @@
 # viewer_flutter
 
-RenderScene-first Flutter viewer skeleton for the TabletBimEngine UI path.
+RenderScene-first Flutter viewer for the TabletBimEngine UI path.
 
-This app is intentionally minimal. It loads `render_scene.json`, shows scene
-diagnostics, and hosts a renderer-neutral viewport contract that is ready for a
-native Filament implementation.
-The older C ABI / FFI hooks stay in the package for future engine/status work,
-but they are not the primary 3D source in this pass.
+The default path loads `assets/sample_project.json` through the C API on a
+worker isolate, obtains the engine-generated RenderScene in memory, shows scene
+diagnostics, and hosts a renderer-neutral viewport contract.
 
 ## Scope
 
-- load bundled `assets/render_scene.json`
+- load bundled `assets/sample_project.json` through the engine
 - open an external RenderScene JSON file
 - parse and validate the scene safely
 - show object / vertex / triangle diagnostics
 - show object counts by kind
 - highlight/select elements from the object list
-- host a native Android platform-view skeleton
-- keep an iOS placeholder structure ready
+- host the native Android Filament platform view
+- use the verified Flutter fallback viewport on non-Android platforms
 
 It does **not** implement BIM editing, cloud sync, schedules, or photorealistic
 rendering.
@@ -31,12 +29,11 @@ making the UI depend on debug JSON, OBJ fallback files, or engine internals.
 
 ## RenderScene flow
 
-The viewer loads `assets/render_scene.json` or a local file path, parses it in
-Dart, and then:
+The viewer loads a project through the engine worker or accepts a renderer-only
+JSON source for tests and tooling, then:
 
 1. shows diagnostics in Flutter,
-2. sends the scene payload to the native Android viewport skeleton when
-   available,
+2. sends the scene payload to the mounted native Android viewport,
 3. keeps a desktop fallback preview for macOS / Linux / Windows development.
 
 The renderer contract is intentionally neutral:
@@ -47,6 +44,9 @@ The renderer contract is intentionally neutral:
 - `setVisibleKinds`
 - `selectElement`
 - `highlightElement`
+- `setProjectionMode`
+- `setOrbitProjectionStyle`
+- `setDisplayStyle`
 
 ## Native renderer status
 
@@ -65,16 +65,15 @@ scene path:
 - Native logs include renderer creation, surface attach/detach, scene load
   counts, and any material-build failures.
 
-The local machine that produced this checkout does **not** have a complete
-Android SDK installed, so I could not run `flutter build apk` or launch on a
-device here. The code is structured for a normal Android Studio / SDK / NDK /
-JDK setup and should be the first native target once that toolchain is present.
+The Android app now builds the engine C API through `android/app/CMakeLists.txt`
+so `libtbe_capi.so` is packaged with the APK. APK/device validation still
+requires a local Android SDK, NDK and JDK 17.
 
 ### iOS
 
-The iOS runner includes a placeholder platform-view structure with the same
-Dart-facing contract, but full native rendering is deferred until the toolchain
-is available.
+The iOS runner no longer registers a fake native placeholder. It uses the same
+Flutter fallback renderer, while the engine source falls back to the validated
+RenderScene asset if the C API is not linked into the iOS process.
 
 ## Setup
 
@@ -200,10 +199,9 @@ doors, windows, and the rest of the RenderScene diagnostics data.
 ## Known limitations
 
 - the desktop preview is a fallback, not the final renderer
-- Android Filament rendering is wired in code, but the local SDK/toolchain was
-  not available here to run the APK proof
-- iOS is placeholder-only for now
-- no editing tools are implemented in this app
+- Android/iOS device builds still need toolchain smoke tests
+- editing commands are exposed through the worker/repository layer, but editing
+  UI tools are not implemented yet
 - selection is still list-driven rather than full viewport picking
 
 ## Manual Android checklist
@@ -223,6 +221,6 @@ show:
 
 ## Future work
 
-- harden Android Filament rendering and add picking/highlight
-- add iOS/Metal rendering
-- connect live selection and editing after the renderer is stable
+- add viewport-to-engine picking and snap feedback
+- add editing panels and save/export actions
+- add an iOS native Metal renderer if native GPU parity is required

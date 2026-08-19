@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include "tbe/api/RenderSceneContract.hpp"
 #include <memory>
 #include <optional>
 #include <string>
@@ -199,9 +200,9 @@ struct RenderSceneObjectDTO {
 };
 
 struct RenderSceneDTO {
-    int scene_version{1};
-    std::string units{"meters"};
-    std::string coordinate_system{"X/Y plan, Z up"};
+    int scene_version{TBE_RENDER_SCENE_VERSION};
+    std::string units{TBE_RENDER_SCENE_UNITS};
+    std::string coordinate_system{TBE_RENDER_SCENE_COORDINATE_SYSTEM};
     std::vector<RenderSceneObjectDTO> objects{};
     std::size_t object_count{};
     std::size_t vertex_count{};
@@ -471,6 +472,7 @@ public:
     ApiVoidResult export_project_package(const std::string& path, PackageExportOptionsDTO options = {}) const;
     ApiVoidResult import_project_package(const std::string& path, LoadMode mode = LoadMode::Strict);
     ApiResult<RenderSceneDTO> get_render_scene() const;
+    ApiResult<std::string> get_render_scene_json() const;
     ApiVoidResult export_render_scene_json(const std::string& path) const;
     ApiVoidResult set_performance_profile(PerformanceProfile profile);
     ApiResult<PerformanceProfile> get_performance_profile() const;

@@ -11,6 +11,8 @@
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <thread>
+#include <vector>
 
 int main() {
     const auto nearly_equal = [](double left, double right, double epsilon = 1.0e-6) {
@@ -975,6 +977,7 @@ int main() {
 
     TbeEngineHandle* handle = tbe_engine_create();
     assert(handle != nullptr);
+    assert(tbe_get_c_api_version_major() == TBE_C_API_VERSION_MAJOR);
 
     uint64_t wall1 = 0;
     uint64_t wall2 = 0;
@@ -1026,6 +1029,12 @@ int main() {
     assert(tbe_project_save_json(handle, &json) == TBE_API_OK);
     assert(json != nullptr);
     assert(std::string(json).find("\"project_name\"") != std::string::npos);
+    char* render_scene_json = nullptr;
+    assert(tbe_get_render_scene_json(handle, &render_scene_json) == TBE_API_OK);
+    assert(render_scene_json != nullptr);
+    assert(std::string(render_scene_json).find("\"objects\"") != std::string::npos);
+    assert(std::string(render_scene_json).find("\"kind\":\"Wall\"") != std::string::npos);
+    tbe_free_string(render_scene_json);
 
     int c_schema_version = 0;
     assert(tbe_get_schema_version(handle, &c_schema_version) == TBE_API_OK);
@@ -1104,6 +1113,31 @@ int main() {
         tbe_free_string(clear_error_probe);
 
         tbe_engine_destroy(loop_handle);
+    }
+
+    {
+        // The C ABI serializes calls made through the same opaque handle.
+        auto* concurrent_handle = tbe_engine_create();
+        assert(concurrent_handle != nullptr);
+        std::vector<std::thread> workers;
+        for (int worker = 0; worker < 8; ++worker) {
+            workers.emplace_back([concurrent_handle]() {
+                for (int iteration = 0; iteration < 20; ++iteration) {
+                    char* version = nullptr;
+                    assert(tbe_get_engine_version(concurrent_handle, &version) == TBE_API_OK);
+                    assert(version != nullptr);
+                    tbe_free_string(version);
+
+                    int schema = 0;
+                    assert(tbe_get_schema_version(concurrent_handle, &schema) == TBE_API_OK);
+                    assert(schema == 1);
+                }
+            });
+        }
+        for (auto& worker : workers) {
+            worker.join();
+        }
+        tbe_engine_destroy(concurrent_handle);
     }
 
     return 0;

@@ -9,6 +9,18 @@ extern "C" {
 
 typedef struct TbeEngineHandle TbeEngineHandle;
 
+/*
+ * C ABI contract:
+ * - A TbeEngineHandle is opaque and owns one engine session.
+ * - Calls using the same handle are serialized internally and may be made
+ *   from different threads. The caller must not use a handle after destroy.
+ * - Allocated output strings and arrays are owned by the caller and must be
+ *   released with tbe_free_string() or tbe_free_memory().
+ * - After handle/output validation, output pointers are reset to NULL/zero
+ *   before a call writes a result.
+ */
+#define TBE_C_API_VERSION_MAJOR 1
+
 typedef enum TbeApiStatusCode {
     TBE_API_OK = 0,
     TBE_API_INVALID_ARGUMENT = 1,
@@ -119,24 +131,29 @@ typedef struct TbeWallHostPlacement {
     int warning_count;
 } TbeWallHostPlacement;
 
+int tbe_get_c_api_version_major(void);
 TbeEngineHandle* tbe_engine_create(void);
 void tbe_engine_destroy(TbeEngineHandle* handle);
 
 TbeApiStatusCode tbe_project_new(TbeEngineHandle* handle, const char* project_name);
 TbeApiStatusCode tbe_project_load_json(TbeEngineHandle* handle, const char* json);
 TbeApiStatusCode tbe_project_load_json_with_mode(TbeEngineHandle* handle, const char* json, int load_mode);
+/* out_json is caller-owned after success; release it with tbe_free_string(). */
 TbeApiStatusCode tbe_project_save_json(TbeEngineHandle* handle, char** out_json);
 TbeApiStatusCode tbe_get_engine_version(TbeEngineHandle* handle, char** out_version);
 TbeApiStatusCode tbe_get_core_version(TbeEngineHandle* handle, char** out_version);
 TbeApiStatusCode tbe_get_api_version(TbeEngineHandle* handle, char** out_version);
 TbeApiStatusCode tbe_get_schema_version(TbeEngineHandle* handle, int* out_version);
 TbeApiStatusCode tbe_detect_schema_version_from_json(TbeEngineHandle* handle, const char* json, int* out_version);
+/* out_json is caller-owned after success; release it with tbe_free_string(). */
 TbeApiStatusCode tbe_migrate_project_json(TbeEngineHandle* handle, const char* json, int from_version, int to_version, char** out_json);
 TbeApiStatusCode tbe_get_last_migration_report(TbeEngineHandle* handle, TbeMigrationSummary* out_summary);
 TbeApiStatusCode tbe_get_last_repair_report(TbeEngineHandle* handle, TbeRepairSummary* out_summary);
 TbeApiStatusCode tbe_repair_current_project(TbeEngineHandle* handle, TbeRepairSummary* out_summary);
 TbeApiStatusCode tbe_export_project_package(TbeEngineHandle* handle, const char* path);
 TbeApiStatusCode tbe_import_project_package(TbeEngineHandle* handle, const char* path, int load_mode);
+/* out_json is caller-owned after success; release it with tbe_free_string(). */
+TbeApiStatusCode tbe_get_render_scene_json(TbeEngineHandle* handle, char** out_json);
 TbeApiStatusCode tbe_export_render_scene_json(TbeEngineHandle* handle, const char* path);
 
 TbeApiStatusCode tbe_create_wall(
@@ -169,21 +186,27 @@ TbeApiStatusCode tbe_create_window(
     double sill_height_meters,
     uint64_t* out_window_id
 );
+TbeApiStatusCode tbe_delete_element(TbeEngineHandle* handle, uint64_t element_id);
 TbeApiStatusCode tbe_detect_rooms(TbeEngineHandle* handle, uint64_t* out_room_count);
 TbeApiStatusCode tbe_generate_schedules(TbeEngineHandle* handle, TbeScheduleSummary* out_summary);
 TbeApiStatusCode tbe_validate(TbeEngineHandle* handle, TbeValidationSummary* out_summary);
 TbeApiStatusCode tbe_rebuild_spatial_index(TbeEngineHandle* handle);
 TbeApiStatusCode tbe_spatial_index_stats(TbeEngineHandle* handle, TbeSpatialIndexStats* out_stats);
 TbeApiStatusCode tbe_hit_test_point(TbeEngineHandle* handle, uint64_t level_id, TbeVec2 point, double tolerance_meters, TbeHitTestResult* out_result);
+/* out_result->candidates is caller-owned after success; release with tbe_free_memory(). */
 TbeApiStatusCode tbe_hit_test_candidates(TbeEngineHandle* handle, uint64_t level_id, TbeVec2 point, double tolerance_meters, TbeHitTestCandidatesResult* out_result);
 TbeApiStatusCode tbe_best_snap(TbeEngineHandle* handle, uint64_t level_id, TbeVec2 point, double tolerance_meters, TbeSnapResult* out_result);
+/* out_result->intervals is caller-owned after success; release with tbe_free_memory(). */
 TbeApiStatusCode tbe_compute_wall_free_intervals(TbeEngineHandle* handle, uint64_t wall_id, double requested_width_meters, double clearance_meters, TbeWallFreeIntervalsResult* out_result);
+/* out_result->intervals is caller-owned after success; release with tbe_free_memory(). */
 TbeApiStatusCode tbe_find_wall_host_at_point(TbeEngineHandle* handle, uint64_t level_id, TbeVec2 point, double tolerance_meters, double requested_width_meters, double clearance_meters, TbeWallHostPlacement* out_result);
 TbeApiStatusCode tbe_undo(TbeEngineHandle* handle);
 TbeApiStatusCode tbe_redo(TbeEngineHandle* handle);
 TbeApiStatusCode tbe_export_svg(TbeEngineHandle* handle, const char* path);
 TbeApiStatusCode tbe_export_obj(TbeEngineHandle* handle, const char* path);
 
+/* The returned pointer is thread-local and valid until the next
+ * tbe_get_last_error() call on the same thread. */
 const char* tbe_get_last_error(const TbeEngineHandle* handle);
 void tbe_free_string(char* value);
 void tbe_free_memory(void* value);

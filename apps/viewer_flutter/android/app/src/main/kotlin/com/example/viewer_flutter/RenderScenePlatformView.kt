@@ -266,7 +266,9 @@ internal class RenderScenePlatformView(
   initialScene: SceneState?,
 ) : PlatformView, MethodChannel.MethodCallHandler {
   private val channel = MethodChannel(messenger, "tbe/render_scene_view_$viewId")
-  private val view = RenderSceneFilamentHostView(context, initialScene)
+  private val view = RenderSceneFilamentHostView(context, initialScene) { elementId ->
+    channel.invokeMethod("elementTapped", elementId)
+  }
 
   init {
     channel.setMethodCallHandler(this)
@@ -311,6 +313,21 @@ internal class RenderScenePlatformView(
 
       "highlightElement" -> {
         view.highlightElement(call.arguments)
+        result.success(null)
+      }
+
+      "setProjectionMode" -> {
+        view.setProjectionMode(call.arguments as? String ?: "isometric")
+        result.success(null)
+      }
+
+      "setOrbitProjectionStyle" -> {
+        view.setOrbitProjectionStyle(call.arguments as? String ?: "perspective")
+        result.success(null)
+      }
+
+      "setDisplayStyle" -> {
+        view.setDisplayStyle(call.arguments as? String ?: "solid")
         result.success(null)
       }
 

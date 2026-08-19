@@ -1,6 +1,7 @@
 #pragma once
 
 #include "tbe/core/Element.hpp"
+#include "tbe/core/DependencyGraphService.hpp"
 
 #include <filesystem>
 #include <optional>
@@ -183,9 +184,7 @@ private:
     std::map<ElementId, FloorSystemData> floor_systems_{};
     std::map<ElementId, CeilingSystemData> ceiling_systems_{};
     std::vector<ElementId> dirty_room_ids_{};
-    mutable DependencyGraph dependency_graph_cache_{};
-    mutable bool dependency_graph_dirty_{true};
-    mutable Revision dependency_graph_version_{};
+    mutable DependencyGraphService dependency_graph_service_{};
 };
 
 } // namespace tbe::core

@@ -1759,7 +1759,10 @@ const std::vector<ElementId>& Document::dirty_room_ids() const noexcept {
 }
 
 void Document::regenerate_dirty_geometry() {
-    GeometryService geometry;
+    const auto backend = TBE_HAS_OCCT
+        ? GeometryService::Backend::OpenCascade
+        : GeometryService::Backend::Fallback;
+    GeometryService geometry{backend};
     for (auto& element : elements_) {
         auto* wall = element.wall();
         if (wall != nullptr && wall->geometry.dirty) {
@@ -1768,24 +1771,24 @@ void Document::regenerate_dirty_geometry() {
 
         auto* slab = element.slab();
         if (slab != nullptr && slab->generated_geometry_dirty) {
-            slab->area_square_meters = polygon_area(slab->boundary_polygon);
+            slab->area_square_meters = geometry.polygon_area(slab->boundary_polygon);
             slab->volume_cubic_meters = slab->area_square_meters * slab->thickness_meters;
             const auto thickness = slab->assembly_id != 0
-                ? (get_layered_assembly(slab->assembly_id) == nullptr ? slab->thickness_meters : layered_assembly_total_thickness(*get_layered_assembly(slab->assembly_id)))
+                ? (get_layered_assembly(slab->assembly_id) == nullptr ? slab->thickness_meters : geometry.layered_assembly_thickness(*get_layered_assembly(slab->assembly_id)))
                 : slab->thickness_meters;
-            slab->mesh = extrude_polygon_mesh(slab->boundary_polygon, thickness, slab->elevation_offset_meters);
+            slab->mesh = geometry.build_extruded_polygon_mesh(slab->boundary_polygon, thickness, slab->elevation_offset_meters);
             slab->generated_geometry_dirty = false;
         }
 
         auto* roof = element.roof();
         if (roof != nullptr && roof->generated_geometry_dirty) {
             const auto thickness = roof->assembly_id != 0
-                ? (get_layered_assembly(roof->assembly_id) == nullptr ? roof->thickness_meters : layered_assembly_total_thickness(*get_layered_assembly(roof->assembly_id)))
+                ? (get_layered_assembly(roof->assembly_id) == nullptr ? roof->thickness_meters : geometry.layered_assembly_thickness(*get_layered_assembly(roof->assembly_id)))
                 : roof->thickness_meters;
-            roof->area_square_meters = roof_surface_area(*roof);
+            roof->area_square_meters = geometry.roof_surface_area(*roof);
             roof->volume_cubic_meters = roof->area_square_meters * thickness;
             roof->mesh = roof->roof_type == RoofType::Flat
-                ? extrude_polygon_mesh(roof->boundary_polygon, thickness, 0.0)
+                ? geometry.build_extruded_polygon_mesh(roof->boundary_polygon, thickness, 0.0)
                 : MeshBuffer{};
             roof->generated_geometry_dirty = false;
         }
@@ -1793,7 +1796,7 @@ void Document::regenerate_dirty_geometry() {
         auto* column = element.column();
         if (column != nullptr && column->generated_geometry_dirty) {
             column->volume_cubic_meters = column->width_meters * column->depth_meters * column->height_meters;
-            column->mesh = extrude_column_mesh(column->position, column->width_meters, column->depth_meters, column->height_meters);
+            column->mesh = geometry.build_column_mesh(column->position, column->width_meters, column->depth_meters, column->height_meters);
             column->generated_geometry_dirty = false;
         }
 
@@ -1801,7 +1804,7 @@ void Document::regenerate_dirty_geometry() {
         if (beam != nullptr && beam->generated_geometry_dirty) {
             beam->length_meters = length(Line2{.start = beam->start, .end = beam->end});
             beam->volume_cubic_meters = beam->length_meters * beam->width_meters * beam->height_meters;
-            beam->mesh = extrude_beam_mesh(beam->start, beam->end, beam->width_meters, beam->height_meters);
+            beam->mesh = geometry.build_beam_mesh(beam->start, beam->end, beam->width_meters, beam->height_meters);
             beam->generated_geometry_dirty = false;
         }
 
@@ -1809,82 +1812,22 @@ void Document::regenerate_dirty_geometry() {
         if (stair != nullptr && stair->generated_geometry_dirty) {
             stair->footprint_area_square_meters = stair->width_meters * stair->total_run_meters;
             stair->volume_cubic_meters = stair->footprint_area_square_meters * (stair->total_rise_meters / 2.0);
-            stair->mesh = build_stair_mesh(*stair);
+            stair->mesh = geometry.build_stair_mesh(*stair);
             stair->generated_geometry_dirty = false;
         }
     }
 }
 
 DependencyGraph Document::build_dependency_graph() const {
-    DependencyGraph graph;
-
-    for (const auto& element : elements_) {
-        if (const auto* wall = element.wall()) {
-            auto& geometry = graph.geometry_by_element[element.id()];
-            append_unique(geometry, element.id());
-
-            for (const auto& join : wall->joins) {
-                append_unique(graph.connected_walls_by_wall[element.id()], join.other_wall_id);
-            }
-            for (const auto& opening : wall->openings) {
-                append_unique(graph.openings_by_wall[element.id()], opening.element_id);
-                append_unique(graph.geometry_by_element[opening.element_id], element.id());
-            }
-        } else if (const auto* slab = element.slab()) {
-            auto& geometry = graph.geometry_by_element[element.id()];
-            append_unique(geometry, element.id());
-            append_unique(graph.geometry_by_element[slab->level_id], element.id());
-        } else if (const auto* roof = element.roof()) {
-            auto& geometry = graph.geometry_by_element[element.id()];
-            append_unique(geometry, element.id());
-            append_unique(graph.geometry_by_element[roof->level_id], element.id());
-        } else if (const auto* column = element.column()) {
-            auto& geometry = graph.geometry_by_element[element.id()];
-            append_unique(geometry, element.id());
-            append_unique(graph.geometry_by_element[column->level_id], element.id());
-        } else if (const auto* beam = element.beam()) {
-            auto& geometry = graph.geometry_by_element[element.id()];
-            append_unique(geometry, element.id());
-            append_unique(graph.geometry_by_element[beam->level_id], element.id());
-        } else if (const auto* stair = element.stair()) {
-            auto& geometry = graph.geometry_by_element[element.id()];
-            append_unique(geometry, element.id());
-            append_unique(graph.geometry_by_element[stair->base_level_id], element.id());
-            if (stair->top_level_id != 0) {
-                append_unique(graph.geometry_by_element[stair->top_level_id], element.id());
-            }
-        } else if (const auto* room = element.room()) {
-            for (const auto boundary_id : room->boundary_wall_ids) {
-                append_unique(graph.rooms_by_wall[boundary_id], element.id());
-                append_unique(graph.geometry_by_element[boundary_id], element.id());
-            }
-            for (const auto& [system_id, system] : floor_systems_) {
-                if (system.room_id == element.id()) {
-                    append_unique(graph.geometry_by_element[element.id()], system_id);
-                }
-            }
-            for (const auto& [system_id, system] : ceiling_systems_) {
-                if (system.room_id == element.id()) {
-                    append_unique(graph.geometry_by_element[element.id()], system_id);
-                }
-            }
-        }
-    }
-
-    return graph;
+    return dependency_graph_service_.build(*this);
 }
 
 const DependencyGraph& Document::dependency_graph() const {
-    if (dependency_graph_dirty_) {
-        dependency_graph_cache_ = build_dependency_graph();
-        dependency_graph_dirty_ = false;
-        ++dependency_graph_version_;
-    }
-    return dependency_graph_cache_;
+    return dependency_graph_service_.get(*this);
 }
 
 Revision Document::dependency_graph_version() const noexcept {
-    return dependency_graph_version_;
+    return dependency_graph_service_.version();
 }
 
 ValidationReport Document::validate_document() const {
@@ -3473,7 +3416,7 @@ void Document::replace_state(std::string name, std::vector<Element> elements, El
 }
 
 void Document::invalidate_dependency_graph_cache() noexcept {
-    dependency_graph_dirty_ = true;
+    dependency_graph_service_.invalidate();
 }
 
 } // namespace tbe::core

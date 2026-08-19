@@ -433,9 +433,9 @@ RenderSceneObjectDTO make_object_dto(
 
 RenderSceneDTO build_render_scene(const Document& document) {
     RenderSceneDTO scene;
-    scene.scene_version = 1;
-    scene.units = "meters";
-    scene.coordinate_system = "X/Y plan, Z up";
+    scene.scene_version = TBE_RENDER_SCENE_VERSION;
+    scene.units = std::string(TBE_RENDER_SCENE_UNITS);
+    scene.coordinate_system = std::string(TBE_RENDER_SCENE_COORDINATE_SYSTEM);
 
     const auto elevations = level_elevation_map(document);
 
@@ -572,8 +572,8 @@ std::string render_scene_to_json(const RenderSceneDTO& scene) {
     std::ostringstream out;
     out << '{';
     out << "\"scene_version\":" << scene.scene_version << ',';
-    out << "\"units\":\"" << "meters" << "\",";
-    out << "\"coordinate_system\":\"" << "X/Y plan, Z up" << "\",";
+    out << "\"units\":\"" << scene.units << "\",";
+    out << "\"coordinate_system\":\"" << scene.coordinate_system << "\",";
     out << "\"object_count\":" << scene.object_count << ',';
     out << "\"vertex_count\":" << scene.vertex_count << ',';
     out << "\"index_count\":" << scene.index_count << ',';
@@ -1802,6 +1802,18 @@ ApiResult<RenderSceneDTO> EngineSession::get_render_scene() const {
     }
 }
 
+ApiResult<std::string> EngineSession::get_render_scene_json() const {
+    try {
+        auto recompute = recompute_impl(*impl_, ComputeMode::FinalExact);
+        if (!recompute.ok()) {
+            return error_result<std::string>(recompute.status, recompute.message);
+        }
+        return success_result(render_scene_to_json(build_render_scene(impl_->document())));
+    } catch (const std::exception& error) {
+        return error_result<std::string>(status_from_exception(error), error.what());
+    }
+}
+
 ApiVoidResult EngineSession::export_render_scene_json(const std::string& path) const {
     namespace fs = std::filesystem;
     try {
@@ -1817,7 +1829,11 @@ ApiVoidResult EngineSession::export_render_scene_json(const std::string& path) c
         if (!file) {
             return error_void(ApiStatus::InternalError, "failed to open render scene export path");
         }
-        file << render_scene_to_json(build_render_scene(impl_->document()));
+        const auto scene_json = get_render_scene_json();
+        if (!scene_json.ok() || !scene_json.value.has_value()) {
+            return error_void(scene_json.status, scene_json.message);
+        }
+        file << *scene_json.value;
         return success_void();
     } catch (const std::exception& error) {
         return error_void(status_from_exception(error), error.what());

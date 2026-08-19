@@ -5,11 +5,15 @@
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <mutex>
 #include <string>
 
 struct TbeEngineHandle {
     std::unique_ptr<tbe::api::EngineSession> session{};
     std::string last_error{};
+    // A handle is the C ABI's session boundary. Recursive locking is used
+    // because a few API calls call other session operations internally.
+    mutable std::recursive_mutex mutex{};
 };
 
 namespace {
@@ -34,6 +38,14 @@ TbeApiStatusCode apply_result(TbeEngineHandle* handle, const Result& result) {
     return to_c_status(result.status);
 }
 
+std::unique_lock<std::recursive_mutex> lock_handle(TbeEngineHandle* handle) {
+    return std::unique_lock<std::recursive_mutex>(handle->mutex);
+}
+
+std::unique_lock<std::recursive_mutex> lock_handle(const TbeEngineHandle* handle) {
+    return std::unique_lock<std::recursive_mutex>(handle->mutex);
+}
+
 TbeApiStatusCode null_handle_error(TbeEngineHandle* handle) {
     if (handle != nullptr) {
         handle->last_error = "engine handle is null";
@@ -42,6 +54,7 @@ TbeApiStatusCode null_handle_error(TbeEngineHandle* handle) {
 }
 
 TbeApiStatusCode copy_string_result(TbeEngineHandle* handle, const tbe::api::ApiResult<std::string>& result, char** out_value) {
+    *out_value = nullptr;
     if (!result.ok() || !result.value.has_value()) {
         return apply_result(handle, result);
     }
@@ -59,6 +72,10 @@ TbeApiStatusCode copy_string_result(TbeEngineHandle* handle, const tbe::api::Api
 } // namespace
 
 extern "C" {
+
+int tbe_get_c_api_version_major(void) {
+    return TBE_C_API_VERSION_MAJOR;
+}
 
 TbeEngineHandle* tbe_engine_create(void) {
     auto created = tbe::api::create_session("C API Project");
@@ -78,6 +95,7 @@ TbeApiStatusCode tbe_project_new(TbeEngineHandle* handle, const char* project_na
     if (handle == nullptr || handle->session == nullptr || project_name == nullptr) {
         return null_handle_error(handle);
     }
+    auto lock = lock_handle(handle);
     return apply_result(handle, handle->session->new_project(project_name));
 }
 
@@ -85,6 +103,7 @@ TbeApiStatusCode tbe_project_load_json(TbeEngineHandle* handle, const char* json
     if (handle == nullptr || handle->session == nullptr || json == nullptr) {
         return null_handle_error(handle);
     }
+    auto lock = lock_handle(handle);
     return apply_result(handle, handle->session->load_project_json(json));
 }
 
@@ -92,6 +111,7 @@ TbeApiStatusCode tbe_project_load_json_with_mode(TbeEngineHandle* handle, const 
     if (handle == nullptr || handle->session == nullptr || json == nullptr) {
         return null_handle_error(handle);
     }
+    auto lock = lock_handle(handle);
     return apply_result(handle, handle->session->load_project_json_with_mode(json, static_cast<tbe::api::LoadMode>(load_mode)));
 }
 
@@ -99,6 +119,8 @@ TbeApiStatusCode tbe_project_save_json(TbeEngineHandle* handle, char** out_json)
     if (handle == nullptr || handle->session == nullptr || out_json == nullptr) {
         return null_handle_error(handle);
     }
+    auto lock = lock_handle(handle);
+    *out_json = nullptr;
     const auto result = handle->session->save_project_json();
     if (!result.ok() || !result.value.has_value()) {
         return apply_result(handle, result);
@@ -119,6 +141,8 @@ TbeApiStatusCode tbe_get_engine_version(TbeEngineHandle* handle, char** out_vers
     if (handle == nullptr || handle->session == nullptr || out_version == nullptr) {
         return null_handle_error(handle);
     }
+    auto lock = lock_handle(handle);
+    *out_version = nullptr;
     return copy_string_result(handle, handle->session->get_engine_version(), out_version);
 }
 
@@ -126,6 +150,8 @@ TbeApiStatusCode tbe_get_core_version(TbeEngineHandle* handle, char** out_versio
     if (handle == nullptr || handle->session == nullptr || out_version == nullptr) {
         return null_handle_error(handle);
     }
+    auto lock = lock_handle(handle);
+    *out_version = nullptr;
     return copy_string_result(handle, handle->session->get_core_version(), out_version);
 }
 
@@ -133,6 +159,8 @@ TbeApiStatusCode tbe_get_api_version(TbeEngineHandle* handle, char** out_version
     if (handle == nullptr || handle->session == nullptr || out_version == nullptr) {
         return null_handle_error(handle);
     }
+    auto lock = lock_handle(handle);
+    *out_version = nullptr;
     return copy_string_result(handle, handle->session->get_api_version(), out_version);
 }
 
@@ -140,6 +168,8 @@ TbeApiStatusCode tbe_get_schema_version(TbeEngineHandle* handle, int* out_versio
     if (handle == nullptr || handle->session == nullptr || out_version == nullptr) {
         return null_handle_error(handle);
     }
+    auto lock = lock_handle(handle);
+    *out_version = 0;
     const auto result = handle->session->get_schema_version();
     if (result.ok() && result.value.has_value()) {
         *out_version = *result.value;
@@ -151,6 +181,8 @@ TbeApiStatusCode tbe_detect_schema_version_from_json(TbeEngineHandle* handle, co
     if (handle == nullptr || handle->session == nullptr || json == nullptr || out_version == nullptr) {
         return null_handle_error(handle);
     }
+    auto lock = lock_handle(handle);
+    *out_version = 0;
     const auto result = handle->session->detect_schema_version_from_json(json);
     if (result.ok() && result.value.has_value()) {
         *out_version = *result.value;
@@ -162,6 +194,8 @@ TbeApiStatusCode tbe_migrate_project_json(TbeEngineHandle* handle, const char* j
     if (handle == nullptr || handle->session == nullptr || json == nullptr || out_json == nullptr) {
         return null_handle_error(handle);
     }
+    auto lock = lock_handle(handle);
+    *out_json = nullptr;
     const auto result = handle->session->migrate_project_json(json, from_version, to_version);
     if (!result.ok() || !result.value.has_value()) {
         return apply_result(handle, result);
@@ -181,6 +215,8 @@ TbeApiStatusCode tbe_get_last_migration_report(TbeEngineHandle* handle, TbeMigra
     if (handle == nullptr || handle->session == nullptr || out_summary == nullptr) {
         return null_handle_error(handle);
     }
+    auto lock = lock_handle(handle);
+    *out_summary = TbeMigrationSummary{};
     const auto result = handle->session->get_last_migration_report();
     if (result.ok() && result.value.has_value()) {
         out_summary->from_version = result.value->from_version;
@@ -196,6 +232,8 @@ TbeApiStatusCode tbe_get_last_repair_report(TbeEngineHandle* handle, TbeRepairSu
     if (handle == nullptr || handle->session == nullptr || out_summary == nullptr) {
         return null_handle_error(handle);
     }
+    auto lock = lock_handle(handle);
+    *out_summary = TbeRepairSummary{};
     const auto result = handle->session->get_last_repair_report();
     if (result.ok() && result.value.has_value()) {
         out_summary->repaired_count = result.value->repaired_count;
@@ -209,6 +247,8 @@ TbeApiStatusCode tbe_repair_current_project(TbeEngineHandle* handle, TbeRepairSu
     if (handle == nullptr || handle->session == nullptr || out_summary == nullptr) {
         return null_handle_error(handle);
     }
+    auto lock = lock_handle(handle);
+    *out_summary = TbeRepairSummary{};
     const auto result = handle->session->repair_current_project();
     if (result.ok() && result.value.has_value()) {
         out_summary->repaired_count = result.value->repaired_count;
@@ -222,6 +262,7 @@ TbeApiStatusCode tbe_export_project_package(TbeEngineHandle* handle, const char*
     if (handle == nullptr || handle->session == nullptr || path == nullptr) {
         return null_handle_error(handle);
     }
+    auto lock = lock_handle(handle);
     return apply_result(handle, handle->session->export_project_package(path));
 }
 
@@ -229,13 +270,24 @@ TbeApiStatusCode tbe_import_project_package(TbeEngineHandle* handle, const char*
     if (handle == nullptr || handle->session == nullptr || path == nullptr) {
         return null_handle_error(handle);
     }
+    auto lock = lock_handle(handle);
     return apply_result(handle, handle->session->import_project_package(path, static_cast<tbe::api::LoadMode>(load_mode)));
+}
+
+TbeApiStatusCode tbe_get_render_scene_json(TbeEngineHandle* handle, char** out_json) {
+    if (handle == nullptr || handle->session == nullptr || out_json == nullptr) {
+        return null_handle_error(handle);
+    }
+    auto lock = lock_handle(handle);
+    *out_json = nullptr;
+    return copy_string_result(handle, handle->session->get_render_scene_json(), out_json);
 }
 
 TbeApiStatusCode tbe_export_render_scene_json(TbeEngineHandle* handle, const char* path) {
     if (handle == nullptr || handle->session == nullptr || path == nullptr) {
         return null_handle_error(handle);
     }
+    auto lock = lock_handle(handle);
     return apply_result(handle, handle->session->export_render_scene_json(path));
 }
 
@@ -252,6 +304,8 @@ TbeApiStatusCode tbe_create_wall(
     if (handle == nullptr || handle->session == nullptr || name == nullptr || out_wall_id == nullptr) {
         return null_handle_error(handle);
     }
+    auto lock = lock_handle(handle);
+    *out_wall_id = 0;
     const auto result = handle->session->create_wall(
         name,
         tbe::api::Vec2{.x = start.x, .y = start.y},
@@ -270,6 +324,7 @@ TbeApiStatusCode tbe_move_wall(TbeEngineHandle* handle, uint64_t wall_id, double
     if (handle == nullptr || handle->session == nullptr) {
         return null_handle_error(handle);
     }
+    auto lock = lock_handle(handle);
     const auto wall = handle->session->get_wall(wall_id);
     if (!wall.ok() || !wall.value.has_value()) {
         return apply_result(handle, wall);
@@ -294,6 +349,8 @@ TbeApiStatusCode tbe_create_door(
     if (handle == nullptr || handle->session == nullptr || name == nullptr || out_door_id == nullptr) {
         return null_handle_error(handle);
     }
+    auto lock = lock_handle(handle);
+    *out_door_id = 0;
     const auto result = handle->session->create_door(name, host_wall_id, offset_meters, width_meters, height_meters);
     if (result.ok() && result.value.has_value()) {
         *out_door_id = result.value->value;
@@ -314,6 +371,8 @@ TbeApiStatusCode tbe_create_window(
     if (handle == nullptr || handle->session == nullptr || name == nullptr || out_window_id == nullptr) {
         return null_handle_error(handle);
     }
+    auto lock = lock_handle(handle);
+    *out_window_id = 0;
     const auto result = handle->session->create_window(name, host_wall_id, offset_meters, width_meters, height_meters, sill_height_meters);
     if (result.ok() && result.value.has_value()) {
         *out_window_id = result.value->value;
@@ -321,10 +380,20 @@ TbeApiStatusCode tbe_create_window(
     return apply_result(handle, result);
 }
 
+TbeApiStatusCode tbe_delete_element(TbeEngineHandle* handle, uint64_t element_id) {
+    if (handle == nullptr || handle->session == nullptr) {
+        return null_handle_error(handle);
+    }
+    auto lock = lock_handle(handle);
+    return apply_result(handle, handle->session->delete_element(element_id));
+}
+
 TbeApiStatusCode tbe_detect_rooms(TbeEngineHandle* handle, uint64_t* out_room_count) {
     if (handle == nullptr || handle->session == nullptr || out_room_count == nullptr) {
         return null_handle_error(handle);
     }
+    auto lock = lock_handle(handle);
+    *out_room_count = 0;
     const auto result = handle->session->detect_rooms();
     if (result.ok() && result.value.has_value()) {
         *out_room_count = static_cast<uint64_t>(result.value->size());
@@ -336,6 +405,8 @@ TbeApiStatusCode tbe_generate_schedules(TbeEngineHandle* handle, TbeScheduleSumm
     if (handle == nullptr || handle->session == nullptr || out_summary == nullptr) {
         return null_handle_error(handle);
     }
+    auto lock = lock_handle(handle);
+    *out_summary = TbeScheduleSummary{};
     const auto result = handle->session->generate_schedules();
     if (result.ok() && result.value.has_value()) {
         const auto& summary = *result.value;
@@ -358,6 +429,8 @@ TbeApiStatusCode tbe_validate(TbeEngineHandle* handle, TbeValidationSummary* out
     if (handle == nullptr || handle->session == nullptr || out_summary == nullptr) {
         return null_handle_error(handle);
     }
+    auto lock = lock_handle(handle);
+    *out_summary = TbeValidationSummary{};
     const auto result = handle->session->get_validation_report();
     if (result.ok() && result.value.has_value()) {
         const auto& summary = *result.value;
@@ -372,6 +445,7 @@ TbeApiStatusCode tbe_rebuild_spatial_index(TbeEngineHandle* handle) {
     if (handle == nullptr || handle->session == nullptr) {
         return null_handle_error(handle);
     }
+    auto lock = lock_handle(handle);
     return apply_result(handle, handle->session->rebuild_spatial_index());
 }
 
@@ -379,6 +453,8 @@ TbeApiStatusCode tbe_spatial_index_stats(TbeEngineHandle* handle, TbeSpatialInde
     if (handle == nullptr || handle->session == nullptr || out_stats == nullptr) {
         return null_handle_error(handle);
     }
+    auto lock = lock_handle(handle);
+    *out_stats = TbeSpatialIndexStats{};
     const auto result = handle->session->spatial_index_stats();
     if (result.ok() && result.value.has_value()) {
         const auto& stats = *result.value;
@@ -402,6 +478,8 @@ TbeApiStatusCode tbe_hit_test_point(
     if (handle == nullptr || handle->session == nullptr || out_result == nullptr) {
         return null_handle_error(handle);
     }
+    auto lock = lock_handle(handle);
+    *out_result = TbeHitTestResult{};
     const auto result = handle->session->hit_test_point(tbe::api::HitTestPoint{
         .level_id = tbe::api::ElementIdDTO{.value = level_id},
         .point = tbe::api::Vec2{.x = point.x, .y = point.y},
@@ -438,13 +516,14 @@ TbeApiStatusCode tbe_hit_test_candidates(
     if (handle == nullptr || handle->session == nullptr || out_result == nullptr) {
         return null_handle_error(handle);
     }
+    auto lock = lock_handle(handle);
+    out_result->candidate_count = 0;
+    out_result->candidates = nullptr;
     const auto result = handle->session->hit_test_point(tbe::api::HitTestPoint{
         .level_id = tbe::api::ElementIdDTO{.value = level_id},
         .point = tbe::api::Vec2{.x = point.x, .y = point.y},
         .tolerance_meters = tolerance_meters,
     });
-    out_result->candidate_count = 0;
-    out_result->candidates = nullptr;
     if (result.ok() && result.value.has_value()) {
         const auto& candidates = *result.value;
         out_result->candidate_count = static_cast<uint64_t>(candidates.size());
@@ -480,6 +559,10 @@ TbeApiStatusCode tbe_compute_wall_free_intervals(
     if (handle == nullptr || handle->session == nullptr || out_result == nullptr) {
         return null_handle_error(handle);
     }
+    auto lock = lock_handle(handle);
+    out_result->wall_id = 0;
+    out_result->interval_count = 0;
+    out_result->intervals = nullptr;
     const auto result = handle->session->compute_wall_free_intervals(wall_id, requested_width_meters, clearance_meters);
     if (result.ok() && result.value.has_value()) {
         out_result->wall_id = wall_id;
@@ -514,6 +597,8 @@ TbeApiStatusCode tbe_best_snap(
     if (handle == nullptr || handle->session == nullptr || out_result == nullptr) {
         return null_handle_error(handle);
     }
+    auto lock = lock_handle(handle);
+    *out_result = TbeSnapResult{};
     const auto result = handle->session->best_snap(
         tbe::api::ElementIdDTO{.value = level_id},
         tbe::api::Vec2{.x = point.x, .y = point.y},
@@ -543,6 +628,15 @@ TbeApiStatusCode tbe_find_wall_host_at_point(
     if (handle == nullptr || handle->session == nullptr || out_result == nullptr) {
         return null_handle_error(handle);
     }
+    auto lock = lock_handle(handle);
+    out_result->wall_id = 0;
+    out_result->requested_offset_meters = 0.0;
+    out_result->wall_local_offset_meters = 0.0;
+    out_result->adjusted_valid_offset_meters = 0.0;
+    out_result->valid = 0;
+    out_result->interval_count = 0;
+    out_result->intervals = nullptr;
+    out_result->warning_count = 0;
     const auto result = handle->session->find_wall_host_at_point(
         tbe::api::ElementIdDTO{.value = level_id},
         tbe::api::Vec2{.x = point.x, .y = point.y},
@@ -583,6 +677,7 @@ TbeApiStatusCode tbe_undo(TbeEngineHandle* handle) {
     if (handle == nullptr || handle->session == nullptr) {
         return null_handle_error(handle);
     }
+    auto lock = lock_handle(handle);
     return apply_result(handle, handle->session->undo());
 }
 
@@ -590,6 +685,7 @@ TbeApiStatusCode tbe_redo(TbeEngineHandle* handle) {
     if (handle == nullptr || handle->session == nullptr) {
         return null_handle_error(handle);
     }
+    auto lock = lock_handle(handle);
     return apply_result(handle, handle->session->redo());
 }
 
@@ -597,6 +693,7 @@ TbeApiStatusCode tbe_export_svg(TbeEngineHandle* handle, const char* path) {
     if (handle == nullptr || handle->session == nullptr || path == nullptr) {
         return null_handle_error(handle);
     }
+    auto lock = lock_handle(handle);
     return apply_result(handle, handle->session->export_svg(path));
 }
 
@@ -604,6 +701,7 @@ TbeApiStatusCode tbe_export_obj(TbeEngineHandle* handle, const char* path) {
     if (handle == nullptr || handle->session == nullptr || path == nullptr) {
         return null_handle_error(handle);
     }
+    auto lock = lock_handle(handle);
     return apply_result(handle, handle->session->export_obj(path));
 }
 
@@ -611,7 +709,10 @@ const char* tbe_get_last_error(const TbeEngineHandle* handle) {
     if (handle == nullptr) {
         return "engine handle is null";
     }
-    return handle->last_error.c_str();
+    thread_local std::string error_copy;
+    auto lock = lock_handle(handle);
+    error_copy = handle->last_error;
+    return error_copy.c_str();
 }
 
 void tbe_free_string(char* value) {

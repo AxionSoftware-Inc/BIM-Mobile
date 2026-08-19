@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tbe:render-scene:v1",
+  "title": "Tablet BIM Engine RenderScene",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["scene_version", "units", "coordinate_system", "object_count", "vertex_count", "index_count", "objects"],
+  "properties": {
+    "scene_version": { "const": 1 },
+    "units": { "const": "meters" },
+    "coordinate_system": { "const": "X/Y plan, Z up" },
+    "object_count": { "type": "integer", "minimum": 0 },
+    "vertex_count": { "type": "integer", "minimum": 0 },
+    "index_count": { "type": "integer", "minimum": 0 },
+    "objects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["element_id", "kind", "level_id", "selectable", "visible_by_default", "revision", "bounds", "mesh", "material_category"],
+        "properties": {
+          "element_id": { "type": "integer", "minimum": 0 },
+          "kind": { "type": "string", "minLength": 1 },
+          "level_id": { "type": "integer", "minimum": 0 },
+          "selectable": { "type": "boolean" },
+          "visible_by_default": { "type": "boolean" },
+          "revision": { "type": "integer", "minimum": 0 },
+          "bounds": {
+            "type": "object",
+            "required": ["min", "max"],
+            "properties": {
+              "min": { "$ref": "#/$defs/point" },
+              "max": { "$ref": "#/$defs/point" }
+            }
+          },
+          "mesh": {
+            "type": "object",
+            "required": ["positions", "indices"],
+            "properties": {
+              "positions": { "type": "array", "items": { "$ref": "#/$defs/point" } },
+              "indices": { "type": "array", "items": { "type": "integer", "minimum": 0 } },
+              "normals": { "type": ["array", "null"], "items": { "$ref": "#/$defs/point" } }
+            }
+          },
+          "material_category": { "type": "string" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "point": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "z"],
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "z": { "type": "number" }
+      }
+    }
+  }
+}

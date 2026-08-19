@@ -164,10 +164,22 @@ final class ViewerLoadResult {
   final List<HitCandidateView> hitCandidates;
 }
 
+enum TbeLoadMode {
+  strict(0),
+  tolerant(1),
+  repair(2);
+
+  const TbeLoadMode(this.value);
+
+  final int value;
+}
+
 typedef _EngineCreateNative = ffi.Pointer<ffi.Void> Function();
 typedef _EngineCreateDart = ffi.Pointer<ffi.Void> Function();
 typedef _EngineDestroyNative = ffi.Void Function(ffi.Pointer<ffi.Void>);
 typedef _EngineDestroyDart = void Function(ffi.Pointer<ffi.Void>);
+typedef _CApiVersionNative = ffi.Int32 Function();
+typedef _CApiVersionDart = int Function();
 typedef _StringGetterNative = ffi.Int32 Function(
   ffi.Pointer<ffi.Void>,
   ffi.Pointer<ffi.Pointer<Utf8>>,
@@ -183,6 +195,14 @@ typedef _ProjectLoadJsonNative = ffi.Int32 Function(
 typedef _ProjectLoadJsonDart = int Function(
   ffi.Pointer<ffi.Void>,
   ffi.Pointer<Utf8>,
+);
+typedef _ProjectSaveJsonNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Pointer<ffi.Pointer<Utf8>>,
+);
+typedef _ProjectSaveJsonDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Pointer<ffi.Pointer<Utf8>>,
 );
 typedef _ProjectExportPathNative = ffi.Int32 Function(
   ffi.Pointer<ffi.Void>,
@@ -202,6 +222,86 @@ typedef _ProjectImportPackageDart = int Function(
   ffi.Pointer<Utf8>,
   int,
 );
+typedef _CreateWallNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Pointer<Utf8>,
+  ffi.Uint64,
+  TbeVec2,
+  TbeVec2,
+  ffi.Double,
+  ffi.Double,
+  ffi.Pointer<ffi.Uint64>,
+);
+typedef _CreateWallDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Pointer<Utf8>,
+  int,
+  TbeVec2,
+  TbeVec2,
+  double,
+  double,
+  ffi.Pointer<ffi.Uint64>,
+);
+typedef _CreateDoorNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Pointer<Utf8>,
+  ffi.Uint64,
+  ffi.Double,
+  ffi.Double,
+  ffi.Double,
+  ffi.Pointer<ffi.Uint64>,
+);
+typedef _CreateDoorDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Pointer<Utf8>,
+  int,
+  double,
+  double,
+  double,
+  ffi.Pointer<ffi.Uint64>,
+);
+typedef _CreateWindowNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Pointer<Utf8>,
+  ffi.Uint64,
+  ffi.Double,
+  ffi.Double,
+  ffi.Double,
+  ffi.Double,
+  ffi.Pointer<ffi.Uint64>,
+);
+typedef _CreateWindowDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Pointer<Utf8>,
+  int,
+  double,
+  double,
+  double,
+  double,
+  ffi.Pointer<ffi.Uint64>,
+);
+typedef _MoveWallNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Uint64,
+  ffi.Double,
+  ffi.Double,
+);
+typedef _MoveWallDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  int,
+  double,
+  double,
+);
+typedef _ElementCommandNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Uint64,
+);
+typedef _ElementCommandDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  int,
+);
+typedef _SessionCommandNative = ffi.Int32 Function(ffi.Pointer<ffi.Void>);
+typedef _SessionCommandDart = int Function(ffi.Pointer<ffi.Void>);
 typedef _ValidateNative = ffi.Int32 Function(
   ffi.Pointer<ffi.Void>,
   ffi.Pointer<TbeValidationSummary>,
@@ -249,7 +349,9 @@ typedef _FreeMemoryDart = void Function(ffi.Pointer<ffi.Void>);
 
 class TbeViewerApi {
   TbeViewerApi._(ffi.DynamicLibrary library)
-      : _engineCreate =
+      : _getCApiVersion = library.lookupFunction<_CApiVersionNative,
+            _CApiVersionDart>('tbe_get_c_api_version_major'),
+        _engineCreate =
             library.lookupFunction<_EngineCreateNative, _EngineCreateDart>(
                 'tbe_engine_create'),
         _engineDestroy =
@@ -266,9 +368,27 @@ class TbeViewerApi {
                 'tbe_get_schema_version'),
         _projectLoadJson = library.lookupFunction<_ProjectLoadJsonNative,
             _ProjectLoadJsonDart>('tbe_project_load_json'),
+        _projectSaveJson = library.lookupFunction<_ProjectSaveJsonNative,
+            _ProjectSaveJsonDart>('tbe_project_save_json'),
         _importProjectPackage = library.lookupFunction<
             _ProjectImportPackageNative,
             _ProjectImportPackageDart>('tbe_import_project_package'),
+        _getRenderSceneJson = library.lookupFunction<_ProjectSaveJsonNative,
+            _ProjectSaveJsonDart>('tbe_get_render_scene_json'),
+        _createWall = library.lookupFunction<_CreateWallNative, _CreateWallDart>(
+            'tbe_create_wall'),
+        _moveWall = library.lookupFunction<_MoveWallNative, _MoveWallDart>(
+            'tbe_move_wall'),
+        _createDoor = library.lookupFunction<_CreateDoorNative, _CreateDoorDart>(
+            'tbe_create_door'),
+        _createWindow = library.lookupFunction<_CreateWindowNative,
+            _CreateWindowDart>('tbe_create_window'),
+        _deleteElement = library.lookupFunction<_ElementCommandNative,
+            _ElementCommandDart>('tbe_delete_element'),
+        _undo = library.lookupFunction<_SessionCommandNative,
+            _SessionCommandDart>('tbe_undo'),
+        _redo = library.lookupFunction<_SessionCommandNative,
+            _SessionCommandDart>('tbe_redo'),
         _validate = library
             .lookupFunction<_ValidateNative, _ValidateDart>('tbe_validate'),
         _generateSchedules =
@@ -287,7 +407,14 @@ class TbeViewerApi {
                 'tbe_free_string'),
         _freeMemory =
             library.lookupFunction<_FreeMemoryNative, _FreeMemoryDart>(
-                'tbe_free_memory');
+                'tbe_free_memory') {
+    final version = _getCApiVersion();
+    if (version != 1) {
+      throw TbeApiException(
+        'Unsupported TBE C API major version $version; expected 1',
+      );
+    }
+  }
 
   factory TbeViewerApi.load() {
     return TbeViewerApi._(_openLibrary());
@@ -302,14 +429,30 @@ class TbeViewerApi {
       current.parent.parent,
       current.parent.parent.parent,
     };
+    if (overridePath != null && overridePath.isNotEmpty) {
+      try {
+        return ffi.DynamicLibrary.open(overridePath);
+      } catch (_) {
+        // Continue with platform-native loading and produce a complete error
+        // below if the override is invalid.
+      }
+    }
+    if (Platform.isIOS) {
+      return ffi.DynamicLibrary.process();
+    }
+    final libraryNames = <String>[
+      if (Platform.isAndroid) 'libtbe_capi.so',
+      if (Platform.isLinux) 'libtbe_capi.so',
+      if (Platform.isWindows) 'tbe_capi.dll',
+      if (Platform.isMacOS) 'libtbe_capi.dylib',
+    ];
     final candidates = <String>[
-      if (overridePath != null && overridePath.isNotEmpty) overridePath,
       for (final root in repoLikeRoots) ...<String>[
         '${root.path}/build/dev/src/api/libtbe_capi.dylib',
         '${root.path}/build/dev/src/api/Debug/libtbe_capi.dylib',
         '${root.path}/build/dev/src/api/Release/libtbe_capi.dylib',
       ],
-      'libtbe_capi.dylib',
+      ...libraryNames,
     ];
     final attempted = <String>[];
     for (final candidate in candidates) {
@@ -324,18 +467,29 @@ class TbeViewerApi {
       }
     }
     throw TbeApiException(
-      'Unable to locate libtbe_capi.dylib. Build `tbe_capi_shared`, set TBE_CAPI_PATH, '
-      'or place the dylib at build/dev/src/api/libtbe_capi.dylib. Attempted: ${attempted.join(', ')}',
+      'Unable to locate the TBE C API library for ${Platform.operatingSystem}. '
+      'Build `tbe_capi_shared`, package the native library, or set TBE_CAPI_PATH. '
+      'Attempted: ${attempted.join(', ')}',
     );
   }
 
   final _EngineCreateDart _engineCreate;
+  final _CApiVersionDart _getCApiVersion;
   final _EngineDestroyDart _engineDestroy;
   final _StringGetterDart _getEngineVersion;
   final _StringGetterDart _getApiVersion;
   final _SchemaVersionDart _getSchemaVersion;
   final _ProjectLoadJsonDart _projectLoadJson;
+  final _ProjectSaveJsonDart _projectSaveJson;
   final _ProjectImportPackageDart _importProjectPackage;
+  final _ProjectSaveJsonDart _getRenderSceneJson;
+  final _CreateWallDart _createWall;
+  final _MoveWallDart _moveWall;
+  final _CreateDoorDart _createDoor;
+  final _CreateWindowDart _createWindow;
+  final _ElementCommandDart _deleteElement;
+  final _SessionCommandDart _undo;
+  final _SessionCommandDart _redo;
   final _ValidateDart _validate;
   final _ScheduleDart _generateSchedules;
   final _ProjectExportPathDart _exportSvg;
@@ -362,9 +516,15 @@ class TbeViewerApi {
     final out = calloc<ffi.Pointer<Utf8>>();
     try {
       _check(handle, fn(handle, out));
-      final value = out.value.toDartString();
-      _freeString(out.value);
-      return value;
+      final valuePointer = out.value;
+      if (valuePointer == ffi.nullptr) {
+        throw TbeApiException('Native API returned an empty string pointer');
+      }
+      try {
+        return valuePointer.toDartString();
+      } finally {
+        _freeString(valuePointer);
+      }
     } finally {
       calloc.free(out);
     }
@@ -394,13 +554,148 @@ class TbeViewerApi {
     }
   }
 
-  void importProjectPackage(ffi.Pointer<ffi.Void> handle, String path) {
+  String saveProjectJson(ffi.Pointer<ffi.Void> handle) =>
+      _readOwnedString(handle, _projectSaveJson);
+
+  String getRenderSceneJson(ffi.Pointer<ffi.Void> handle) =>
+      _readOwnedString(handle, _getRenderSceneJson);
+
+  void importProjectPackage(
+    ffi.Pointer<ffi.Void> handle,
+    String path, {
+    TbeLoadMode mode = TbeLoadMode.repair,
+  }) {
     final pathPtr = path.toNativeUtf8();
     try {
-      _check(handle, _importProjectPackage(handle, pathPtr, 2));
+      _check(handle, _importProjectPackage(handle, pathPtr, mode.value));
     } finally {
       calloc.free(pathPtr);
     }
+  }
+
+  int createWall(
+    ffi.Pointer<ffi.Void> handle, {
+    required String name,
+    required int levelId,
+    required double startX,
+    required double startY,
+    required double endX,
+    required double endY,
+    required double thicknessMeters,
+    required double heightMeters,
+  }) {
+    final namePtr = name.toNativeUtf8();
+    final outId = calloc<ffi.Uint64>();
+    final start = calloc<TbeVec2>();
+    final end = calloc<TbeVec2>();
+    start.ref
+      ..x = startX
+      ..y = startY;
+    end.ref
+      ..x = endX
+      ..y = endY;
+    try {
+      final status = _createWall(
+        handle,
+        namePtr,
+        levelId,
+        start.ref,
+        end.ref,
+        thicknessMeters,
+        heightMeters,
+        outId,
+      );
+      _check(handle, status);
+      return outId.value;
+    } finally {
+      calloc.free(namePtr);
+      calloc.free(outId);
+      calloc.free(start);
+      calloc.free(end);
+    }
+  }
+
+  int createDoor(
+    ffi.Pointer<ffi.Void> handle, {
+    required String name,
+    required int hostWallId,
+    required double offsetMeters,
+    required double widthMeters,
+    required double heightMeters,
+  }) {
+    final namePtr = name.toNativeUtf8();
+    final outId = calloc<ffi.Uint64>();
+    try {
+      _check(
+        handle,
+        _createDoor(
+          handle,
+          namePtr,
+          hostWallId,
+          offsetMeters,
+          widthMeters,
+          heightMeters,
+          outId,
+        ),
+      );
+      return outId.value;
+    } finally {
+      calloc.free(namePtr);
+      calloc.free(outId);
+    }
+  }
+
+  int createWindow(
+    ffi.Pointer<ffi.Void> handle, {
+    required String name,
+    required int hostWallId,
+    required double offsetMeters,
+    required double widthMeters,
+    required double heightMeters,
+    required double sillHeightMeters,
+  }) {
+    final namePtr = name.toNativeUtf8();
+    final outId = calloc<ffi.Uint64>();
+    try {
+      _check(
+        handle,
+        _createWindow(
+          handle,
+          namePtr,
+          hostWallId,
+          offsetMeters,
+          widthMeters,
+          heightMeters,
+          sillHeightMeters,
+          outId,
+        ),
+      );
+      return outId.value;
+    } finally {
+      calloc.free(namePtr);
+      calloc.free(outId);
+    }
+  }
+
+  void moveWall(
+    ffi.Pointer<ffi.Void> handle,
+    int wallId, {
+    required double dxMeters,
+    required double dyMeters,
+  }) {
+    _check(handle, _moveWall(handle, wallId, dxMeters, dyMeters));
+  }
+
+  void deleteElement(ffi.Pointer<ffi.Void> handle, int elementId) {
+    _check(handle, _deleteElement(handle, elementId));
+  }
+
+  void undo(ffi.Pointer<ffi.Void> handle) {
+    _check(handle, _undo(handle));
+  }
+
+  void redo(ffi.Pointer<ffi.Void> handle) {
+    _check(handle, _redo(handle));
   }
 
   ValidationSummary validate(ffi.Pointer<ffi.Void> handle) {
@@ -518,11 +813,13 @@ class ViewerRepository {
   String? _currentJson;
   String? _currentJsonPath;
   String? _currentPackagePath;
+  final List<Directory> _temporaryDirectories = <Directory>[];
 
   Future<ViewerLoadResult> loadFromJson({
     required String projectName,
     required String json,
     String? sourcePath,
+    bool exportArtifacts = true,
   }) async {
     _projectName = projectName;
     _currentJson = json;
@@ -532,7 +829,11 @@ class ViewerRepository {
     _handle ??= _api.createSession();
     final handle = _handle!;
     _api.loadProjectJson(handle, json);
-    final snapshot = await _buildSnapshot(handle, _projectName ?? projectName);
+    final snapshot = await _buildSnapshot(
+      handle,
+      _projectName ?? projectName,
+      exportArtifacts: exportArtifacts,
+    );
     return ViewerLoadResult(
       snapshot: snapshot,
       hitCandidates: const <HitCandidateView>[],
@@ -541,6 +842,7 @@ class ViewerRepository {
 
   Future<ViewerLoadResult> loadFromPackage({
     required String packagePath,
+    TbeLoadMode mode = TbeLoadMode.repair,
   }) async {
     _projectName = packagePath.split(Platform.pathSeparator).last;
     _currentJson = null;
@@ -549,9 +851,12 @@ class ViewerRepository {
     _activeLevelId = _extractPrimaryLevelIdFromPackage(packagePath);
     _handle ??= _api.createSession();
     final handle = _handle!;
-    _api.importProjectPackage(handle, packagePath);
-    final snapshot =
-        await _buildSnapshot(handle, _projectName ?? 'Imported Package');
+    _api.importProjectPackage(handle, packagePath, mode: mode);
+    final snapshot = await _buildSnapshot(
+      handle,
+      _projectName ?? 'Imported Package',
+      exportArtifacts: true,
+    );
     return ViewerLoadResult(
       snapshot: snapshot,
       hitCandidates: const <HitCandidateView>[],
@@ -566,11 +871,15 @@ class ViewerRepository {
             _projectName ?? File(_currentJsonPath!).uri.pathSegments.last,
         json: json,
         sourcePath: _currentJsonPath,
+        exportArtifacts: true,
       );
     }
     if (_currentJson != null) {
       return loadFromJson(
-          projectName: _projectName ?? 'Reloaded Project', json: _currentJson!);
+        projectName: _projectName ?? 'Reloaded Project',
+        json: _currentJson!,
+        exportArtifacts: true,
+      );
     }
     if (_currentPackagePath != null) {
       return loadFromPackage(packagePath: _currentPackagePath!);
@@ -581,15 +890,23 @@ class ViewerRepository {
   Future<ViewerSnapshot> _buildSnapshot(
     ffi.Pointer<ffi.Void> handle,
     String projectName,
+    {required bool exportArtifacts,}
   ) async {
     final validation = _api.validate(handle);
     final schedules = _api.schedules(handle);
-    final tempDir =
-        await Directory.systemTemp.createTemp('tbe_viewer_flutter_');
-    final svgPath = '${tempDir.path}/floorplan.svg';
-    final packagePath = '${tempDir.path}/package';
-    _api.exportSvg(handle, svgPath);
-    _api.exportPackage(handle, packagePath);
+    var svgPath = '';
+    var packagePath = '';
+    var validationMessages = const <String>[];
+    if (exportArtifacts) {
+      final tempDir =
+          await Directory.systemTemp.createTemp('tbe_viewer_flutter_');
+      _temporaryDirectories.add(tempDir);
+      svgPath = '${tempDir.path}/floorplan.svg';
+      packagePath = '${tempDir.path}/package';
+      _api.exportSvg(handle, svgPath);
+      _api.exportPackage(handle, packagePath);
+      validationMessages = _extractValidationMessages(packagePath);
+    }
     return ViewerSnapshot(
       projectName: _projectName ?? projectName,
       engineVersion: _api.getEngineVersion(handle),
@@ -600,8 +917,129 @@ class ViewerRepository {
       schedule: schedules,
       svgPath: svgPath,
       packagePath: packagePath,
-      validationMessages: _extractValidationMessages(packagePath),
+      validationMessages: validationMessages,
     );
+  }
+
+  String renderSceneJson() {
+    final handle = _handle;
+    if (handle == null) {
+      throw TbeApiException('No loaded project');
+    }
+    return _api.getRenderSceneJson(handle);
+  }
+
+  String saveProjectJson() {
+    final handle = _handle;
+    if (handle == null) {
+      throw TbeApiException('No loaded project');
+    }
+    final json = _api.saveProjectJson(handle);
+    _currentJson = json;
+    return json;
+  }
+
+  int createWall({
+    required String name,
+    required int levelId,
+    required double startX,
+    required double startY,
+    required double endX,
+    required double endY,
+    required double thicknessMeters,
+    required double heightMeters,
+  }) {
+    final handle = _handle;
+    if (handle == null) {
+      throw TbeApiException('No loaded project');
+    }
+    return _api.createWall(
+      handle,
+      name: name,
+      levelId: levelId,
+      startX: startX,
+      startY: startY,
+      endX: endX,
+      endY: endY,
+      thicknessMeters: thicknessMeters,
+      heightMeters: heightMeters,
+    );
+  }
+
+  int createDoor({
+    required String name,
+    required int hostWallId,
+    required double offsetMeters,
+    required double widthMeters,
+    required double heightMeters,
+  }) {
+    final handle = _handle;
+    if (handle == null) {
+      throw TbeApiException('No loaded project');
+    }
+    return _api.createDoor(
+      handle,
+      name: name,
+      hostWallId: hostWallId,
+      offsetMeters: offsetMeters,
+      widthMeters: widthMeters,
+      heightMeters: heightMeters,
+    );
+  }
+
+  int createWindow({
+    required String name,
+    required int hostWallId,
+    required double offsetMeters,
+    required double widthMeters,
+    required double heightMeters,
+    required double sillHeightMeters,
+  }) {
+    final handle = _handle;
+    if (handle == null) {
+      throw TbeApiException('No loaded project');
+    }
+    return _api.createWindow(
+      handle,
+      name: name,
+      hostWallId: hostWallId,
+      offsetMeters: offsetMeters,
+      widthMeters: widthMeters,
+      heightMeters: heightMeters,
+      sillHeightMeters: sillHeightMeters,
+    );
+  }
+
+  void moveWall(int wallId, {required double dxMeters, required double dyMeters}) {
+    final handle = _handle;
+    if (handle == null) {
+      throw TbeApiException('No loaded project');
+    }
+    _api.moveWall(handle, wallId, dxMeters: dxMeters, dyMeters: dyMeters);
+  }
+
+  void deleteElement(int elementId) {
+    final handle = _handle;
+    if (handle == null) {
+      throw TbeApiException('No loaded project');
+    }
+    _api.deleteElement(handle, elementId);
+  }
+
+  void undo() {
+    final handle = _handle;
+    if (handle == null) {
+      throw TbeApiException('No loaded project');
+    }
+    _api.undo(handle);
+  }
+
+  void redo() {
+    final handle = _handle;
+    if (handle == null) {
+      throw TbeApiException('No loaded project');
+    }
+    _api.redo(handle);
   }
 
   List<HitCandidateView> hitTest(double modelX, double modelY) {
@@ -683,5 +1121,15 @@ class ViewerRepository {
       _api.destroySession(_handle!);
       _handle = null;
     }
+    for (final directory in _temporaryDirectories) {
+      try {
+        if (directory.existsSync()) {
+          directory.deleteSync(recursive: true);
+        }
+      } on FileSystemException {
+        // Temporary exports are best-effort cleanup only.
+      }
+    }
+    _temporaryDirectories.clear();
   }
 }

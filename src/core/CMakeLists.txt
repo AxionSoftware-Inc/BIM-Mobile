@@ -2,6 +2,7 @@ add_library(tbe_core
     src/Command.cpp
     src/Document.cpp
     src/DocumentJson.cpp
+    src/DependencyGraphService.cpp
     src/Element.cpp
     src/GeometryService.cpp
     src/JobSystem.cpp

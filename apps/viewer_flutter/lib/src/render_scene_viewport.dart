@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:io';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -109,6 +110,13 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
 
   Future<void> attachNativeBridge(int viewId) async {
     _channel = MethodChannel('tbe/render_scene_view_$viewId');
+    _channel!.setMethodCallHandler((MethodCall call) async {
+      if (call.method == 'elementTapped') {
+        final elementId = call.arguments?.toString();
+        await selectElement(elementId);
+        await highlightElement(elementId);
+      }
+    });
     await _syncNativeBridge();
     unawaited(
       Future<void>.delayed(const Duration(milliseconds: 250)).then((_) {
@@ -170,6 +178,10 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
       _orbitPitchRadians = math.pi / 4.8;
     }
     notifyListeners();
+    await _invoke(
+      'setProjectionMode',
+      mode == RenderSceneProjectionMode.topDown ? 'topDown' : 'isometric',
+    );
   }
 
   @override
@@ -178,12 +190,22 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
   ) async {
     _orbitProjectionStyle = style;
     notifyListeners();
+    await _invoke(
+      'setOrbitProjectionStyle',
+      style == RenderSceneOrbitProjectionStyle.perspective
+          ? 'perspective'
+          : 'orthographic',
+    );
   }
 
   @override
   Future<void> setDisplayStyle(RenderSceneDisplayStyle style) async {
     _displayStyle = style;
     notifyListeners();
+    await _invoke(
+      'setDisplayStyle',
+      style == RenderSceneDisplayStyle.solid ? 'solid' : 'wireframe',
+    );
   }
 
   @override
@@ -258,6 +280,22 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     await _invoke('setVisibleKinds', _visibleKinds.toList());
     await _invoke('selectElement', _selectedElementId);
     await _invoke('highlightElement', _highlightedElementId);
+    await _invoke(
+      'setProjectionMode',
+      _projectionMode == RenderSceneProjectionMode.topDown
+          ? 'topDown'
+          : 'isometric',
+    );
+    await _invoke(
+      'setOrbitProjectionStyle',
+      _orbitProjectionStyle == RenderSceneOrbitProjectionStyle.perspective
+          ? 'perspective'
+          : 'orthographic',
+    );
+    await _invoke(
+      'setDisplayStyle',
+      _displayStyle == RenderSceneDisplayStyle.solid ? 'solid' : 'wireframe',
+    );
   }
 
   Future<void> _invoke(String method, [Object? arguments]) async {
@@ -270,6 +308,13 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     } on MissingPluginException {
       // Native bridge is intentionally optional in the skeleton.
     }
+  }
+
+  @override
+  void dispose() {
+    _channel?.setMethodCallHandler(null);
+    _channel = null;
+    super.dispose();
   }
 }
 
@@ -318,7 +363,21 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
 
   @override
   Widget build(BuildContext context) {
+    if (Platform.isAndroid) {
+      return _buildAndroidPlatformViewport(context);
+    }
     return _buildFallbackViewport(context);
+  }
+
+  Widget _buildAndroidPlatformViewport(BuildContext context) {
+    return AndroidView(
+      viewType: 'tbe/render_scene_view',
+      creationParams: widget.controller.scene?.toJson(),
+      creationParamsCodec: const StandardMessageCodec(),
+      onPlatformViewCreated: (int viewId) {
+        unawaited(widget.controller.attachNativeBridge(viewId));
+      },
+    );
   }
 
   Widget _buildFallbackViewport(BuildContext context) {

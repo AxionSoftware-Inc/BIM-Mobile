@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'render_scene_models.dart';
 import 'render_scene_repository.dart';
 import 'render_scene_viewport.dart';
+import 'viewer_document_controller.dart';
 
 class ViewerApp extends StatelessWidget {
   const ViewerApp({
@@ -22,7 +23,7 @@ class ViewerApp extends StatelessWidget {
         useMaterial3: true,
       ),
       home: ViewerHomePage(
-        source: source ?? const AssetRenderSceneSource(),
+        source: source ?? EngineRenderSceneSource(),
       ),
     );
   }
@@ -43,11 +44,9 @@ class ViewerHomePage extends StatefulWidget {
 class _ViewerHomePageState extends State<ViewerHomePage> {
   final RenderSceneViewportController _viewportController =
       RenderSceneViewportController();
+  late final ViewerDocumentController _documentController;
 
-  RenderScene? _scene;
   String? _statusMessage;
-  String? _loadError;
-  bool _isBusy = false;
   RenderSceneProjectionMode _projectionMode = RenderSceneProjectionMode.topDown;
   RenderSceneOrbitProjectionStyle _orbitProjectionStyle =
       RenderSceneOrbitProjectionStyle.perspective;
@@ -56,31 +55,33 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   @override
   void initState() {
     super.initState();
+    _documentController = ViewerDocumentController(source: widget.source)
+      ..addListener(_handleDocumentChanged);
     _loadBundledSample();
+  }
+
+  RenderScene? get _scene => _documentController.scene;
+  String? get _loadError => _documentController.errorMessage;
+  bool get _isBusy => _documentController.isBusy;
+
+  void _handleDocumentChanged() {
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   @override
   void dispose() {
+    _documentController.removeListener(_handleDocumentChanged);
+    _documentController.dispose();
     _viewportController.dispose();
     super.dispose();
   }
 
   Future<void> _loadBundledSample() async {
-    setState(() {
-      _isBusy = true;
-      _loadError = null;
-      _statusMessage = 'Loading bundled RenderScene sample...';
-    });
-    try {
-      final result = await widget.source.loadBundledSample();
-      await _applyLoadResult(result, sourceLabel: 'assets/render_scene.json');
-    } catch (error) {
-      setState(() {
-        _loadError = error.toString();
-        _statusMessage = 'Failed to load bundled sample.';
-        _isBusy = false;
-      });
-    }
+    _statusMessage = 'Loading bundled project through the engine...';
+    final result = await _documentController.loadBundledSample();
+    await _applyLoadResult(result, sourceLabel: 'engine project');
   }
 
   Future<void> _reloadCurrentScene() async {
@@ -98,14 +99,14 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     RenderSceneLoadResult result, {
     required String sourceLabel,
   }) async {
+    if (!mounted) {
+      return;
+    }
     final scene = result.scene;
     setState(() {
-      _scene = scene;
-      _loadError = result.errors.isNotEmpty ? result.errors.join('\n') : null;
       _statusMessage = scene == null
           ? 'RenderScene load failed.'
           : 'Loaded ${scene.objectCount} objects from $sourceLabel';
-      _isBusy = false;
     });
     if (scene != null) {
       await _viewportController.loadRenderScene(scene);

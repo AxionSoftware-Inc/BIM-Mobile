@@ -40,6 +40,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.IntBuffer
 import kotlin.math.cos
+import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
@@ -86,6 +87,7 @@ private data class FilamentSceneMetrics(
 internal class RenderSceneFilamentHostView(
   context: Context,
   initialScene: SceneState? = null,
+  private val onElementTapped: (Long) -> Unit = {},
 ) : FrameLayout(context), UiHelper.RendererCallback, Choreographer.FrameCallback {
   companion object {
     init {
@@ -154,6 +156,9 @@ internal class RenderSceneFilamentHostView(
   private var orbitYawRadians = Math.toRadians(45.0)
   private var orbitPitchRadians = Math.toRadians(22.0)
   private var orbitDistance = 12.0
+  private var projectionMode = "isometric"
+  private var orbitProjectionStyle = "perspective"
+  private var displayStyle = "solid"
   private var lastTouchX = 0f
   private var lastTouchY = 0f
   private var touching = false
@@ -249,7 +254,7 @@ internal class RenderSceneFilamentHostView(
     orbitDistance = max(radius * 2.0, 3.0)
     orbitYawRadians = Math.toRadians(45.0)
     orbitPitchRadians = Math.toRadians(24.0)
-    camera.setProjection(45.0, aspectRatio(), 0.1, orbitDistance * 60.0, Camera.Fov.VERTICAL)
+    updateCameraProjection()
     updateOrbitCamera()
     updateStatus("Camera fitted to ${metrics.objectCount} objects.")
     invalidate()
@@ -273,6 +278,27 @@ internal class RenderSceneFilamentHostView(
   fun highlightElement(elementId: Any?) {
     highlightedElementId = toLong(elementId)
     refreshTintState()
+    updateStatus()
+    invalidate()
+  }
+
+  fun setProjectionMode(mode: String) {
+    projectionMode = if (mode == "topDown") "topDown" else "isometric"
+    updateCameraProjection()
+    updateOrbitCamera()
+    updateStatus()
+    invalidate()
+  }
+
+  fun setOrbitProjectionStyle(style: String) {
+    orbitProjectionStyle = if (style == "orthographic") "orthographic" else "perspective"
+    updateCameraProjection()
+    updateStatus()
+    invalidate()
+  }
+
+  fun setDisplayStyle(style: String) {
+    displayStyle = if (style == "wireframe") "wireframe" else "solid"
     updateStatus()
     invalidate()
   }
@@ -645,6 +671,12 @@ internal class RenderSceneFilamentHostView(
       append(selectedLabel)
       append(" · ")
       append(highlightLabel)
+      append(" · mode=")
+      append(projectionMode)
+      append("/")
+      append(orbitProjectionStyle)
+      append("/")
+      append(displayStyle)
     }
     statusMessage = status
     statusView.text = status
@@ -698,6 +730,9 @@ internal class RenderSceneFilamentHostView(
         return true
       }
       MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+        if (event.actionMasked == MotionEvent.ACTION_UP) {
+          pickElementAt(event.x, event.y)?.let(onElementTapped)
+        }
         touching = false
         return true
       }
@@ -708,6 +743,20 @@ internal class RenderSceneFilamentHostView(
   private fun updateOrbitCamera() {
     val camera = camera ?: return
     val center = orbitCenter
+    if (projectionMode == "topDown") {
+      camera.lookAt(
+        center.x,
+        center.y + orbitDistance,
+        center.z,
+        center.x,
+        center.y,
+        center.z,
+        0.0,
+        0.0,
+        -1.0,
+      )
+      return
+    }
     val cosPitch = cos(orbitPitchRadians)
     val eyeX = center.x + orbitDistance * cosPitch * cos(orbitYawRadians)
     val eyeZ = center.z + orbitDistance * cosPitch * sin(orbitYawRadians)
@@ -723,6 +772,69 @@ internal class RenderSceneFilamentHostView(
       1.0,
       0.0,
     )
+  }
+
+  private fun updateCameraProjection() {
+    val camera = camera ?: return
+    val distance = orbitDistance.coerceAtLeast(1.0)
+    if (orbitProjectionStyle == "orthographic") {
+      val halfHeight = (distance * 0.55).coerceAtLeast(1.0)
+      val halfWidth = halfHeight * aspectRatio()
+      camera.setProjection(
+        Camera.Projection.ORTHO,
+        -halfWidth,
+        halfWidth,
+        -halfHeight,
+        halfHeight,
+        0.1,
+        distance * 60.0,
+      )
+    } else {
+      camera.setProjection(45.0, aspectRatio(), 0.1, distance * 60.0, Camera.Fov.VERTICAL)
+    }
+  }
+
+  private fun pickElementAt(screenX: Float, screenY: Float): Long? {
+    val sceneState = currentScene ?: return null
+    var bounds: SceneBounds? = null
+    for (objectData in sceneState.objects) {
+      bounds = if (bounds == null) {
+        objectData.bounds
+      } else {
+        SceneBounds(
+          min = ScenePoint(
+            min(bounds!!.min.x, objectData.bounds.min.x),
+            min(bounds!!.min.y, objectData.bounds.min.y),
+            min(bounds!!.min.z, objectData.bounds.min.z),
+          ),
+          max = ScenePoint(
+            max(bounds!!.max.x, objectData.bounds.max.x),
+            max(bounds!!.max.y, objectData.bounds.max.y),
+            max(bounds!!.max.z, objectData.bounds.max.z),
+          ),
+        )
+      }
+    }
+    val sceneBounds = bounds ?: return null
+    val width = max(sceneBounds.max.x - sceneBounds.min.x, 0.001)
+    val depth = max(sceneBounds.max.y - sceneBounds.min.y, 0.001)
+    val viewportWidth = max(renderSurface.width, 1).toDouble()
+    val viewportHeight = max(renderSurface.height, 1).toDouble()
+    val tolerance = 56.0
+    return sceneState.objects
+      .asSequence()
+      .filter { it.elementId != null }
+      .map { objectData ->
+        val centerX = (objectData.bounds.min.x + objectData.bounds.max.x) * 0.5
+        val centerY = (objectData.bounds.min.y + objectData.bounds.max.y) * 0.5
+        val projectedX = ((centerX - sceneBounds.min.x) / width) * viewportWidth
+        val projectedY = (1.0 - (centerY - sceneBounds.min.y) / depth) * viewportHeight
+        val distance = hypot(projectedX - screenX, projectedY - screenY)
+        objectData.elementId!! to distance
+      }
+      .filter { (_, distance) -> distance <= tolerance }
+      .minByOrNull { (_, distance) -> distance }
+      ?.first
   }
 
   private fun boxCorners(bounds: SceneBounds): List<ScenePoint> {
