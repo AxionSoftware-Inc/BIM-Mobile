@@ -567,17 +567,27 @@ extension _ViewerViewportWallEditing on _ViewerHomePageState {
           )
         : (_snapDraftToGrid ? _snapPoint(modelPoint) : modelPoint);
     if (_surfaceDrawMode == RenderSceneSurfaceDrawMode.polyline) {
+      if (_surfaceTool.boundaryClosed) {
+        _updateViewportState(() {
+          _editStatusMessage =
+              'Boundary closed. Pink outline-ni tekshiring, keyin Finish bosing.';
+        });
+        return;
+      }
       final first = _draftSurfacePoints.firstOrNull;
       if (first != null &&
           _draftSurfacePoints.length >= 3 &&
-          PlanSketchGeometry.planDistance(first, snapped) <=
-              PlanSketchGeometry.defaultEndpointToleranceMeters) {
+          SurfaceAuthoringGeometry.isNearFirstPoint(
+            _draftSurfacePoints,
+            snapped,
+            toleranceMeters: PlanSketchGeometry.defaultEndpointToleranceMeters,
+          )) {
         _updateViewportState(() {
           _draftSurfaceEnd = first;
-          _editStatusMessage = 'Boundary closed. Creating...';
+          _editStatusMessage = 'First point snapped. Closing boundary...';
         });
         _syncSurfaceDraftPreview();
-        await _confirmDraft();
+        _toggleBoundaryClosed();
         return;
       }
       final previous = _draftSurfacePoints.lastOrNull;
@@ -592,8 +602,8 @@ extension _ViewerViewportWallEditing on _ViewerHomePageState {
         _draftSurfaceStart ??= snapped;
         _draftSurfaceEnd = snapped;
         _editStatusMessage = _draftSurfacePoints.length < 3
-            ? 'Polyline draft point ${_draftSurfacePoints.length} added. Add more points.'
-            : 'Polyline draft ready. Confirm to create ${_surfaceKindLabel()}.';
+            ? 'Boundary point ${_draftSurfacePoints.length} added. Add the next corner.'
+            : 'Pink boundary draft ready. Close contour, then Finish.';
       });
       _syncSurfaceDraftPreview();
       return;

@@ -521,8 +521,12 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
               enabled: _scene != null && !_isBusy,
               canFinish: _draftCanConfirm,
               canUndo: _surfaceTool.canUndo,
+              canCloseBoundary: _draftSurfacePoints.length >= 3,
+              boundaryClosed: _surfaceTool.boundaryClosed,
+              draftPointCount: _draftSurfacePoints.length,
               onDrawModeChanged: _setSurfaceDrawMode,
               onUndo: _undoSurfaceDraft,
+              onToggleBoundaryClosed: _toggleBoundaryClosed,
               onRepairJoins: () => unawaited(_repairWallJoins()),
               onTrimExtend: () {
                 _setInteractionMode(RenderSceneInteractionMode.trimExtend);

@@ -88,25 +88,103 @@ class NativeDraftOverlayPainter extends CustomPainter {
       final points = surface.points
           .map((point) => projection.project(point).screen)
           .toList(growable: false);
+      final isBoundarySketch = surface.boundarySketch;
+      final strokeColor = isBoundarySketch
+          ? const Color(0xFFE11D72)
+          : const Color(0xFF2563EB).withValues(alpha: 0.9);
+      final fillColor = isBoundarySketch
+          ? const Color(0xFFFFD1E4).withValues(alpha: 0.28)
+          : const Color(0xFF2563EB).withValues(alpha: 0.10);
+      final committedCount = (surface.committedPointCount ?? points.length)
+          .clamp(0, points.length);
+      final committed = points.take(committedCount).toList(growable: false);
       final path = Path()..moveTo(points.first.dx, points.first.dy);
       for (final point in points.skip(1)) {
         path.lineTo(point.dx, point.dy);
       }
       if (surface.closed && points.length >= 3) path.close();
-      canvas.drawPath(
-        path,
-        Paint()
-          ..style = PaintingStyle.fill
-          ..color = const Color(0xFF2563EB).withValues(alpha: 0.10),
-      );
-      canvas.drawPath(
-        path,
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 2.2
-          ..strokeJoin = StrokeJoin.round
-          ..color = const Color(0xFF2563EB).withValues(alpha: 0.9),
-      );
+      if (surface.closed && points.length >= 3) {
+        canvas.drawPath(
+          path,
+          Paint()
+            ..style = PaintingStyle.fill
+            ..color = fillColor,
+        );
+      }
+      if (isBoundarySketch && !surface.closed && committed.length >= 2) {
+        final committedPath = Path()
+          ..moveTo(committed.first.dx, committed.first.dy);
+        for (final point in committed.skip(1)) {
+          committedPath.lineTo(point.dx, point.dy);
+        }
+        canvas.drawPath(
+          committedPath,
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 3.0
+            ..strokeCap = StrokeCap.round
+            ..strokeJoin = StrokeJoin.round
+            ..color = strokeColor,
+        );
+        if (points.length > committed.length) {
+          canvas.drawLine(
+            committed.last,
+            points.last,
+            Paint()
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = 3.0
+              ..strokeCap = StrokeCap.round
+              ..color = strokeColor.withValues(alpha: 0.62),
+          );
+        }
+      } else {
+        canvas.drawPath(
+          path,
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = isBoundarySketch ? 3.0 : 2.2
+            ..strokeJoin = StrokeJoin.round
+            ..color = strokeColor,
+        );
+      }
+      for (var index = 0; index < points.length; index += 1) {
+        final point = points[index];
+        if (isBoundarySketch && index >= committedCount) {
+          canvas.drawCircle(
+            point,
+            8.0,
+            Paint()
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = 2.0
+              ..color = strokeColor.withValues(alpha: 0.75),
+          );
+          canvas.drawCircle(point, 4.5, Paint()..color = Colors.white);
+          canvas.drawCircle(
+            point,
+            4.5,
+            Paint()
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = 2.0
+              ..color = strokeColor,
+          );
+        } else {
+          canvas.drawCircle(
+            point,
+            isBoundarySketch ? 5.5 : 4.5,
+            Paint()..color = strokeColor,
+          );
+        }
+      }
+      if (isBoundarySketch && !surface.closed && points.length >= 3) {
+        canvas.drawCircle(
+          points.first,
+          10.0,
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 2.0
+            ..color = strokeColor.withValues(alpha: 0.58),
+        );
+      }
     }
 
     // Keep each picked wall visible independently. This is important before

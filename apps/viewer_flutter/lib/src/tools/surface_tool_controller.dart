@@ -9,6 +9,7 @@ class SurfaceToolController extends ChangeNotifier {
   RenderScenePoint? _end;
   final List<RenderScenePoint> _points = <RenderScenePoint>[];
   final Set<int> _wallIds = <int>{};
+  bool _boundaryClosed = false;
   // Picking the enclosing walls is the safest default on a touch screen: it
   // avoids an accidental rectangle when the user intended to follow the
   // building footprint.
@@ -29,6 +30,7 @@ class SurfaceToolController extends ChangeNotifier {
   /// remain scoped to this controller instead of the app-level UI state.
   List<RenderScenePoint> get points => _points;
   Set<int> get wallIds => _wallIds;
+  bool get boundaryClosed => _boundaryClosed;
   bool get canUndo => switch (_drawMode) {
         RenderSceneSurfaceDrawMode.polyline => _points.isNotEmpty,
         RenderSceneSurfaceDrawMode.pickWalls => _wallIds.isNotEmpty,
@@ -63,6 +65,18 @@ class SurfaceToolController extends ChangeNotifier {
     notifyListeners();
   }
 
+  void closeBoundary() {
+    if (_boundaryClosed) return;
+    _boundaryClosed = true;
+    notifyListeners();
+  }
+
+  void reopenBoundary() {
+    if (!_boundaryClosed) return;
+    _boundaryClosed = false;
+    notifyListeners();
+  }
+
   void replaceWallIds(Iterable<int> value) {
     _wallIds
       ..clear()
@@ -76,6 +90,11 @@ class SurfaceToolController extends ChangeNotifier {
   bool undoLast() {
     switch (_drawMode) {
       case RenderSceneSurfaceDrawMode.polyline:
+        if (_boundaryClosed) {
+          _boundaryClosed = false;
+          notifyListeners();
+          return true;
+        }
         if (_points.isEmpty) return false;
         _points.removeLast();
         _start = _points.firstOrNull;
@@ -93,6 +112,7 @@ class SurfaceToolController extends ChangeNotifier {
         _start = null;
         _end = null;
         _points.clear();
+        _boundaryClosed = false;
         break;
       case RenderSceneSurfaceDrawMode.autoRoom:
         return false;
@@ -106,6 +126,7 @@ class SurfaceToolController extends ChangeNotifier {
     _end = null;
     _points.clear();
     _wallIds.clear();
+    _boundaryClosed = false;
     _drawMode = RenderSceneSurfaceDrawMode.pickWalls;
     _thicknessMeters = 0.18;
     _heightMeters = defaultHeight;

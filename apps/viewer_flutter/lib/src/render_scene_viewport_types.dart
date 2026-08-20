@@ -193,11 +193,22 @@ class RenderSceneSurfaceDraft {
     required this.kind,
     required this.points,
     this.closed = true,
+    this.boundarySketch = false,
+    this.committedPointCount,
   });
 
   final String kind;
   final List<RenderScenePoint> points;
   final bool closed;
+
+  /// True while the Revit-style Boundary tool is being edited. Boundary
+  /// drafts use the pink sketch treatment instead of the final material
+  /// colour, and may contain one extra live cursor point.
+  final bool boundarySketch;
+
+  /// Number of points confirmed by a tap. When the live cursor is present,
+  /// it is drawn as a separate preview segment/handle.
+  final int? committedPointCount;
 }
 
 @immutable

@@ -63,6 +63,29 @@ void registerWorkspaceDocumentationTests() {
     expect(find.text('Auto Room'), findsNothing);
   });
 
+  testWidgets('Boundary tool uses an explicit close-before-finish workflow',
+      (WidgetTester tester) async {
+    final json = File('assets/render_scene.json').readAsStringSync();
+    await tester.binding.setSurfaceSize(const Size(1600, 1000));
+    await tester.pumpWidget(
+      ViewerApp(
+        source:
+            MemoryRenderSceneSource(json, source: 'assets/render_scene.json'),
+        preferEngineBackedBundledSample: false,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Floor'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Boundary'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Close contour'), findsOneWidget);
+    expect(find.text('Finish'), findsOneWidget);
+    expect(find.text('Trim / Extend'), findsNothing);
+  });
+
   testWidgets('Project Browser keeps categories without an object list',
       (WidgetTester tester) async {
     final json = File('assets/render_scene.json').readAsStringSync();

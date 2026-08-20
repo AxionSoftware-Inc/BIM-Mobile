@@ -210,6 +210,41 @@ extension _ViewerViewportInput on _ViewerHomePageState {
           }
           return;
         }
+        if (_surfaceDrawMode == RenderSceneSurfaceDrawMode.polyline) {
+          if (_surfaceTool.boundaryClosed) {
+            return;
+          }
+          final snapped = _draftLinePoint(
+            rawPoint: modelPoint,
+            referenceStart: _draftSurfacePoints.lastOrNull,
+          );
+          final first = _draftSurfacePoints.firstOrNull;
+          final previewPoint = first != null &&
+                  _draftSurfacePoints.length >= 3 &&
+                  SurfaceAuthoringGeometry.isNearFirstPoint(
+                    _draftSurfacePoints,
+                    snapped,
+                    toleranceMeters:
+                        PlanSketchGeometry.defaultEndpointToleranceMeters,
+                  )
+              ? first
+              : snapped;
+          if (_draftSurfaceEnd == previewPoint) {
+            return;
+          }
+          _updateViewportState(() {
+            _draftSurfaceEnd = previewPoint;
+            _editStatusMessage = first != null &&
+                    _draftSurfacePoints.length >= 3 &&
+                    previewPoint == first
+                ? 'Close target: tap the first point or press Close contour.'
+                : _draftSurfacePoints.isEmpty
+                    ? 'Tap the first boundary corner.'
+                    : 'Pink preview: tap to add the next boundary corner.';
+          });
+          _syncSurfaceDraftPreview();
+          return;
+        }
         if (_surfaceDrawMode != RenderSceneSurfaceDrawMode.rectangle) {
           return;
         }

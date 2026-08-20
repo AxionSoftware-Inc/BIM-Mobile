@@ -265,6 +265,57 @@ void registerAuthoringToolModuleTests() {
     );
   });
 
+  test('boundary preview keeps a live cursor separate from committed points',
+      () {
+    const first = RenderScenePoint(x: 0, y: 0, z: 0);
+    const second = RenderScenePoint(x: 4, y: 0, z: 0);
+    const third = RenderScenePoint(x: 4, y: 3, z: 0);
+    const cursor = RenderScenePoint(x: 0, y: 3, z: 0);
+    final preview = SurfaceAuthoringGeometry.previewPoints(
+      mode: RenderSceneSurfaceDrawMode.polyline,
+      points: const <RenderScenePoint>[first, second, third],
+      cursor: cursor,
+    );
+
+    expect(preview, hasLength(4));
+    expect(preview.last, cursor);
+    expect(
+      SurfaceAuthoringGeometry.previewIsClosed(
+        mode: RenderSceneSurfaceDrawMode.polyline,
+        points: preview,
+      ),
+      isFalse,
+    );
+    expect(
+      SurfaceAuthoringGeometry.isValidBoundary(
+        const <RenderScenePoint>[first, second, third, cursor],
+        closed: true,
+      ),
+      isTrue,
+    );
+  });
+
+  test('boundary validation rejects self-crossing sketches', () {
+    const bowTie = <RenderScenePoint>[
+      RenderScenePoint(x: 0, y: 0, z: 0),
+      RenderScenePoint(x: 4, y: 3, z: 0),
+      RenderScenePoint(x: 0, y: 3, z: 0),
+      RenderScenePoint(x: 4, y: 0, z: 0),
+    ];
+
+    expect(
+      SurfaceAuthoringGeometry.isValidBoundary(bowTie, closed: true),
+      isFalse,
+    );
+    expect(
+      SurfaceAuthoringGeometry.boundaryValidationMessage(
+        bowTie,
+        closed: true,
+      ),
+      contains('kesishgan'),
+    );
+  });
+
   test('stair authoring geometry validates run, rise and riser count', () {
     var scene = loadSampleScene();
     scene = RenderSceneEditor.createLevel(

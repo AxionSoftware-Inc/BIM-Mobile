@@ -200,9 +200,10 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
       _draftSurfaceEnd = null;
       _draftSurfacePoints.clear();
       _draftSurfaceWallIds.clear();
+      _surfaceTool.reopenBoundary();
       _editStatusMessage = switch (value) {
         RenderSceneSurfaceDrawMode.polyline =>
-          'Boundary sketch: tap each corner, then Finish.',
+          'Boundary sketch: tap corners. Pink line is a draft; close it, then Finish.',
         RenderSceneSurfaceDrawMode.rectangle =>
           'Rectangle sketch: tap two opposite corners.',
         RenderSceneSurfaceDrawMode.pickWalls =>
@@ -225,14 +226,49 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
     }
     _updateViewportState(() {
       _editStatusMessage = switch (_surfaceDrawMode) {
-        RenderSceneSurfaceDrawMode.polyline =>
-          '${_draftSurfacePoints.length} boundary points remain.',
+        RenderSceneSurfaceDrawMode.polyline => _surfaceTool.boundaryClosed
+            ? 'Boundary reopened. Undo again to remove the last point.'
+            : '${_draftSurfacePoints.length} boundary points remain. Add the next corner or close the contour.',
         RenderSceneSurfaceDrawMode.pickWalls =>
           '${_draftSurfaceWallIds.length} picked walls remain.',
         RenderSceneSurfaceDrawMode.rectangle =>
           'Rectangle cleared. Drag again to draw.',
         RenderSceneSurfaceDrawMode.autoRoom => 'Tap a room.',
       };
+    });
+  }
+
+  void _toggleBoundaryClosed() {
+    if (_surfaceDrawMode != RenderSceneSurfaceDrawMode.polyline) {
+      return;
+    }
+    if (_surfaceTool.boundaryClosed) {
+      _surfaceTool.reopenBoundary();
+      _draftSurfaceEnd = _draftSurfacePoints.lastOrNull;
+      _syncSurfaceDraftPreview();
+      _updateViewportState(() {
+        _editStatusMessage =
+            'Boundary reopened. Fix the pink sketch, then close it again.';
+      });
+      return;
+    }
+
+    final points = _draftSurfacePoints;
+    if (!SurfaceAuthoringGeometry.isValidBoundary(points, closed: true)) {
+      _updateViewportState(() {
+        _editStatusMessage = SurfaceAuthoringGeometry.boundaryValidationMessage(
+          points,
+          closed: false,
+        );
+      });
+      return;
+    }
+    _surfaceTool.closeBoundary();
+    _draftSurfaceEnd = points.firstOrNull;
+    _syncSurfaceDraftPreview();
+    _updateViewportState(() {
+      _editStatusMessage =
+          'Boundary closed. Check the pink outline, then tap Finish.';
     });
   }
 

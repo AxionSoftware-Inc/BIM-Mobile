@@ -73,23 +73,30 @@ mixin _FallbackSceneOverlayMixin {
           .map((point) => projection.project(point).screen)
           .toList(growable: false);
       if (projected.length >= 2) {
+        final isBoundarySketch = surface.boundarySketch;
+        final fillColor = isBoundarySketch
+            ? const Color(0xFFFFD1E4).withValues(alpha: 0.28)
+            : switch (surface.kind) {
+                'ceiling' => const Color(0xFF60A5FA).withValues(alpha: 0.18),
+                'roof' => const Color(0xFFF59E0B).withValues(alpha: 0.18),
+                _ => const Color(0xFF10B981).withValues(alpha: 0.18),
+              };
+        final strokeColor = isBoundarySketch
+            ? const Color(0xFFE11D72)
+            : switch (surface.kind) {
+                'ceiling' => const Color(0xFF2563EB),
+                'roof' => const Color(0xFFD97706),
+                _ => const Color(0xFF059669),
+              };
+        final committedCount = (surface.committedPointCount ?? projected.length)
+            .clamp(0, projected.length);
+        final committed =
+            projected.take(committedCount).toList(growable: false);
         final path = Path()..moveTo(projected[0].dx, projected[0].dy);
         for (var index = 1; index < projected.length; index += 1) {
           path.lineTo(projected[index].dx, projected[index].dy);
         }
-        if (surface.closed && projected.length >= 3) {
-          path.close();
-        }
-        final fillColor = switch (surface.kind) {
-          'ceiling' => const Color(0xFF60A5FA).withValues(alpha: 0.18),
-          'roof' => const Color(0xFFF59E0B).withValues(alpha: 0.18),
-          _ => const Color(0xFF10B981).withValues(alpha: 0.18),
-        };
-        final strokeColor = switch (surface.kind) {
-          'ceiling' => const Color(0xFF2563EB),
-          'roof' => const Color(0xFFD97706),
-          _ => const Color(0xFF059669),
-        };
+        if (surface.closed && projected.length >= 3) path.close();
         if (surface.closed && projected.length >= 3) {
           canvas.drawPath(
             path,
@@ -98,15 +105,76 @@ mixin _FallbackSceneOverlayMixin {
               ..color = fillColor,
           );
         }
-        canvas.drawPath(
-          path,
-          Paint()
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 2.0
-            ..color = strokeColor,
-        );
-        for (final point in projected) {
-          canvas.drawCircle(point, 4.5, Paint()..color = strokeColor);
+        if (isBoundarySketch && !surface.closed && committed.length >= 2) {
+          final committedPath = Path()
+            ..moveTo(committed.first.dx, committed.first.dy);
+          for (final point in committed.skip(1)) {
+            committedPath.lineTo(point.dx, point.dy);
+          }
+          canvas.drawPath(
+            committedPath,
+            Paint()
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = 3.0
+              ..strokeCap = StrokeCap.round
+              ..strokeJoin = StrokeJoin.round
+              ..color = strokeColor,
+          );
+          if (projected.length > committed.length) {
+            canvas.drawLine(
+              committed.last,
+              projected.last,
+              Paint()
+                ..style = PaintingStyle.stroke
+                ..strokeWidth = 3.0
+                ..strokeCap = StrokeCap.round
+                ..color = strokeColor.withValues(alpha: 0.62),
+            );
+          }
+        } else {
+          canvas.drawPath(
+            path,
+            Paint()
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = isBoundarySketch ? 3.0 : 2.0
+              ..strokeJoin = StrokeJoin.round
+              ..color = strokeColor,
+          );
+        }
+        for (var index = 0; index < projected.length; index += 1) {
+          final point = projected[index];
+          if (isBoundarySketch && index >= committedCount) {
+            canvas.drawCircle(
+              point,
+              8.0,
+              Paint()
+                ..style = PaintingStyle.stroke
+                ..strokeWidth = 2.0
+                ..color = strokeColor.withValues(alpha: 0.75),
+            );
+            canvas.drawCircle(point, 4.5, Paint()..color = Colors.white);
+            canvas.drawCircle(
+              point,
+              4.5,
+              Paint()
+                ..style = PaintingStyle.stroke
+                ..strokeWidth = 2.0
+                ..color = strokeColor,
+            );
+          } else {
+            canvas.drawCircle(point, isBoundarySketch ? 5.5 : 4.5,
+                Paint()..color = strokeColor);
+          }
+        }
+        if (isBoundarySketch && !surface.closed && projected.length >= 3) {
+          canvas.drawCircle(
+            projected.first,
+            10.0,
+            Paint()
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = 2.0
+              ..color = strokeColor.withValues(alpha: 0.58),
+          );
         }
 
         // A roof direction/ridge preview is defined for the whole boundary.
@@ -598,5 +666,4 @@ mixin _FallbackSceneOverlayMixin {
         return const Color(0xFFE2E8F0);
     }
   }
-
 }

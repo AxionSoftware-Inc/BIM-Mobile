@@ -331,8 +331,12 @@ class SurfaceDrawingContextBar extends StatelessWidget {
     required this.enabled,
     required this.canFinish,
     required this.canUndo,
+    required this.canCloseBoundary,
+    required this.boundaryClosed,
+    required this.draftPointCount,
     required this.onDrawModeChanged,
     required this.onUndo,
+    required this.onToggleBoundaryClosed,
     required this.onRepairJoins,
     required this.onTrimExtend,
     required this.onFinish,
@@ -344,8 +348,12 @@ class SurfaceDrawingContextBar extends StatelessWidget {
   final bool enabled;
   final bool canFinish;
   final bool canUndo;
+  final bool canCloseBoundary;
+  final bool boundaryClosed;
+  final int draftPointCount;
   final ValueChanged<RenderSceneSurfaceDrawMode> onDrawModeChanged;
   final VoidCallback onUndo;
+  final VoidCallback onToggleBoundaryClosed;
   final VoidCallback onRepairJoins;
   final VoidCallback onTrimExtend;
   final VoidCallback onFinish;
@@ -409,7 +417,10 @@ class SurfaceDrawingContextBar extends StatelessWidget {
               child: VerticalDivider(width: 8),
             ),
             Tooltip(
-              message: 'Remove the last point or picked wall',
+              message: drawMode == RenderSceneSurfaceDrawMode.polyline &&
+                      boundaryClosed
+                  ? 'Reopen the boundary before removing a point'
+                  : 'Remove the last point or picked wall',
               child: IconButton.filledTonal(
                 onPressed: enabled && canUndo ? onUndo : null,
                 icon: const Icon(Icons.undo, size: 19),
@@ -424,14 +435,33 @@ class SurfaceDrawingContextBar extends StatelessWidget {
                 label: const Text('Repair joins'),
               ),
             ),
-            Tooltip(
-              message: 'Switch to the wall Trim / Extend tool',
-              child: OutlinedButton.icon(
-                onPressed: enabled ? onTrimExtend : null,
-                icon: const Icon(Icons.call_merge_outlined, size: 18),
-                label: const Text('Trim / Extend'),
+            if (drawMode == RenderSceneSurfaceDrawMode.polyline)
+              Tooltip(
+                message: boundaryClosed
+                    ? 'Reopen the pink boundary to edit its points'
+                    : 'Close the pink boundary without creating the surface',
+                child: OutlinedButton.icon(
+                  onPressed: enabled && (boundaryClosed || canCloseBoundary)
+                      ? onToggleBoundaryClosed
+                      : null,
+                  icon: Icon(
+                    boundaryClosed
+                        ? Icons.lock_open_outlined
+                        : Icons.link_outlined,
+                    size: 18,
+                  ),
+                  label: Text(boundaryClosed ? 'Reopen' : 'Close contour'),
+                ),
+              )
+            else
+              Tooltip(
+                message: 'Switch to the wall Trim / Extend tool',
+                child: OutlinedButton.icon(
+                  onPressed: enabled ? onTrimExtend : null,
+                  icon: const Icon(Icons.call_merge_outlined, size: 18),
+                  label: const Text('Trim / Extend'),
+                ),
               ),
-            ),
             FilledButton.icon(
               onPressed: enabled && canFinish ? onFinish : null,
               icon: const Icon(Icons.check, size: 18),
@@ -448,7 +478,9 @@ class SurfaceDrawingContextBar extends StatelessWidget {
                       ? 'Tap walls · selected walls turn blue · Undo removes last'
                       : drawMode == RenderSceneSurfaceDrawMode.autoRoom
                           ? 'Tap inside a closed room · created immediately'
-                          : 'Tap corners · Finish closes the loop',
+                          : boundaryClosed
+                              ? '$draftPointCount points · pink loop closed · review it, then Finish'
+                              : '$draftPointCount points · pink preview · Close contour · Finish',
               style: theme.textTheme.labelSmall?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
               ),
@@ -484,7 +516,7 @@ String _surfaceDrawModeLabel(RenderSceneSurfaceDrawMode mode) => switch (mode) {
 
 String _surfaceDrawModeHint(RenderSceneSurfaceDrawMode mode) => switch (mode) {
       RenderSceneSurfaceDrawMode.polyline =>
-        'Click consecutive boundary points, then Finish',
+        'Tap corners to make the pink draft; close the loop, review it, then Finish',
       RenderSceneSurfaceDrawMode.rectangle => 'Click two opposite corners',
       RenderSceneSurfaceDrawMode.pickWalls =>
         'Select enclosing walls to derive the footprint',

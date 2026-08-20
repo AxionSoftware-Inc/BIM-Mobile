@@ -331,6 +331,28 @@ void registerInteractionAuthoringTests() {
     expect(tool.canUndo, isFalse);
   });
 
+  test('boundary close is explicit and undo reopens before deleting a point',
+      () {
+    final tool = SurfaceToolController()
+      ..drawMode = RenderSceneSurfaceDrawMode.polyline;
+    addTearDown(tool.dispose);
+    const points = <RenderScenePoint>[
+      RenderScenePoint(x: 0, y: 0, z: 0),
+      RenderScenePoint(x: 4, y: 0, z: 0),
+      RenderScenePoint(x: 4, y: 3, z: 0),
+    ];
+    tool.replacePoints(points);
+
+    expect(tool.boundaryClosed, isFalse);
+    tool.closeBoundary();
+    expect(tool.boundaryClosed, isTrue);
+    expect(tool.undoLast(), isTrue);
+    expect(tool.boundaryClosed, isFalse);
+    expect(tool.points, points);
+    expect(tool.undoLast(), isTrue);
+    expect(tool.points, hasLength(2));
+  });
+
   test('plan sketch kernel shares snap, ortho and rectangle rules', () {
     const start = RenderScenePoint(x: 0, y: 0, z: 3.2);
     const raw = RenderScenePoint(x: 2.10, y: 2.84, z: 3.2);

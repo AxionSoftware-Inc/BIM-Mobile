@@ -113,6 +113,10 @@ extension _ViewerViewportSurfaceEditing on _ViewerHomePageState {
       start: _draftSurfaceStart,
       end: _draftSurfaceEnd,
       points: _draftSurfacePoints,
+      cursor: _surfaceDrawMode == RenderSceneSurfaceDrawMode.polyline
+          ? _draftSurfaceEnd
+          : null,
+      boundaryClosed: _surfaceTool.boundaryClosed,
     );
     if (points.isNotEmpty) {
       _viewportController.setSurfaceDraft(
@@ -122,7 +126,14 @@ extension _ViewerViewportSurfaceEditing on _ViewerHomePageState {
           closed: SurfaceAuthoringGeometry.previewIsClosed(
             mode: _surfaceDrawMode,
             points: points,
+            boundaryClosed: _surfaceTool.boundaryClosed,
           ),
+          boundarySketch:
+              _surfaceDrawMode == RenderSceneSurfaceDrawMode.polyline,
+          committedPointCount:
+              _surfaceDrawMode == RenderSceneSurfaceDrawMode.polyline
+                  ? _draftSurfacePoints.length
+                  : null,
         ),
       );
       return;
@@ -232,7 +243,10 @@ extension _ViewerViewportSurfaceEditing on _ViewerHomePageState {
               draft.points.length >= 3;
         }
         if (_surfaceDrawMode == RenderSceneSurfaceDrawMode.polyline) {
-          return _draftSurfacePoints.length >= 3;
+          return SurfaceAuthoringGeometry.isValidBoundary(
+            _draftSurfacePoints,
+            closed: _surfaceTool.boundaryClosed,
+          );
         }
         if (_surfaceDrawMode == RenderSceneSurfaceDrawMode.autoRoom) {
           return false;
@@ -523,6 +537,43 @@ extension _ViewerViewportSurfaceEditing on _ViewerHomePageState {
           if (identical(nextScene, scene)) {
             _updateViewportState(() {
               _editStatusMessage = 'Closed wall loop topilmadi.';
+            });
+            return;
+          }
+        } else if (_surfaceDrawMode == RenderSceneSurfaceDrawMode.polyline) {
+          final polygon = _surfaceProfilePointsForCommit();
+          if (!SurfaceAuthoringGeometry.isValidBoundary(
+            polygon,
+            closed: _surfaceTool.boundaryClosed,
+          )) {
+            _updateViewportState(() {
+              _editStatusMessage =
+                  SurfaceAuthoringGeometry.boundaryValidationMessage(
+                polygon,
+                closed: _surfaceTool.boundaryClosed,
+              );
+            });
+            return;
+          }
+          nextScene = _interactionMode == RenderSceneInteractionMode.addFloor
+              ? RenderSceneEditor.addFloorFromPolygon(
+                  scene: scene,
+                  polygon: polygon,
+                  thicknessMeters: _draftSurfaceThicknessMeters,
+                  topElevationMeters: _draftFloorTopElevationMeters,
+                  levelId: _activeLevelId,
+                )
+              : RenderSceneEditor.addCeilingFromPolygon(
+                  scene: scene,
+                  polygon: polygon,
+                  thicknessMeters: _draftSurfaceThicknessMeters,
+                  heightMeters: _draftCeilingHeightOffsetMeters,
+                  levelId: _activeLevelId,
+                );
+          if (identical(nextScene, scene)) {
+            _updateViewportState(() {
+              _editStatusMessage =
+                  '${_surfaceKindLabel()} boundary yaratilmadi.';
             });
             return;
           }
