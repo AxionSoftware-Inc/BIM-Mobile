@@ -154,6 +154,11 @@ final class TbeAuthoringMutationRepository {
     return _afterMutation();
   }
 
+  Future<RenderSceneLoadResult> autoJoinWalls() async {
+    _api.autoJoinWalls(_requireHandle());
+    return _afterMutation();
+  }
+
   Future<RenderSceneLoadResult> trimExtendWalls({
     required int firstWallId,
     required bool firstUsesStart,

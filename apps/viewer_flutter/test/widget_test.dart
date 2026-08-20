@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/gestures.dart';
@@ -37,6 +38,7 @@ import 'package:viewer_flutter/src/tools/stair_authoring_geometry.dart';
 import 'package:viewer_flutter/src/tools/surface_authoring_geometry.dart';
 import 'package:viewer_flutter/src/tools/surface_tool_controller.dart';
 import 'package:viewer_flutter/src/tools/wall_authoring_geometry.dart';
+import 'package:viewer_flutter/src/tools/wall_repair_geometry.dart';
 import 'package:viewer_flutter/src/tools/wall_tool_controller.dart';
 import 'package:viewer_flutter/src/viewer_app.dart';
 import 'package:viewer_flutter/src/viewport_interaction.dart';

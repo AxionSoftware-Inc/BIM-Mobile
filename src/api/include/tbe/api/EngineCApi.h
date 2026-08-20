@@ -199,6 +199,7 @@ TbeApiStatusCode tbe_set_wall_axis(
     TbeVec2 start,
     TbeVec2 end
 );
+TbeApiStatusCode tbe_auto_join_walls(TbeEngineHandle* handle);
 TbeApiStatusCode tbe_trim_extend_walls(
     TbeEngineHandle* handle,
     uint64_t first_wall_id,

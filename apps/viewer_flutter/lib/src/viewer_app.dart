@@ -40,6 +40,7 @@ import 'tools/stair_tool_controller.dart';
 import 'tools/trim_extend_tool_controller.dart';
 import 'tools/wall_tool_controller.dart';
 import 'tools/wall_authoring_geometry.dart';
+import 'tools/wall_repair_geometry.dart';
 import 'view_tabs.dart';
 import 'view_navigation_policy.dart';
 import 'view_workspace_store.dart';

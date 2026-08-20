@@ -321,6 +321,50 @@ int main() {
     assert(loaded.find_ptr(room_window.created_id())->id() == room_window.created_id());
     assert(loaded.find_ptr(room_detect.detected_room_ids().front())->id() == room_detect.detected_room_ids().front());
 
+    // A touch-drawn architectural footprint is not limited to rectangles or
+    // orthogonal corners. The graph detector must expose both faces created
+    // by a shared diagonal partition so Auto Room can drive floor/ceiling
+    // authoring for each attached room.
+    tbe::core::Document angled_rooms{"Angled Attached Rooms"};
+    const auto attached_level = angled_rooms.create_level("Level 1", 0.0, 3.0);
+    angled_rooms.create_wall(
+        "AB", tbe::core::Line2{.start = {.x = 0.0, .y = 0.0}, .end = {.x = 5.0, .y = 0.0}}, 0.2, 3.0, attached_level);
+    angled_rooms.create_wall(
+        "BC", tbe::core::Line2{.start = {.x = 5.0, .y = 0.0}, .end = {.x = 10.0, .y = 0.0}}, 0.2, 3.0, attached_level);
+    angled_rooms.create_wall(
+        "CD", tbe::core::Line2{.start = {.x = 10.0, .y = 0.0}, .end = {.x = 10.0, .y = 4.0}}, 0.2, 3.0, attached_level);
+    angled_rooms.create_wall(
+        "DE", tbe::core::Line2{.start = {.x = 10.0, .y = 4.0}, .end = {.x = 5.0, .y = 6.0}}, 0.2, 3.0, attached_level);
+    angled_rooms.create_wall(
+        "EF", tbe::core::Line2{.start = {.x = 5.0, .y = 6.0}, .end = {.x = 0.0, .y = 4.0}}, 0.2, 3.0, attached_level);
+    angled_rooms.create_wall(
+        "FA", tbe::core::Line2{.start = {.x = 0.0, .y = 4.0}, .end = {.x = 0.0, .y = 0.0}}, 0.2, 3.0, attached_level);
+    angled_rooms.create_wall(
+        "BE", tbe::core::Line2{.start = {.x = 5.0, .y = 0.0}, .end = {.x = 5.0, .y = 6.0}}, 0.2, 3.0, attached_level);
+    angled_rooms.auto_join_walls();
+    const auto angled_room_ids = angled_rooms.detect_rooms();
+    assert(angled_room_ids.size() == 2);
+    for (const auto room_id : angled_room_ids) {
+        const auto* room = angled_rooms.find_ptr(room_id)->room();
+        assert(room != nullptr);
+        assert(room->centerline_boundary_polygon.size() >= 4);
+        assert(room->centerline_area_square_meters > 0.0);
+        assert(room->interior_area_square_meters > 0.0);
+        assert(room->centerline_perimeter_meters > 0.0);
+    }
+    const auto angled_floors = angled_rooms.generate_floor_systems_for_all_rooms(0);
+    const auto angled_ceilings = angled_rooms.generate_ceiling_systems_for_all_rooms(0, 2.6);
+    assert(angled_floors.size() == 2);
+    assert(angled_ceilings.size() == 2);
+    for (const auto& [_, floor] : angled_rooms.floor_systems()) {
+        assert(floor.boundary_polygon.size() >= 4);
+        assert(floor.area_square_meters > 0.0);
+    }
+    for (const auto& [_, ceiling] : angled_rooms.ceiling_systems()) {
+        assert(ceiling.boundary_polygon.size() >= 4);
+        assert(ceiling.area_square_meters > 0.0);
+    }
+
     tbe::core::Document invalid_room_document{"Invalid Room Test"};
     const auto invalid_level_id = invalid_room_document.create_level("Level 1", 0.0, 3.0);
     invalid_room_document.create_wall(

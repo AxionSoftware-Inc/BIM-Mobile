@@ -62,6 +62,9 @@ class AuthoringCommandService {
         end: end,
       );
 
+  Future<RenderSceneLoadResult> autoJoinWalls() =>
+      _requireRepository().autoJoinWalls();
+
   Future<RenderSceneLoadResult> moveLevelElevation({
     required int levelId,
     required double elevationMeters,

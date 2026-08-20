@@ -333,6 +333,7 @@ class SurfaceDrawingContextBar extends StatelessWidget {
     required this.canUndo,
     required this.onDrawModeChanged,
     required this.onUndo,
+    required this.onRepairJoins,
     required this.onTrimExtend,
     required this.onFinish,
     required this.onCancel,
@@ -345,6 +346,7 @@ class SurfaceDrawingContextBar extends StatelessWidget {
   final bool canUndo;
   final ValueChanged<RenderSceneSurfaceDrawMode> onDrawModeChanged;
   final VoidCallback onUndo;
+  final VoidCallback onRepairJoins;
   final VoidCallback onTrimExtend;
   final VoidCallback onFinish;
   final VoidCallback onCancel;
@@ -411,6 +413,15 @@ class SurfaceDrawingContextBar extends StatelessWidget {
               child: IconButton.filledTonal(
                 onPressed: enabled && canUndo ? onUndo : null,
                 icon: const Icon(Icons.undo, size: 19),
+              ),
+            ),
+            Tooltip(
+              message:
+                  'Small wall gapsni auto-join/Trim bilan xavfsiz tuzatish',
+              child: OutlinedButton.icon(
+                onPressed: enabled ? onRepairJoins : null,
+                icon: const Icon(Icons.auto_fix_high_outlined, size: 18),
+                label: const Text('Repair joins'),
               ),
             ),
             Tooltip(

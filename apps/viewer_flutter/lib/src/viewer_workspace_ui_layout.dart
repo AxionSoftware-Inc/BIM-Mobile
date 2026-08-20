@@ -523,6 +523,7 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
               canUndo: _surfaceTool.canUndo,
               onDrawModeChanged: _setSurfaceDrawMode,
               onUndo: _undoSurfaceDraft,
+              onRepairJoins: () => unawaited(_repairWallJoins()),
               onTrimExtend: () {
                 _setInteractionMode(RenderSceneInteractionMode.trimExtend);
               },

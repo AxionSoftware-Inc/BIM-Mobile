@@ -359,6 +359,13 @@ TbeApiStatusCode tbe_set_wall_axis(
     ));
 }
 
+TbeApiStatusCode tbe_auto_join_walls(TbeEngineHandle* handle) {
+    if (handle == nullptr || handle->session == nullptr) {
+        return null_handle_error(handle);
+    }
+    return apply_result(handle, handle->session->auto_join_walls());
+}
+
 TbeApiStatusCode tbe_trim_extend_walls(
     TbeEngineHandle* handle,
     uint64_t first_wall_id,

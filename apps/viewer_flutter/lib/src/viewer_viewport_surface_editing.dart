@@ -2,6 +2,110 @@ part of 'viewer_app.dart';
 
 /// Surface drafting, snapping and footprint handling.
 extension _ViewerViewportSurfaceEditing on _ViewerHomePageState {
+  /// Repairs the current touch-drawn wall boundary without guessing a room
+  /// rectangle. Native auto-join handles small endpoint noise first; the
+  /// bounded geometry pass then trims/extends only the closest selected (or
+  /// active-level) endpoint pairs. The operation stays atomic per pair and
+  /// leaves ambiguous/long gaps for an explicit user Trim/Extend action.
+  Future<void> _repairWallJoins() async {
+    final repository = _engineRepository;
+    if (!_engineBackedMode || repository == null || _activeLevelId == null) {
+      _updateViewportState(() {
+        _editStatusMessage = 'Wall repair uchun Android native engine kerak.';
+      });
+      return;
+    }
+
+    final pickedIds =
+        _surfaceDrawMode == RenderSceneSurfaceDrawMode.pickWalls &&
+                _draftSurfaceWallIds.isNotEmpty
+            ? _draftSurfaceWallIds.toSet()
+            : null;
+    var scene = _scene;
+    if (scene == null) return;
+    var repairs = 0;
+    var skipped = 0;
+    final excludedPairs = <String>{};
+    final maximumSuccessfulRepairs = pickedIds == null ? 8 : 1;
+    try {
+      var result = await _authoringCommands.autoJoinWalls();
+      await _applyEngineSceneResult(
+        result,
+        message: 'Wall joins tekshirildi.',
+      );
+      scene = result.scene;
+
+      // A noisy hand-drawn corner can be larger than the native join
+      // tolerance but still be an obvious endpoint-to-endpoint repair. Apply
+      // a small bounded number so a dense plan cannot cascade unexpectedly.
+      for (var attempt = 0;
+          attempt < 16 && repairs < maximumSuccessfulRepairs && scene != null;
+          attempt++) {
+        final candidate = WallRepairGeometry.bestCandidate(
+          scene,
+          wallIds: pickedIds,
+          levelId: _activeLevelId,
+          excludedPairs: excludedPairs,
+        );
+        if (candidate == null) break;
+        try {
+          result = await _authoringCommands.trimExtendWalls(
+            firstWallId: candidate.firstWallId,
+            firstUsesStart: candidate.firstEndpoint == PlanSketchEndpoint.start,
+            secondWallId: candidate.secondWallId,
+            secondUsesStart:
+                candidate.secondEndpoint == PlanSketchEndpoint.start,
+          );
+          repairs++;
+          await _applyEngineSceneResult(
+            result,
+            message: 'Wall gap repaired ($repairs).',
+          );
+          scene = result.scene;
+        } catch (_) {
+          // The engine can reject a geometrically plausible pair when the
+          // operation would leave one wall too short. Skip only that pair and
+          // keep looking for other safe repairs in the same boundary.
+          excludedPairs.add(candidate.key);
+          skipped++;
+        }
+      }
+
+      // Recompute rooms after the topology pass so Auto Room immediately sees
+      // the repaired graph. This also refreshes the room preview under the
+      // user's finger without leaving the Floor/Ceiling tool.
+      result = await _authoringCommands.detectRooms();
+      await _applyEngineSceneResult(
+        result,
+        message: repairs == 0
+            ? skipped == 0
+                ? 'Wall joins tayyor. Safe gap topilmadi.'
+                : 'Safe bo‘lmagan $skipped ta juftlik tashlab o‘tildi; room boundaries yangilandi.'
+            : '$repairs ta wall gap tuzatildi'
+                '${skipped == 0 ? '' : ', $skipped ta juftlik tashlab o‘tildi'}; room boundaries yangilandi.',
+      );
+      scene = result.scene;
+      if (_surfaceDrawMode == RenderSceneSurfaceDrawMode.pickWalls &&
+          scene != null) {
+        _syncSurfaceDraftFromWalls(scene);
+      }
+      if (!mounted) return;
+      _updateViewportState(() {
+        _editStatusMessage = _draftCanConfirm
+            ? 'Kontur yopildi. Finish yoki Auto Room’dan foydalaning.'
+            : repairs == 0
+                ? 'Kontur hali ochiq. Ikki eng yaqin wall uchini bosing yoki Trim / Extend ishlating.'
+                : 'Kontur hali ochiq. Qolgan gap uchun Trim / Extend ishlating.';
+      });
+    } catch (error) {
+      if (!mounted) return;
+      _updateViewportState(() {
+        _editStatusMessage = 'Wall repair failed: $error';
+        _statusMessage = _editStatusMessage;
+      });
+    }
+  }
+
   void _syncSurfaceDraftPreview() {
     final kind = _surfaceKindKey();
     final points = SurfaceAuthoringGeometry.previewPoints(
@@ -591,6 +695,7 @@ extension _ViewerViewportSurfaceEditing on _ViewerHomePageState {
     // whose walls were drawn with a finger. The fallback still requires all
     // picked segments to form one closed loop; it cannot create a bounding
     // rectangle from an incomplete selection.
+    final selectedWallIds = _draftSurfaceWallIds.toSet();
     final polygon = SurfaceAuthoringGeometry.wallBoundaryPolygon(
           scene,
           _draftSurfaceWallIds,
@@ -600,7 +705,8 @@ extension _ViewerViewportSurfaceEditing on _ViewerHomePageState {
           scene,
           _draftSurfaceWallIds,
           toleranceMeters: 1.5,
-        );
+        ) ??
+        _roomPolygonForPickedWalls(scene, selectedWallIds);
     if (polygon != null && polygon.length >= 3) {
       _viewportController.setSurfaceDraft(
         RenderSceneSurfaceDraft(
@@ -617,5 +723,29 @@ extension _ViewerViewportSurfaceEditing on _ViewerHomePageState {
     _draftSurfaceStart = null;
     _draftSurfaceEnd = null;
     _viewportController.setSurfaceDraft(null);
+  }
+
+  List<RenderScenePoint>? _roomPolygonForPickedWalls(
+    RenderScene scene,
+    Set<int> selectedWallIds,
+  ) {
+    if (selectedWallIds.length < 3) return null;
+    for (final room
+        in scene.objects.where((object) => object.kindKey == 'room')) {
+      final roomWallIds = RenderSceneEditor.roomBoundaryWallIds(room).toSet();
+      if (roomWallIds.length != selectedWallIds.length ||
+          !roomWallIds.containsAll(selectedWallIds)) {
+        continue;
+      }
+      final polygon = RenderSceneEditor.roomBoundaryPolygon(
+        scene,
+        room,
+        toleranceMeters: 1.5,
+      );
+      if (polygon != null && polygon.length >= 3) {
+        return polygon;
+      }
+    }
+    return null;
   }
 }

@@ -44,6 +44,8 @@ abstract interface class ViewerAuthoringGateway {
     required RenderScenePoint end,
   });
 
+  Future<RenderSceneLoadResult> autoJoinWalls();
+
   Future<RenderSceneLoadResult> trimExtendWalls({
     required int firstWallId,
     required bool firstUsesStart,

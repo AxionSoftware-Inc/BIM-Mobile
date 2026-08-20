@@ -225,6 +225,11 @@ struct RoomCandidate {
     ElementId level_id{};
 };
 
+struct GraphWallRef {
+    ElementId id{};
+    const WallData* wall{};
+};
+
 bool interval_covered(double query_min, double query_max, double range_min, double range_max) {
     return query_min >= (range_min - epsilon) && query_max <= (range_max + epsilon);
 }
@@ -262,6 +267,234 @@ double polygon_signed_area(const std::vector<Point2>& polygon) {
 
 double polygon_area(const std::vector<Point2>& polygon) {
     return std::abs(polygon_signed_area(polygon));
+}
+
+std::vector<RoomCandidate> graph_room_candidates(
+    const std::vector<GraphWallRef>& walls,
+    ElementId level_id) {
+    constexpr auto endpoint_tolerance = 0.35;
+    if (walls.size() < 3) {
+        return {};
+    }
+
+    struct Endpoint {
+        Point2 point{};
+        std::size_t wall_index{};
+        bool is_start{};
+    };
+    std::vector<Endpoint> endpoints;
+    endpoints.reserve(walls.size() * 2);
+    for (std::size_t index = 0; index < walls.size(); ++index) {
+        if (walls[index].wall == nullptr || length(walls[index].wall->axis) <= epsilon) {
+            continue;
+        }
+        endpoints.push_back(Endpoint{
+            .point = walls[index].wall->axis.start,
+            .wall_index = index,
+            .is_start = true,
+        });
+        endpoints.push_back(Endpoint{
+            .point = walls[index].wall->axis.end,
+            .wall_index = index,
+            .is_start = false,
+        });
+    }
+    if (endpoints.size() < 6) {
+        return {};
+    }
+
+    std::vector<std::size_t> parent(endpoints.size());
+    std::iota(parent.begin(), parent.end(), 0);
+    const auto find_root = [&](std::size_t value, const auto& self) -> std::size_t {
+        if (parent[value] == value) {
+            return value;
+        }
+        parent[value] = self(parent[value], self);
+        return parent[value];
+    };
+    const auto unite = [&](std::size_t first, std::size_t second) {
+        auto first_root = find_root(first, find_root);
+        auto second_root = find_root(second, find_root);
+        if (first_root != second_root) {
+            parent[second_root] = first_root;
+        }
+    };
+
+    // Exact/shared endpoints are always the same graph node. Join metadata is
+    // also honoured so a small, explicitly repaired gap remains connected
+    // without merging nearby parallel walls that merely look close on touch.
+    for (std::size_t first = 0; first < endpoints.size(); ++first) {
+        for (std::size_t second = first + 1; second < endpoints.size(); ++second) {
+            if (same_point(endpoints[first].point, endpoints[second].point)) {
+                unite(first, second);
+            }
+        }
+    }
+
+    std::map<ElementId, std::size_t> wall_index_by_id;
+    for (std::size_t index = 0; index < walls.size(); ++index) {
+        wall_index_by_id[walls[index].id] = index;
+    }
+    const auto endpoint_index = [&](std::size_t wall_index, Point2 point) -> std::optional<std::size_t> {
+        std::optional<std::size_t> best;
+        auto best_distance = endpoint_tolerance;
+        for (std::size_t index = 0; index < endpoints.size(); ++index) {
+            if (endpoints[index].wall_index != wall_index) {
+                continue;
+            }
+            const auto distance = std::hypot(
+                endpoints[index].point.x - point.x,
+                endpoints[index].point.y - point.y);
+            if (distance <= best_distance) {
+                best_distance = distance;
+                best = index;
+            }
+        }
+        return best;
+    };
+    for (std::size_t index = 0; index < walls.size(); ++index) {
+        const auto* wall = walls[index].wall;
+        if (wall == nullptr) {
+            continue;
+        }
+        for (const auto& join : wall->joins) {
+            const auto other = wall_index_by_id.find(join.other_wall_id);
+            if (other == wall_index_by_id.end()) {
+                continue;
+            }
+            const auto first_endpoint = endpoint_index(index, join.point);
+            const auto second_endpoint = endpoint_index(other->second, join.point);
+            if (first_endpoint.has_value() && second_endpoint.has_value()) {
+                unite(*first_endpoint, *second_endpoint);
+            }
+        }
+    }
+
+    struct GraphNode {
+        Point2 point{};
+    };
+    std::map<std::size_t, std::size_t> node_by_root;
+    std::vector<GraphNode> nodes;
+    std::vector<std::size_t> endpoint_nodes(endpoints.size());
+    for (std::size_t index = 0; index < endpoints.size(); ++index) {
+        const auto root = find_root(index, find_root);
+        const auto [it, inserted] = node_by_root.emplace(root, nodes.size());
+        if (inserted) {
+            nodes.push_back(GraphNode{.point = endpoints[index].point});
+        }
+        endpoint_nodes[index] = it->second;
+    }
+
+    struct HalfEdge {
+        std::size_t from{};
+        std::size_t to{};
+        std::size_t twin{};
+        ElementId wall_id{};
+    };
+    std::vector<HalfEdge> half_edges;
+    std::vector<std::vector<std::size_t>> outgoing(nodes.size());
+    for (std::size_t wall_index = 0; wall_index < walls.size(); ++wall_index) {
+        const auto start = std::find_if(
+            endpoints.begin(), endpoints.end(), [&](const auto& endpoint) {
+                return endpoint.wall_index == wall_index && endpoint.is_start;
+            });
+        const auto end = std::find_if(
+            endpoints.begin(), endpoints.end(), [&](const auto& endpoint) {
+                return endpoint.wall_index == wall_index && !endpoint.is_start;
+            });
+        if (start == endpoints.end() || end == endpoints.end()) {
+            continue;
+        }
+        const auto from = endpoint_nodes[static_cast<std::size_t>(std::distance(endpoints.begin(), start))];
+        const auto to = endpoint_nodes[static_cast<std::size_t>(std::distance(endpoints.begin(), end))];
+        if (from == to) {
+            continue;
+        }
+        const auto forward = half_edges.size();
+        half_edges.push_back(HalfEdge{
+            .from = from,
+            .to = to,
+            .twin = forward + 1,
+            .wall_id = walls[wall_index].id,
+        });
+        half_edges.push_back(HalfEdge{
+            .from = to,
+            .to = from,
+            .twin = forward,
+            .wall_id = walls[wall_index].id,
+        });
+        outgoing[from].push_back(forward);
+        outgoing[to].push_back(forward + 1);
+    }
+
+    for (auto& edges : outgoing) {
+        std::sort(edges.begin(), edges.end(), [&](std::size_t first, std::size_t second) {
+            const auto& first_edge = half_edges[first];
+            const auto& second_edge = half_edges[second];
+            const auto first_angle = std::atan2(
+                nodes[first_edge.to].point.y - nodes[first_edge.from].point.y,
+                nodes[first_edge.to].point.x - nodes[first_edge.from].point.x);
+            const auto second_angle = std::atan2(
+                nodes[second_edge.to].point.y - nodes[second_edge.from].point.y,
+                nodes[second_edge.to].point.x - nodes[second_edge.from].point.x);
+            return first_angle < second_angle;
+        });
+    }
+
+    std::vector<bool> visited(half_edges.size(), false);
+    std::vector<RoomCandidate> candidates;
+    for (std::size_t start_edge = 0; start_edge < half_edges.size(); ++start_edge) {
+        if (visited[start_edge]) {
+            continue;
+        }
+        std::vector<Point2> polygon;
+        std::vector<ElementId> boundary_wall_ids;
+        auto current_edge = start_edge;
+        auto closed = false;
+        for (std::size_t guard = 0; guard <= half_edges.size() + 2; ++guard) {
+            if (visited[current_edge]) {
+                closed = current_edge == start_edge;
+                break;
+            }
+            visited[current_edge] = true;
+            const auto& edge = half_edges[current_edge];
+            polygon.push_back(nodes[edge.from].point);
+            append_unique(boundary_wall_ids, edge.wall_id);
+
+            const auto& next_edges = outgoing[edge.to];
+            const auto reverse = edge.twin;
+            const auto reverse_it = std::find(next_edges.begin(), next_edges.end(), reverse);
+            if (reverse_it == next_edges.end() || next_edges.empty()) {
+                break;
+            }
+            const auto reverse_index = static_cast<std::size_t>(std::distance(next_edges.begin(), reverse_it));
+            current_edge = next_edges[(reverse_index + next_edges.size() - 1) % next_edges.size()];
+        }
+        if (!closed || polygon.size() < 3 || boundary_wall_ids.size() < 3) {
+            continue;
+        }
+        const auto signed_area = polygon_signed_area(polygon);
+        // With the clockwise predecessor walk, bounded faces are CCW and the
+        // unbounded exterior face is CW. Keeping only positive faces prevents
+        // the outer shell from becoming a Room.
+        if (signed_area <= 1.0e-6) {
+            continue;
+        }
+        auto perimeter = 0.0;
+        for (std::size_t index = 0; index < polygon.size(); ++index) {
+            const auto& first = polygon[index];
+            const auto& second = polygon[(index + 1) % polygon.size()];
+            perimeter += std::hypot(second.x - first.x, second.y - first.y);
+        }
+        candidates.push_back(RoomCandidate{
+            .boundary_wall_ids = std::move(boundary_wall_ids),
+            .boundary_polygon = std::move(polygon),
+            .area_square_meters = signed_area,
+            .perimeter_meters = perimeter,
+            .level_id = level_id,
+        });
+    }
+    return candidates;
 }
 
 double layered_assembly_total_thickness(const LayeredAssemblyData& assembly) {
@@ -2788,8 +3021,166 @@ std::vector<ElementId> Document::detect_rooms_for_levels(const std::vector<Eleme
     // one pass.  This is particularly important for multi-storey templates,
     // where one level can discover many rooms.
     std::vector<std::pair<ElementId, RoomData>> pending_rooms;
+    std::set<ElementId> graph_detected_levels;
+
+    // The original sweep below is very fast for orthogonal plans. A wall
+    // graph is needed for diagonal/non-rectangular footprints, where a grid
+    // made only from X/Y barriers would silently leave the room open. Use the
+    // graph path for any level that has a usable non-cardinal face and keep
+    // the established sweep for purely orthogonal levels.
+    for (const auto& [level_id, walls] : walls_by_level) {
+        if (!target_levels.empty() && target_levels.find(level_id) == target_levels.end()) {
+            continue;
+        }
+        std::vector<GraphWallRef> graph_walls;
+        auto has_non_orthogonal_wall = false;
+        for (const auto& wall : walls) {
+            if (wall.wall == nullptr) {
+                continue;
+            }
+            graph_walls.push_back(GraphWallRef{.id = wall.id, .wall = wall.wall});
+            has_non_orthogonal_wall = has_non_orthogonal_wall ||
+                (!is_horizontal(wall.wall->axis) && !is_vertical(wall.wall->axis));
+        }
+        if (!has_non_orthogonal_wall) {
+            continue;
+        }
+
+        const auto candidates = graph_room_candidates(graph_walls, level_id);
+        if (candidates.empty()) {
+            continue;
+        }
+        graph_detected_levels.insert(level_id);
+        for (const auto& candidate : candidates) {
+            const auto polygon = candidate.boundary_polygon;
+            if (polygon.size() < 3 || candidate.area_square_meters <= 1.0e-6) {
+                continue;
+            }
+
+            const auto wall_thickness_for_edge = [&](Point2 first, Point2 second) {
+                constexpr auto edge_tolerance = 0.35;
+                for (const auto wall_id : candidate.boundary_wall_ids) {
+                    const auto* boundary = find_ptr(wall_id);
+                    const auto* boundary_wall = boundary == nullptr ? nullptr : boundary->wall();
+                    if (boundary_wall == nullptr) {
+                        continue;
+                    }
+                    const auto axis = boundary_wall->axis;
+                    const auto same_axis =
+                        (std::hypot(axis.start.x - first.x, axis.start.y - first.y) <= edge_tolerance &&
+                         std::hypot(axis.end.x - second.x, axis.end.y - second.y) <= edge_tolerance) ||
+                        (std::hypot(axis.end.x - first.x, axis.end.y - first.y) <= edge_tolerance &&
+                         std::hypot(axis.start.x - second.x, axis.start.y - second.y) <= edge_tolerance);
+                    if (same_axis) {
+                        return boundary_wall->thickness_meters / 2.0;
+                    }
+                }
+                return 0.15;
+            };
+
+            const auto build_interior = [&](bool invert) {
+                std::vector<Line2> shifted_lines;
+                shifted_lines.reserve(polygon.size());
+                for (std::size_t index = 0; index < polygon.size(); ++index) {
+                    const auto current = polygon[index];
+                    const auto next = polygon[(index + 1) % polygon.size()];
+                    const auto direction = subtract(next, current);
+                    const auto edge_length = std::hypot(direction.x, direction.y);
+                    if (edge_length <= epsilon) {
+                        continue;
+                    }
+                    const auto normal = Point2{
+                        .x = -direction.y / edge_length,
+                        .y = direction.x / edge_length,
+                    };
+                    auto inward = invert ? -1.0 : 1.0;
+                    const auto offset = wall_thickness_for_edge(current, next) * inward;
+                    const auto shift = scale(normal, offset);
+                    shifted_lines.push_back(Line2{
+                        .start = add(current, shift),
+                        .end = add(next, shift),
+                    });
+                }
+
+                std::vector<Point2> interior_polygon;
+                if (shifted_lines.size() == polygon.size()) {
+                    interior_polygon.reserve(shifted_lines.size());
+                    for (std::size_t index = 0; index < shifted_lines.size(); ++index) {
+                        const auto& previous = shifted_lines[(index + shifted_lines.size() - 1) % shifted_lines.size()];
+                        const auto& current = shifted_lines[index];
+                        interior_polygon.push_back(
+                            line_intersection(previous, current).value_or(polygon[index]));
+                    }
+                }
+                interior_polygon = simplify_polygon(std::move(interior_polygon));
+                auto interior_area = polygon_area(interior_polygon);
+                auto interior_perimeter = 0.0;
+                for (std::size_t index = 0; index < interior_polygon.size(); ++index) {
+                    const auto& first = interior_polygon[index];
+                    const auto& second = interior_polygon[(index + 1) % interior_polygon.size()];
+                    interior_perimeter += std::hypot(second.x - first.x, second.y - first.y);
+                }
+                return std::tuple<std::vector<Point2>, double, double>{
+                    std::move(interior_polygon), interior_area, interior_perimeter};
+            };
+
+            auto [interior_polygon, interior_area, interior_perimeter] = build_interior(false);
+            if (interior_area > candidate.area_square_meters) {
+                auto [alternate_polygon, alternate_area, alternate_perimeter] = build_interior(true);
+                if (alternate_area < interior_area) {
+                    interior_polygon = std::move(alternate_polygon);
+                    interior_area = alternate_area;
+                    interior_perimeter = alternate_perimeter;
+                }
+            }
+
+            auto boundary_wall_ids = candidate.boundary_wall_ids;
+            std::sort(boundary_wall_ids.begin(), boundary_wall_ids.end());
+            auto opening_area_on_boundary = 0.0;
+            for (const auto wall_id : boundary_wall_ids) {
+                const auto* boundary = find_ptr(wall_id);
+                const auto* boundary_wall = boundary == nullptr ? nullptr : boundary->wall();
+                if (boundary_wall == nullptr) {
+                    continue;
+                }
+                for (const auto& opening : boundary_wall->openings) {
+                    opening_area_on_boundary += opening.width_meters * opening.height_meters;
+                }
+            }
+            std::ostringstream room_key;
+            for (const auto wall_id : boundary_wall_ids) {
+                room_key << wall_id << '-';
+            }
+            const auto reused = previous_room_ids.find(room_key.str());
+            const auto room_id = reused == previous_room_ids.end() ? allocate_id() : reused->second;
+            const auto wall_height = walls.empty() || walls.front().wall == nullptr
+                ? 3.0
+                : resolved_wall_height(*walls.front().wall);
+            pending_rooms.emplace_back(room_id, RoomData{
+                .boundary_wall_ids = std::move(boundary_wall_ids),
+                .level_id = level_id,
+                .preferred_boundary_mode = RoomBoundaryMode::InteriorFinishFace,
+                .centerline_boundary_polygon = polygon,
+                .interior_boundary_polygon = interior_polygon,
+                .centerline_area_square_meters = candidate.area_square_meters,
+                .interior_area_square_meters = interior_area,
+                .centerline_perimeter_meters = candidate.perimeter_meters,
+                .interior_perimeter_meters = interior_perimeter,
+                .floor_finish_area_square_meters = interior_area,
+                .ceiling_area_square_meters = interior_area,
+                .baseboard_length_meters = interior_perimeter,
+                .interior_wall_finish_area_square_meters = std::max(
+                    0.0,
+                    (interior_perimeter * wall_height) - opening_area_on_boundary),
+            });
+            room_ids.push_back(room_id);
+        }
+    }
 
     for (const auto& [level_id, walls] : walls_by_level) {
+        if (graph_detected_levels.find(level_id) != graph_detected_levels.end()) {
+            continue;
+        }
         if (!target_levels.empty() && target_levels.find(level_id) == target_levels.end()) {
             continue;
         }

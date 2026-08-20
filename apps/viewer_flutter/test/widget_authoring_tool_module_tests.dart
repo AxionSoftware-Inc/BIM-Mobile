@@ -71,6 +71,151 @@ void registerAuthoringToolModuleTests() {
     );
   });
 
+  test('wall continuation ignores a nearby parallel wall', () {
+    final scene = parseRenderSceneJson(
+      jsonEncode(<String, Object?>{
+        'scene_version': 1,
+        'units': 'meters',
+        'coordinate_system': 'X/Y plan, Z up',
+        'levels': <Object?>[
+          <String, Object?>{
+            'level_id': 1,
+            'name': 'Level 1',
+            'elevation_meters': 0.0,
+            'default_wall_height_meters': 3.0,
+          },
+        ],
+        'objects': <Object?>[
+          <String, Object?>{
+            'element_id': 1,
+            'kind': 'Wall',
+            'level_id': 1,
+            'bounds': <String, Object?>{
+              'min': <String, Object?>{'x': 0, 'y': -0.1, 'z': 0},
+              'max': <String, Object?>{'x': 8, 'y': 0.1, 'z': 3},
+            },
+            'mesh': <String, Object?>{
+              'positions': <Object?>[],
+              'indices': <Object?>[]
+            },
+            'metadata': <String, Object?>{
+              'axis_start': <String, Object?>{'x': 0, 'y': 0, 'z': 0},
+              'axis_end': <String, Object?>{'x': 8, 'y': 0, 'z': 0},
+              'thickness_meters': 0.2,
+            },
+          },
+          <String, Object?>{
+            'element_id': 2,
+            'kind': 'Wall',
+            'level_id': 1,
+            'bounds': <String, Object?>{
+              'min': <String, Object?>{'x': 0, 'y': 0, 'z': 0},
+              'max': <String, Object?>{'x': 8, 'y': 0.2, 'z': 3},
+            },
+            'mesh': <String, Object?>{
+              'positions': <Object?>[],
+              'indices': <Object?>[]
+            },
+            'metadata': <String, Object?>{
+              'axis_start': <String, Object?>{'x': 0, 'y': 0.1, 'z': 0},
+              'axis_end': <String, Object?>{'x': 8, 'y': 0.1, 'z': 0},
+              'thickness_meters': 0.2,
+            },
+          },
+        ],
+      }),
+      source: 'parallel continuation test',
+    ).scene!;
+
+    final resolved = WallAuthoringGeometry.resolveLineEndpoint(
+      rawPoint: const RenderScenePoint(x: 7.9, y: 0.1, z: 0),
+      referenceStart: const RenderScenePoint(x: 0, y: 0, z: 0),
+      scene: scene,
+      activeLevelId: 1,
+      snapToGrid: false,
+      projectionMode: RenderSceneProjectionMode.topDown,
+      useOrthogonalSnap: true,
+      wallOrthogonalSnap: true,
+      excludeWallId: 1,
+    );
+    expect(resolved.y, closeTo(0.0, 1e-9));
+  });
+
+  test('wall repair chooses the closest bounded endpoint gap', () {
+    final scene = parseRenderSceneJson(
+      jsonEncode(<String, Object?>{
+        'scene_version': 1,
+        'units': 'meters',
+        'coordinate_system': 'X/Y plan, Z up',
+        'levels': <Object?>[
+          <String, Object?>{
+            'level_id': 1,
+            'name': 'Level 1',
+            'elevation_meters': 0.0,
+            'default_wall_height_meters': 3.0,
+          },
+        ],
+        'objects': <Object?>[
+          <String, Object?>{
+            'element_id': 11,
+            'kind': 'Wall',
+            'level_id': 1,
+            'bounds': <String, Object?>{
+              'min': <String, Object?>{'x': 0, 'y': -0.1, 'z': 0},
+              'max': <String, Object?>{'x': 4.5, 'y': 0.1, 'z': 3},
+            },
+            'mesh': <String, Object?>{
+              'positions': <Object?>[],
+              'indices': <Object?>[]
+            },
+            'metadata': <String, Object?>{
+              'axis_start': <String, Object?>{'x': 0, 'y': 0, 'z': 0},
+              'axis_end': <String, Object?>{'x': 4.5, 'y': 0, 'z': 0},
+              'thickness_meters': 0.2,
+            },
+          },
+          <String, Object?>{
+            'element_id': 12,
+            'kind': 'Wall',
+            'level_id': 1,
+            'bounds': <String, Object?>{
+              'min': <String, Object?>{'x': 4.3, 'y': 0.1, 'z': 0},
+              'max': <String, Object?>{'x': 4.5, 'y': 3.2, 'z': 3},
+            },
+            'mesh': <String, Object?>{
+              'positions': <Object?>[],
+              'indices': <Object?>[]
+            },
+            'metadata': <String, Object?>{
+              'axis_start': <String, Object?>{'x': 4.35, 'y': 0.16, 'z': 0},
+              'axis_end': <String, Object?>{'x': 4.35, 'y': 3.2, 'z': 0},
+              'thickness_meters': 0.2,
+            },
+          },
+        ],
+      }),
+      source: 'wall repair test',
+    ).scene!;
+    final candidate = WallRepairGeometry.bestCandidate(
+      scene,
+      wallIds: const <int>{11, 12},
+      levelId: 1,
+    );
+    expect(candidate, isNotNull);
+    expect(candidate!.firstWallId, 11);
+    expect(candidate.secondWallId, 12);
+    expect(candidate.maxGapMeters, lessThan(0.5));
+    expect(candidate.intersection.x, closeTo(4.35, 1e-9));
+    expect(
+      WallRepairGeometry.bestCandidate(
+        scene,
+        wallIds: const <int>{11, 12},
+        levelId: 2,
+      ),
+      isNull,
+    );
+  });
+
   test('opening authoring geometry projects and validates hosted placement',
       () {
     final scene = loadSampleScene();

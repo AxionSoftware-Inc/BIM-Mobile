@@ -394,6 +394,9 @@ class ViewerRepository
       _mutations.setWallAxis(wallId: wallId, start: start, end: end);
 
   @override
+  Future<RenderSceneLoadResult> autoJoinWalls() => _mutations.autoJoinWalls();
+
+  @override
   Future<RenderSceneLoadResult> trimExtendWalls({
     required int firstWallId,
     required bool firstUsesStart,

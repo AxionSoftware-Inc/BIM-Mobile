@@ -75,6 +75,9 @@ class TbeViewerApi {
         _setWallAxis =
             library.lookupFunction<_SetWallAxisNative, _SetWallAxisDart>(
                 'tbe_set_wall_axis'),
+        _autoJoinWalls =
+            library.lookupFunction<_AutoJoinWallsNative, _AutoJoinWallsDart>(
+                'tbe_auto_join_walls'),
         _trimExtendWalls = library.lookupFunction<_TrimExtendWallsNative,
             _TrimExtendWallsDart>('tbe_trim_extend_walls'),
         _setElementAssembly = library.lookupFunction<_SetElementAssemblyNative,
@@ -182,6 +185,7 @@ class TbeViewerApi {
   final _MoveLevelElevationDart _moveLevelElevation;
   final _SetWallLevelConstraintsDart _setWallLevelConstraints;
   final _SetWallAxisDart _setWallAxis;
+  final _AutoJoinWallsDart _autoJoinWalls;
   final _TrimExtendWallsDart _trimExtendWalls;
   final _SetElementAssemblyDart _setElementAssembly;
   final _UpdateRoofPropertiesDart _updateRoofProperties;

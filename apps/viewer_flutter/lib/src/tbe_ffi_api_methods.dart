@@ -253,6 +253,10 @@ extension _TbeViewerApiMethods on TbeViewerApi {
     }
   }
 
+  void autoJoinWalls(ffi.Pointer<ffi.Void> handle) {
+    _check(handle, _autoJoinWalls(handle));
+  }
+
   void trimExtendWalls(
     ffi.Pointer<ffi.Void> handle, {
     required int firstWallId,
