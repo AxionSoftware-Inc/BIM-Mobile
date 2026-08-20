@@ -25,6 +25,11 @@ internal data class SceneMesh(
   val positions: List<ScenePoint>,
   val indices: List<Int>,
 )
+internal data class SceneLevel(
+  val levelId: Long,
+  val name: String,
+  val elevationMeters: Double,
+)
 
 internal data class SceneObject(
   val elementId: Long?,
@@ -36,6 +41,7 @@ internal data class SceneObject(
   val bounds: SceneBounds,
   val mesh: SceneMesh,
   val materialCategory: String,
+  val metadata: Map<String, String>,
 )
 
 internal data class SceneState(
@@ -45,6 +51,7 @@ internal data class SceneState(
   val objectCount: Int,
   val vertexCount: Int,
   val indexCount: Int,
+  val levels: List<SceneLevel>,
   val objects: List<SceneObject>,
 )
 
@@ -63,10 +70,31 @@ internal fun toSceneState(payload: Any?): SceneState? {
     return null
   }
   val root = normalizeScenePayload(payload) ?: return null
+  // AndroidView creation parameters wrap the actual RenderScene. Method
+  // channel updates send the scene directly, so accept both contracts.
+  val sceneRoot = (root["renderScene"] as? Map<*, *>)
+    ?.entries
+    ?.associate { (key, value) -> key.toString() to value }
+    ?: root
   val warnings = mutableListOf<String>()
   val errors = mutableListOf<String>()
   val objects = mutableListOf<SceneObject>()
-  val rawObjects = root["objects"]
+  val levels = mutableListOf<SceneLevel>()
+  val rawLevels = sceneRoot["levels"]
+  if (rawLevels is List<*>) {
+    for (entry in rawLevels) {
+      val level = entry as? Map<*, *> ?: continue
+      val levelId = toLong(level["level_id"] ?: level["levelId"]) ?: continue
+      levels.add(
+        SceneLevel(
+          levelId = levelId,
+          name = toStringValue(level["name"], "Level $levelId"),
+          elevationMeters = toDouble(level["elevation_meters"] ?: level["elevationMeters"]) ?: 0.0,
+        ),
+      )
+    }
+  }
+  val rawObjects = sceneRoot["objects"]
   if (rawObjects is List<*>) {
     for (entry in rawObjects) {
       val objectMap = entry as? Map<*, *> ?: continue
@@ -83,6 +111,10 @@ internal fun toSceneState(payload: Any?): SceneState? {
           bounds = if (isFinite(bounds)) bounds else SceneBounds(ScenePoint(0.0, 0.0, 0.0), ScenePoint(0.0, 0.0, 0.0)),
           mesh = mesh,
           materialCategory = toStringValue(objectMap["material_category"], "generic"),
+          metadata = (objectMap["metadata"] as? Map<*, *>)
+            ?.entries
+            ?.associate { (key, value) -> key.toString() to value.toString() }
+            ?: emptyMap(),
         )
       )
     }
@@ -91,10 +123,10 @@ internal fun toSceneState(payload: Any?): SceneState? {
   }
   val derivedVertexCount = objects.sumOf { it.mesh.positions.size }
   val derivedIndexCount = objects.sumOf { it.mesh.indices.size }
-  val sceneVersion = toInt(root["scene_version"]) ?: toInt(root["sceneVersion"]) ?: 1
-  val objectCount = toInt(root["object_count"]) ?: toInt(root["objectCount"]) ?: objects.size
-  val vertexCount = toInt(root["vertex_count"]) ?: toInt(root["vertexCount"]) ?: derivedVertexCount
-  val indexCount = toInt(root["index_count"]) ?: toInt(root["indexCount"]) ?: derivedIndexCount
+  val sceneVersion = toInt(sceneRoot["scene_version"]) ?: toInt(sceneRoot["sceneVersion"]) ?: 1
+  val objectCount = toInt(sceneRoot["object_count"]) ?: toInt(sceneRoot["objectCount"]) ?: objects.size
+  val vertexCount = toInt(sceneRoot["vertex_count"]) ?: toInt(sceneRoot["vertexCount"]) ?: derivedVertexCount
+  val indexCount = toInt(sceneRoot["index_count"]) ?: toInt(sceneRoot["indexCount"]) ?: derivedIndexCount
   if (warnings.isNotEmpty()) {
     // Intentionally left as a debug hook for the skeleton; Dart side owns user-facing diagnostics.
   }
@@ -103,11 +135,12 @@ internal fun toSceneState(payload: Any?): SceneState? {
   }
   return SceneState(
     sceneVersion = sceneVersion,
-    units = toStringValue(root["units"], "meters"),
-    coordinateSystem = toStringValue(root["coordinate_system"] ?: root["coordinateSystem"], "X/Y plan, Z up"),
+    units = toStringValue(sceneRoot["units"], "meters"),
+    coordinateSystem = toStringValue(sceneRoot["coordinate_system"] ?: sceneRoot["coordinateSystem"], "X/Y plan, Z up"),
     objectCount = objectCount,
     vertexCount = vertexCount,
     indexCount = indexCount,
+    levels = levels.sortedBy { it.elevationMeters },
     objects = objects,
   )
 }
@@ -267,7 +300,7 @@ internal class RenderScenePlatformView(
 ) : PlatformView, MethodChannel.MethodCallHandler {
   private val channel = MethodChannel(messenger, "tbe/render_scene_view_$viewId")
   private val view = RenderSceneFilamentHostView(context, initialScene) { elementId ->
-    channel.invokeMethod("elementTapped", elementId)
+    channel.invokeMethod("objectTapped", mapOf("elementId" to elementId))
   }
 
   init {
@@ -306,8 +339,53 @@ internal class RenderScenePlatformView(
         result.success(null)
       }
 
+      "setSectionBox" -> {
+        view.setSectionBox(call.arguments as? Map<*, *>)
+        result.success(null)
+      }
+
+      "setSectionView" -> {
+        view.setSectionView(call.arguments as? Map<*, *>)
+        result.success(null)
+      }
+
+      "setProjectionMode" -> {
+        view.setProjectionMode(call.arguments as? String ?: "topDown")
+        result.success(null)
+      }
+
+      "setOrbitProjectionStyle" -> {
+        view.setOrbitProjectionStyle(call.arguments as? String ?: "orthographic")
+        result.success(null)
+      }
+
+      "setCamera" -> {
+        view.setCamera(call.arguments as? Map<*, *>)
+        result.success(null)
+      }
+
+      "setDisplayStyle" -> {
+        view.setDisplayStyle(call.arguments as? String ?: "solid")
+        result.success(null)
+      }
+
+      "setShadowsEnabled" -> {
+        view.setShadowsEnabled(call.arguments as? Boolean ?: false)
+        result.success(null)
+      }
+
       "selectElement" -> {
         view.selectElement(call.arguments)
+        result.success(null)
+      }
+
+      "setSelection" -> {
+        view.setSelection(call.arguments as? Map<*, *>)
+        result.success(null)
+      }
+
+      "setSelectionRectangle" -> {
+        view.setSelectionRectangle(call.arguments as? Map<*, *>)
         result.success(null)
       }
 
@@ -316,20 +394,16 @@ internal class RenderScenePlatformView(
         result.success(null)
       }
 
-      "setProjectionMode" -> {
-        view.setProjectionMode(call.arguments as? String ?: "isometric")
+      "pickNormalized" -> {
+        val point = call.arguments as? Map<*, *>
+        view.pickNormalized(
+          toDouble(point?.get("x")) ?: 0.5,
+          toDouble(point?.get("y")) ?: 0.5,
+        )
         result.success(null)
       }
 
-      "setOrbitProjectionStyle" -> {
-        view.setOrbitProjectionStyle(call.arguments as? String ?: "perspective")
-        result.success(null)
-      }
-
-      "setDisplayStyle" -> {
-        view.setDisplayStyle(call.arguments as? String ?: "solid")
-        result.success(null)
-      }
+      "getDiagnostics" -> result.success(view.diagnostics())
 
       else -> result.notImplemented()
     }

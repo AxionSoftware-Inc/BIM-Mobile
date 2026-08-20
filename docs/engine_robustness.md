@@ -66,13 +66,27 @@ Supported:
 - Rectangular or orthogonal slab boundaries with positive thickness.
 - Floor and ceiling systems derived from valid room boundaries.
 - Flat roofs over closed building footprints.
+- Automatic sloped roofs over simple orthogonal L/U and other concave
+  footprints using the engine-owned `AutoFootprint` profile solver.
 - Rectangular columns and beams.
 - Straight stairs with positive rise, run, width, riser count, and tread count.
 
 Assumptions and limitations:
 
 - Floor and ceiling systems are room-bound and assembly-driven, not freeform slabs.
-- Roof support remains simple and orthogonal; complex pitched roofs are placeholders.
+- AutoFootprint roofs generate a unified sloped shell for the supported
+  orthogonal L footprint, with ridge planes and external overhang; other
+  concave footprints use the adaptive triangulated fallback. This is not yet a
+  full Revit ridge/valley topology solver for curved or multi-slope roofs.
+- Wall and slab assemblies are stored semantically. The interactive scene uses
+  a single envelope mesh and compact assembly metadata for floor-plan cut
+  patterns, avoiding per-layer GPU geometry on tablets. Explicit layered mesh
+  generation remains available at core level for detailed authoring/tests;
+  opening reveals terminate each layer and finish layers provide the visible
+  jamb/head/sill return surfaces in that detailed path.
+- Foundation slabs are distinct assembly instances from ordinary floor slabs;
+  the default foundation is offset below Level 1 so its top aligns with the
+  wall base rather than adding foundation concrete to every storey wall.
 - Columns and beams are rectangular, parametric fallback geometry.
 - Stair support is basic straight-run geometry, not a full multi-flight solver.
 - Material takeoff is quantity foundation work, not a final estimating engine.

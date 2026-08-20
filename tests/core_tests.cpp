@@ -9,6 +9,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <numbers>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -108,7 +109,31 @@ int main() {
 
     const auto joined_profile = geometry.build_wall_profile(*wall_a);
     assert(joined_profile.has_miter_join);
-    assert(max_x(joined_profile.polygon) > 4.5);
+    // A 90° wall join shares one diagonal cap: both faces move in opposite
+    // directions.  A one-sided extension leaves overlapping rectangles and
+    // creates the jagged outer corners that are especially obvious in plan.
+    assert(near(joined_profile.polygon[1].x, 4.6));
+    assert(near(joined_profile.polygon[2].x, 4.4));
+
+    const std::vector<tbe::core::WallAssemblyLayer> joined_layers{
+        {.material_id = 1, .thickness_meters = 0.1},
+        {.material_id = 2, .thickness_meters = 0.1},
+    };
+    const auto layered_joined_geometry = geometry.build_wall_geometry(*wall_a, 1, joined_layers);
+    assert(layered_joined_geometry.mesh.triangle_material_ids.size() ==
+           layered_joined_geometry.mesh.indices.size() / 3);
+    const auto has_layered_outer_miter = std::any_of(
+        layered_joined_geometry.mesh.vertices.begin(),
+        layered_joined_geometry.mesh.vertices.end(),
+        [](const auto& point) { return near(point.x, 4.6) && near(point.y, -0.1); }
+    );
+    const auto has_layered_inner_miter = std::any_of(
+        layered_joined_geometry.mesh.vertices.begin(),
+        layered_joined_geometry.mesh.vertices.end(),
+        [](const auto& point) { return near(point.x, 4.4) && near(point.y, 0.1); }
+    );
+    assert(has_layered_outer_miter);
+    assert(has_layered_inner_miter);
 
     const auto wall_t_id = document.create_wall(
         "Wall T",
@@ -716,7 +741,36 @@ int main() {
         assert(second->joins.size() == 1);
         assert(first->joins.front().other_wall_id == second_wall);
         assert(second->joins.front().other_wall_id == first_wall);
+        const auto first_profile = geometry.build_wall_profile(*first);
+        const auto second_profile = geometry.build_wall_profile(*second);
+        const auto first_length = std::hypot(
+            first->axis.end.x - first->axis.start.x,
+            first->axis.end.y - first->axis.start.y
+        );
+        // Both faces must participate in every orientation of an exterior
+        // corner.  Extending only one face creates the stepped/rumpled plan
+        // outline this regression protects against.
+        assert(!near(first_profile.polygon[1].x, first_length));
+        assert(!near(first_profile.polygon[2].x, first_length));
+        assert(!near(second_profile.polygon[0].x, 0.0));
+        assert(!near(second_profile.polygon[3].x, 0.0));
     }
+
+    tbe::core::Document acute_corner_document{"Acute Corner"};
+    const auto acute_level = acute_corner_document.create_level("Level 1", 0.0, 3.0);
+    const auto acute_first = acute_corner_document.create_wall(
+        "Acute First", {{0.0, 0.0}, {4.0, 0.0}}, 0.2, 3.0, acute_level
+    );
+    acute_corner_document.create_wall(
+        "Acute Second", {{4.0, 0.0}, {6.0, 2.0}}, 0.2, 3.0, acute_level
+    );
+    acute_corner_document.auto_join_walls();
+    const auto acute_profile = geometry.build_wall_profile(
+        *acute_corner_document.find_ptr(acute_first)->wall()
+    );
+    const auto acute_extension = 0.1 * std::tan(std::numbers::pi / 8.0);
+    assert(near(acute_profile.polygon[1].x, 4.0 + acute_extension));
+    assert(near(acute_profile.polygon[2].x, 4.0 - acute_extension));
 
     tbe::core::Document tolerance_document{"Tolerance Join"};
     const auto tolerance_level = tolerance_document.create_level("Level 1", 0.0, 3.0);
@@ -737,6 +791,314 @@ int main() {
     tolerance_document.auto_join_walls();
     assert(tolerance_document.find_ptr(tolerance_wall_a)->wall()->joins.size() == 1);
     assert(tolerance_document.find_ptr(tolerance_wall_b)->wall()->joins.size() == 1);
+
+    // A non-orthogonal corner with a small hand-drawn gap must be repaired to
+    // one exact intersection, not left as two overlapping wall caps.
+    tbe::core::Document angled_tolerance_document{"Angled Tolerance Join"};
+    const auto angled_level = angled_tolerance_document.create_level("Level 1", 0.0, 3.0);
+    const auto angled_wall_a = angled_tolerance_document.create_wall(
+        "Angled A", {{0.0, 0.0}, {4.0, 0.0}}, 0.2, 3.0, angled_level
+    );
+    const auto angled_wall_b = angled_tolerance_document.create_wall(
+        "Angled B", {{4.18, 0.08}, {6.0, 2.0}}, 0.2, 3.0, angled_level
+    );
+    angled_tolerance_document.auto_join_walls();
+    const auto* angled_a = angled_tolerance_document.find_ptr(angled_wall_a)->wall();
+    const auto* angled_b = angled_tolerance_document.find_ptr(angled_wall_b)->wall();
+    assert(angled_a != nullptr && angled_b != nullptr);
+    assert(angled_a->joins.size() == 1);
+    assert(angled_b->joins.size() == 1);
+    assert(near(angled_a->axis.end.x, angled_b->axis.start.x));
+    assert(near(angled_a->axis.end.y, angled_b->axis.start.y));
+
+    // A small collinear hand-drawn gap is repaired only when the walls meet
+    // end-to-end. This protects the common wall-chain case without turning
+    // overlapping parallel walls into false joins.
+    tbe::core::Document collinear_document{"Collinear Endpoint Join"};
+    const auto collinear_level = collinear_document.create_level("Level 1", 0.0, 3.0);
+    const auto collinear_a = collinear_document.create_wall(
+        "Collinear A", {{0.0, 0.0}, {4.0, 0.0}}, 0.2, 3.0, collinear_level
+    );
+    const auto collinear_b = collinear_document.create_wall(
+        "Collinear B", {{4.18, 0.0}, {8.0, 0.0}}, 0.2, 3.0, collinear_level
+    );
+    collinear_document.auto_join_walls();
+    const auto* repaired_collinear_a = collinear_document.find_ptr(collinear_a)->wall();
+    const auto* repaired_collinear_b = collinear_document.find_ptr(collinear_b)->wall();
+    assert(repaired_collinear_a != nullptr && repaired_collinear_b != nullptr);
+    assert(repaired_collinear_a->joins.size() == 1);
+    assert(repaired_collinear_b->joins.size() == 1);
+    assert(near(repaired_collinear_a->axis.end.x, repaired_collinear_b->axis.start.x));
+    assert(near(repaired_collinear_a->axis.end.y, repaired_collinear_b->axis.start.y));
+
+    // Joins are level-local even when two floors share the same plan-space
+    // coordinates. Moving one floor must never mutate the other floor's wall.
+    tbe::core::Document level_isolation_document{"Level Isolated Joins"};
+    const auto isolation_level_one = level_isolation_document.create_level("Level 1", 0.0, 3.0);
+    const auto isolation_level_two = level_isolation_document.create_level("Level 2", 3.0, 3.0);
+    const auto isolation_wall_one = level_isolation_document.create_wall(
+        "Level 1 Wall", {{0.0, 0.0}, {4.0, 0.0}}, 0.2, 3.0, isolation_level_one
+    );
+    const auto isolation_wall_two = level_isolation_document.create_wall(
+        "Level 2 Wall", {{4.0, 0.0}, {4.0, 3.0}}, 0.2, 3.0, isolation_level_two
+    );
+    level_isolation_document.auto_join_walls();
+    assert(level_isolation_document.find_ptr(isolation_wall_one)->wall()->joins.empty());
+    assert(level_isolation_document.find_ptr(isolation_wall_two)->wall()->joins.empty());
+
+    // Direct axis editing must rebuild the relation as well; otherwise the
+    // old miter remains attached after a wall is moved from its endpoint.
+    angled_tolerance_document.set_wall_axis(
+        angled_wall_b, {{4.0, 0.0}, {6.0, 2.0}}
+    );
+    assert(angled_tolerance_document.find_ptr(angled_wall_a)->wall()->joins.size() == 1);
+    assert(angled_tolerance_document.find_ptr(angled_wall_b)->wall()->joins.size() == 1);
+
+    const auto angled_wall_c = angled_tolerance_document.create_wall(
+        "Angled C", {{6.0, 2.0}, {6.5, 3.0}}, 0.2, 3.0, angled_level
+    );
+    angled_tolerance_document.auto_join_walls();
+    angled_tolerance_document.set_wall_axis_with_joins(
+        angled_wall_b, {{4.0, 0.0}, {6.5, 2.5}}
+    );
+    const auto* moved_angled_b = angled_tolerance_document.find_ptr(angled_wall_b)->wall();
+    const auto* moved_angled_c = angled_tolerance_document.find_ptr(angled_wall_c)->wall();
+    assert(moved_angled_b != nullptr && moved_angled_c != nullptr);
+    assert(near(moved_angled_c->axis.start.x, 6.0));
+    assert(near(moved_angled_c->axis.start.y, 2.0));
+    assert(near(moved_angled_c->axis.end.x, 6.5));
+    assert(near(moved_angled_c->axis.end.y, 3.0));
+    assert(moved_angled_b->joins.size() == 2);
+    assert(moved_angled_c->joins.size() == 1);
+
+    // Proximity alone is not a join: a nearby parallel wall must stay put.
+    tbe::core::Document isolated_nearby_document{"Isolated Nearby Wall"};
+    const auto isolated_level = isolated_nearby_document.create_level("Level 1", 0.0, 3.0);
+    const auto isolated_base = isolated_nearby_document.create_wall(
+        "Base", {{0.0, 0.0}, {4.0, 0.0}}, 0.2, 3.0, isolated_level
+    );
+    const auto isolated_parallel = isolated_nearby_document.create_wall(
+        "Parallel", {{0.0, 0.1}, {4.0, 0.1}}, 0.2, 3.0, isolated_level
+    );
+    isolated_nearby_document.auto_join_walls();
+    isolated_nearby_document.set_wall_axis_with_joins(
+        isolated_base, {{0.0, 1.0}, {4.0, 1.0}}
+    );
+    const auto* isolated_wall = isolated_nearby_document.find_ptr(isolated_parallel)->wall();
+    assert(isolated_wall != nullptr);
+    assert(near(isolated_wall->axis.start.y, 0.1));
+
+    // Resizing from an endpoint must not drag the joined neighbor with it.
+    // The native join rebuild is responsible for recognizing the new
+    // intersection, rather than preserving the old corner by moving both
+    // walls together.
+    tbe::core::Document endpoint_document{"Endpoint Resize Join"};
+    const auto endpoint_level = endpoint_document.create_level("Level 1", 0.0, 3.0);
+    const auto endpoint_base = endpoint_document.create_wall(
+        "Base",
+        tbe::core::Line2{.start = {.x = 0.0, .y = 0.0}, .end = {.x = 4.0, .y = 0.0}},
+        0.2,
+        3.0,
+        endpoint_level
+    );
+    const auto endpoint_branch = endpoint_document.create_wall(
+        "Branch",
+        tbe::core::Line2{.start = {.x = 4.0, .y = 0.0}, .end = {.x = 4.0, .y = 3.0}},
+        0.2,
+        3.0,
+        endpoint_level
+    );
+    endpoint_document.auto_join_walls();
+    endpoint_document.set_wall_axis_with_joins(
+        endpoint_base, tbe::core::Line2{.start = {.x = 0.0, .y = 0.0}, .end = {.x = 2.0, .y = 0.0}}
+    );
+    const auto* resized_base = endpoint_document.find_ptr(endpoint_base)->wall();
+    const auto* fixed_branch = endpoint_document.find_ptr(endpoint_branch)->wall();
+    assert(resized_base != nullptr && fixed_branch != nullptr);
+    assert(near(fixed_branch->axis.start.x, 4.0));
+    assert(near(fixed_branch->axis.start.y, 0.0));
+    assert(near(fixed_branch->axis.end.x, 4.0));
+    assert(near(fixed_branch->axis.end.y, 3.0));
+
+    // A T-junction remains a real join after moving its perpendicular branch:
+    // the base wall stays fixed and the branch endpoint becomes a new
+    // interior intersection on it.
+    tbe::core::Document tee_move_document{"T Move Join"};
+    const auto tee_move_level = tee_move_document.create_level("Level 1", 0.0, 3.0);
+    const auto tee_move_base = tee_move_document.create_wall(
+        "Base",
+        tbe::core::Line2{.start = {.x = -2.0, .y = 0.0}, .end = {.x = 2.0, .y = 0.0}},
+        0.2,
+        3.0,
+        tee_move_level
+    );
+    const auto tee_move_branch = tee_move_document.create_wall(
+        "Branch",
+        tbe::core::Line2{.start = {.x = 0.0, .y = 0.0}, .end = {.x = 0.0, .y = 2.0}},
+        0.2,
+        3.0,
+        tee_move_level
+    );
+    tee_move_document.auto_join_walls();
+    const auto* initial_tee_base = tee_move_document.find_ptr(tee_move_base)->wall();
+    const auto* initial_tee_branch = tee_move_document.find_ptr(tee_move_branch)->wall();
+    assert(initial_tee_base != nullptr && initial_tee_branch != nullptr);
+    assert(initial_tee_base->joins.size() == 1);
+    assert(initial_tee_branch->joins.size() == 1);
+    assert(initial_tee_branch->joins.front().kind == tbe::core::WallJoinKind::Tee);
+    tee_move_document.set_wall_axis_with_joins(
+        tee_move_branch,
+        tbe::core::Line2{.start = {.x = 1.0, .y = 0.0}, .end = {.x = 1.0, .y = 2.0}}
+    );
+    const auto* moved_tee_base = tee_move_document.find_ptr(tee_move_base)->wall();
+    const auto* moved_tee_branch = tee_move_document.find_ptr(tee_move_branch)->wall();
+    assert(moved_tee_base != nullptr && moved_tee_branch != nullptr);
+    assert(near(moved_tee_base->axis.start.x, -2.0));
+    assert(near(moved_tee_base->axis.end.x, 2.0));
+    assert(moved_tee_base->joins.size() == 1);
+    assert(moved_tee_branch->joins.size() == 1);
+    assert(moved_tee_branch->joins.front().kind == tbe::core::WallJoinKind::Tee);
+    assert(near(moved_tee_branch->joins.front().point.x, 1.0));
+    assert(near(moved_tee_branch->joins.front().point.y, 0.0));
+
+    tbe::core::GeometryService tee_move_geometry;
+    const auto tee_branch_profile = tee_move_geometry.build_wall_profile(*moved_tee_branch);
+    assert(tee_branch_profile.t_junction_placeholders == 1);
+    assert(near(tee_branch_profile.polygon[0].x, 0.1));
+    assert(near(tee_branch_profile.polygon[3].x, 0.1));
+
+    // Moving one side of a closed room inward/outward stretches only the two
+    // adjacent walls. The opposite side and the rest of the model stay fixed,
+    // while the join graph and room enclosure remain valid.
+    tbe::core::Document room_move_document{"Room Wall Move"};
+    const auto room_move_level = room_move_document.create_level("Level 1", 0.0, 3.0);
+    const auto room_bottom = room_move_document.create_wall(
+        "Bottom", {{0.0, 0.0}, {6.0, 0.0}}, 0.2, 3.0, room_move_level);
+    const auto room_right = room_move_document.create_wall(
+        "Right", {{6.0, 0.0}, {6.0, 4.0}}, 0.2, 3.0, room_move_level);
+    const auto room_top = room_move_document.create_wall(
+        "Top", {{6.0, 4.0}, {0.0, 4.0}}, 0.2, 3.0, room_move_level);
+    const auto room_left = room_move_document.create_wall(
+        "Left", {{0.0, 4.0}, {0.0, 0.0}}, 0.2, 3.0, room_move_level);
+    room_move_document.auto_join_walls();
+    room_move_document.set_wall_axis_with_joins(
+        room_top, {{6.0, 2.5}, {0.0, 2.5}});
+    assert(near(room_move_document.find_ptr(room_bottom)->wall()->axis.start.y, 0.0));
+    assert(near(room_move_document.find_ptr(room_bottom)->wall()->axis.end.y, 0.0));
+    assert(near(room_move_document.find_ptr(room_right)->wall()->axis.end.y, 2.5));
+    assert(near(room_move_document.find_ptr(room_left)->wall()->axis.start.y, 2.5));
+    assert(room_move_document.find_ptr(room_top)->wall()->joins.size() == 2);
+    assert(room_move_document.detect_rooms().size() == 1);
+
+    room_move_document.set_wall_axis_with_joins(
+        room_top, {{6.0, 5.0}, {0.0, 5.0}});
+    assert(near(room_move_document.find_ptr(room_right)->wall()->axis.end.y, 5.0));
+    assert(near(room_move_document.find_ptr(room_left)->wall()->axis.start.y, 5.0));
+    assert(room_move_document.detect_rooms().size() == 1);
+
+    // A loaded/stale document may have no serialized join graph even though
+    // its wall axes are attached. Body move still derives the two immediate
+    // endpoint attachments from geometry and preserves the enclosure.
+    tbe::core::Document stale_join_document{"Stale Join Body Move"};
+    stale_join_document.set_automatic_wall_join_enabled(false);
+    const auto stale_level = stale_join_document.create_level("Level 1", 0.0, 3.0);
+    const auto stale_bottom = stale_join_document.create_wall(
+        "Bottom", {{0.0, 0.0}, {6.0, 0.0}}, 0.2, 3.0, stale_level);
+    const auto stale_right = stale_join_document.create_wall(
+        "Right", {{6.0, 0.0}, {6.0, 5.0}}, 0.2, 3.0, stale_level);
+    const auto stale_top = stale_join_document.create_wall(
+        "Top", {{6.0, 5.0}, {0.0, 5.0}}, 0.2, 3.0, stale_level);
+    const auto stale_left = stale_join_document.create_wall(
+        "Left", {{0.0, 5.0}, {0.0, 0.0}}, 0.2, 3.0, stale_level);
+    (void)stale_bottom;
+    stale_join_document.set_automatic_wall_join_enabled(true);
+    stale_join_document.set_wall_axis_with_joins(
+        stale_top, {{6.0, 3.5}, {0.0, 3.5}});
+    assert(near(stale_join_document.find_ptr(stale_right)->wall()->axis.end.y, 3.5));
+    assert(near(stale_join_document.find_ptr(stale_left)->wall()->axis.start.y, 3.5));
+    assert(stale_join_document.find_ptr(stale_top)->wall()->joins.size() == 2);
+    assert(stale_join_document.detect_rooms().size() == 1);
+
+    // Dragging through the fixed ends would invert both side walls. Reject
+    // the whole mutation so no wall is left partially moved.
+    bool rejected_inverting_room_move = false;
+    try {
+        room_move_document.set_wall_axis_with_joins(
+            room_top, {{6.0, -1.0}, {0.0, -1.0}});
+    } catch (const std::invalid_argument&) {
+        rejected_inverting_room_move = true;
+    }
+    assert(rejected_inverting_room_move);
+    assert(near(room_move_document.find_ptr(room_top)->wall()->axis.start.y, 5.0));
+    assert(near(room_move_document.find_ptr(room_right)->wall()->axis.end.y, 5.0));
+    assert(near(room_move_document.find_ptr(room_left)->wall()->axis.start.y, 5.0));
+
+    // An endpoint handle edit on a long connected chain must remain local.
+    tbe::core::Document chain_move_document{"Local Endpoint Edit"};
+    const auto chain_level = chain_move_document.create_level("Level 1", 0.0, 3.0);
+    std::vector<tbe::core::ElementId> chain_walls;
+    std::vector<tbe::core::Line2> chain_axes;
+    tbe::core::Point2 chain_point{0.0, 0.0};
+    for (int index = 0; index < 50; ++index) {
+        const auto next = index % 2 == 0
+            ? tbe::core::Point2{chain_point.x + 1.0, chain_point.y}
+            : tbe::core::Point2{chain_point.x, chain_point.y + 1.0};
+        const tbe::core::Line2 axis{.start = chain_point, .end = next};
+        chain_axes.push_back(axis);
+        chain_walls.push_back(chain_move_document.create_wall(
+            "Chain", axis, 0.2, 3.0, chain_level));
+        chain_point = next;
+    }
+    chain_move_document.auto_join_walls();
+    chain_move_document.set_wall_axis_with_joins(
+        chain_walls.front(), {{0.0, 0.0}, {0.5, 0.0}});
+    for (std::size_t index = 1; index < chain_walls.size(); ++index) {
+        const auto* unchanged = chain_move_document.find_ptr(chain_walls[index])->wall();
+        assert(unchanged != nullptr);
+        assert(near(unchanged->axis.start.x, chain_axes[index].start.x));
+        assert(near(unchanged->axis.start.y, chain_axes[index].start.y));
+        assert(near(unchanged->axis.end.x, chain_axes[index].end.x));
+        assert(near(unchanged->axis.end.y, chain_axes[index].end.y));
+    }
+
+    // A slightly skewed hand-drawn connector gets exact endpoint joins, but
+    // auto-join must not globally rotate/square semantic wall axes.
+    tbe::core::Document parallel_connector_document{"Parallel Connector Repair"};
+    const auto parallel_connector_level = parallel_connector_document.create_level("Level 1", 0.0, 3.0);
+    const auto parallel_lower = parallel_connector_document.create_wall(
+        "Lower",
+        tbe::core::Line2{.start = {.x = 0.0, .y = 0.0}, .end = {.x = 4.0, .y = 0.0}},
+        0.2,
+        3.0,
+        parallel_connector_level
+    );
+    const auto parallel_upper = parallel_connector_document.create_wall(
+        "Upper",
+        tbe::core::Line2{.start = {.x = 0.0, .y = 3.0}, .end = {.x = 3.75, .y = 3.0}},
+        0.2,
+        3.0,
+        parallel_connector_level
+    );
+    const auto skew_connector = parallel_connector_document.create_wall(
+        "Skew Connector",
+        tbe::core::Line2{.start = {.x = 3.98, .y = 0.04}, .end = {.x = 3.76, .y = 2.96}},
+        0.2,
+        3.0,
+        parallel_connector_level
+    );
+    parallel_connector_document.auto_join_walls();
+    const auto* repaired_lower = parallel_connector_document.find_ptr(parallel_lower)->wall();
+    const auto* repaired_upper = parallel_connector_document.find_ptr(parallel_upper)->wall();
+    const auto* repaired_connector = parallel_connector_document.find_ptr(skew_connector)->wall();
+    assert(repaired_lower != nullptr && repaired_upper != nullptr && repaired_connector != nullptr);
+    assert(near(repaired_lower->axis.end.x, repaired_connector->axis.start.x));
+    assert(near(repaired_lower->axis.end.y, repaired_connector->axis.start.y));
+    assert(near(repaired_upper->axis.end.x, repaired_connector->axis.end.x));
+    assert(near(repaired_upper->axis.end.y, repaired_connector->axis.end.y));
+    assert(std::abs(repaired_connector->axis.start.x - repaired_connector->axis.end.x) > 0.1);
+    assert(repaired_lower->joins.size() == 1);
+    assert(repaired_upper->joins.size() == 1);
+    assert(repaired_connector->joins.size() == 2);
 
     tbe::core::Document t_junction_document{"T Junction"};
     const auto t_level = t_junction_document.create_level("Level 1", 0.0, 3.0);
@@ -945,6 +1307,13 @@ int main() {
     assert(opening_schedule_before.empty());
     const auto sched_door_id = shared_wall_document.create_door("Door", shared_mid, 2.0, 1.0, 2.1);
     const auto sched_window_id = shared_wall_document.create_window("Window", shared_mid, 3.2, 0.8, 1.2, 0.9);
+    shared_wall_document.regenerate_dirty_geometry();
+    const auto* layered_wall = shared_wall_document.find_ptr(shared_mid)->wall();
+    assert(layered_wall != nullptr);
+    assert(layered_wall->geometry.mesh.triangle_material_ids.size() == layered_wall->geometry.mesh.indices.size() / 3);
+    assert(std::count(layered_wall->geometry.mesh.triangle_material_ids.begin(), layered_wall->geometry.mesh.triangle_material_ids.end(), brick_material) > 0);
+    assert(std::count(layered_wall->geometry.mesh.triangle_material_ids.begin(), layered_wall->geometry.mesh.triangle_material_ids.end(), plaster_material) > 0);
+    assert(layered_wall->geometry.openings_cut == 2);
     const auto updated_wall_schedule = shared_wall_document.generate_wall_schedule();
     const auto updated_opening_schedule = shared_wall_document.generate_opening_schedule();
     assert(updated_opening_schedule.size() == 2);
@@ -1319,6 +1688,70 @@ int main() {
     assert(l_room != nullptr);
     assert(near(l_room->centerline_area_square_meters, 20.0));
     assert(l_room->centerline_boundary_polygon.size() >= 6);
+
+    // Automatic footprint roof regression: a concave U profile must keep its
+    // exact boundary while producing a non-empty sloped mesh. The old
+    // rectangle-only gable path returned an empty mesh for this case.
+    tbe::core::Document u_roof_document{"U Roof"};
+    const auto u_roof_level = u_roof_document.create_level("Roof Level", 3.0, 3.0);
+    const std::vector<tbe::core::Point2> u_footprint{
+        {.x = 0.0, .y = 0.0}, {.x = 8.0, .y = 0.0}, {.x = 8.0, .y = 8.0},
+        {.x = 6.0, .y = 8.0}, {.x = 6.0, .y = 2.0}, {.x = 2.0, .y = 2.0},
+        {.x = 2.0, .y = 8.0}, {.x = 0.0, .y = 8.0},
+    };
+    const auto u_roof_id = u_roof_document.create_roof(
+        u_roof_level, u_footprint, tbe::core::RoofType::AutoFootprint,
+        0.24, 0, 0, 22.0, 0.30
+    );
+    u_roof_document.regenerate_dirty_geometry();
+    const auto* u_roof = u_roof_document.find_ptr(u_roof_id)->roof();
+    assert(u_roof != nullptr);
+    assert(u_roof->mesh.vertices.size() > 0);
+    assert(u_roof->mesh.indices.size() > 0);
+    assert(u_roof->area_square_meters > 40.0);
+    // Every footprint edge gets one slope plane.  Matching midpoints of the
+    // eave and raised ridge loops must therefore rise at tan(slope), even for
+    // a concave U where a centre fan would cut straight through the notch.
+    const auto u_edge_count = u_footprint.size();
+    assert(u_roof->mesh.vertices.size() >= u_edge_count * 3);
+    const auto expected_u_slope = std::tan(22.0 * std::numbers::pi / 180.0);
+    for (std::size_t index = 0; index < u_edge_count; ++index) {
+        const auto next = (index + 1) % u_edge_count;
+        const auto& eave_a = u_roof->mesh.vertices[u_edge_count + index];
+        const auto& eave_b = u_roof->mesh.vertices[u_edge_count + next];
+        const auto& ridge_a = u_roof->mesh.vertices[(u_edge_count * 2) + index];
+        const auto& ridge_b = u_roof->mesh.vertices[(u_edge_count * 2) + next];
+        const auto eave_dx = eave_b.x - eave_a.x;
+        const auto eave_dy = eave_b.y - eave_a.y;
+        const auto ridge_mid_x = (ridge_a.x + ridge_b.x) * 0.5;
+        const auto ridge_mid_y = (ridge_a.y + ridge_b.y) * 0.5;
+        // Concave corners can slide an offset edge along its own direction;
+        // only the perpendicular run determines its roof pitch.
+        const auto run = std::abs(
+            (eave_dx * (ridge_mid_y - eave_a.y)) -
+            (eave_dy * (ridge_mid_x - eave_a.x))
+        ) / std::hypot(eave_dx, eave_dy);
+        assert(run > 1.0e-9);
+        assert(near((ridge_a.z - eave_a.z) / run, expected_u_slope));
+    }
+    const auto u_peak_before = std::max_element(
+        u_roof->mesh.vertices.begin(), u_roof->mesh.vertices.end(),
+        [](const auto& left, const auto& right) { return left.z < right.z; }
+    )->z;
+    u_roof_document.update_roof_properties(
+        u_roof_id, tbe::core::RoofType::AutoFootprint, 35.0, 0.30
+    );
+    u_roof_document.regenerate_dirty_geometry();
+    const auto* steeper_u_roof = u_roof_document.find_ptr(u_roof_id)->roof();
+    const auto u_peak_after = std::max_element(
+        steeper_u_roof->mesh.vertices.begin(), steeper_u_roof->mesh.vertices.end(),
+        [](const auto& left, const auto& right) { return left.z < right.z; }
+    )->z;
+    assert(u_peak_after > u_peak_before);
+    const auto u_roundtrip = tbe::core::Document::from_json(u_roof_document.to_json());
+    const auto* loaded_u_roof = u_roundtrip.find_ptr(u_roof_id)->roof();
+    assert(loaded_u_roof != nullptr);
+    assert(loaded_u_roof->roof_type == tbe::core::RoofType::AutoFootprint);
 
     tbe::core::Project multi_project{"Multi Project"};
     multi_project.active_document() = multi_room_document;
@@ -1717,6 +2150,359 @@ int main() {
     assert(std::any_of(short_wall_report.issues.begin(), short_wall_report.issues.end(), [](const auto& issue) {
         return issue.code == tbe::core::ValidationIssueCode::WallTooShort;
     }));
+
+    {
+        tbe::core::Document level_kernel_document{"Level Kernel"};
+        const auto finish_material = level_kernel_document.create_material("Finish", tbe::core::MaterialCategory::Finish);
+        const auto floor_assembly = level_kernel_document.create_layered_assembly(
+            tbe::core::LayeredAssemblyKind::Floor,
+            "Floor Build-Up",
+            {tbe::core::WallAssemblyLayer{
+                .material_id = finish_material,
+                .thickness_meters = 0.18,
+                .function = tbe::core::WallLayerFunction::Core,
+            }}
+        );
+        const auto ceiling_assembly = level_kernel_document.create_layered_assembly(
+            tbe::core::LayeredAssemblyKind::Ceiling,
+            "Ceiling Build-Up",
+            {tbe::core::WallAssemblyLayer{
+                .material_id = finish_material,
+                .thickness_meters = 0.03,
+                .function = tbe::core::WallLayerFunction::InteriorFinish,
+            }}
+        );
+
+        const auto level_1 = level_kernel_document.create_level("Level 1", 0.0, 3.0);
+        const auto level_2 = level_kernel_document.create_level("Level 2", 3.2, 3.0);
+        const auto constrained_wall = level_kernel_document.create_wall(
+            "Constrained Wall",
+            {{0.0, 0.0}, {4.0, 0.0}},
+            0.2,
+            3.0,
+            level_1
+        );
+        const auto constrained_door = level_kernel_document.create_door("Door", constrained_wall, 1.2, 0.9, 2.1);
+        level_kernel_document.set_wall_level_constraints(
+            constrained_wall,
+            level_1,
+            level_2,
+            0.0,
+            0.2,
+            tbe::core::WallHeightMode::TopLevel
+        );
+        level_kernel_document.regenerate_dirty_geometry();
+        auto constrained_schedule = level_kernel_document.generate_wall_schedule();
+        const auto constrained_row = std::find_if(constrained_schedule.begin(), constrained_schedule.end(), [constrained_wall](const auto& row) {
+            return row.wall_id == constrained_wall;
+        });
+        assert(constrained_row != constrained_schedule.end());
+        assert(near(constrained_row->height_meters, 3.4));
+
+        const auto wall_ids = level_kernel_document.create_elements_from_profile(tbe::core::ProfileDraft{
+            .mode = tbe::core::ProfileDraftMode::Polyline,
+            .target_kind = tbe::core::ProfileTargetKind::WallPath,
+            .level_id = level_1,
+            .points = {{10.0, 0.0}, {14.0, 0.0}, {14.0, 3.0}, {10.0, 3.0}, {10.0, 0.0}},
+            .closed = true,
+            .thickness_meters = 0.2,
+            .height_meters = 3.0,
+        });
+        assert(wall_ids.size() == 4);
+        level_kernel_document.auto_join_walls();
+        const auto level_kernel_rooms = level_kernel_document.detect_rooms();
+        assert(!level_kernel_rooms.empty());
+
+        const auto floor_ids = level_kernel_document.create_elements_from_profile(tbe::core::ProfileDraft{
+            .mode = tbe::core::ProfileDraftMode::Rectangle,
+            .target_kind = tbe::core::ProfileTargetKind::FloorBoundary,
+            .level_id = level_1,
+            .points = {{10.0, 0.0}, {14.0, 3.0}},
+            .closed = true,
+            .thickness_meters = 0.18,
+            .assembly_id = floor_assembly,
+        });
+        const auto ceiling_ids = level_kernel_document.create_elements_from_profile(tbe::core::ProfileDraft{
+            .mode = tbe::core::ProfileDraftMode::PickWalls,
+            .target_kind = tbe::core::ProfileTargetKind::CeilingBoundary,
+            .level_id = level_1,
+            .picked_wall_ids = wall_ids,
+            .closed = true,
+            .assembly_id = ceiling_assembly,
+        });
+        const auto poly_floor_ids = level_kernel_document.create_elements_from_profile(tbe::core::ProfileDraft{
+            .mode = tbe::core::ProfileDraftMode::Polyline,
+            .target_kind = tbe::core::ProfileTargetKind::FloorBoundary,
+            .level_id = level_1,
+            .points = {{20.0, 0.0}, {24.0, 0.0}, {24.0, 1.5}, {22.0, 3.0}, {20.0, 2.0}},
+            .closed = true,
+            .thickness_meters = 0.18,
+            .assembly_id = floor_assembly,
+        });
+        const auto roof_ids = level_kernel_document.create_elements_from_profile(tbe::core::ProfileDraft{
+            .mode = tbe::core::ProfileDraftMode::Polyline,
+            .target_kind = tbe::core::ProfileTargetKind::RoofBoundary,
+            .level_id = level_2,
+            .points = {{19.8, -0.2}, {24.2, -0.2}, {24.8, 1.5}, {22.0, 3.6}, {19.6, 2.2}},
+            .closed = true,
+            .thickness_meters = 0.2,
+        });
+        assert(floor_ids.size() == 1);
+        assert(ceiling_ids.size() == 1);
+        assert(poly_floor_ids.size() == 1);
+        assert(roof_ids.size() == 1);
+        const auto floor_system_it = level_kernel_document.floor_systems().find(floor_ids.front());
+        const auto ceiling_system_it = level_kernel_document.ceiling_systems().find(ceiling_ids.front());
+        assert(floor_system_it != level_kernel_document.floor_systems().end());
+        assert(ceiling_system_it != level_kernel_document.ceiling_systems().end());
+        const auto& floor_system = floor_system_it->second;
+        const auto& ceiling_system = ceiling_system_it->second;
+        assert(floor_system.boundary_polygon.size() == 4);
+        assert(ceiling_system.boundary_polygon.size() == 4);
+        assert(near(min_x(floor_system.boundary_polygon), min_x(ceiling_system.boundary_polygon)));
+        assert(near(max_x(floor_system.boundary_polygon), max_x(ceiling_system.boundary_polygon)));
+        assert(near(min_y(floor_system.boundary_polygon), min_y(ceiling_system.boundary_polygon)));
+        assert(near(max_y(floor_system.boundary_polygon), max_y(ceiling_system.boundary_polygon)));
+        assert(near(ceiling_system.height_offset_meters, 2.6));
+
+        bool rejected_duplicate_floor = false;
+        try {
+            (void)level_kernel_document.create_elements_from_profile(tbe::core::ProfileDraft{
+                .mode = tbe::core::ProfileDraftMode::Rectangle,
+                .target_kind = tbe::core::ProfileTargetKind::FloorBoundary,
+                .level_id = level_1,
+                .points = {{10.0, 0.0}, {14.0, 3.0}},
+                .closed = true,
+                .thickness_meters = 0.18,
+                .assembly_id = floor_assembly,
+            });
+        } catch (const std::invalid_argument&) {
+            rejected_duplicate_floor = true;
+        }
+        assert(rejected_duplicate_floor);
+
+        bool rejected_duplicate_ceiling = false;
+        try {
+            (void)level_kernel_document.create_elements_from_profile(tbe::core::ProfileDraft{
+                .mode = tbe::core::ProfileDraftMode::PickWalls,
+                .target_kind = tbe::core::ProfileTargetKind::CeilingBoundary,
+                .level_id = level_1,
+                .picked_wall_ids = wall_ids,
+                .closed = true,
+                .assembly_id = ceiling_assembly,
+            });
+        } catch (const std::invalid_argument&) {
+            rejected_duplicate_ceiling = true;
+        }
+        assert(rejected_duplicate_ceiling);
+
+        const auto poly_floor_system_it = level_kernel_document.floor_systems().find(poly_floor_ids.front());
+        assert(poly_floor_system_it != level_kernel_document.floor_systems().end());
+        const auto& poly_floor_system = poly_floor_system_it->second;
+        assert(poly_floor_system.boundary_polygon.size() == 5);
+        assert(near(poly_floor_system.area_square_meters, 9.5));
+        const auto* roof = level_kernel_document.find_ptr(roof_ids.front())->roof();
+        assert(roof != nullptr);
+        assert(roof->boundary_polygon.size() == 5);
+
+        bool rejected_disconnected_pick = false;
+        try {
+            (void)level_kernel_document.create_elements_from_profile(tbe::core::ProfileDraft{
+                .mode = tbe::core::ProfileDraftMode::PickWalls,
+                .target_kind = tbe::core::ProfileTargetKind::FloorBoundary,
+                .level_id = level_1,
+                .picked_wall_ids = {wall_ids[0], wall_ids[1], constrained_wall},
+                .closed = true,
+                .assembly_id = floor_assembly,
+            });
+        } catch (const std::invalid_argument&) {
+            rejected_disconnected_pick = true;
+        }
+        assert(rejected_disconnected_pick);
+
+        level_kernel_document.move_level_elevation(level_2, 4.0);
+        constrained_schedule = level_kernel_document.generate_wall_schedule();
+        const auto moved_top_row = std::find_if(constrained_schedule.begin(), constrained_schedule.end(), [constrained_wall](const auto& row) {
+            return row.wall_id == constrained_wall;
+        });
+        assert(moved_top_row != constrained_schedule.end());
+        assert(near(moved_top_row->height_meters, 4.2));
+
+        level_kernel_document.move_level_elevation(level_1, 0.5);
+        const auto* moved_wall = level_kernel_document.find_ptr(constrained_wall)->wall();
+        const auto* moved_door = level_kernel_document.find_ptr(constrained_door)->door();
+        assert(moved_wall != nullptr && moved_wall->geometry.dirty);
+        assert(moved_door != nullptr && moved_door->level_locked);
+        assert(moved_door->level_id == level_1);
+        assert(level_kernel_document.floor_systems().find(floor_ids.front()) != level_kernel_document.floor_systems().end());
+        assert(level_kernel_document.ceiling_systems().find(ceiling_ids.front()) != level_kernel_document.ceiling_systems().end());
+        assert(level_kernel_document.floor_systems().find(floor_ids.front())->second.dirty);
+        assert(level_kernel_document.ceiling_systems().find(ceiling_ids.front())->second.dirty);
+
+        const auto reloaded_level_kernel = tbe::core::Document::from_json(level_kernel_document.to_json());
+        const auto* reloaded_wall = reloaded_level_kernel.find_ptr(constrained_wall)->wall();
+        const auto* reloaded_door = reloaded_level_kernel.find_ptr(constrained_door)->door();
+        assert(reloaded_wall != nullptr);
+        assert(reloaded_wall->base_level_id == level_1);
+        assert(reloaded_wall->top_level_id == level_2);
+        assert(reloaded_wall->height_mode == tbe::core::WallHeightMode::TopLevel);
+        assert(reloaded_door != nullptr);
+        assert(reloaded_door->level_locked);
+    }
+
+    {
+        // Compound assemblies are semantic data. Their generated meshes are
+        // rebuilt after reload rather than persisted as project payload.
+        tbe::core::Document compound{"Compound V2"};
+        const auto level = compound.create_level("Level 1", 0.0, 3.2);
+        const auto concrete = compound.create_material("Concrete", tbe::core::MaterialCategory::Structural);
+        const auto screed = compound.create_material("Screed", tbe::core::MaterialCategory::Structural);
+        const auto laminate = compound.create_material("Laminate", tbe::core::MaterialCategory::Finish);
+        const auto wall_assembly = compound.create_layered_assembly(tbe::core::LayeredAssemblyKind::Wall, "Wall", {
+            {.material_id = concrete, .thickness_meters = 0.20, .function = tbe::core::WallLayerFunction::Core, .priority = 100, .structural = true},
+            {.material_id = concrete, .thickness_meters = 0.02, .function = tbe::core::WallLayerFunction::InteriorFinish, .priority = 10},
+        });
+        const auto roof_assembly = compound.create_layered_assembly(tbe::core::LayeredAssemblyKind::Roof, "Roof", {
+            {.material_id = concrete, .thickness_meters = 0.18, .function = tbe::core::WallLayerFunction::Core, .priority = 100, .structural = true},
+        });
+        const auto stair_assembly = compound.create_layered_assembly(tbe::core::LayeredAssemblyKind::Stair, "Stair", {
+            {.material_id = concrete, .thickness_meters = 0.15, .function = tbe::core::WallLayerFunction::Core, .priority = 100, .structural = true},
+        });
+        const auto slab_assembly = compound.create_layered_assembly(tbe::core::LayeredAssemblyKind::Floor, "Floor Slab", {
+            tbe::core::WallAssemblyLayer{.material_id = concrete, .thickness_meters = 0.18, .function = tbe::core::WallLayerFunction::Core},
+            tbe::core::WallAssemblyLayer{.material_id = screed, .thickness_meters = 0.05, .function = tbe::core::WallLayerFunction::Core},
+            tbe::core::WallAssemblyLayer{.material_id = laminate, .thickness_meters = 0.012, .function = tbe::core::WallLayerFunction::InteriorFinish},
+        });
+        const auto wall = compound.create_wall("Wall", {{0.0, 0.0}, {6.0, 0.0}}, 0.2, 3.2, level, wall_assembly);
+        const auto compound_wall_schedule = compound.generate_wall_schedule();
+        const auto compound_wall_row = std::find_if(compound_wall_schedule.begin(), compound_wall_schedule.end(), [wall](const auto& row) {
+            return row.wall_id == wall;
+        });
+        assert(compound_wall_row != compound_wall_schedule.end());
+        assert(near(compound_wall_row->material_volume_by_id.at(concrete), 4.224));
+        const auto column = compound.create_column(level, {3.0, 0.0}, 0.30, 0.30, 3.0, concrete);
+        const auto beam = compound.create_beam(level, {0.0, 0.0}, {6.0, 0.0}, 0.25, 0.4, concrete);
+        compound.auto_join_structural_elements();
+        assert(!compound.find_ptr(wall)->wall()->openings.empty());
+        assert(!compound.host_relations().empty());
+        compound.set_structural_wall_cut(wall, column, true, 0.02);
+        assert(compound.find_ptr(wall)->wall()->openings.size() == 1);
+        compound.set_structural_wall_cut(wall, column, false);
+        assert(compound.find_ptr(wall)->wall()->openings.empty());
+        compound.set_beam_column_join(beam, column, true);
+        const auto slab = compound.create_slab(level, {{0.0, 0.0}, {6.0, 0.0}, {6.0, 4.0}, {0.0, 4.0}}, 0.01, concrete, slab_assembly, 0.4);
+        compound.regenerate_dirty_geometry();
+        const auto* slab_data = compound.find_ptr(slab)->slab();
+        assert(slab_data != nullptr);
+        assert(near(slab_data->thickness_meters, 0.242));
+        assert(slab_data->mesh.triangle_material_ids.size() == slab_data->mesh.indices.size() / 3);
+        const auto compound_slab_schedule = compound.generate_slab_schedule();
+        const auto compound_slab_row = std::find_if(compound_slab_schedule.begin(), compound_slab_schedule.end(), [slab](const auto& row) {
+            return row.slab_id == slab;
+        });
+        assert(compound_slab_row != compound_slab_schedule.end());
+        assert(near(compound_slab_row->material_volume_by_id.at(concrete), 4.32));
+        assert(near(compound_slab_row->material_volume_by_id.at(screed), 1.2));
+        assert(near(compound_slab_row->material_volume_by_id.at(laminate), 0.288));
+        const auto roof = compound.create_roof(level, {{0.0, 0.0}, {6.0, 0.0}, {6.0, 4.0}, {0.0, 4.0}}, tbe::core::RoofType::SimpleGable, 0.18, concrete, roof_assembly, 25.0);
+        assert(!compound.find_ptr(roof)->roof()->mesh.vertices.empty());
+        const auto stair = compound.create_stair(level, level, {0.0, 0.5}, {1.0, 0.0}, 1.1, 3.0, 4.0, 18, 17, concrete, stair_assembly);
+        assert(!compound.find_ptr(stair)->stair()->mesh.vertices.empty());
+        assert(!compound.find_ptr(stair)->stair()->mesh.indices.empty());
+        auto edited = *compound.get_layered_assembly(wall_assembly);
+        edited.layers.front().thickness_meters = 0.25;
+        compound.update_layered_assembly(std::move(edited));
+        assert(compound.find_ptr(wall)->wall()->geometry.dirty);
+        compound.regenerate_dirty_geometry();
+        auto metadata_only = *compound.get_layered_assembly(wall_assembly);
+        metadata_only.layers.front().priority = 999;
+        metadata_only.layers.front().structural = false;
+        compound.update_layered_assembly(std::move(metadata_only));
+        assert(!compound.find_ptr(wall)->wall()->geometry.dirty);
+        const auto restored = tbe::core::Document::from_json(compound.to_json());
+        assert(restored.find_ptr(wall)->wall()->assembly_id == wall_assembly);
+        assert(restored.find_ptr(roof)->roof()->assembly_id == roof_assembly);
+        assert(restored.find_ptr(slab)->slab()->assembly_id == slab_assembly);
+        assert(restored.find_ptr(stair)->stair()->assembly_id == stair_assembly);
+        assert(restored.find_ptr(roof)->roof()->generated_geometry_dirty);
+        assert(!restored.host_relations().empty());
+
+        // A wall owns door/window openings only. A column/beam wall cut is a
+        // derived relation, so deleting either side must not delete the other
+        // semantic element or leave a stale structural void behind.
+        compound.delete_element(wall);
+        assert(compound.find_ptr(column) != nullptr);
+        assert(compound.find_ptr(column)->column() != nullptr);
+        assert(compound.find_ptr(beam) != nullptr);
+        assert(compound.find_ptr(beam)->beam() != nullptr);
+
+        const auto replacement_wall = compound.create_wall(
+            "Replacement wall", {{0.0, 0.0}, {6.0, 0.0}}, 0.2, 3.2, level, wall_assembly);
+        compound.auto_join_structural_elements();
+        assert(!compound.find_ptr(replacement_wall)->wall()->openings.empty());
+        compound.delete_element(column);
+        assert(compound.find_ptr(replacement_wall)->wall()->openings.empty());
+        assert(compound.find_ptr(beam) != nullptr);
+    }
+
+    {
+        // Trim/Extend is an endpoint-explicit, atomic authoring operation.
+        // The two axes begin with a gap and must meet at the infinite-line
+        // intersection after the single command.
+        tbe::core::Document trim_document{"Trim Extend"};
+        const auto level = trim_document.create_level("Level 1", 0.0, 3.0);
+        const auto horizontal = trim_document.create_wall(
+            "Horizontal",
+            {{0.0, 0.0}, {3.0, 0.0}},
+            0.2,
+            3.0,
+            level
+        );
+        const auto vertical = trim_document.create_wall(
+            "Vertical",
+            {{4.0, 1.0}, {4.0, 4.0}},
+            0.2,
+            3.0,
+            level
+        );
+        trim_document.trim_extend_walls(horizontal, false, vertical, true);
+        const auto* trimmed_horizontal = trim_document.find_ptr(horizontal)->wall();
+        const auto* trimmed_vertical = trim_document.find_ptr(vertical)->wall();
+        assert(near(trimmed_horizontal->axis.end.x, 4.0));
+        assert(near(trimmed_horizontal->axis.end.y, 0.0));
+        assert(near(trimmed_vertical->axis.start.x, 4.0));
+        assert(near(trimmed_vertical->axis.start.y, 0.0));
+        assert(!trimmed_horizontal->joins.empty());
+
+        // Opening validation happens before either axis is written, so an
+        // invalid trim cannot leave one wall changed and the other untouched.
+        const auto opening_wall = trim_document.create_wall(
+            "Opening wall",
+            {{6.0, 0.0}, {9.0, 0.0}},
+            0.2,
+            3.0,
+            level
+        );
+        trim_document.create_door("Door", opening_wall, 2.2, 0.5, 2.1);
+        const auto crossing_wall = trim_document.create_wall(
+            "Crossing wall",
+            {{7.0, -2.0}, {7.0, -0.5}},
+            0.2,
+            3.0,
+            level
+        );
+        bool trim_rejected = false;
+        try {
+            trim_document.trim_extend_walls(opening_wall, true, crossing_wall, false);
+        } catch (const std::invalid_argument&) {
+            trim_rejected = true;
+        }
+        assert(trim_rejected);
+        const auto* unchanged_opening_wall = trim_document.find_ptr(opening_wall)->wall();
+        const auto* unchanged_crossing_wall = trim_document.find_ptr(crossing_wall)->wall();
+        assert(near(unchanged_opening_wall->axis.start.x, 6.0));
+        assert(near(unchanged_crossing_wall->axis.end.y, -0.5));
+    }
 
     return 0;
 }

@@ -12,10 +12,14 @@ dependencies:
   ffi: ^2.1.2
   file_selector: ^1.0.3
   flutter_svg: ^2.0.10+1
+  pdf: ^3.13.0
+  printing: ^5.15.0
 
 dev_dependencies:
   flutter_lints: ^4.0.0
   flutter_test:
+    sdk: flutter
+  integration_test:
     sdk: flutter
 
 flutter:

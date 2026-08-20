@@ -50,7 +50,23 @@ enum class WallJoinKind {
 
 enum class OpeningKind {
     Door,
-    Window
+    Window,
+    StructuralVoid
+};
+
+enum class HostRelationKind {
+    Join,
+    Embed,
+    Cut,
+    Host
+};
+
+struct HostRelation {
+    ElementId host_id{};
+    ElementId guest_id{};
+    HostRelationKind kind{HostRelationKind::Embed};
+    int priority{};
+    double clearance_meters{};
 };
 
 enum class RoomBoundaryMode {
@@ -81,6 +97,12 @@ enum class WallLayerFunction {
     Generic
 };
 
+enum class WallTypeCategory {
+    Interior,
+    Exterior,
+    Generic,
+};
+
 enum class QuantityType {
     Area,
     Volume,
@@ -89,13 +111,38 @@ enum class QuantityType {
 };
 
 enum class LayeredAssemblyKind {
+    Wall,
     Floor,
-    Ceiling
+    Ceiling,
+    Roof,
+    Stair
 };
 
 enum class RoofType {
     Flat,
-    SimpleGable
+    SimpleGable,
+    // Revit-like roof by footprint: ridge, hip and valley geometry is
+    // generated from an arbitrary simple closed wall/profile loop.
+    AutoFootprint
+};
+
+enum class WallHeightMode {
+    Unconnected,
+    TopLevel
+};
+
+enum class ProfileDraftMode {
+    Polyline,
+    Rectangle,
+    PickWalls,
+    AutoRoom
+};
+
+enum class ProfileTargetKind {
+    WallPath,
+    FloorBoundary,
+    CeilingBoundary,
+    RoofBoundary
 };
 
 struct WallJoin {
@@ -112,6 +159,7 @@ struct HostedOpening {
     double width_meters{};
     double height_meters{};
     double sill_height_meters{};
+    double vertical_offset_meters{};
 };
 
 struct OpeningRectangle {
@@ -135,6 +183,9 @@ struct WallProfile2D {
 struct MeshBuffer {
     std::vector<Point3> vertices{};
     std::vector<std::uint32_t> indices{};
+    // One material id per triangle. An empty vector means legacy/default
+    // material assignment and is valid for older generated meshes.
+    std::vector<ElementId> triangle_material_ids{};
 };
 
 struct GeneratedGeometry {
@@ -150,10 +201,18 @@ struct GeneratedGeometry {
 
 struct WallData {
     ElementId level_id{};
+    ElementId base_level_id{};
+    ElementId top_level_id{};
     ElementId wall_type_id{};
+    // WallTypeData is kept for legacy projects. New authoring uses the same
+    // compound assembly contract as floors, roofs and stairs.
+    ElementId assembly_id{};
     Line2 axis{};
     double thickness_meters{};
     double height_meters{};
+    double base_offset_meters{};
+    double top_offset_meters{};
+    WallHeightMode height_mode{WallHeightMode::Unconnected};
     std::vector<WallJoin> joins{};
     std::vector<HostedOpening> openings{};
     GeneratedGeometry geometry{};
@@ -165,6 +224,11 @@ struct DoorData {
     double offset_meters{};
     double width_meters{};
     double height_meters{};
+    // Authoritative offset from level_id. vertical_offset_meters is the
+    // derived host-wall-relative value used by the wall opening geometry.
+    double level_offset_meters{};
+    double vertical_offset_meters{};
+    bool level_locked{true};
 };
 
 struct WindowData {
@@ -174,12 +238,18 @@ struct WindowData {
     double width_meters{};
     double height_meters{};
     double sill_height_meters{};
+    // Authoritative offset from level_id. vertical_offset_meters is derived
+    // against the current host wall base elevation.
+    double level_offset_meters{};
+    double vertical_offset_meters{};
+    bool level_locked{true};
 };
 
 struct LevelData {
     std::string name{};
     double elevation_meters{};
     double default_wall_height_meters{};
+    bool is_story{true};
 };
 
 struct RoomData {
@@ -214,6 +284,10 @@ struct SlabData {
 struct RoofData {
     ElementId level_id{};
     std::vector<Point2> boundary_polygon{};
+    // Present only for roofs created from a PickWalls profile.  The engine owns
+    // this relationship so a changed wall loop can regenerate the roof rather
+    // than leaving a stale, Flutter-side footprint behind.
+    std::vector<ElementId> source_wall_ids{};
     RoofType roof_type{RoofType::Flat};
     double thickness_meters{};
     std::optional<double> slope_degrees{};
@@ -262,6 +336,7 @@ struct StairData {
     int riser_count{};
     int tread_count{};
     ElementId material_id{};
+    ElementId assembly_id{};
     bool generated_geometry_dirty{true};
     MeshBuffer mesh{};
     double footprint_area_square_meters{};
@@ -274,7 +349,11 @@ struct FloorSystemData {
     ElementId level_id{};
     ElementId assembly_id{};
     std::vector<Point2> boundary_polygon{};
+    // Semantic holes hosted by stairs. The renderer can choose a cutaway
+    // representation without duplicating the stair itself.
+    std::vector<ElementId> stair_opening_ids{};
     double area_square_meters{};
+    bool manual_profile{};
     bool dirty{true};
 };
 
@@ -284,9 +363,26 @@ struct CeilingSystemData {
     ElementId level_id{};
     ElementId assembly_id{};
     std::vector<Point2> boundary_polygon{};
+    std::vector<ElementId> stair_opening_ids{};
     double area_square_meters{};
     double height_offset_meters{};
+    bool manual_profile{};
     bool dirty{true};
+};
+
+struct ProfileDraft {
+    ProfileDraftMode mode{ProfileDraftMode::Polyline};
+    ProfileTargetKind target_kind{ProfileTargetKind::WallPath};
+    ElementId level_id{};
+    std::vector<Point2> points{};
+    std::vector<ElementId> picked_wall_ids{};
+    bool closed{};
+    double thickness_meters{};
+    double height_meters{};
+    double vertical_offset_meters{};
+    ElementId material_id{};
+    ElementId assembly_id{};
+    RoofType roof_type{RoofType::Flat};
 };
 
 struct MaterialDefinition {
@@ -295,6 +391,7 @@ struct MaterialDefinition {
     MaterialCategory category{MaterialCategory::Generic};
     std::optional<double> density_kg_per_m3{};
     std::optional<double> unit_cost{};
+    std::string display_color{"#B0B7C3"};
     std::map<std::string, std::string> metadata{};
 };
 
@@ -302,6 +399,8 @@ struct WallAssemblyLayer {
     ElementId material_id{};
     double thickness_meters{};
     WallLayerFunction function{WallLayerFunction::Generic};
+    int priority{};
+    bool structural{};
 };
 
 struct LayeredAssemblyData {
@@ -314,6 +413,7 @@ struct LayeredAssemblyData {
 struct WallTypeData {
     ElementId wall_type_id{};
     std::string name{};
+    WallTypeCategory category{WallTypeCategory::Generic};
     std::vector<WallAssemblyLayer> layers{};
 };
 
@@ -383,6 +483,7 @@ struct WallScheduleRow {
     double interior_finish_area_square_meters{};
     double exterior_finish_area_square_meters{};
     std::map<ElementId, double> material_volume_by_id{};
+    std::map<ElementId, double> material_cost_by_id{};
 };
 
 struct SlabScheduleRow {
@@ -392,6 +493,8 @@ struct SlabScheduleRow {
     double thickness_meters{};
     double volume_cubic_meters{};
     std::string material_or_assembly_name{};
+    std::map<ElementId, double> material_volume_by_id{};
+    std::map<ElementId, double> material_cost_by_id{};
 };
 
 struct FloorFinishScheduleRow {

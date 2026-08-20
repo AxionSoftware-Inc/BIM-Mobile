@@ -1,471 +1,398 @@
-import 'package:flutter/material.dart';
+// Legacy dialog widgets are kept temporarily for the level-line quick edit
+// path.  The production Inspector is `PropertyEditor` + its controllers.
+// ignore_for_file: unused_element, unused_element_parameter
 
-import 'drawing_kernel.dart';
-import 'drawing_layer.dart';
+import 'dart:async';
+import 'dart:math' as math;
+
+import 'package:file_selector/file_selector.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
+import 'authoring_command_service.dart';
+import 'documentation/document_models.dart';
+import 'documentation/documentation_workspace.dart';
+import 'documentation/sheet_canvas.dart';
+import 'documentation/sheet_workspace_controller.dart';
+import 'inspector_controller.dart';
+import 'property_editor.dart';
+import 'project_lifecycle_service.dart';
+import 'project_persistence_service.dart';
+import 'project_session_controller.dart';
+import 'project_browser_panel.dart';
+import 'render_scene_editor.dart';
+import 'render_scene_estimator.dart';
 import 'render_scene_models.dart';
 import 'render_scene_repository.dart';
+import 'scene_mutation_service.dart';
+import 'scene_view_service.dart';
+import 'selection_controller.dart';
+import 'start_screen.dart';
+import 'tools/level_tool_controller.dart';
+import 'tools/opening_authoring_geometry.dart';
+import 'tools/opening_tool_controller.dart';
+import 'tools/plan_sketch_geometry.dart';
+import 'tools/stair_authoring_geometry.dart';
+import 'tools/surface_authoring_geometry.dart';
+import 'tools/surface_tool_controller.dart';
+import 'tools/stair_tool_controller.dart';
+import 'tools/trim_extend_tool_controller.dart';
+import 'tools/wall_tool_controller.dart';
+import 'tools/wall_authoring_geometry.dart';
+import 'view_tabs.dart';
+import 'view_navigation_policy.dart';
+import 'view_workspace_store.dart';
+import 'viewer_app_dependencies.dart';
+import 'viewer_project_session.dart';
+import 'workspace_chrome.dart';
 import 'render_scene_viewport.dart';
-import 'viewer_document_controller.dart';
+import 'render_scene_viewport_planar.dart';
 
-class ViewerApp extends StatelessWidget {
-  const ViewerApp({
-    super.key,
-    this.source,
-  });
-
-  final RenderSceneSource? source;
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'BIM Viewer',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF1F5D4E)),
-        useMaterial3: true,
-      ),
-      home: ViewerHomePage(
-        source: source ?? EngineRenderSceneSource(),
-      ),
-    );
-  }
-}
-
-class ViewerHomePage extends StatefulWidget {
-  const ViewerHomePage({
-    super.key,
-    required this.source,
-  });
-
-  final RenderSceneSource source;
-
-  @override
-  State<ViewerHomePage> createState() => _ViewerHomePageState();
-}
+part 'viewer_viewport_input.dart';
+part 'viewer_viewport_wall_editing.dart';
+part 'viewer_viewport_surface_editing.dart';
+part 'viewer_inspector_draft_widgets.dart';
+part 'viewer_inspector_selection_widgets.dart';
+part 'viewer_inspector_estimate_widgets.dart';
+part 'viewer_inspector_info_widgets.dart';
+part 'viewer_workspace_ui_layout.dart';
+part 'viewer_workspace_ui_interactions.dart';
+part 'viewer_start_screen.dart';
+part 'viewer_project_lifecycle.dart';
+part 'viewer_view_state.dart';
+part 'viewer_view_commands.dart';
+part 'viewer_authoring_state.dart';
 
 class _ViewerHomePageState extends State<ViewerHomePage> {
+  static const double _defaultWallThicknessMeters =
+      RenderSceneEditor.defaultWallThicknessMeters;
+  static const double _defaultWallHeightMeters =
+      RenderSceneEditor.defaultWallHeightMeters;
+  static const Set<String> _coreKindOrder = <String>{
+    'wall',
+    'door',
+    'window',
+    'room',
+    'slab',
+    'floor',
+    'ceiling',
+    'roof',
+    'column',
+    'beam',
+    'stair',
+  };
+
   final RenderSceneViewportController _viewportController =
       RenderSceneViewportController();
-  final DrawingInteractionController _drawingController =
-      DrawingInteractionController();
-  late final ViewerDocumentController _documentController;
+  final WallToolController _wallTool = WallToolController();
+  final LevelToolController _levelTool = LevelToolController();
+  final OpeningToolController _openingTool = OpeningToolController();
+  final SurfaceToolController _surfaceTool = SurfaceToolController();
+  final StairToolController _stairTool = StairToolController();
+  final TrimExtendToolController _trimTool = TrimExtendToolController();
+  late final SelectionController _selectionController;
+  late final InspectorController _inspectorController;
+  late final AuthoringCommandService _authoringCommands;
+  late final ViewerAppDependencies _dependencies;
+  late final ProjectLifecycleService<ViewerEngineSession> _projectLifecycle;
+  late final ProjectPersistenceService _projectPersistence;
+  late final ProjectSessionController<ViewerEngineSession> _projectSession;
+  late final SceneViewService _sceneViews;
+  late final SheetWorkspaceController _sheetWorkspace;
 
+  ViewerEngineSession? get _engineRepository => _projectSession.session;
+  bool get _engineBackedMode => _projectSession.isEngineBacked;
+
+  RenderScene? _scene;
   String? _statusMessage;
-  RenderSceneProjectionMode _projectionMode = RenderSceneProjectionMode.topDown;
+  String? _loadError;
+  bool _isBusy = false;
+  bool _showInspector = false;
+  bool _showObjectList = true;
+  bool _showDiagnostics = false;
+  String? _engineLoadDiagnostic;
+  int? _activeLevelId;
+  RenderSceneSection? _activeSectionView;
+  final ViewWorkspaceStore _viewWorkspace = ViewWorkspaceStore.standard();
+
+  List<OpenedViewTab> get _openedViewTabs => _viewWorkspace.tabs;
+  String? get _activeViewTabId => _viewWorkspace.activeTabId;
+  set _activeViewTabId(String? value) => _viewWorkspace.setActiveTab(value);
+  Map<String, OpenedViewTab> get _viewPresentationById =>
+      _viewWorkspace.savedPresentations;
+  Map<String, RenderScene> get _sheetViewScenes => _viewWorkspace.sheetScenes;
+  RenderScene? get _sheetSourceScene => _viewWorkspace.sheetSourceScene;
+  set _sheetSourceScene(RenderScene? value) =>
+      _viewWorkspace.cacheSheetSource(value);
+  double _planViewRangeMeters = 2.0;
+
+  RenderSceneProjectionMode _projectionMode = kDefaultPlanProjectionMode;
   RenderSceneOrbitProjectionStyle _orbitProjectionStyle =
       RenderSceneOrbitProjectionStyle.perspective;
   RenderSceneDisplayStyle _displayStyle = RenderSceneDisplayStyle.solid;
+  RenderSceneInteractionMode _interactionMode =
+      RenderSceneInteractionMode.select;
+  RenderScenePoint? _draftWallStart;
+  RenderScenePoint? _draftWallEnd;
+  RenderSceneObject? _draftMoveTarget;
+  RenderScenePoint? _moveAnchorPoint;
+  RenderScenePoint? _moveWallOriginalStart;
+  RenderScenePoint? _moveWallOriginalEnd;
+  int? _draftMoveLevelId;
+  double? _moveLevelOriginalElevation;
+  WallMoveMode _wallMoveMode = WallMoveMode.translate;
+  String? _editStatusMessage;
+  bool _snapDraftToGrid = true;
+  final List<String> _androidMutationTrace = <String>[];
+  // Wall gestures can arrive before the previous engine mutation has
+  // finished. Keep the commits ordered instead of dropping the next segment.
+  Future<void> _wallCommitTail = Future<void>.value();
+
+  RenderSceneObject? get _draftHostWall => _openingTool.hostWall;
+  set _draftHostWall(RenderSceneObject? value) =>
+      _openingTool.setHostWall(value);
+  double get _draftOpeningOffsetMeters => _openingTool.offsetMeters;
+  set _draftOpeningOffsetMeters(double value) => _openingTool.setOffset(value);
+  double get _draftOpeningWidthMeters => _openingTool.widthMeters;
+  set _draftOpeningWidthMeters(double value) => _openingTool.setWidth(value);
+  double get _draftOpeningHeightMeters => _openingTool.heightMeters;
+  set _draftOpeningHeightMeters(double value) => _openingTool.setHeight(value);
+  double get _draftOpeningSillHeightMeters => _openingTool.sillHeightMeters;
+  set _draftOpeningSillHeightMeters(double value) =>
+      _openingTool.setSillHeight(value);
+
+  RenderScenePoint? get _draftSurfaceStart => _surfaceTool.start;
+  set _draftSurfaceStart(RenderScenePoint? value) => _surfaceTool.start = value;
+  RenderScenePoint? get _draftSurfaceEnd => _surfaceTool.end;
+  set _draftSurfaceEnd(RenderScenePoint? value) => _surfaceTool.end = value;
+  List<RenderScenePoint> get _draftSurfacePoints => _surfaceTool.points;
+  Set<int> get _draftSurfaceWallIds => _surfaceTool.wallIds;
+  RenderSceneSurfaceDrawMode get _surfaceDrawMode => _surfaceTool.drawMode;
+  set _surfaceDrawMode(RenderSceneSurfaceDrawMode value) =>
+      _surfaceTool.drawMode = value;
+  double get _draftSurfaceThicknessMeters => _surfaceTool.thicknessMeters;
+  set _draftSurfaceThicknessMeters(double value) =>
+      _surfaceTool.thicknessMeters = value;
+  double get _draftSurfaceHeightMeters => _surfaceTool.heightMeters;
+  set _draftSurfaceHeightMeters(double value) =>
+      _surfaceTool.heightMeters = value;
+  double get _draftFloorTopElevationMeters => _surfaceTool.floorTopMeters;
+  set _draftFloorTopElevationMeters(double value) =>
+      _surfaceTool.floorTopMeters = value;
+  double get _draftCeilingHeightOffsetMeters =>
+      _surfaceTool.ceilingOffsetMeters;
+  set _draftCeilingHeightOffsetMeters(double value) =>
+      _surfaceTool.ceilingOffsetMeters = value;
+
+  bool get _isSurfaceAuthoring =>
+      _interactionMode == RenderSceneInteractionMode.addFloor ||
+      _interactionMode == RenderSceneInteractionMode.addCeiling ||
+      _interactionMode == RenderSceneInteractionMode.addRoof;
+
+  Set<String> get _authoringPickKinds => switch (_interactionMode) {
+        RenderSceneInteractionMode.addDoor ||
+        RenderSceneInteractionMode.addWindow ||
+        RenderSceneInteractionMode.trimExtend =>
+          const <String>{'wall'},
+        RenderSceneInteractionMode.addFloor ||
+        RenderSceneInteractionMode.addCeiling ||
+        RenderSceneInteractionMode.addRoof =>
+          switch (_surfaceDrawMode) {
+            RenderSceneSurfaceDrawMode.pickWalls => const <String>{'wall'},
+            // Room previews are generated client-side and are not guaranteed
+            // to exist in the native pick index. Keep the plan point available
+            // so Auto Room can resolve the enclosure under the user's finger.
+            RenderSceneSurfaceDrawMode.autoRoom => const <String>{},
+            _ => const <String>{},
+          },
+        _ => const <String>{},
+      };
+
+  RenderSceneObject? _resolvePlanPick(
+    RenderScenePoint point,
+    Set<String> allowedKinds,
+    double toleranceMeters,
+  ) {
+    final repository = _engineRepository;
+    final scene = _scene;
+    if (!_engineBackedMode || repository == null || scene == null) return null;
+    try {
+      final candidates = repository.hitTest(
+        point.x,
+        point.y,
+        toleranceMeters: toleranceMeters,
+      );
+      for (final candidate in candidates) {
+        final object = scene.objectById(candidate.elementId);
+        if (object == null) continue;
+        if (_visibleKinds.isNotEmpty &&
+            !_visibleKinds.contains(object.kindKey)) {
+          continue;
+        }
+        if (allowedKinds.isNotEmpty && !allowedKinds.contains(object.kindKey)) {
+          continue;
+        }
+        return object;
+      }
+    } catch (_) {
+      // The mesh picker remains a safe fallback while a project is loading or
+      // when a legacy engine does not expose the spatial query.
+    }
+    return null;
+  }
+
+  RenderSceneObject? _findWallNearPlanPoint(
+    RenderScene scene,
+    RenderScenePoint point, {
+    double toleranceMeters = 0.45,
+  }) {
+    RenderSceneObject? best;
+    var bestDistance = double.infinity;
+    for (final wall in scene.objects) {
+      if (wall.kindKey != 'wall' ||
+          (_activeLevelId != null && wall.levelId != _activeLevelId)) {
+        continue;
+      }
+      final start = RenderSceneEditor.wallStartPoint(wall);
+      final end = RenderSceneEditor.wallEndPoint(wall);
+      if (start == null || end == null) continue;
+      final axis = end - start;
+      final lengthSquared = axis.x * axis.x + axis.y * axis.y;
+      if (lengthSquared <= 1e-9) continue;
+      final rawT =
+          ((point.x - start.x) * axis.x + (point.y - start.y) * axis.y) /
+              lengthSquared;
+      final t = rawT.clamp(0.0, 1.0);
+      final projected = RenderScenePoint(
+        x: start.x + axis.x * t,
+        y: start.y + axis.y * t,
+        z: point.z,
+      );
+      final dx = projected.x - point.x;
+      final dy = projected.y - point.y;
+      final distance = math.sqrt(dx * dx + dy * dy);
+      final wallTolerance = math.max(
+        toleranceMeters,
+        (RenderSceneEditor.wallThickness(wall) ?? 0.30) * 0.5 + 0.12,
+      );
+      if (distance <= wallTolerance && distance < bestDistance) {
+        best = wall;
+        bestDistance = distance;
+      }
+    }
+    return best;
+  }
+
+  void _traceAndroidMutation(String message) {
+    if (!kDebugMode) return;
+    final timestamp = DateTime.now().toIso8601String().split('T').last;
+    setState(() {
+      _androidMutationTrace.insert(0, '$timestamp  $message');
+      if (_androidMutationTrace.length > 8) {
+        _androidMutationTrace.removeRange(8, _androidMutationTrace.length);
+      }
+    });
+  }
+
+  /// Empty means “show all” in RenderSceneViewportController.
+  Set<String> _visibleKinds = <String>{};
+  bool _usesProjectionDefaultVisibility = true;
+  bool _usesProjectionDefaultDisplayStyle = true;
 
   @override
   void initState() {
     super.initState();
-    _documentController = ViewerDocumentController(source: widget.source)
-      ..addListener(_handleDocumentChanged);
-    _drawingController.addListener(_handleDrawingChanged);
-    _loadBundledSample();
+    _selectionController = SelectionController(_viewportController);
+    _inspectorController = InspectorController(_selectionController);
+    _authoringCommands = AuthoringCommandService(
+      repository: () => _engineRepository,
+      creationGateway: () => _engineRepository,
+      engineEnabled: () => _engineBackedMode,
+    );
+    _dependencies = widget.dependencies ?? ViewerAppDependencies.production();
+    _projectSession = _dependencies.projectSession;
+    _projectLifecycle = _dependencies.projectLifecycle;
+    _projectPersistence = ProjectPersistenceService(
+      repository: () => _engineRepository,
+      engineEnabled: () => _engineBackedMode,
+    );
+    _sceneViews = SceneViewService(
+      repository: () => _engineRepository,
+      engineEnabled: () => _engineBackedMode,
+    );
+    _sheetWorkspace = SheetWorkspaceController();
+    _sheetWorkspace.addListener(_onSheetWorkspaceChanged);
+    _viewportController.addListener(_onViewportChanged);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      final initialTemplate = widget.initialTemplate;
+      final initialProjectJson = widget.initialProjectJson;
+      if (widget.initialBlankProject) {
+        _createBlankProject();
+      } else if (initialTemplate != null) {
+        _createResidentialTemplate(_residentialTemplateKind(initialTemplate));
+      } else if (initialProjectJson != null) {
+        _loadProjectJson(
+          initialProjectJson,
+          projectName: widget.initialProjectName ?? 'Opened project',
+          sourcePath: widget.initialProjectPath,
+        );
+      } else {
+        _loadBundledSample();
+      }
+    });
   }
 
-  RenderScene? get _scene => _documentController.scene;
-  String? get _loadError => _documentController.errorMessage;
-  bool get _isBusy => _documentController.isBusy;
-  bool get _canEdit => widget.source is EngineRenderSceneSource;
-
-  void _handleDocumentChanged() {
-    if (mounted) {
-      setState(() {});
-    }
-  }
-
-  void _handleDrawingChanged() {
-    if (mounted) {
-      setState(() {});
+  _ResidentialTemplateKind _residentialTemplateKind(
+    WorkspaceTemplate template,
+  ) {
+    switch (template) {
+      case WorkspaceTemplate.default3:
+        return _ResidentialTemplateKind.default3;
+      case WorkspaceTemplate.tower9:
+        return _ResidentialTemplateKind.tower9;
+      case WorkspaceTemplate.campus6x9:
+        return _ResidentialTemplateKind.campus6x9;
     }
   }
 
   @override
   void dispose() {
-    _documentController.removeListener(_handleDocumentChanged);
-    _drawingController.removeListener(_handleDrawingChanged);
-    _documentController.dispose();
-    _drawingController.dispose();
+    _sheetWorkspace.removeListener(_onSheetWorkspaceChanged);
+    _sheetWorkspace.dispose();
+    _viewportController.removeListener(_onViewportChanged);
     _viewportController.dispose();
+    _wallTool.dispose();
+    _levelTool.dispose();
+    _openingTool.dispose();
+    _surfaceTool.dispose();
+    _stairTool.dispose();
+    _trimTool.dispose();
+    _inspectorController.dispose();
+    _selectionController.dispose();
+    if (widget.dependencies == null) {
+      _dependencies.dispose();
+    }
     super.dispose();
   }
 
-  Future<void> _loadBundledSample() async {
-    _statusMessage = 'Loading bundled project through the engine...';
-    final result = await _documentController.loadBundledSample();
-    await _applyLoadResult(result, sourceLabel: 'engine project');
-  }
-
-  Future<void> _reloadCurrentScene() async {
-    await _loadBundledSample();
-  }
-
-  Future<void> _fitCamera() async {
-    setState(() {
-      _statusMessage = 'Fitting scene to view...';
-    });
-    await _viewportController.fitCamera();
-  }
-
-  Future<void> _applyLoadResult(
-    RenderSceneLoadResult result, {
-    required String sourceLabel,
-  }) async {
-    if (!mounted) {
-      return;
-    }
-    final scene = result.scene;
-    if (!identical(_documentController.scene, scene)) {
-      _documentController.applyResult(result);
-    }
-    setState(() {
-      _statusMessage = scene == null
-          ? 'RenderScene load failed.'
-          : 'Loaded ${scene.objectCount} objects from $sourceLabel';
-    });
-    if (scene != null) {
-      _drawingController.setScene(scene);
-      await _viewportController.loadRenderScene(scene);
-      await _viewportController.setProjectionMode(_projectionMode);
-      await _viewportController.fitCamera();
-    } else {
-      _drawingController.setScene(null);
-      await _viewportController.clearScene();
-    }
-  }
-
-  int _activeLevelId(RenderScene? scene) {
-    for (final object in scene?.objects ?? const <RenderSceneObject>[]) {
-      if (object.levelId != null && object.kindKey == 'wall') {
-        return object.levelId!;
+  @override
+  void reassemble() {
+    super.reassemble();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && !_isBusy) {
+        _reloadCurrentScene();
       }
-    }
-    return 0;
-  }
-
-  Future<bool> _commitWall(DrawingSegment segment) async {
-    final source = widget.source;
-    if (source is! EngineRenderSceneSource) {
-      setState(() => _statusMessage = 'Engine editing is unavailable for this source');
-      return false;
-    }
-    try {
-      await source.createWall(
-        name: 'Wall',
-        levelId: _activeLevelId(_scene),
-        startX: segment.start.x,
-        startY: segment.start.y,
-        endX: segment.end.x,
-        endY: segment.end.y,
-        thicknessMeters: segment.thickness,
-        heightMeters: 3.0,
-      );
-      final refreshed = await source.refreshFromEngine();
-      await _applyLoadResult(refreshed, sourceLabel: 'engine current model');
-      return true;
-    } catch (error) {
-      if (mounted) {
-        setState(() => _statusMessage = 'Wall was rejected: $error');
-      }
-      return false;
-    }
-  }
-
-  Future<bool> _commitPolygon(
-    DrawingToolKind tool,
-    List<RenderScenePoint> polygon,
-  ) async {
-    if (mounted) {
-      setState(() {
-        _statusMessage =
-            '${tool == DrawingToolKind.floor ? 'Floor' : 'Ceiling'} outline captured; semantic commit adapter is next.';
-      });
-    }
-    return false;
-  }
-
-  Future<void> _setProjectionMode(RenderSceneProjectionMode mode) async {
-    setState(() {
-      _projectionMode = mode;
-      _statusMessage = mode == RenderSceneProjectionMode.topDown
-          ? '2D plan view'
-          : '3D isometric view';
     });
-    await _viewportController.setProjectionMode(mode);
   }
 
-  Future<void> _setOrbitProjectionStyle(
-    RenderSceneOrbitProjectionStyle style,
-  ) async {
-    setState(() {
-      _orbitProjectionStyle = style;
-      _statusMessage = style == RenderSceneOrbitProjectionStyle.perspective
-          ? '3D perspective view'
-          : '3D orthographic view';
-    });
-    await _viewportController.setOrbitProjectionStyle(style);
-  }
-
-  Future<void> _setDisplayStyle(RenderSceneDisplayStyle style) async {
-    setState(() {
-      _displayStyle = style;
-      _statusMessage = style == RenderSceneDisplayStyle.solid
-          ? 'Solid view'
-          : 'Wireframe view';
-    });
-    await _viewportController.setDisplayStyle(style);
-  }
-
-  String _topBarText(RenderScene? scene) {
-    if (scene == null) {
-      return 'No RenderScene loaded';
-    }
-    final wallCount = scene.kindCounts['wall'] ?? 0;
-    return '${scene.objectCount} objects · $wallCount walls · ${scene.vertexCount} vertices · ${scene.triangleCount} triangles';
+  void _updateViewportState(VoidCallback callback) {
+    if (mounted) setState(callback);
   }
 
   @override
-  Widget build(BuildContext context) {
-    final scene = _scene;
-    final theme = Theme.of(context);
-
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('BIM Viewer'),
-        actions: <Widget>[
-          Padding(
-            padding: const EdgeInsets.only(right: 12),
-            child: IconButton(
-              tooltip: 'Reload sample',
-              onPressed: _isBusy ? null : _reloadCurrentScene,
-              icon: const Icon(Icons.refresh),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.only(right: 12),
-            child: IconButton(
-              tooltip: 'Fit scene',
-              onPressed: _isBusy ? null : _fitCamera,
-              icon: const Icon(Icons.center_focus_strong),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.only(right: 12),
-            child: SegmentedButton<RenderSceneProjectionMode>(
-              segments: const <ButtonSegment<RenderSceneProjectionMode>>[
-                ButtonSegment<RenderSceneProjectionMode>(
-                  value: RenderSceneProjectionMode.topDown,
-                  label: Text('2D'),
-                ),
-                ButtonSegment<RenderSceneProjectionMode>(
-                  value: RenderSceneProjectionMode.isometric,
-                  label: Text('3D'),
-                ),
-              ],
-              selected: <RenderSceneProjectionMode>{_projectionMode},
-              onSelectionChanged: (Set<RenderSceneProjectionMode> selection) {
-                if (selection.isNotEmpty) {
-                  _setProjectionMode(selection.first);
-                }
-              },
-            ),
-          ),
-          if (_projectionMode == RenderSceneProjectionMode.isometric)
-            Padding(
-              padding: const EdgeInsets.only(right: 12),
-              child: SegmentedButton<RenderSceneOrbitProjectionStyle>(
-                segments: const <ButtonSegment<
-                    RenderSceneOrbitProjectionStyle>>[
-                  ButtonSegment<RenderSceneOrbitProjectionStyle>(
-                    value: RenderSceneOrbitProjectionStyle.perspective,
-                    label: Text('Perspective'),
-                  ),
-                  ButtonSegment<RenderSceneOrbitProjectionStyle>(
-                    value: RenderSceneOrbitProjectionStyle.orthographic,
-                    label: Text('Ortho'),
-                  ),
-                ],
-                selected: <RenderSceneOrbitProjectionStyle>{
-                  _orbitProjectionStyle,
-                },
-                onSelectionChanged:
-                    (Set<RenderSceneOrbitProjectionStyle> selection) {
-                  if (selection.isNotEmpty) {
-                    _setOrbitProjectionStyle(selection.first);
-                  }
-                },
-              ),
-            ),
-          Padding(
-            padding: const EdgeInsets.only(right: 12),
-            child: SegmentedButton<RenderSceneDisplayStyle>(
-              segments: const <ButtonSegment<RenderSceneDisplayStyle>>[
-                ButtonSegment<RenderSceneDisplayStyle>(
-                  value: RenderSceneDisplayStyle.solid,
-                  label: Text('Solid'),
-                ),
-                ButtonSegment<RenderSceneDisplayStyle>(
-                  value: RenderSceneDisplayStyle.wireframe,
-                  label: Text('Wire'),
-                ),
-              ],
-              selected: <RenderSceneDisplayStyle>{_displayStyle},
-              onSelectionChanged: (Set<RenderSceneDisplayStyle> selection) {
-                if (selection.isNotEmpty) {
-                  _setDisplayStyle(selection.first);
-                }
-              },
-            ),
-          ),
-        ],
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(56),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                _topBarText(scene),
-                style: theme.textTheme.titleSmall,
-              ),
-            ),
-          ),
-        ),
-      ),
-      body: Column(
-        children: <Widget>[
-          Expanded(
-            child: Container(
-              color: const Color(0xFFF4F7F5),
-              child: Stack(
-                fit: StackFit.expand,
-                children: <Widget>[
-                  RenderSceneViewport(controller: _viewportController),
-                  if (_canEdit)
-                    DrawingLayer(
-                      controller: _drawingController,
-                      viewport: _viewportController,
-                      onWallCommit: _commitWall,
-                      onPolygonCommit: _commitPolygon,
-                    ),
-                  if (_canEdit)
-                    Positioned(
-                      left: 12,
-                      top: 12,
-                      child: Card(
-                        child: Padding(
-                          padding: const EdgeInsets.all(6),
-                          child: Wrap(
-                            spacing: 4,
-                            crossAxisAlignment: WrapCrossAlignment.center,
-                            children: <Widget>[
-                              IconButton(
-                                tooltip: 'Drawing mode',
-                                onPressed: _drawingController.toggle,
-                                color: _drawingController.enabled
-                                    ? Theme.of(context).colorScheme.primary
-                                    : null,
-                                icon: const Icon(Icons.edit_road),
-                              ),
-                              if (_drawingController.enabled)
-                                SegmentedButton<DrawingToolKind>(
-                                  segments: const <ButtonSegment<DrawingToolKind>>[
-                                    ButtonSegment<DrawingToolKind>(
-                                      value: DrawingToolKind.wall,
-                                      label: Text('Wall'),
-                                      icon: Icon(Icons.straighten),
-                                    ),
-                                    ButtonSegment<DrawingToolKind>(
-                                      value: DrawingToolKind.floor,
-                                      label: Text('Floor'),
-                                      icon: Icon(Icons.crop_square),
-                                    ),
-                                    ButtonSegment<DrawingToolKind>(
-                                      value: DrawingToolKind.ceiling,
-                                      label: Text('Ceiling'),
-                                      icon: Icon(Icons.grid_on),
-                                    ),
-                                  ],
-                                  selected: <DrawingToolKind>{
-                                    _drawingController.tool,
-                                  },
-                                  onSelectionChanged:
-                                      (Set<DrawingToolKind> selection) {
-                                    if (selection.isNotEmpty) {
-                                      _drawingController.setTool(selection.first);
-                                    }
-                                  },
-                                ),
-                              if (_drawingController.enabled)
-                                IconButton(
-                                  tooltip: 'Cancel drawing',
-                                  onPressed: _drawingController.cancel,
-                                  icon: const Icon(Icons.close),
-                                ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            color: const Color(0xFF0F172A),
-            child: DefaultTextStyle(
-              style: theme.textTheme.bodyMedium?.copyWith(
-                    color: Colors.white,
-                  ) ??
-                  const TextStyle(color: Colors.white),
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  children: <Widget>[
-                    Text(
-                      _statusMessage ??
-                          (_isBusy ? 'Loading scene...' : 'Ready'),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(width: 16),
-                    Text('Objects: ${scene?.objectCount ?? 0}'),
-                    const SizedBox(width: 12),
-                    Text('Walls: ${scene?.kindCounts['wall'] ?? 0}'),
-                    const SizedBox(width: 12),
-                    Text(
-                        'Mode: ${_projectionMode == RenderSceneProjectionMode.topDown ? '2D' : '3D'}'),
-                    const SizedBox(width: 12),
-                    Text(
-                      'View: ${_orbitProjectionStyle == RenderSceneOrbitProjectionStyle.perspective ? 'Persp' : 'Ortho'}',
-                    ),
-                    const SizedBox(width: 12),
-                    Text(
-                        'Selected: ${_viewportController.selectedElementId ?? '-'}'),
-                    const SizedBox(width: 12),
-                    Text(
-                        'Style: ${_displayStyle == RenderSceneDisplayStyle.solid ? 'Solid' : 'Wire'}'),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          if (_loadError != null)
-            Container(
-              width: double.infinity,
-              color: const Color(0xFFFEE2E2),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: Text(
-                _loadError!,
-                style: const TextStyle(color: Color(0xFF991B1B)),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
+  Widget build(BuildContext context) => _buildWorkspace(context);
 }

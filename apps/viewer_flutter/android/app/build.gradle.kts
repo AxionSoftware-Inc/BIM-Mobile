@@ -24,21 +24,21 @@ android {
         versionCode = flutter.versionCode
         versionName = flutter.versionName
 
-        ndk {
-            abiFilters += listOf("arm64-v8a", "x86_64")
-        }
-
         externalNativeBuild {
             cmake {
-                targets += "tbe_capi_shared"
+                arguments += listOf(
+                    "-DTBE_BUILD_TESTS=OFF",
+                    "-DTBE_BUILD_CLI=OFF",
+                    "-DTBE_BUILD_EXAMPLES=OFF",
+                    "-DTBE_ENABLE_OCCT=OFF",
+                )
             }
         }
     }
 
     externalNativeBuild {
         cmake {
-            path = file("CMakeLists.txt")
-            version = "3.30.3"
+            path = file("../../../../CMakeLists.txt")
         }
     }
 
@@ -47,6 +47,15 @@ android {
             // TODO: Add your own signing config for the release build.
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.getByName("debug")
+        }
+    }
+
+    // Dart FFI receives the absolute nativeLibraryDir path from MainActivity.
+    // Keep C++ libraries extracted there instead of relying on zip-backed
+    // loading behaviour, which varies across Android vendors.
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
         }
     }
 }

@@ -2,28 +2,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numeric>
+#include <optional>
 #include <stdexcept>
 #include <utility>
-
-#if TBE_HAS_OCCT
-#include <BRepAlgoAPI_Cut.hxx>
-#include <BRepGProp.hxx>
-#include <BRepMesh_IncrementalMesh.hxx>
-#include <BRepPrimAPI_MakeBox.hxx>
-#include <BRep_Tool.hxx>
-#include <GProp_GProps.hxx>
-#include <Poly_Triangulation.hxx>
-#include <TopExp_Explorer.hxx>
-#include <TopAbs_ShapeEnum.hxx>
-#include <TopoDS.hxx>
-#include <TopoDS_Face.hxx>
-#include <TopoDS_Shape.hxx>
-#include <TopLoc_Location.hxx>
-#include <gp_Dir.hxx>
-#include <gp_Pnt.hxx>
-#include <gp_Trsf.hxx>
-#include <gp_Vec.hxx>
-#endif
 
 namespace tbe::core {
 
@@ -37,115 +19,6 @@ double wall_length(const Line2& axis) {
     return std::sqrt((dx * dx) + (dy * dy));
 }
 
-double polygon_signed_area(const std::vector<Point2>& polygon) {
-    auto value = 0.0;
-    for (std::size_t index = 0; index < polygon.size(); ++index) {
-        const auto& current = polygon[index];
-        const auto& next = polygon[(index + 1) % polygon.size()];
-        value += (current.x * next.y) - (next.x * current.y);
-    }
-    return value / 2.0;
-}
-
-Point2 add(Point2 left, Point2 right) {
-    return Point2{.x = left.x + right.x, .y = left.y + right.y};
-}
-
-Point2 scale(Point2 value, double factor) {
-    return Point2{.x = value.x * factor, .y = value.y * factor};
-}
-
-Point2 perpendicular_left(Point2 direction) {
-    return Point2{.x = -direction.y, .y = direction.x};
-}
-
-MeshBuffer extrude_polygon_mesh(const std::vector<Point2>& polygon, double thickness, double elevation_offset) {
-    MeshBuffer mesh;
-    const auto vertex_count = polygon.size();
-    if (vertex_count < 3 || thickness <= 0.0) {
-        return mesh;
-    }
-
-    mesh.vertices.reserve(vertex_count * 2);
-    mesh.indices.reserve((vertex_count - 2) * 6 + vertex_count * 6);
-    for (const auto& point : polygon) {
-        mesh.vertices.push_back(Point3{.x = point.x, .y = point.y, .z = elevation_offset});
-    }
-    for (const auto& point : polygon) {
-        mesh.vertices.push_back(Point3{.x = point.x, .y = point.y, .z = elevation_offset + thickness});
-    }
-    for (std::uint32_t index = 1; index + 1 < vertex_count; ++index) {
-        mesh.indices.push_back(0);
-        mesh.indices.push_back(index);
-        mesh.indices.push_back(index + 1);
-        mesh.indices.push_back(static_cast<std::uint32_t>(vertex_count));
-        mesh.indices.push_back(static_cast<std::uint32_t>(vertex_count + index + 1));
-        mesh.indices.push_back(static_cast<std::uint32_t>(vertex_count + index));
-    }
-    for (std::uint32_t index = 0; index < vertex_count; ++index) {
-        const auto next = (index + 1) % static_cast<std::uint32_t>(vertex_count);
-        mesh.indices.push_back(index);
-        mesh.indices.push_back(next);
-        mesh.indices.push_back(static_cast<std::uint32_t>(vertex_count + next));
-        mesh.indices.push_back(index);
-        mesh.indices.push_back(static_cast<std::uint32_t>(vertex_count + next));
-        mesh.indices.push_back(static_cast<std::uint32_t>(vertex_count + index));
-    }
-    return mesh;
-}
-
-std::vector<Point2> rectangle_polygon(Point2 center, double width, double depth) {
-    const auto half_width = width / 2.0;
-    const auto half_depth = depth / 2.0;
-    return {
-        Point2{.x = center.x - half_width, .y = center.y - half_depth},
-        Point2{.x = center.x + half_width, .y = center.y - half_depth},
-        Point2{.x = center.x + half_width, .y = center.y + half_depth},
-        Point2{.x = center.x - half_width, .y = center.y + half_depth},
-    };
-}
-
-MeshBuffer column_mesh(Point2 center, double width, double depth, double height) {
-    return extrude_polygon_mesh(rectangle_polygon(center, width, depth), height, 0.0);
-}
-
-MeshBuffer beam_mesh(Point2 start, Point2 end, double width, double height) {
-    const auto beam_length = wall_length(Line2{.start = start, .end = end});
-    if (beam_length <= epsilon || width <= 0.0 || height <= 0.0) {
-        return {};
-    }
-    const auto direction = Point2{
-        .x = (end.x - start.x) / beam_length,
-        .y = (end.y - start.y) / beam_length,
-    };
-    const auto normal = scale(perpendicular_left(direction), width / 2.0);
-    return extrude_polygon_mesh({
-        add(start, normal),
-        add(end, normal),
-        add(end, scale(normal, -1.0)),
-        add(start, scale(normal, -1.0)),
-    }, height, 0.0);
-}
-
-MeshBuffer stair_mesh(const StairData& stair) {
-    if (stair.width_meters <= 0.0 || stair.total_run_meters <= 0.0 || stair.total_rise_meters <= 0.0) {
-        return {};
-    }
-    const auto direction_length = std::sqrt((stair.direction.x * stair.direction.x) + (stair.direction.y * stair.direction.y));
-    if (direction_length <= epsilon) {
-        return {};
-    }
-    const auto unit = Point2{.x = stair.direction.x / direction_length, .y = stair.direction.y / direction_length};
-    const auto normal = scale(perpendicular_left(unit), stair.width_meters / 2.0);
-    const auto run = scale(unit, stair.total_run_meters);
-    return extrude_polygon_mesh({
-        add(stair.start, normal),
-        add(add(stair.start, run), normal),
-        add(add(stair.start, run), scale(normal, -1.0)),
-        add(stair.start, scale(normal, -1.0)),
-    }, stair.total_rise_meters, 0.0);
-}
-
 Point2 subtract(Point2 left, Point2 right) {
     return Point2{.x = left.x - right.x, .y = left.y - right.y};
 }
@@ -156,6 +29,27 @@ double dot(Point2 left, Point2 right) {
 
 double cross(Point2 left, Point2 right) {
     return (left.x * right.y) - (left.y * right.x);
+}
+
+// The distance from an endpoint to a true mitre intersection.  Extending a
+// wall by half of its thickness only happens to be correct for a 90 degree
+// corner; every other angle needs the half-angle relation below.  Keeping a
+// finite limit prevents an almost reversed pair of lines from generating a
+// kilometre-long spike while the user is still sketching a wall.
+std::optional<double> miter_extension(double half_thickness, Point2 first, Point2 second) {
+    const auto sine = cross(first, second);
+    const auto cosine = dot(first, second);
+    const auto denominator = 1.0 + cosine;
+    if (std::abs(sine) <= epsilon || denominator <= epsilon) {
+        return std::nullopt;
+    }
+
+    const auto extension = half_thickness * std::abs(sine) / denominator;
+    constexpr auto miter_limit = 4.0;
+    if (!std::isfinite(extension) || extension > half_thickness * miter_limit) {
+        return std::nullopt;
+    }
+    return extension;
 }
 
 Point2 unit_direction(const Line2& axis) {
@@ -212,16 +106,28 @@ void validate_opening_rectangles(const std::vector<OpeningRectangle>& openings, 
     }
 }
 
-void append_quad(MeshBuffer& mesh, std::uint32_t a, std::uint32_t b, std::uint32_t c, std::uint32_t d) {
+void append_triangle(MeshBuffer& mesh, std::uint32_t a, std::uint32_t b, std::uint32_t c, ElementId material_id = 0) {
     mesh.indices.push_back(a);
     mesh.indices.push_back(b);
     mesh.indices.push_back(c);
-    mesh.indices.push_back(a);
-    mesh.indices.push_back(c);
-    mesh.indices.push_back(d);
+    if (!mesh.triangle_material_ids.empty() || material_id != 0) {
+        mesh.triangle_material_ids.push_back(material_id);
+    }
 }
 
-void append_opening_reveal(MeshBuffer& mesh, const OpeningRectangle& opening) {
+void append_quad(MeshBuffer& mesh, std::uint32_t a, std::uint32_t b, std::uint32_t c, std::uint32_t d, ElementId material_id = 0) {
+    append_triangle(mesh, a, b, c, material_id);
+    append_triangle(mesh, a, c, d, material_id);
+}
+
+void ensure_material_tracking(MeshBuffer& mesh) {
+    if (mesh.triangle_material_ids.empty() && !mesh.indices.empty()) {
+        mesh.triangle_material_ids.assign(mesh.indices.size() / 3, 0);
+    }
+}
+
+void append_opening_reveal(MeshBuffer& mesh, const OpeningRectangle& opening, ElementId material_id = 0) {
+    ensure_material_tracking(mesh);
     const auto base = static_cast<std::uint32_t>(mesh.vertices.size());
     mesh.vertices.push_back(Point3{.x = opening.x_min, .y = opening.y_min, .z = opening.z_min});
     mesh.vertices.push_back(Point3{.x = opening.x_max, .y = opening.y_min, .z = opening.z_min});
@@ -232,10 +138,143 @@ void append_opening_reveal(MeshBuffer& mesh, const OpeningRectangle& opening) {
     mesh.vertices.push_back(Point3{.x = opening.x_max, .y = opening.y_max, .z = opening.z_max});
     mesh.vertices.push_back(Point3{.x = opening.x_min, .y = opening.y_max, .z = opening.z_max});
 
-    append_quad(mesh, base + 0, base + 4, base + 7, base + 3);
-    append_quad(mesh, base + 1, base + 2, base + 6, base + 5);
-    append_quad(mesh, base + 3, base + 7, base + 6, base + 2);
-    append_quad(mesh, base + 0, base + 1, base + 5, base + 4);
+    append_quad(mesh, base + 0, base + 4, base + 7, base + 3, material_id);
+    append_quad(mesh, base + 1, base + 2, base + 6, base + 5, material_id);
+    append_quad(mesh, base + 3, base + 7, base + 6, base + 2, material_id);
+    append_quad(mesh, base + 0, base + 1, base + 5, base + 4, material_id);
+}
+
+void append_layer_face_with_openings(
+    MeshBuffer& mesh,
+    double y,
+    double x_min,
+    double x_max,
+    double height,
+    const std::vector<OpeningRectangle>& openings,
+    ElementId material_id
+) {
+    auto cursor = x_min;
+    for (const auto& opening : openings) {
+        if (opening.x_min > cursor + epsilon) {
+            const auto base = static_cast<std::uint32_t>(mesh.vertices.size());
+            mesh.vertices.push_back(Point3{.x = cursor, .y = y, .z = 0.0});
+            mesh.vertices.push_back(Point3{.x = opening.x_min, .y = y, .z = 0.0});
+            mesh.vertices.push_back(Point3{.x = opening.x_min, .y = y, .z = height});
+            mesh.vertices.push_back(Point3{.x = cursor, .y = y, .z = height});
+            append_quad(mesh, base + 0, base + 1, base + 2, base + 3, material_id);
+        }
+        if (opening.z_min > epsilon) {
+            const auto base = static_cast<std::uint32_t>(mesh.vertices.size());
+            mesh.vertices.push_back(Point3{.x = opening.x_min, .y = y, .z = 0.0});
+            mesh.vertices.push_back(Point3{.x = opening.x_max, .y = y, .z = 0.0});
+            mesh.vertices.push_back(Point3{.x = opening.x_max, .y = y, .z = opening.z_min});
+            mesh.vertices.push_back(Point3{.x = opening.x_min, .y = y, .z = opening.z_min});
+            append_quad(mesh, base + 0, base + 1, base + 2, base + 3, material_id);
+        }
+        if (opening.z_max < height - epsilon) {
+            const auto base = static_cast<std::uint32_t>(mesh.vertices.size());
+            mesh.vertices.push_back(Point3{.x = opening.x_min, .y = y, .z = opening.z_max});
+            mesh.vertices.push_back(Point3{.x = opening.x_max, .y = y, .z = opening.z_max});
+            mesh.vertices.push_back(Point3{.x = opening.x_max, .y = y, .z = height});
+            mesh.vertices.push_back(Point3{.x = opening.x_min, .y = y, .z = height});
+            append_quad(mesh, base + 0, base + 1, base + 2, base + 3, material_id);
+        }
+        cursor = std::max(cursor, opening.x_max);
+    }
+    if (cursor < x_max - epsilon) {
+        const auto base = static_cast<std::uint32_t>(mesh.vertices.size());
+        mesh.vertices.push_back(Point3{.x = cursor, .y = y, .z = 0.0});
+        mesh.vertices.push_back(Point3{.x = x_max, .y = y, .z = 0.0});
+        mesh.vertices.push_back(Point3{.x = x_max, .y = y, .z = height});
+        mesh.vertices.push_back(Point3{.x = cursor, .y = y, .z = height});
+        append_quad(mesh, base + 0, base + 1, base + 2, base + 3, material_id);
+    }
+}
+
+void append_layer_prism(
+    MeshBuffer& mesh,
+    double x_min_at_y_min,
+    double x_max_at_y_min,
+    double x_min_at_y_max,
+    double x_max_at_y_max,
+    double y_min,
+    double y_max,
+    double height,
+    const std::vector<OpeningRectangle>& openings,
+    ElementId material_id
+) {
+    append_layer_face_with_openings(mesh, y_min, x_min_at_y_min, x_max_at_y_min, height, openings, material_id);
+    append_layer_face_with_openings(mesh, y_max, x_min_at_y_max, x_max_at_y_max, height, openings, material_id);
+
+    const auto append_rect = [&](Point3 a, Point3 b, Point3 c, Point3 d) {
+        const auto base = static_cast<std::uint32_t>(mesh.vertices.size());
+        mesh.vertices.push_back(a);
+        mesh.vertices.push_back(b);
+        mesh.vertices.push_back(c);
+        mesh.vertices.push_back(d);
+        append_quad(mesh, base + 0, base + 1, base + 2, base + 3, material_id);
+    };
+    append_rect(
+        {x_min_at_y_min, y_min, 0.0}, {x_min_at_y_max, y_max, 0.0},
+        {x_min_at_y_max, y_max, height}, {x_min_at_y_min, y_min, height}
+    );
+    append_rect(
+        {x_max_at_y_min, y_min, 0.0}, {x_max_at_y_min, y_min, height},
+        {x_max_at_y_max, y_max, height}, {x_max_at_y_max, y_max, 0.0}
+    );
+    append_rect(
+        {x_min_at_y_min, y_min, 0.0}, {x_min_at_y_min, y_min, height},
+        {x_max_at_y_min, y_min, height}, {x_max_at_y_min, y_min, 0.0}
+    );
+    append_rect(
+        {x_min_at_y_max, y_max, 0.0}, {x_max_at_y_max, y_max, 0.0},
+        {x_max_at_y_max, y_max, height}, {x_min_at_y_max, y_max, height}
+    );
+
+    // Every layer terminates at the opening, while finish layers become the
+    // visible jamb/head/sill return surfaces at their own material depth.
+    for (const auto& opening : openings) {
+        append_rect({opening.x_min, y_min, opening.z_min}, {opening.x_min, y_max, opening.z_min}, {opening.x_min, y_max, opening.z_max}, {opening.x_min, y_min, opening.z_max});
+        append_rect({opening.x_max, y_min, opening.z_min}, {opening.x_max, y_min, opening.z_max}, {opening.x_max, y_max, opening.z_max}, {opening.x_max, y_max, opening.z_min});
+        append_rect({opening.x_min, y_min, opening.z_min}, {opening.x_max, y_min, opening.z_min}, {opening.x_max, y_max, opening.z_min}, {opening.x_min, y_max, opening.z_min});
+        append_rect({opening.x_min, y_min, opening.z_max}, {opening.x_min, y_max, opening.z_max}, {opening.x_max, y_max, opening.z_max}, {opening.x_max, y_min, opening.z_max});
+    }
+}
+
+MeshBuffer build_layered_wall_mesh(
+    const WallProfile2D& profile,
+    double height_meters,
+    const std::vector<WallAssemblyLayer>& layers,
+    double total_thickness
+) {
+    MeshBuffer mesh;
+    if (layers.empty()) {
+        return mesh;
+    }
+    const auto interpolate_endpoint = [&](Point2 lower, Point2 upper, double y) {
+        const auto denominator = upper.y - lower.y;
+        if (std::abs(denominator) <= epsilon) {
+            return lower.x;
+        }
+        const auto t = std::clamp((y - lower.y) / denominator, 0.0, 1.0);
+        return lower.x + ((upper.x - lower.x) * t);
+    };
+    auto y = -total_thickness / 2.0;
+    for (const auto& layer : layers) {
+        const auto next_y = y + layer.thickness_meters;
+        const auto start_at_y = interpolate_endpoint(profile.polygon[0], profile.polygon[3], y);
+        const auto end_at_y = interpolate_endpoint(profile.polygon[1], profile.polygon[2], y);
+        const auto start_at_next_y = interpolate_endpoint(profile.polygon[0], profile.polygon[3], next_y);
+        const auto end_at_next_y = interpolate_endpoint(profile.polygon[1], profile.polygon[2], next_y);
+        append_layer_prism(
+            mesh,
+            start_at_y, end_at_y,
+            start_at_next_y, end_at_next_y,
+            y, next_y, height_meters, profile.openings, layer.material_id
+        );
+        y = next_y;
+    }
+    return mesh;
 }
 
 MeshBuffer extrude_profile(const WallProfile2D& profile, double height_meters) {
@@ -299,15 +338,15 @@ Point3 to_world_point(const Point3& local_point, const Line2& axis) {
 
 } // namespace
 
-std::string FallbackGeometryBackend::name() const {
+std::string GeometryService::backend_name() const {
+#if TBE_HAS_OCCT
+    return "Open CASCADE";
+#else
     return "Fallback mesh estimator";
+#endif
 }
 
-bool FallbackGeometryBackend::supports_exact_solids() const noexcept {
-    return false;
-}
-
-WallProfile2D FallbackGeometryBackend::build_wall_profile(const WallData& wall) const {
+WallProfile2D GeometryService::build_wall_profile(const WallData& wall) const {
     const auto length = wall_length(wall.axis);
     if (length <= epsilon || wall.thickness_meters <= 0.0 || wall.height_meters <= 0.0) {
         throw std::invalid_argument("wall dimensions must be positive");
@@ -324,11 +363,26 @@ WallProfile2D FallbackGeometryBackend::build_wall_profile(const WallData& wall) 
     };
 
     const auto direction = unit_direction(wall.axis);
-    const auto miter_extension = half_thickness;
+    struct EndpointMiter {
+        double extension{};
+        double turn{};
+    };
+    std::optional<EndpointMiter> start_miter;
+    std::optional<EndpointMiter> end_miter;
+    bool tee_at_start = false;
+    bool tee_at_end = false;
 
     for (const auto& join : wall.joins) {
         if (join.kind == WallJoinKind::Tee || join.kind == WallJoinKind::Cross) {
             ++profile.t_junction_placeholders;
+            if (join.kind == WallJoinKind::Tee) {
+                const auto join_x = local_x(join.point, wall.axis);
+                if (std::abs(join_x) <= 1.0e-6) {
+                    tee_at_start = true;
+                } else if (std::abs(join_x - length) <= 1.0e-6) {
+                    tee_at_end = true;
+                }
+            }
             continue;
         }
 
@@ -342,31 +396,58 @@ WallProfile2D FallbackGeometryBackend::build_wall_profile(const WallData& wall) 
 
         const auto other_direction = direction_away_from(join.point, join.other_axis);
         const auto turn = cross(direction, other_direction);
-        if (std::abs(turn) <= epsilon) {
+        const auto extension = miter_extension(half_thickness, direction, other_direction);
+        if (!extension.has_value()) {
             continue;
         }
 
-        profile.has_miter_join = true;
-        if (at_end) {
-            if (turn > 0.0) {
-                profile.polygon[2].x += miter_extension;
-            } else {
-                profile.polygon[1].x += miter_extension;
-            }
-        } else {
-            if (turn > 0.0) {
-                profile.polygon[0].x -= miter_extension;
-            } else {
-                profile.polygon[3].x -= miter_extension;
-            }
+        auto& target = at_end ? end_miter : start_miter;
+        // A fan of walls can share one endpoint.  A wall can only have one
+        // cap there, so retain the widest valid mitre instead of summing all
+        // joins into a visibly exploded corner.
+        if (!target.has_value() || extension.value() > target->extension) {
+            target = EndpointMiter{.extension = extension.value(), .turn = turn};
         }
+    }
+
+    const auto apply_miter = [&](const EndpointMiter& miter, bool at_end) {
+        profile.has_miter_join = true;
+        const auto signed_extension = miter.turn > 0.0 ? miter.extension : -miter.extension;
+        if (at_end) {
+            // A mitre is a shared cap, not a one-sided overhang.  Moving both
+            // faces in opposite directions gives the neighbouring wall the
+            // exact same cap line and removes the overlap seam in plan.
+            profile.polygon[1].x += signed_extension;
+            profile.polygon[2].x -= signed_extension;
+        } else {
+            profile.polygon[0].x -= signed_extension;
+            profile.polygon[3].x += signed_extension;
+        }
+    };
+    if (start_miter.has_value()) apply_miter(*start_miter, false);
+    if (end_miter.has_value()) apply_miter(*end_miter, true);
+
+    // A Tee is different from an end-to-end corner: the branch wall must stop
+    // at the face of the continuous wall, not run through its centreline.
+    // Otherwise both wall meshes occupy the same half-thickness and their
+    // coincident edges show as doubled lines in plan/3D. Keep the host wall
+    // untouched and retract only the endpoint wall by half its thickness.
+    if (tee_at_start) {
+        const auto trimmed_start = half_thickness;
+        profile.polygon[0].x = std::max(profile.polygon[0].x, trimmed_start);
+        profile.polygon[3].x = std::max(profile.polygon[3].x, trimmed_start);
+    }
+    if (tee_at_end) {
+        const auto trimmed_end = length - half_thickness;
+        profile.polygon[1].x = std::min(profile.polygon[1].x, trimmed_end);
+        profile.polygon[2].x = std::min(profile.polygon[2].x, trimmed_end);
     }
 
     for (const auto& opening : wall.openings) {
         const auto x_min = opening.offset_meters - (opening.width_meters / 2.0);
         const auto x_max = opening.offset_meters + (opening.width_meters / 2.0);
-        const auto z_min = opening.sill_height_meters;
-        const auto z_max = opening.sill_height_meters + opening.height_meters;
+        const auto z_min = opening.vertical_offset_meters + opening.sill_height_meters;
+        const auto z_max = opening.vertical_offset_meters + opening.sill_height_meters + opening.height_meters;
         profile.openings.push_back(OpeningRectangle{
             .element_id = opening.element_id,
             .kind = opening.kind,
@@ -379,23 +460,37 @@ WallProfile2D FallbackGeometryBackend::build_wall_profile(const WallData& wall) 
         });
     }
 
+    std::sort(profile.openings.begin(), profile.openings.end(), [](const auto& left, const auto& right) {
+        return left.x_min < right.x_min;
+    });
+
     validate_opening_rectangles(profile.openings, length, wall.height_meters);
     return profile;
 }
 
-GeneratedGeometry FallbackGeometryBackend::build_wall_geometry(const WallData& wall, Revision source_revision) const {
+GeneratedGeometry GeometryService::build_wall_geometry(
+    const WallData& wall,
+    Revision source_revision,
+    const std::vector<WallAssemblyLayer>& layers
+) const {
     auto profile = build_wall_profile(wall);
-    auto mesh = extrude_profile(profile, wall.height_meters);
+    const auto layer_thickness = std::accumulate(layers.begin(), layers.end(), 0.0, [](double total, const auto& layer) {
+        return total + layer.thickness_meters;
+    });
+    auto mesh = layers.empty() || layer_thickness <= epsilon
+        ? extrude_profile(profile, wall.height_meters)
+        : build_layered_wall_mesh(profile, wall.height_meters, layers, layer_thickness);
 
     for (auto& vertex : mesh.vertices) {
         vertex = to_world_point(vertex, wall.axis);
     }
 
-    const auto gross_volume = wall_length(wall.axis) * wall.height_meters * wall.thickness_meters;
+    const auto resolved_thickness = layer_thickness > epsilon ? layer_thickness : wall.thickness_meters;
+    const auto gross_volume = wall_length(wall.axis) * wall.height_meters * resolved_thickness;
 
     auto opening_volume = 0.0;
     for (const auto& opening : profile.openings) {
-        opening_volume += (opening.x_max - opening.x_min) * (opening.z_max - opening.z_min) * wall.thickness_meters;
+        opening_volume += (opening.x_max - opening.x_min) * (opening.z_max - opening.z_min) * resolved_thickness;
     }
 
     return GeneratedGeometry{
@@ -408,187 +503,6 @@ GeneratedGeometry FallbackGeometryBackend::build_wall_geometry(const WallData& w
         .profile = std::move(profile),
         .mesh = std::move(mesh),
     };
-}
-
-#if TBE_HAS_OCCT
-
-namespace {
-
-GeneratedGeometry build_occt_wall_geometry(const WallData& wall, Revision source_revision) {
-    FallbackGeometryBackend fallback;
-    const auto profile = fallback.build_wall_profile(wall);
-    const auto length = wall_length(wall.axis);
-    const auto half_thickness = wall.thickness_meters / 2.0;
-
-    TopoDS_Shape solid = BRepPrimAPI_MakeBox(
-        length,
-        wall.thickness_meters,
-        wall.height_meters
-    ).Shape();
-
-    for (const auto& opening : profile.openings) {
-        const auto opening_solid = BRepPrimAPI_MakeBox(
-            opening.x_max - opening.x_min,
-            wall.thickness_meters + 2.0e-6,
-            opening.z_max - opening.z_min
-        ).Shape();
-
-        gp_Trsf opening_transform;
-        opening_transform.SetTranslation(gp_Vec(opening.x_min, -1.0e-6, opening.z_min));
-        auto transformed_opening = opening_solid;
-        transformed_opening.Move(TopLoc_Location(opening_transform));
-        solid = BRepAlgoAPI_Cut(solid, transformed_opening);
-    }
-
-    BRepMesh_IncrementalMesh mesher(solid, 1.0e-4, false, 0.5, true);
-    (void)mesher;
-    MeshBuffer mesh;
-    for (TopExp_Explorer explorer(solid, TopAbs_FACE); explorer.More(); explorer.Next()) {
-        const auto face = TopoDS::Face(explorer.Current());
-        TopLoc_Location location;
-        const auto triangulation = BRep_Tool::Triangulation(face, location);
-        if (triangulation.IsNull()) {
-            continue;
-        }
-
-        const auto base = static_cast<std::uint32_t>(mesh.vertices.size());
-        for (int index = 1; index <= triangulation->NbNodes(); ++index) {
-            const auto point = triangulation->Node(index).Transformed(location.Transformation());
-            const auto direction = unit_direction(wall.axis);
-            const Point2 perpendicular{.x = -direction.y, .y = direction.x};
-            mesh.vertices.push_back(Point3{
-                .x = wall.axis.start.x + (point.X() * direction.x) + ((point.Y() - half_thickness) * perpendicular.x),
-                .y = wall.axis.start.y + (point.X() * direction.y) + ((point.Y() - half_thickness) * perpendicular.y),
-                .z = point.Z(),
-            });
-        }
-
-        for (int index = 1; index <= triangulation->NbTriangles(); ++index) {
-            Standard_Integer first{};
-            Standard_Integer second{};
-            Standard_Integer third{};
-            triangulation->Triangle(index).Get(first, second, third);
-            if (face.Orientation() == TopAbs_REVERSED) {
-                std::swap(second, third);
-            }
-            mesh.indices.push_back(base + static_cast<std::uint32_t>(first - 1));
-            mesh.indices.push_back(base + static_cast<std::uint32_t>(second - 1));
-            mesh.indices.push_back(base + static_cast<std::uint32_t>(third - 1));
-        }
-    }
-
-    GProp_GProps properties;
-    BRepGProp::VolumeProperties(solid, properties);
-    return GeneratedGeometry{
-        .dirty = false,
-        .source_revision = source_revision,
-        .vertices = static_cast<int>(mesh.vertices.size()),
-        .triangles = static_cast<int>(mesh.indices.size() / 3),
-        .openings_cut = static_cast<int>(profile.openings.size()),
-        .solid_volume_cubic_meters = properties.Mass(),
-        .profile = profile,
-        .mesh = std::move(mesh),
-    };
-}
-
-} // namespace
-
-std::string OpenCascadeGeometryBackend::name() const {
-    return "Open CASCADE solid backend";
-}
-
-bool OpenCascadeGeometryBackend::supports_exact_solids() const noexcept {
-    return true;
-}
-
-WallProfile2D OpenCascadeGeometryBackend::build_wall_profile(const WallData& wall) const {
-    FallbackGeometryBackend fallback;
-    return fallback.build_wall_profile(wall);
-}
-
-GeneratedGeometry OpenCascadeGeometryBackend::build_wall_geometry(const WallData& wall, Revision source_revision) const {
-    return build_occt_wall_geometry(wall, source_revision);
-}
-
-#endif
-
-GeometryService::GeometryService(Backend backend) {
-    switch (backend) {
-    case Backend::Fallback:
-        backend_ = std::make_unique<FallbackGeometryBackend>();
-        break;
-    case Backend::OpenCascade:
-#if TBE_HAS_OCCT
-        backend_ = std::make_unique<OpenCascadeGeometryBackend>();
-        break;
-#else
-        throw std::invalid_argument("Open CASCADE geometry backend is not available in this build");
-#endif
-    }
-}
-
-GeometryService::~GeometryService() = default;
-GeometryService::GeometryService(GeometryService&&) noexcept = default;
-GeometryService& GeometryService::operator=(GeometryService&&) noexcept = default;
-
-std::string GeometryService::backend_name() const {
-    return backend_->name();
-}
-
-bool GeometryService::supports_exact_solids() const noexcept {
-    return backend_->supports_exact_solids();
-}
-
-double GeometryService::polygon_area(const std::vector<Point2>& polygon) const {
-    return std::abs(polygon_signed_area(polygon));
-}
-
-double GeometryService::roof_surface_area(const RoofData& roof) const {
-    const auto plan_area = polygon_area(roof.boundary_polygon);
-    if (roof.roof_type == RoofType::SimpleGable && roof.slope_degrees.has_value()) {
-        const auto radians = (*roof.slope_degrees) * 3.14159265358979323846 / 180.0;
-        const auto cosine = std::cos(radians);
-        if (std::abs(cosine) > epsilon) {
-            return plan_area / cosine;
-        }
-    }
-    return plan_area;
-}
-
-double GeometryService::layered_assembly_thickness(const LayeredAssemblyData& assembly) const {
-    auto total = 0.0;
-    for (const auto& layer : assembly.layers) {
-        total += layer.thickness_meters;
-    }
-    return total;
-}
-
-MeshBuffer GeometryService::build_extruded_polygon_mesh(
-    const std::vector<Point2>& polygon,
-    double thickness,
-    double elevation_offset
-) const {
-    return extrude_polygon_mesh(polygon, thickness, elevation_offset);
-}
-
-MeshBuffer GeometryService::build_column_mesh(Point2 center, double width, double depth, double height) const {
-    return column_mesh(center, width, depth, height);
-}
-
-MeshBuffer GeometryService::build_beam_mesh(Point2 start, Point2 end, double width, double height) const {
-    return beam_mesh(start, end, width, height);
-}
-
-MeshBuffer GeometryService::build_stair_mesh(const StairData& stair) const {
-    return stair_mesh(stair);
-}
-
-WallProfile2D GeometryService::build_wall_profile(const WallData& wall) const {
-    return backend_->build_wall_profile(wall);
-}
-
-GeneratedGeometry GeometryService::build_wall_geometry(const WallData& wall, Revision source_revision) const {
-    return backend_->build_wall_geometry(wall, source_revision);
 }
 
 } // namespace tbe::core

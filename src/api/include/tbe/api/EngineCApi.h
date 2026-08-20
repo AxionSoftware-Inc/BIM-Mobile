@@ -9,18 +9,6 @@ extern "C" {
 
 typedef struct TbeEngineHandle TbeEngineHandle;
 
-/*
- * C ABI contract:
- * - A TbeEngineHandle is opaque and owns one engine session.
- * - Calls using the same handle are serialized internally and may be made
- *   from different threads. The caller must not use a handle after destroy.
- * - Allocated output strings and arrays are owned by the caller and must be
- *   released with tbe_free_string() or tbe_free_memory().
- * - After handle/output validation, output pointers are reset to NULL/zero
- *   before a call writes a result.
- */
-#define TBE_C_API_VERSION_MAJOR 1
-
 typedef enum TbeApiStatusCode {
     TBE_API_OK = 0,
     TBE_API_INVALID_ARGUMENT = 1,
@@ -108,6 +96,18 @@ typedef struct TbeSpatialIndexStats {
     int dirty;
 } TbeSpatialIndexStats;
 
+typedef struct TbeRect2 {
+    double min_x;
+    double min_y;
+    double max_x;
+    double max_y;
+} TbeRect2;
+
+typedef struct TbeElementIdListResult {
+    uint64_t count;
+    uint64_t* element_ids;
+} TbeElementIdListResult;
+
 typedef struct TbeWallInterval {
     double start_offset_meters;
     double end_offset_meters;
@@ -131,30 +131,48 @@ typedef struct TbeWallHostPlacement {
     int warning_count;
 } TbeWallHostPlacement;
 
-int tbe_get_c_api_version_major(void);
 TbeEngineHandle* tbe_engine_create(void);
 void tbe_engine_destroy(TbeEngineHandle* handle);
 
 TbeApiStatusCode tbe_project_new(TbeEngineHandle* handle, const char* project_name);
 TbeApiStatusCode tbe_project_load_json(TbeEngineHandle* handle, const char* json);
 TbeApiStatusCode tbe_project_load_json_with_mode(TbeEngineHandle* handle, const char* json, int load_mode);
-/* out_json is caller-owned after success; release it with tbe_free_string(). */
 TbeApiStatusCode tbe_project_save_json(TbeEngineHandle* handle, char** out_json);
 TbeApiStatusCode tbe_get_engine_version(TbeEngineHandle* handle, char** out_version);
 TbeApiStatusCode tbe_get_core_version(TbeEngineHandle* handle, char** out_version);
 TbeApiStatusCode tbe_get_api_version(TbeEngineHandle* handle, char** out_version);
 TbeApiStatusCode tbe_get_schema_version(TbeEngineHandle* handle, int* out_version);
 TbeApiStatusCode tbe_detect_schema_version_from_json(TbeEngineHandle* handle, const char* json, int* out_version);
-/* out_json is caller-owned after success; release it with tbe_free_string(). */
 TbeApiStatusCode tbe_migrate_project_json(TbeEngineHandle* handle, const char* json, int from_version, int to_version, char** out_json);
 TbeApiStatusCode tbe_get_last_migration_report(TbeEngineHandle* handle, TbeMigrationSummary* out_summary);
 TbeApiStatusCode tbe_get_last_repair_report(TbeEngineHandle* handle, TbeRepairSummary* out_summary);
 TbeApiStatusCode tbe_repair_current_project(TbeEngineHandle* handle, TbeRepairSummary* out_summary);
 TbeApiStatusCode tbe_export_project_package(TbeEngineHandle* handle, const char* path);
 TbeApiStatusCode tbe_import_project_package(TbeEngineHandle* handle, const char* path, int load_mode);
-/* out_json is caller-owned after success; release it with tbe_free_string(). */
-TbeApiStatusCode tbe_get_render_scene_json(TbeEngineHandle* handle, char** out_json);
 TbeApiStatusCode tbe_export_render_scene_json(TbeEngineHandle* handle, const char* path);
+TbeApiStatusCode tbe_get_render_scene_json(TbeEngineHandle* handle, char** out_json);
+TbeApiStatusCode tbe_get_render_scene_json_near_level(TbeEngineHandle* handle, uint64_t active_level_id, int adjacent_level_count, char** out_json);
+TbeApiStatusCode tbe_get_section_scene_json(TbeEngineHandle* handle, TbeVec2 start, TbeVec2 end, char** out_json);
+TbeApiStatusCode tbe_set_performance_profile(TbeEngineHandle* handle, int profile);
+TbeApiStatusCode tbe_set_compute_mode(TbeEngineHandle* handle, int mode);
+TbeApiStatusCode tbe_create_residential_template(TbeEngineHandle* handle, int building_count, int story_count, uint64_t* out_primary_level_id);
+TbeApiStatusCode tbe_create_level(
+    TbeEngineHandle* handle,
+    const char* name,
+    double elevation_meters,
+    double default_wall_height_meters,
+    uint64_t* out_level_id
+);
+TbeApiStatusCode tbe_update_level(
+    TbeEngineHandle* handle,
+    uint64_t level_id,
+    const char* name,
+    double elevation_meters,
+    double default_wall_height_meters,
+    int update_elevation,
+    int update_default_wall_height
+);
+TbeApiStatusCode tbe_move_level_elevation(TbeEngineHandle* handle, uint64_t level_id, double elevation_meters);
 
 TbeApiStatusCode tbe_create_wall(
     TbeEngineHandle* handle,
@@ -165,6 +183,39 @@ TbeApiStatusCode tbe_create_wall(
     double thickness_meters,
     double height_meters,
     uint64_t* out_wall_id
+);
+TbeApiStatusCode tbe_set_wall_level_constraints(
+    TbeEngineHandle* handle,
+    uint64_t wall_id,
+    uint64_t base_level_id,
+    uint64_t top_level_id,
+    double base_offset_meters,
+    double top_offset_meters,
+    int height_mode
+);
+TbeApiStatusCode tbe_set_wall_axis(
+    TbeEngineHandle* handle,
+    uint64_t wall_id,
+    TbeVec2 start,
+    TbeVec2 end
+);
+TbeApiStatusCode tbe_trim_extend_walls(
+    TbeEngineHandle* handle,
+    uint64_t first_wall_id,
+    int first_uses_start,
+    uint64_t second_wall_id,
+    int second_uses_start
+);
+TbeApiStatusCode tbe_set_element_assembly(TbeEngineHandle* handle, uint64_t element_id, uint64_t assembly_id);
+TbeApiStatusCode tbe_update_roof_properties(
+    TbeEngineHandle* handle, uint64_t roof_id, int roof_type,
+    int has_slope, double slope_degrees, int has_overhang, double overhang_meters
+);
+TbeApiStatusCode tbe_set_structural_wall_cut(
+    TbeEngineHandle* handle, uint64_t wall_id, uint64_t cutter_id, int enabled, double clearance_meters
+);
+TbeApiStatusCode tbe_set_beam_column_join(
+    TbeEngineHandle* handle, uint64_t beam_id, uint64_t column_id, int enabled
 );
 TbeApiStatusCode tbe_move_wall(TbeEngineHandle* handle, uint64_t wall_id, double dx_meters, double dy_meters);
 TbeApiStatusCode tbe_create_door(
@@ -186,27 +237,74 @@ TbeApiStatusCode tbe_create_window(
     double sill_height_meters,
     uint64_t* out_window_id
 );
+TbeApiStatusCode tbe_create_stair(
+    TbeEngineHandle* handle,
+    uint64_t base_level_id,
+    uint64_t top_level_id,
+    TbeVec2 start,
+    TbeVec2 direction,
+    double width_meters,
+    double total_rise_meters,
+    double total_run_meters,
+    int riser_count,
+    int tread_count,
+    uint64_t* out_stair_id
+);
+TbeApiStatusCode tbe_set_opening_level_lock(TbeEngineHandle* handle, uint64_t opening_id, int locked);
+TbeApiStatusCode tbe_set_opening_level(TbeEngineHandle* handle, uint64_t opening_id, uint64_t level_id);
+TbeApiStatusCode tbe_set_opening_level_constraint(TbeEngineHandle* handle, uint64_t opening_id, uint64_t level_id, double level_offset_meters);
+TbeApiStatusCode tbe_move_hosted_opening(TbeEngineHandle* handle, uint64_t opening_id, double offset_meters);
+TbeApiStatusCode tbe_resize_door(TbeEngineHandle* handle, uint64_t door_id, double width_meters, double height_meters);
+TbeApiStatusCode tbe_resize_window(TbeEngineHandle* handle, uint64_t window_id, double width_meters, double height_meters, double sill_height_meters);
+TbeApiStatusCode tbe_create_profile(
+    TbeEngineHandle* handle,
+    int target_kind,
+    int draft_mode,
+    uint64_t level_id,
+    const TbeVec2* points,
+    size_t point_count,
+    const uint64_t* wall_ids,
+    size_t wall_id_count,
+    int closed,
+    double thickness_meters,
+    double height_meters,
+    double vertical_offset_meters,
+    uint64_t material_id,
+    uint64_t assembly_id,
+    int roof_type,
+    uint64_t* out_first_id,
+    uint64_t* out_created_count
+);
+TbeApiStatusCode tbe_create_floor_system_for_room(
+    TbeEngineHandle* handle,
+    uint64_t room_id,
+    uint64_t assembly_id,
+    uint64_t* out_floor_id
+);
+TbeApiStatusCode tbe_create_ceiling_system_for_room(
+    TbeEngineHandle* handle,
+    uint64_t room_id,
+    uint64_t assembly_id,
+    double height_offset_meters,
+    uint64_t* out_ceiling_id
+);
 TbeApiStatusCode tbe_delete_element(TbeEngineHandle* handle, uint64_t element_id);
 TbeApiStatusCode tbe_detect_rooms(TbeEngineHandle* handle, uint64_t* out_room_count);
 TbeApiStatusCode tbe_generate_schedules(TbeEngineHandle* handle, TbeScheduleSummary* out_summary);
 TbeApiStatusCode tbe_validate(TbeEngineHandle* handle, TbeValidationSummary* out_summary);
 TbeApiStatusCode tbe_rebuild_spatial_index(TbeEngineHandle* handle);
 TbeApiStatusCode tbe_spatial_index_stats(TbeEngineHandle* handle, TbeSpatialIndexStats* out_stats);
+TbeApiStatusCode tbe_query_rect(TbeEngineHandle* handle, uint64_t level_id, TbeRect2 bounds, TbeElementIdListResult* out_result);
 TbeApiStatusCode tbe_hit_test_point(TbeEngineHandle* handle, uint64_t level_id, TbeVec2 point, double tolerance_meters, TbeHitTestResult* out_result);
-/* out_result->candidates is caller-owned after success; release with tbe_free_memory(). */
 TbeApiStatusCode tbe_hit_test_candidates(TbeEngineHandle* handle, uint64_t level_id, TbeVec2 point, double tolerance_meters, TbeHitTestCandidatesResult* out_result);
 TbeApiStatusCode tbe_best_snap(TbeEngineHandle* handle, uint64_t level_id, TbeVec2 point, double tolerance_meters, TbeSnapResult* out_result);
-/* out_result->intervals is caller-owned after success; release with tbe_free_memory(). */
 TbeApiStatusCode tbe_compute_wall_free_intervals(TbeEngineHandle* handle, uint64_t wall_id, double requested_width_meters, double clearance_meters, TbeWallFreeIntervalsResult* out_result);
-/* out_result->intervals is caller-owned after success; release with tbe_free_memory(). */
 TbeApiStatusCode tbe_find_wall_host_at_point(TbeEngineHandle* handle, uint64_t level_id, TbeVec2 point, double tolerance_meters, double requested_width_meters, double clearance_meters, TbeWallHostPlacement* out_result);
 TbeApiStatusCode tbe_undo(TbeEngineHandle* handle);
 TbeApiStatusCode tbe_redo(TbeEngineHandle* handle);
 TbeApiStatusCode tbe_export_svg(TbeEngineHandle* handle, const char* path);
 TbeApiStatusCode tbe_export_obj(TbeEngineHandle* handle, const char* path);
 
-/* The returned pointer is thread-local and valid until the next
- * tbe_get_last_error() call on the same thread. */
 const char* tbe_get_last_error(const TbeEngineHandle* handle);
 void tbe_free_string(char* value);
 void tbe_free_memory(void* value);

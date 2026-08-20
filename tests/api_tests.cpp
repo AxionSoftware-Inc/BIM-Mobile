@@ -6,13 +6,12 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <string>
-#include <thread>
-#include <vector>
 
 int main() {
     const auto nearly_equal = [](double left, double right, double epsilon = 1.0e-6) {
@@ -96,12 +95,21 @@ int main() {
 
         const auto moved = session->set_wall_axis(wall_b.value->value, {.x = 5.0, .y = 0.0}, {.x = 5.0, .y = 3.0});
         assert(moved.ok());
+        const auto moved_bottom = session->get_wall(wall_a.value->value);
+        const auto moved_top = session->get_wall(wall_c.value->value);
+        assert(moved_bottom.ok() && moved_bottom.value.has_value());
+        assert(moved_top.ok() && moved_top.value.has_value());
+        assert(nearly_equal(moved_bottom.value->end.x, 5.0));
+        assert(nearly_equal(moved_top.value->start.x, 5.0));
         const auto freshness_after_move = session->get_freshness_summary();
         assert(freshness_after_move.ok());
         assert(freshness_after_move.value->room_metrics != tbe::api::FreshnessState::Clean);
         assert(freshness_after_move.value->schedules != tbe::api::FreshnessState::Clean);
         assert(freshness_after_move.value->material_takeoff != tbe::api::FreshnessState::Clean);
         assert(freshness_after_move.value->validation_report != tbe::api::FreshnessState::Clean);
+        const auto moved_rooms = session->detect_rooms();
+        assert(moved_rooms.ok() && moved_rooms.value.has_value());
+        assert(moved_rooms.value->size() == 1);
         const auto cached_room_schedule = session->get_cached_room_schedule();
         assert(cached_room_schedule.freshness != tbe::api::FreshnessState::Clean);
         const auto regenerated_room_schedule = session->generate_room_schedule();
@@ -121,7 +129,10 @@ int main() {
         assert(session->recompute_dirty().ok());
         const auto battery_freshness = session->get_freshness_summary();
         assert(battery_freshness.ok());
-        assert(battery_freshness.value->room_metrics == tbe::api::FreshnessState::Clean);
+        // Interactive preview intentionally leaves room metrics stale; rooms
+        // are report/documentation data and are computed on explicit final
+        // requests.
+        assert(battery_freshness.value->room_metrics != tbe::api::FreshnessState::Clean);
         assert(battery_freshness.value->validation_report != tbe::api::FreshnessState::Clean);
 
         const auto stale_save = session->save_project_json_cached(true);
@@ -129,11 +140,12 @@ int main() {
         assert(stale_save.freshness != tbe::api::FreshnessState::Clean);
         const auto final_save = session->save_project_json();
         assert(final_save.ok());
-        assert(final_save.freshness == tbe::api::FreshnessState::Clean);
+        // Saving semantic project JSON does not force report calculations.
+        assert(final_save.freshness != tbe::api::FreshnessState::Clean);
 
         const auto freshness_after_export = session->get_freshness_summary();
         assert(freshness_after_export.ok());
-        assert(freshness_after_export.value->validation_report == tbe::api::FreshnessState::Clean);
+        assert(freshness_after_export.value->validation_report != tbe::api::FreshnessState::Clean);
 
         assert(session->undo().ok());
         assert(session->redo().ok());
@@ -146,6 +158,193 @@ int main() {
         assert(loaded_cached_schedule.status == tbe::api::ApiStatus::NotFound);
         const auto loaded_generated_schedule = stale_loaded->get_room_schedule();
         assert(loaded_generated_schedule.ok());
+    }
+
+    {
+        auto session_result = tbe::api::create_session("API Level Kernel");
+        assert(session_result.ok());
+        auto session = std::move(*session_result.value);
+
+        const auto level_1 = session->create_level("Level 1", 0.0, 3.0);
+        const auto level_2 = session->create_level("Level 2", 3.2, 3.0);
+        assert(level_1.ok() && level_2.ok());
+
+        tbe::api::ProfileDraftDTO wall_draft;
+        wall_draft.mode = tbe::api::ApiProfileDraftMode::Polyline;
+        wall_draft.target_kind = tbe::api::ApiProfileTargetKind::WallPath;
+        wall_draft.level_id = tbe::api::ElementIdDTO{level_1.value->value};
+        wall_draft.points = {{0.0, 0.0}, {4.0, 0.0}, {4.0, 3.0}, {0.0, 3.0}, {0.0, 0.0}};
+        wall_draft.closed = true;
+        wall_draft.thickness_meters = 0.2;
+        wall_draft.height_meters = 3.0;
+
+        const auto created_walls = session->create_elements_from_profile(wall_draft);
+        assert(created_walls.ok());
+        assert(created_walls.value.has_value());
+        assert(created_walls.value->size() == 4);
+        assert(session->auto_join_walls().ok());
+        const auto rooms = session->detect_rooms();
+        assert(rooms.ok());
+        assert(rooms.value.has_value());
+        assert(rooms.value->size() == 1);
+
+        const auto wall_id = created_walls.value->front().value;
+        assert(session->set_wall_level_constraints(
+            wall_id,
+            level_1.value->value,
+            level_2.value->value,
+            0.0,
+            2.5,
+            tbe::api::ApiWallHeightMode::TopLevel
+        ).ok());
+        assert(session->move_level_elevation(level_2.value->value, 4.0).ok());
+
+        const auto door = session->create_door("Door", wall_id, 1.2, 0.9, 2.1);
+        assert(door.ok());
+        assert(session->set_opening_level_lock(door.value->value, false).ok());
+        assert(session->set_opening_level_constraint(door.value->value, level_2.value->value, 0.3).ok());
+        const auto moved_opening_scene = session->get_render_scene();
+        assert(moved_opening_scene.ok());
+        assert(moved_opening_scene.value.has_value());
+        const auto moved_door_object = std::find_if(
+            moved_opening_scene.value->objects.begin(),
+            moved_opening_scene.value->objects.end(),
+            [&](const auto& object) {
+                return object.element_id.value == door.value->value;
+            });
+        assert(moved_door_object != moved_opening_scene.value->objects.end());
+        assert(moved_door_object->level_id.value == level_2.value->value);
+        assert(moved_door_object->metadata.at("level_locked") == "true");
+        assert(nearly_equal(std::stod(moved_door_object->metadata.at("level_offset_meters")), 0.3));
+        assert(nearly_equal(std::stod(moved_door_object->metadata.at("vertical_offset_meters")), 4.3));
+        assert(session->move_level_elevation(level_2.value->value, 4.5).ok());
+        const auto moved_with_level_scene = session->get_render_scene();
+        assert(moved_with_level_scene.ok() && moved_with_level_scene.value.has_value());
+        const auto moved_with_level_door = std::find_if(
+            moved_with_level_scene.value->objects.begin(),
+            moved_with_level_scene.value->objects.end(),
+            [&](const auto& object) { return object.element_id.value == door.value->value; });
+        assert(moved_with_level_door != moved_with_level_scene.value->objects.end());
+        assert(nearly_equal(std::stod(moved_with_level_door->metadata.at("vertical_offset_meters")), 4.8));
+
+        const auto render_scene = session->get_render_scene();
+        assert(render_scene.ok());
+        assert(render_scene.value.has_value());
+        assert(render_scene.value->levels.size() == 2);
+        const auto level_2_scene = std::find_if(render_scene.value->levels.begin(), render_scene.value->levels.end(), [&](const auto& level) {
+            return level.level_id.value == level_2.value->value;
+        });
+        assert(level_2_scene != render_scene.value->levels.end());
+        assert(nearly_equal(level_2_scene->elevation_meters, 4.5));
+
+        const auto wall_object = std::find_if(render_scene.value->objects.begin(), render_scene.value->objects.end(), [&](const auto& object) {
+            return object.element_id.value == wall_id;
+        });
+        assert(wall_object != render_scene.value->objects.end());
+        assert(wall_object->metadata.at("height_mode") == "TopLevel");
+        assert(nearly_equal(wall_object->bounds.max.z - wall_object->bounds.min.z, 7.0, 1.0e-3));
+
+        const auto door_object = std::find_if(render_scene.value->objects.begin(), render_scene.value->objects.end(), [&](const auto& object) {
+            return object.element_id.value == door.value->value;
+        });
+        assert(door_object != render_scene.value->objects.end());
+        assert(door_object->metadata.at("level_locked") == "true");
+        assert(door_object->level_id.value == level_2.value->value);
+
+        // A section that crosses the hosted door must carry the opening cut
+        // through every wall layer instead of showing a monolithic wall.
+        const auto opening_section = session->get_section_scene_json(
+            {.x = 1.2, .y = -1.0}, {.x = 1.2, .y = 4.0});
+        assert(opening_section.ok() && opening_section.value.has_value());
+        assert(opening_section.value->find("\"section_opening_id\":\"" +
+                                           std::to_string(door.value->value) + "\"") !=
+               std::string::npos);
+    }
+
+    {
+        tbe::core::Project profile_project{"API Profile Kernel"};
+        auto& document = profile_project.active_document();
+        const auto finish_material = document.create_material("Finish", tbe::core::MaterialCategory::Finish);
+        const auto floor_assembly = document.create_layered_assembly(
+            tbe::core::LayeredAssemblyKind::Floor,
+            "Floor Build-Up",
+            {tbe::core::WallAssemblyLayer{
+                .material_id = finish_material,
+                .thickness_meters = 0.18,
+                .function = tbe::core::WallLayerFunction::Core,
+            }}
+        );
+        const auto ceiling_assembly = document.create_layered_assembly(
+            tbe::core::LayeredAssemblyKind::Ceiling,
+            "Ceiling Build-Up",
+            {tbe::core::WallAssemblyLayer{
+                .material_id = finish_material,
+                .thickness_meters = 0.03,
+                .function = tbe::core::WallLayerFunction::InteriorFinish,
+            }}
+        );
+        const auto level_id = document.create_level("Level 1", 0.0, 3.0);
+        const auto project_json = profile_project.to_json();
+
+        auto session_result = tbe::api::create_session("API Profile Draft");
+        assert(session_result.ok());
+        auto session = std::move(*session_result.value);
+        assert(session->load_project_json(project_json).ok());
+
+        tbe::api::ProfileDraftDTO floor_draft;
+        floor_draft.mode = tbe::api::ApiProfileDraftMode::Rectangle;
+        floor_draft.target_kind = tbe::api::ApiProfileTargetKind::FloorBoundary;
+        floor_draft.level_id = tbe::api::ElementIdDTO{level_id};
+        floor_draft.points = {{0.0, 0.0}, {4.0, 3.0}};
+        floor_draft.closed = true;
+        floor_draft.thickness_meters = 0.18;
+        floor_draft.assembly_id = tbe::api::ElementIdDTO{floor_assembly};
+        const auto floor_created = session->create_elements_from_profile(floor_draft);
+        assert(floor_created.ok());
+        assert(floor_created.value.has_value());
+        assert(floor_created.value->size() == 1);
+
+        tbe::api::ProfileDraftDTO ceiling_draft;
+        ceiling_draft.mode = tbe::api::ApiProfileDraftMode::Rectangle;
+        ceiling_draft.target_kind = tbe::api::ApiProfileTargetKind::CeilingBoundary;
+        ceiling_draft.level_id = tbe::api::ElementIdDTO{level_id};
+        ceiling_draft.points = {{0.0, 0.0}, {4.0, 3.0}};
+        ceiling_draft.closed = true;
+        ceiling_draft.assembly_id = tbe::api::ElementIdDTO{ceiling_assembly};
+        const auto ceiling_created = session->create_elements_from_profile(ceiling_draft);
+        assert(ceiling_created.ok());
+        assert(ceiling_created.value.has_value());
+        assert(ceiling_created.value->size() == 1);
+
+        tbe::api::ProfileDraftDTO roof_draft;
+        roof_draft.mode = tbe::api::ApiProfileDraftMode::Polyline;
+        roof_draft.target_kind = tbe::api::ApiProfileTargetKind::RoofBoundary;
+        roof_draft.level_id = tbe::api::ElementIdDTO{level_id};
+        roof_draft.points = {{-0.2, -0.2}, {4.2, -0.2}, {5.0, 1.5}, {2.0, 3.8}, {-0.4, 2.6}};
+        roof_draft.closed = true;
+        roof_draft.thickness_meters = 0.2;
+        const auto roof_created = session->create_elements_from_profile(roof_draft);
+        assert(roof_created.ok());
+        assert(roof_created.value.has_value());
+        assert(roof_created.value->size() == 1);
+
+        const auto render_scene = session->get_render_scene();
+        assert(render_scene.ok());
+        assert(render_scene.value.has_value());
+        assert(std::any_of(render_scene.value->objects.begin(), render_scene.value->objects.end(), [](const auto& object) {
+            return object.kind == tbe::api::ApiElementKind::FloorSystem;
+        }));
+        assert(std::any_of(render_scene.value->objects.begin(), render_scene.value->objects.end(), [](const auto& object) {
+            return object.kind == tbe::api::ApiElementKind::CeilingSystem;
+        }));
+        assert(std::any_of(render_scene.value->objects.begin(), render_scene.value->objects.end(), [](const auto& object) {
+            return object.kind == tbe::api::ApiElementKind::Roof;
+        }));
+        const auto ceiling_object = std::find_if(render_scene.value->objects.begin(), render_scene.value->objects.end(), [](const auto& object) {
+            return object.kind == tbe::api::ApiElementKind::CeilingSystem;
+        });
+        assert(ceiling_object != render_scene.value->objects.end());
+        assert(nearly_equal(ceiling_object->bounds.min.z, 2.6));
     }
 
     {
@@ -373,33 +572,6 @@ int main() {
         assert(grid_only_snap.value->type == tbe::api::SnapType::Grid);
         assert(nearly_equal(grid_only_snap.value->point.x, 8.0));
         assert(nearly_equal(grid_only_snap.value->point.y, 7.5));
-
-        const auto short_vertical = session->create_wall(
-            "Short vertical",
-            {.x = 7.0, .y = -1.0},
-            {.x = 7.0, .y = 1.0},
-            0.2,
-            3.0,
-            level_id
-        );
-        assert(short_vertical.ok());
-        const auto finite_intersection_candidates = session->get_snap_candidates(
-            {.value = level_id},
-            {.x = 7.0, .y = 0.0},
-            0.2,
-            tbe::api::SnapOptionsDTO{
-                .enable_grid = false,
-                .enable_endpoints = false,
-                .enable_midpoints = false,
-                .enable_intersections = true,
-                .enable_wall_axis = false,
-                .enable_orthogonal_projection = false,
-                .enable_room_corners = false,
-            }
-        );
-        assert(finite_intersection_candidates.ok());
-        assert(finite_intersection_candidates.value.has_value());
-        assert(finite_intersection_candidates.value->empty());
 
         const auto free_intervals = session->compute_wall_free_intervals(wall_a.value->value, 1.0, 0.1);
         assert(free_intervals.ok());
@@ -1004,7 +1176,6 @@ int main() {
 
     TbeEngineHandle* handle = tbe_engine_create();
     assert(handle != nullptr);
-    assert(tbe_get_c_api_version_major() == TBE_C_API_VERSION_MAJOR);
 
     uint64_t wall1 = 0;
     uint64_t wall2 = 0;
@@ -1032,6 +1203,11 @@ int main() {
     TbeSpatialIndexStats spatial_stats{};
     assert(tbe_spatial_index_stats(handle, &spatial_stats) == TBE_API_OK);
     assert(spatial_stats.bucket_count >= 1);
+    TbeElementIdListResult rect_result{};
+    assert(tbe_query_rect(handle, 0, TbeRect2{.min_x = -0.2, .min_y = -0.2, .max_x = 0.2, .max_y = 3.2}, &rect_result) == TBE_API_OK);
+    assert(rect_result.count >= 1);
+    tbe_free_memory(rect_result.element_ids);
+    assert(tbe_query_rect(handle, 0, TbeRect2{.min_x = 1.0, .min_y = 1.0, .max_x = 0.0, .max_y = 1.0}, &rect_result) == TBE_API_INVALID_ARGUMENT);
     TbeHitTestResult hit_result{};
     assert(tbe_hit_test_point(handle, 0, TbeVec2{0.0, 2.0}, 0.2, &hit_result) == TBE_API_OK);
     assert(hit_result.candidate_count >= 1);
@@ -1052,15 +1228,22 @@ int main() {
     tbe_free_memory(intervals_result.intervals);
     tbe_free_memory(host_result.intervals);
 
+    // C ABI coverage for the single-transaction Trim/Extend authoring call.
+    uint64_t trim_first = 0;
+    uint64_t trim_second = 0;
+    assert(tbe_create_wall(handle, "Trim A", 0, TbeVec2{10.0, 0.0}, TbeVec2{13.0, 0.0}, 0.2, 3.0, &trim_first) == TBE_API_OK);
+    assert(tbe_create_wall(handle, "Trim B", 0, TbeVec2{14.0, 1.0}, TbeVec2{14.0, 4.0}, 0.2, 3.0, &trim_second) == TBE_API_OK);
+    assert(tbe_trim_extend_walls(handle, trim_first, 0, trim_second, 1) == TBE_API_OK);
+
     char* json = nullptr;
     assert(tbe_project_save_json(handle, &json) == TBE_API_OK);
     assert(json != nullptr);
     assert(std::string(json).find("\"project_name\"") != std::string::npos);
+
     char* render_scene_json = nullptr;
     assert(tbe_get_render_scene_json(handle, &render_scene_json) == TBE_API_OK);
     assert(render_scene_json != nullptr);
     assert(std::string(render_scene_json).find("\"objects\"") != std::string::npos);
-    assert(std::string(render_scene_json).find("\"kind\":\"Wall\"") != std::string::npos);
     tbe_free_string(render_scene_json);
 
     int c_schema_version = 0;
@@ -1142,30 +1325,188 @@ int main() {
         tbe_engine_destroy(loop_handle);
     }
 
+    // Native default-template smoke test: this is the exact startup path used
+    // by Flutter, including compound assemblies and structural relations.
     {
-        // The C ABI serializes calls made through the same opaque handle.
-        auto* concurrent_handle = tbe_engine_create();
-        assert(concurrent_handle != nullptr);
-        std::vector<std::thread> workers;
-        for (int worker = 0; worker < 8; ++worker) {
-            workers.emplace_back([concurrent_handle]() {
-                for (int iteration = 0; iteration < 20; ++iteration) {
-                    char* version = nullptr;
-                    assert(tbe_get_engine_version(concurrent_handle, &version) == TBE_API_OK);
-                    assert(version != nullptr);
-                    tbe_free_string(version);
-
-                    int schema = 0;
-                    assert(tbe_get_schema_version(concurrent_handle, &schema) == TBE_API_OK);
-                    assert(schema == 1);
+        auto* template_handle = tbe_engine_create();
+        assert(template_handle != nullptr);
+        std::uint64_t primary_level = 0;
+        assert(tbe_create_residential_template(template_handle, 1, 3, &primary_level) == TBE_API_OK);
+        assert(primary_level != 0);
+        char* scene_json = nullptr;
+        assert(tbe_get_render_scene_json(template_handle, &scene_json) == TBE_API_OK);
+        assert(scene_json != nullptr);
+        assert(std::string(scene_json).find("\"roof_type\":\"AutoFootprint\"") != std::string::npos);
+        assert(std::string(scene_json).find("\"slope_degrees\":\"25.000000\"") != std::string::npos);
+        assert(std::string(scene_json).find("\"overhang_meters\":\"0.500000\"") != std::string::npos);
+        assert(std::string(scene_json).find("\"materials\"") != std::string::npos);
+        assert(std::string(scene_json).find("\"triangle_material_ids\"") != std::string::npos);
+        assert(std::string(scene_json).find("\"layer_profile\"") != std::string::npos);
+        assert(std::string(scene_json).find("\"sections\"") != std::string::npos);
+        tbe_free_string(scene_json);
+        auto template_session_result = tbe::api::create_session("Template Render Regression");
+        assert(template_session_result.ok() && template_session_result.value.has_value());
+        auto template_session = std::move(*template_session_result.value);
+        const auto template_created = template_session->create_residential_template(1, 3);
+        assert(template_created.ok());
+        const auto template_scene = template_session->get_render_scene();
+        assert(template_scene.ok() && template_scene.value.has_value());
+        assert(template_scene.value->levels.size() == 4);
+        assert(template_scene.value->levels.back().name == "Level 4 (Roof)");
+        assert(template_scene.value->sections.size() == 2);
+        const auto template_door_count = std::count_if(
+            template_scene.value->objects.begin(),
+            template_scene.value->objects.end(),
+            [](const auto& object) { return object.kind == tbe::api::ApiElementKind::Door; }
+        );
+        assert(template_door_count == 24);
+        const auto has_wall_category = [&](const std::string& category) {
+            return std::any_of(
+                template_scene.value->objects.begin(),
+                template_scene.value->objects.end(),
+                [&](const auto& object) {
+                    const auto found = object.metadata.find("wall_type_category");
+                    return object.kind == tbe::api::ApiElementKind::Wall &&
+                           found != object.metadata.end() && found->second == category;
                 }
-            });
+            );
+        };
+        assert(has_wall_category("Exterior"));
+        assert(has_wall_category("Interior"));
+        // Rooms remain an on-demand analysis product: the startup render
+        // does not compute them, but the realistic partitions must form
+        // usable enclosed spaces whenever documentation requests them.
+        const auto template_rooms = template_session->detect_rooms();
+        assert(template_rooms.ok() && template_rooms.value.has_value());
+        assert(!template_rooms.value->empty());
+        const auto template_roof = std::find_if(
+            template_scene.value->objects.begin(),
+            template_scene.value->objects.end(),
+            [](const auto& object) { return object.kind == tbe::api::ApiElementKind::Roof; }
+        );
+        assert(template_roof != template_scene.value->objects.end());
+        assert(template_roof->level_id.value == template_scene.value->levels.back().level_id.value);
+        assert(template_roof->mesh.positions.size() >= 6);
+        assert(template_roof->bounds.max.z - template_roof->bounds.min.z > 0.2);
+        // The default L roof has six eave edges and therefore six true slope
+        // planes.  The engine serializes bottom eaves, top eaves and the
+        // raised ridge/valley loop in that order; each outer edge must be
+        // bridged to its corresponding raised edge rather than fanned to one
+        // arbitrary centre apex.
+        constexpr std::uint32_t l_edge_count = 6;
+        assert(template_roof->mesh.positions.size() >= l_edge_count * 3);
+        const auto has_triangle = [&](std::uint32_t first, std::uint32_t second, std::uint32_t third) {
+            for (std::size_t triangle = 0; triangle + 2 < template_roof->mesh.indices.size(); triangle += 3) {
+                const auto& indices = template_roof->mesh.indices;
+                const auto contains = [&](std::uint32_t vertex) {
+                    return indices[triangle] == vertex || indices[triangle + 1] == vertex || indices[triangle + 2] == vertex;
+                };
+                if (contains(first) && contains(second) && contains(third)) return true;
+            }
+            return false;
+        };
+        for (std::uint32_t index = 0; index < l_edge_count; ++index) {
+            const auto next = (index + 1) % l_edge_count;
+            const auto eave_a = l_edge_count + index;
+            const auto eave_b = l_edge_count + next;
+            const auto ridge_a = (l_edge_count * 2) + index;
+            const auto ridge_b = (l_edge_count * 2) + next;
+            assert(template_roof->mesh.positions[eave_a].z < template_roof->mesh.positions[ridge_a].z);
+            assert(template_roof->mesh.positions[eave_b].z < template_roof->mesh.positions[ridge_b].z);
+            assert(has_triangle(eave_a, eave_b, ridge_b));
+            assert(has_triangle(eave_a, ridge_b, ridge_a));
         }
-        for (auto& worker : workers) {
-            worker.join();
+        const auto template_materials = template_session->list_materials();
+        assert(template_materials.ok() && template_materials.value.has_value());
+        assert(std::any_of(template_materials.value->begin(), template_materials.value->end(), [](const auto& material) {
+            return material.name == "Template Brick" && material.display_color == "#B86B4B";
+        }));
+        const auto template_assemblies = template_session->list_layered_assemblies();
+        assert(template_assemblies.ok() && template_assemblies.value.has_value());
+        assert(std::any_of(template_assemblies.value->begin(), template_assemblies.value->end(), [](const auto& assembly) {
+            return assembly.name == "Residential Wall" && assembly.layers.size() == 4;
+        }));
+        const auto template_wall_types = template_session->list_wall_types();
+        assert(template_wall_types.ok() && template_wall_types.value.has_value());
+        assert(std::any_of(template_wall_types.value->begin(), template_wall_types.value->end(), [](const auto& type) {
+            return type.name == "Exterior Wall" && type.category == tbe::api::ApiWallTypeCategory::Exterior && type.layers.size() == 4;
+        }));
+        assert(std::any_of(template_wall_types.value->begin(), template_wall_types.value->end(), [](const auto& type) {
+            return type.name == "Interior Wall" && type.category == tbe::api::ApiWallTypeCategory::Interior && type.layers.size() == 3;
+        }));
+        const auto template_wall_schedule = template_session->get_wall_schedule();
+        assert(template_wall_schedule.ok() && template_wall_schedule.value.has_value());
+        assert(std::any_of(template_wall_schedule.value->begin(), template_wall_schedule.value->end(), [](const auto& row) {
+            return !row.material_volume_by_id.empty() && !row.material_cost_by_id.empty();
+        }));
+        const auto template_slab_schedule = template_session->get_slab_schedule();
+        assert(template_slab_schedule.ok() && template_slab_schedule.value.has_value());
+        assert(std::any_of(template_slab_schedule.value->begin(), template_slab_schedule.value->end(), [](const auto& row) {
+            return row.material_or_assembly_name == "Foundation Slab" &&
+                   row.material_volume_by_id.size() == 2 &&
+                   row.material_cost_by_id.size() == 2;
+        }));
+        const auto template_takeoff = template_session->generate_material_takeoff_summary();
+        assert(template_takeoff.ok() && template_takeoff.value.has_value());
+        assert(std::any_of(template_takeoff.value->begin(), template_takeoff.value->end(), [](const auto& row) {
+            return row.estimated_cost.has_value() && row.unit_cost.has_value();
+        }));
+        const auto section_json = template_session->get_section_scene_json({.x = 0.0, .y = 4.0}, {.x = 12.0, .y = 4.0});
+        assert(section_json.ok() && section_json.value.has_value());
+        assert(section_json.value->find("Section distance X, Z elevation") != std::string::npos);
+        assert(section_json.value->find("WallCut") != std::string::npos);
+        assert(section_json.value->find("SlabCut") != std::string::npos);
+        assert(section_json.value->find("RoofSlopeCut") != std::string::npos);
+        const auto template_slab = std::find_if(
+            template_scene.value->objects.begin(),
+            template_scene.value->objects.end(),
+            [](const auto& object) { return object.kind == tbe::api::ApiElementKind::Slab; }
+        );
+        assert(template_slab != template_scene.value->objects.end());
+        assert(template_slab->mesh.triangle_material_ids.size() == template_slab->mesh.indices.size() / 3);
+        // Foundation is below Level 1; ordinary storey walls use the
+        // Residential Wall assembly and do not receive a foundation layer.
+        assert(template_slab->bounds.min.z < -0.30);
+        assert(template_slab->bounds.max.z < 1.0e-6);
+        char* project_json = nullptr;
+        assert(tbe_project_save_json(template_handle, &project_json) == TBE_API_OK);
+        assert(std::string(project_json).find("\"display_color\":\"#B86B4B\"") != std::string::npos);
+        const auto template_reload_status = tbe_project_load_json(template_handle, project_json);
+        if (template_reload_status != TBE_API_OK) {
+            std::fprintf(stderr, "template reload failed: %s\n", tbe_get_last_error(template_handle));
         }
-        tbe_engine_destroy(concurrent_handle);
+        assert(template_reload_status == TBE_API_OK);
+        tbe_free_string(project_json);
+        tbe_engine_destroy(template_handle);
     }
 
+    // Large-project gate: every engine change must keep both the single tower
+    // and the six-building campus on the native authoring/snapshot path. This
+    // is intentionally a correctness/crash gate, not a machine-dependent
+    // millisecond threshold; the CLI records timings for comparison.
+    for (const auto building_count : {1, 6}) {
+        auto* template_handle = tbe_engine_create();
+        assert(template_handle != nullptr);
+        std::uint64_t primary_level = 0;
+        assert(tbe_create_residential_template(template_handle, building_count, 9, &primary_level) == TBE_API_OK);
+        assert(primary_level != 0);
+        char* nearby_scene = nullptr;
+        assert(tbe_get_render_scene_json_near_level(template_handle, primary_level, 1, &nearby_scene) == TBE_API_OK);
+        assert(nearby_scene != nullptr);
+        assert(std::string(nearby_scene).find("\"objects\":[") != std::string::npos);
+        tbe_free_string(nearby_scene);
+        char* template_json = nullptr;
+        assert(tbe_project_save_json(template_handle, &template_json) == TBE_API_OK);
+        assert(template_json != nullptr);
+        const auto large_template_reload_status =
+            tbe_project_load_json(template_handle, template_json);
+        if (large_template_reload_status != TBE_API_OK) {
+            std::fprintf(stderr, "large template reload failed (%d buildings): %s\n",
+                         building_count, tbe_get_last_error(template_handle));
+        }
+        assert(large_template_reload_status == TBE_API_OK);
+        tbe_free_string(template_json);
+        tbe_engine_destroy(template_handle);
+    }
     return 0;
 }

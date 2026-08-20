@@ -3,8 +3,11 @@
 #include "tbe/core/GeometryService.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <fstream>
+#include <limits>
+#include <numeric>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -24,6 +27,10 @@ double length(const Line2& line) {
 
 Point2 add(Point2 left, Point2 right) {
     return Point2{.x = left.x + right.x, .y = left.y + right.y};
+}
+
+Point2 subtract(Point2 left, Point2 right) {
+    return Point2{.x = left.x - right.x, .y = left.y - right.y};
 }
 
 Point2 scale(Point2 value, double factor) {
@@ -115,7 +122,7 @@ std::string svg_hit_kind_name(ElementKind kind) {
     return "unknown";
 }
 
-std::optional<Point2> segment_intersection(Line2 first, Line2 second) {
+std::optional<Point2> line_intersection(Line2 first, Line2 second) {
     const auto x1 = first.start.x;
     const auto y1 = first.start.y;
     const auto x2 = first.end.x;
@@ -133,67 +140,21 @@ std::optional<Point2> segment_intersection(Line2 first, Line2 second) {
     const auto px = (((x1 * y2) - (y1 * x2)) * (x3 - x4) - (x1 - x2) * ((x3 * y4) - (y3 * x4))) / denominator;
     const auto py = (((x1 * y2) - (y1 * x2)) * (y3 - y4) - (y1 - y2) * ((x3 * y4) - (y3 * x4))) / denominator;
 
-    if (!between(px, x1, x2) || !between(py, y1, y2) || !between(px, x3, x4) || !between(py, y3, y4)) {
-        return std::nullopt;
-    }
-
     return Point2{.x = px, .y = py};
 }
 
-bool point_on_segment(Point2 point, Line2 line) {
-    const auto dx = line.end.x - line.start.x;
-    const auto dy = line.end.y - line.start.y;
-    const auto length_squared = (dx * dx) + (dy * dy);
-    if (length_squared <= epsilon) {
-        return same_point(point, line.start);
+std::optional<Point2> segment_intersection(Line2 first, Line2 second) {
+    const auto intersection = line_intersection(first, second);
+    if (!intersection.has_value()) {
+        return std::nullopt;
     }
-    const auto cross = ((point.x - line.start.x) * dy) - ((point.y - line.start.y) * dx);
-    if (std::abs(cross) > 1.0e-8) {
-        return false;
+    if (!between(intersection->x, first.start.x, first.end.x) ||
+        !between(intersection->y, first.start.y, first.end.y) ||
+        !between(intersection->x, second.start.x, second.end.x) ||
+        !between(intersection->y, second.start.y, second.end.y)) {
+        return std::nullopt;
     }
-    const auto projection = ((point.x - line.start.x) * dx + (point.y - line.start.y) * dy) / length_squared;
-    return projection >= -1.0e-8 && projection <= 1.0 + 1.0e-8;
-}
-
-std::vector<Point2> collinear_segment_contacts(Line2 first, Line2 second) {
-    const auto first_direction = Point2{
-        .x = first.end.x - first.start.x,
-        .y = first.end.y - first.start.y,
-    };
-    const auto second_direction = Point2{
-        .x = second.end.x - second.start.x,
-        .y = second.end.y - second.start.y,
-    };
-    const auto cross_directions = (first_direction.x * second_direction.y) -
-        (first_direction.y * second_direction.x);
-    if (std::abs(cross_directions) > 1.0e-8) {
-        return {};
-    }
-    const auto cross_offset = ((second.start.x - first.start.x) * first_direction.y) -
-        ((second.start.y - first.start.y) * first_direction.x);
-    if (std::abs(cross_offset) > 1.0e-8) {
-        return {};
-    }
-
-    std::vector<Point2> contacts;
-    const auto append_unique_contact = [&](Point2 point) {
-        if (std::find_if(contacts.begin(), contacts.end(), [&](Point2 existing) {
-                return same_point(existing, point);
-            }) == contacts.end()) {
-            contacts.push_back(point);
-        }
-    };
-    for (const auto point : {first.start, first.end}) {
-        if (point_on_segment(point, second)) {
-            append_unique_contact(point);
-        }
-    }
-    for (const auto point : {second.start, second.end}) {
-        if (point_on_segment(point, first)) {
-            append_unique_contact(point);
-        }
-    }
-    return contacts;
+    return intersection;
 }
 
 bool is_endpoint(Point2 point, Line2 line) {
@@ -358,6 +319,214 @@ bool cyclic_polygon_equal(const std::vector<Point2>& first, const std::vector<Po
     return false;
 }
 
+constexpr auto default_ceiling_height_offset_meters = 2.6;
+
+double normalized_ceiling_height_offset(double value) {
+    return std::abs(value) < epsilon ? default_ceiling_height_offset_meters : value;
+}
+
+bool has_duplicate_points(const std::vector<Point2>& points) {
+    for (std::size_t index = 0; index < points.size(); ++index) {
+        for (std::size_t other = index + 1; other < points.size(); ++other) {
+            if (same_point(points[index], points[other])) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool polygon_has_self_intersection(const std::vector<Point2>& polygon) {
+    if (polygon.size() < 4) {
+        return false;
+    }
+    for (std::size_t index = 0; index < polygon.size(); ++index) {
+        const Line2 first{
+            .start = polygon[index],
+            .end = polygon[(index + 1) % polygon.size()],
+        };
+        for (std::size_t other = index + 1; other < polygon.size(); ++other) {
+            const auto first_next = (index + 1) % polygon.size();
+            const auto other_next = (other + 1) % polygon.size();
+            if (index == other || first_next == other || other_next == index) {
+                continue;
+            }
+            const Line2 second{
+                .start = polygon[other],
+                .end = polygon[other_next],
+            };
+            const auto intersection = segment_intersection(first, second);
+            if (intersection.has_value()) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+struct PickWallLoopResult {
+    std::vector<Point2> polygon{};
+    std::vector<ElementId> ordered_wall_ids{};
+};
+
+PickWallLoopResult build_pick_wall_loop(
+    const Document& document,
+    const std::vector<ElementId>& picked_wall_ids
+) {
+    if (picked_wall_ids.size() < 3) {
+        throw std::invalid_argument("pick-walls profile needs at least 3 walls");
+    }
+
+    struct LoopWallRef {
+        ElementId wall_id{};
+        Point2 start{};
+        Point2 end{};
+        std::size_t start_node{};
+        std::size_t end_node{};
+    };
+
+    std::vector<Point2> nodes;
+    auto find_or_add_node = [&](Point2 point) {
+        for (std::size_t index = 0; index < nodes.size(); ++index) {
+            if (same_point(nodes[index], point)) {
+                return index;
+            }
+        }
+        nodes.push_back(point);
+        return nodes.size() - 1;
+    };
+
+    std::vector<LoopWallRef> walls;
+    walls.reserve(picked_wall_ids.size());
+    for (const auto wall_id : picked_wall_ids) {
+        if (std::find_if(
+                walls.begin(),
+                walls.end(),
+                [wall_id](const LoopWallRef& wall) { return wall.wall_id == wall_id; }) != walls.end()) {
+            throw std::invalid_argument("pick-walls profile contains duplicate walls");
+        }
+        const auto* wall_element = document.find_ptr(wall_id);
+        const auto* wall = wall_element == nullptr ? nullptr : wall_element->wall();
+        if (wall == nullptr) {
+            throw std::invalid_argument("pick-walls profile references a non-wall element");
+        }
+        const auto start_node = find_or_add_node(wall->axis.start);
+        const auto end_node = find_or_add_node(wall->axis.end);
+        if (start_node == end_node) {
+            throw std::invalid_argument("pick-walls profile contains a zero-length wall");
+        }
+        walls.push_back(LoopWallRef{
+            .wall_id = wall_id,
+            .start = wall->axis.start,
+            .end = wall->axis.end,
+            .start_node = start_node,
+            .end_node = end_node,
+        });
+    }
+
+    std::vector<std::vector<std::size_t>> adjacency(nodes.size());
+    for (std::size_t index = 0; index < walls.size(); ++index) {
+        adjacency[walls[index].start_node].push_back(index);
+        adjacency[walls[index].end_node].push_back(index);
+    }
+    for (const auto& connected : adjacency) {
+        if (connected.size() != 2) {
+            throw std::invalid_argument("pick-walls profile must form one connected closed loop");
+        }
+    }
+
+    std::vector<bool> visited(walls.size(), false);
+    std::vector<ElementId> ordered_wall_ids;
+    std::vector<Point2> polygon;
+    ordered_wall_ids.reserve(walls.size());
+    polygon.reserve(walls.size());
+
+    std::size_t current_wall_index = 0;
+    std::size_t current_node = walls[current_wall_index].start_node;
+    const auto start_node = current_node;
+    for (std::size_t step = 0; step < walls.size(); ++step) {
+        if (visited[current_wall_index]) {
+            throw std::invalid_argument("pick-walls profile contains an ambiguous or repeated loop");
+        }
+        visited[current_wall_index] = true;
+        const auto& wall = walls[current_wall_index];
+        polygon.push_back(nodes[current_node]);
+        ordered_wall_ids.push_back(wall.wall_id);
+
+        const auto next_node = wall.start_node == current_node ? wall.end_node : wall.start_node;
+        const auto& connected = adjacency[next_node];
+        const auto next_wall_it = std::find_if(
+            connected.begin(),
+            connected.end(),
+            [&](std::size_t candidate) { return candidate != current_wall_index; });
+        current_node = next_node;
+        if (step + 1 == walls.size()) {
+            if (current_node != start_node) {
+                throw std::invalid_argument("pick-walls profile does not close back to its start");
+            }
+            continue;
+        }
+        if (next_wall_it == connected.end()) {
+            throw std::invalid_argument("pick-walls profile became disconnected while ordering walls");
+        }
+        current_wall_index = *next_wall_it;
+    }
+
+    if (std::find(visited.begin(), visited.end(), false) != visited.end()) {
+        throw std::invalid_argument("pick-walls profile must be a single simple loop");
+    }
+
+    polygon = simplify_polygon(std::move(polygon));
+    if (polygon.size() < 3 || has_duplicate_points(polygon) || polygon_has_self_intersection(polygon)) {
+        throw std::invalid_argument("pick-walls profile produced an invalid closed boundary");
+    }
+    if (polygon_signed_area(polygon) < 0.0) {
+        std::reverse(polygon.begin(), polygon.end());
+        std::reverse(ordered_wall_ids.begin(), ordered_wall_ids.end());
+    }
+    return PickWallLoopResult{
+        .polygon = std::move(polygon),
+        .ordered_wall_ids = std::move(ordered_wall_ids),
+    };
+}
+
+void validate_profile_polygon(
+    const std::vector<Point2>& polygon,
+    ProfileTargetKind target_kind
+) {
+    const auto target_label = [target_kind]() -> const char* {
+        switch (target_kind) {
+        case ProfileTargetKind::WallPath: return "wall";
+        case ProfileTargetKind::FloorBoundary: return "floor";
+        case ProfileTargetKind::CeilingBoundary: return "ceiling";
+        case ProfileTargetKind::RoofBoundary: return "roof";
+        }
+        return "profile";
+    }();
+
+    if (polygon.size() < 3) {
+        throw std::invalid_argument(std::string(target_label) + " profile needs at least 3 unique points");
+    }
+    if (has_duplicate_points(polygon)) {
+        throw std::invalid_argument(std::string(target_label) + " profile contains duplicate points");
+    }
+    for (std::size_t index = 0; index < polygon.size(); ++index) {
+        const Line2 edge{
+            .start = polygon[index],
+            .end = polygon[(index + 1) % polygon.size()],
+        };
+        if (length(edge) <= epsilon) {
+            throw std::invalid_argument(std::string(target_label) + " profile contains a too-short edge");
+        }
+    }
+    if (polygon_has_self_intersection(polygon)) {
+        throw std::invalid_argument(std::string(target_label) + " profile self-intersects");
+    }
+    if (polygon_area(polygon) <= epsilon) {
+        throw std::invalid_argument(std::string(target_label) + " profile must enclose a positive area");
+    }
+}
+
 MeshBuffer extrude_polygon_mesh(const std::vector<Point2>& polygon, double thickness, double elevation_offset) {
     MeshBuffer mesh;
     const auto vertex_count = polygon.size();
@@ -392,6 +561,299 @@ MeshBuffer extrude_polygon_mesh(const std::vector<Point2>& polygon, double thick
         mesh.indices.push_back(static_cast<std::uint32_t>(vertex_count + index));
     }
 
+    return mesh;
+}
+
+MeshBuffer build_layered_slab_mesh(
+    const std::vector<Point2>& polygon,
+    const LayeredAssemblyData& assembly,
+    double elevation_offset
+) {
+    MeshBuffer mesh;
+    auto layer_elevation = elevation_offset;
+    for (const auto& layer : assembly.layers) {
+        const auto layer_mesh = extrude_polygon_mesh(polygon, layer.thickness_meters, layer_elevation);
+        const auto vertex_offset = static_cast<std::uint32_t>(mesh.vertices.size());
+        mesh.vertices.insert(mesh.vertices.end(), layer_mesh.vertices.begin(), layer_mesh.vertices.end());
+        for (const auto index : layer_mesh.indices) {
+            mesh.indices.push_back(vertex_offset + index);
+        }
+        mesh.triangle_material_ids.insert(
+            mesh.triangle_material_ids.end(),
+            layer_mesh.indices.size() / 3,
+            layer.material_id
+        );
+        layer_elevation += layer.thickness_meters;
+    }
+    return mesh;
+}
+
+bool valid_gable_profile(const std::vector<Point2>& polygon) {
+    if (polygon.size() != 4 || polygon_has_self_intersection(polygon)) return false;
+    double min_x = polygon.front().x, max_x = min_x, min_y = polygon.front().y, max_y = min_y;
+    for (const auto& point : polygon) {
+        min_x = std::min(min_x, point.x); max_x = std::max(max_x, point.x);
+        min_y = std::min(min_y, point.y); max_y = std::max(max_y, point.y);
+    }
+    return cyclic_polygon_equal(polygon, {{min_x, min_y}, {max_x, min_y}, {max_x, max_y}, {min_x, max_y}});
+}
+
+MeshBuffer build_gable_roof_mesh(const RoofData& roof, double thickness);
+
+std::optional<std::vector<Point2>> offset_roof_boundary(const std::vector<Point2>& polygon, double offset) {
+    if (polygon.size() < 3) {
+        return std::nullopt;
+    }
+    if (std::abs(offset) <= epsilon) {
+        return polygon;
+    }
+    const auto ccw = polygon_signed_area(polygon) > 0.0;
+    std::vector<Line2> shifted;
+    shifted.reserve(polygon.size());
+    for (std::size_t index = 0; index < polygon.size(); ++index) {
+        const auto start = polygon[index];
+        const auto end = polygon[(index + 1) % polygon.size()];
+        const auto direction = unit_direction(Line2{.start = start, .end = end});
+        const auto outward = ccw
+            ? Point2{.x = direction.y, .y = -direction.x}
+            : Point2{.x = -direction.y, .y = direction.x};
+        const auto shift = scale(outward, offset);
+        shifted.push_back(Line2{.start = add(start, shift), .end = add(end, shift)});
+    }
+
+    std::vector<Point2> result;
+    result.reserve(polygon.size());
+    for (std::size_t index = 0; index < shifted.size(); ++index) {
+        const auto& previous = shifted[(index + shifted.size() - 1) % shifted.size()];
+        const auto& current = shifted[index];
+        const auto first_direction = subtract(previous.end, previous.start);
+        const auto second_direction = subtract(current.end, current.start);
+        const auto denominator = (first_direction.x * second_direction.y) - (first_direction.y * second_direction.x);
+        if (std::abs(denominator) <= epsilon) {
+            return std::nullopt;
+        }
+        const auto delta = subtract(current.start, previous.start);
+        const auto t = ((delta.x * second_direction.y) - (delta.y * second_direction.x)) / denominator;
+        result.push_back(add(previous.start, scale(first_direction, t)));
+    }
+    if (result.size() < 3 || polygon_has_self_intersection(result) ||
+        polygon_signed_area(result) * polygon_signed_area(polygon) <= epsilon) {
+        return std::nullopt;
+    }
+    // A concave footprint can remain formally simple after an inward offset
+    // even though one of its wavefront edges has already collapsed and
+    // reversed.  That is the first straight-skeleton event, so reject it and
+    // let the binary search stop before the topology changes.
+    for (std::size_t index = 0; index < polygon.size(); ++index) {
+        const auto original = subtract(polygon[(index + 1) % polygon.size()], polygon[index]);
+        const auto shifted_edge = subtract(result[(index + 1) % result.size()], result[index]);
+        if ((original.x * shifted_edge.x) + (original.y * shifted_edge.y) <= epsilon) {
+            return std::nullopt;
+        }
+    }
+    return result;
+}
+
+std::vector<std::array<std::size_t, 3>> triangulate_roof_boundary(std::vector<Point2> polygon) {
+    if (polygon_signed_area(polygon) < 0.0) {
+        std::reverse(polygon.begin(), polygon.end());
+    }
+    std::vector<std::size_t> remaining(polygon.size());
+    std::iota(remaining.begin(), remaining.end(), 0);
+    std::vector<std::array<std::size_t, 3>> triangles;
+    const auto point_in_triangle = [](Point2 point, Point2 a, Point2 b, Point2 c) {
+        const auto ab = (b.x - a.x) * (point.y - a.y) - (b.y - a.y) * (point.x - a.x);
+        const auto bc = (c.x - b.x) * (point.y - b.y) - (c.y - b.y) * (point.x - b.x);
+        const auto ca = (a.x - c.x) * (point.y - c.y) - (a.y - c.y) * (point.x - c.x);
+        return ab >= -epsilon && bc >= -epsilon && ca >= -epsilon;
+    };
+    while (remaining.size() > 3) {
+        bool clipped = false;
+        for (std::size_t index = 0; index < remaining.size(); ++index) {
+            const auto previous = remaining[(index + remaining.size() - 1) % remaining.size()];
+            const auto current = remaining[index];
+            const auto next = remaining[(index + 1) % remaining.size()];
+            const auto& a = polygon[previous];
+            const auto& b = polygon[current];
+            const auto& c = polygon[next];
+            const auto cross_value = (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x);
+            if (cross_value <= epsilon) {
+                continue;
+            }
+            const auto contains_other = std::any_of(remaining.begin(), remaining.end(), [&](std::size_t candidate) {
+                return candidate != previous && candidate != current && candidate != next &&
+                    point_in_triangle(polygon[candidate], a, b, c);
+            });
+            if (contains_other) {
+                continue;
+            }
+            triangles.push_back({previous, current, next});
+            remaining.erase(remaining.begin() + static_cast<std::ptrdiff_t>(index));
+            clipped = true;
+            break;
+        }
+        if (!clipped) {
+            return {};
+        }
+    }
+    if (remaining.size() == 3) {
+        triangles.push_back({remaining[0], remaining[1], remaining[2]});
+    }
+    return triangles;
+}
+
+std::optional<std::pair<std::vector<Point2>, double>> build_roof_plateau(
+    const std::vector<Point2>& boundary
+) {
+    auto shortest_edge = std::numeric_limits<double>::max();
+    for (std::size_t index = 0; index < boundary.size(); ++index) {
+        shortest_edge = std::min(shortest_edge, length(Line2{
+            .start = boundary[index], .end = boundary[(index + 1) % boundary.size()]
+        }));
+    }
+    if (!std::isfinite(shortest_edge) || shortest_edge <= epsilon) {
+        return std::nullopt;
+    }
+
+    // Move every eave inwards together.  The largest simple inset is the
+    // first straight-skeleton event; stopping just before it creates a small
+    // ridge/valley plateau and works for convex, L, U and irregular simple
+    // footprints without ever fanning triangles through a concave notch.
+    auto low = 0.0;
+    auto high = shortest_edge;
+    for (int iteration = 0; iteration < 40; ++iteration) {
+        const auto candidate_distance = (low + high) * 0.5;
+        const auto candidate = offset_roof_boundary(boundary, -candidate_distance);
+        if (candidate.has_value() && std::abs(polygon_signed_area(*candidate)) > epsilon) {
+            low = candidate_distance;
+        } else {
+            high = candidate_distance;
+        }
+    }
+    if (low <= epsilon) {
+        return std::nullopt;
+    }
+    const auto plateau_distance = low * 0.94;
+    const auto plateau = offset_roof_boundary(boundary, -plateau_distance);
+    if (!plateau.has_value()) {
+        return std::nullopt;
+    }
+    return std::make_pair(*plateau, plateau_distance);
+}
+
+MeshBuffer build_auto_footprint_roof_mesh(const RoofData& roof, double thickness) {
+    if (roof.boundary_polygon.size() < 3 || !roof.slope_degrees.has_value()) {
+        return {};
+    }
+
+    const auto boundary = offset_roof_boundary(roof.boundary_polygon, roof.overhang_meters.value_or(0.0));
+    if (!boundary.has_value()) {
+        return {};
+    }
+    const auto plateau = build_roof_plateau(*boundary);
+    if (!plateau.has_value()) {
+        return {};
+    }
+    const auto& eaves = *boundary;
+    const auto& ridge = plateau->first;
+    const auto eave_triangles = triangulate_roof_boundary(eaves);
+    const auto ridge_triangles = triangulate_roof_boundary(ridge);
+    if (eave_triangles.empty() || ridge_triangles.empty() || eaves.size() != ridge.size()) {
+        return {};
+    }
+    const auto rise = plateau->second * std::tan(*roof.slope_degrees * 3.14159265358979323846 / 180.0);
+    if (rise <= epsilon) {
+        return {};
+    }
+
+    MeshBuffer mesh;
+    const auto count = static_cast<std::uint32_t>(eaves.size());
+    mesh.vertices.reserve((count * 3) + ridge_triangles.size() * 3);
+    // Bottom eaves, top eaves and the raised, footprint-derived ridge loop.
+    for (const auto& point : eaves) mesh.vertices.push_back({point.x, point.y, 0.0});
+    for (const auto& point : eaves) mesh.vertices.push_back({point.x, point.y, thickness});
+    for (const auto& point : ridge) mesh.vertices.push_back({point.x, point.y, thickness + rise});
+    const auto top_eave = count;
+    const auto ridge_base = count * 2;
+
+    for (const auto& triangle : eave_triangles) {
+        mesh.indices.insert(mesh.indices.end(), {
+            static_cast<std::uint32_t>(triangle[0]),
+            static_cast<std::uint32_t>(triangle[2]),
+            static_cast<std::uint32_t>(triangle[1]),
+        });
+    }
+    for (std::uint32_t index = 0; index < count; ++index) {
+        const auto next = (index + 1) % count;
+        // Fascia at the eave.
+        mesh.indices.insert(mesh.indices.end(), {
+            index, next, top_eave + next,
+            index, top_eave + next, top_eave + index,
+        });
+        // One true slope face per footprint edge.  The inner edge is a
+        // parallel offset, so its rise/distance is exactly tan(slope).
+        mesh.indices.insert(mesh.indices.end(), {
+            top_eave + index, top_eave + next, ridge_base + next,
+            top_eave + index, ridge_base + next, ridge_base + index,
+        });
+    }
+    for (const auto& triangle : ridge_triangles) {
+        mesh.indices.insert(mesh.indices.end(), {
+            ridge_base + static_cast<std::uint32_t>(triangle[0]),
+            ridge_base + static_cast<std::uint32_t>(triangle[1]),
+            ridge_base + static_cast<std::uint32_t>(triangle[2]),
+        });
+    }
+    return mesh;
+}
+
+double triangle_area(Point3 first, Point3 second, Point3 third) {
+    const auto ab = Point3{.x = second.x - first.x, .y = second.y - first.y, .z = second.z - first.z};
+    const auto ac = Point3{.x = third.x - first.x, .y = third.y - first.y, .z = third.z - first.z};
+    const Point3 cross_product{
+        .x = (ab.y * ac.z) - (ab.z * ac.y),
+        .y = (ab.z * ac.x) - (ab.x * ac.z),
+        .z = (ab.x * ac.y) - (ab.y * ac.x),
+    };
+    return 0.5 * std::sqrt(
+        (cross_product.x * cross_product.x) +
+        (cross_product.y * cross_product.y) +
+        (cross_product.z * cross_product.z)
+    );
+}
+
+double auto_roof_surface_area(const RoofData& roof, double thickness) {
+    const auto mesh = build_auto_footprint_roof_mesh(roof, thickness);
+    auto area = 0.0;
+    for (std::size_t index = 0; index + 2 < mesh.indices.size(); index += 3) {
+        const auto& first = mesh.vertices[mesh.indices[index]];
+        const auto& second = mesh.vertices[mesh.indices[index + 1]];
+        const auto& third = mesh.vertices[mesh.indices[index + 2]];
+        if (first.z >= thickness - epsilon && second.z >= thickness - epsilon && third.z >= thickness - epsilon) {
+            area += triangle_area(first, second, third);
+        }
+    }
+    return area;
+}
+
+MeshBuffer build_gable_roof_mesh(const RoofData& roof, double thickness) {
+    if (!valid_gable_profile(roof.boundary_polygon) || !roof.slope_degrees.has_value()) return {};
+    double min_x = roof.boundary_polygon.front().x, max_x = min_x, min_y = roof.boundary_polygon.front().y, max_y = min_y;
+    for (const auto& point : roof.boundary_polygon) {
+        min_x = std::min(min_x, point.x); max_x = std::max(max_x, point.x);
+        min_y = std::min(min_y, point.y); max_y = std::max(max_y, point.y);
+    }
+    const auto dx = max_x - min_x, dy = max_y - min_y;
+    const auto rise = std::min(dx, dy) * 0.5 * std::tan(*roof.slope_degrees * 3.14159265358979323846 / 180.0);
+    if (rise <= epsilon) return {};
+    MeshBuffer mesh;
+    if (dx >= dy) {
+        mesh.vertices = {{min_x,min_y,0},{max_x,min_y,0},{max_x,max_y,0},{min_x,max_y,0},{min_x,min_y,thickness},{max_x,min_y,thickness},{max_x,max_y,thickness},{min_x,max_y,thickness},{min_x,(min_y+max_y)*0.5,thickness+rise},{max_x,(min_y+max_y)*0.5,thickness+rise}};
+        mesh.indices = {0,2,1,0,3,2,0,1,5,0,5,4,3,7,6,3,6,2,0,4,8,0,8,3,3,8,7,1,2,9,1,9,5,2,6,9,4,5,9,4,9,8,7,8,9,7,9,6};
+    } else {
+        mesh.vertices = {{min_x,min_y,0},{max_x,min_y,0},{max_x,max_y,0},{min_x,max_y,0},{min_x,min_y,thickness},{max_x,min_y,thickness},{max_x,max_y,thickness},{min_x,max_y,thickness},{(min_x+max_x)*0.5,min_y,thickness+rise},{(min_x+max_x)*0.5,max_y,thickness+rise}};
+        mesh.indices = {0,2,1,0,3,2,0,1,5,0,5,4,3,7,6,3,6,2,0,4,8,0,8,1,1,8,5,3,2,9,3,9,7,2,6,9,4,7,9,4,9,8,5,8,9,5,9,6};
+    }
     return mesh;
 }
 
@@ -435,15 +897,76 @@ MeshBuffer build_stair_mesh(const StairData& stair) {
         return {};
     }
     const auto unit = Point2{.x = stair.direction.x / direction_length, .y = stair.direction.y / direction_length};
+    // A staircase is one watertight stepped solid, rather than a stack of
+    // overlapping boxes.  The old approach left coplanar internal faces in
+    // Solid view (the visual "many boxes" effect) and spent O(n²) welding
+    // them.  This emits only exterior tread/riser/side faces in O(n).
+    MeshBuffer mesh;
+    const auto step_count = std::max(1, stair.tread_count);
+    const auto tread = stair.total_run_meters / static_cast<double>(step_count);
+    const auto rise = stair.total_rise_meters / static_cast<double>(step_count);
     const auto normal = scale(perpendicular_left(unit), stair.width_meters / 2.0);
-    const auto run = scale(unit, stair.total_run_meters);
-    std::vector<Point2> polygon{
-        add(stair.start, normal),
-        add(add(stair.start, run), normal),
-        add(add(stair.start, run), scale(normal, -1.0)),
-        add(stair.start, scale(normal, -1.0)),
+    const auto point_at = [&](double run, double side, double height) {
+        const auto plan = add(add(stair.start, scale(unit, run)), scale(normal, side));
+        return Point3{.x = plan.x, .y = plan.y, .z = height};
     };
-    return extrude_polygon_mesh(polygon, stair.total_rise_meters, 0.0);
+    const auto add_quad = [&](Point3 a, Point3 b, Point3 c, Point3 d) {
+        const auto base = static_cast<std::uint32_t>(mesh.vertices.size());
+        mesh.vertices.insert(mesh.vertices.end(), {a, b, c, d});
+        mesh.indices.insert(mesh.indices.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
+    };
+
+    // Build one continuous stair-shaped side profile. The old implementation
+    // emitted a full-height side panel for every tread, which looked like a
+    // row of boxes. This profile is a single monolithic wedge with a sloped
+    // underside and the stepped top contour.
+    std::vector<Point3> side_profile;
+    side_profile.reserve(static_cast<std::size_t>(step_count) + 3);
+    side_profile.push_back(point_at(0.0, -1.0, 0.0));
+    side_profile.push_back(point_at(stair.total_run_meters, -1.0, stair.total_rise_meters));
+    for (int step = step_count - 1; step >= 0; --step) {
+        const auto run = tread * static_cast<double>(step);
+        const auto height = rise * static_cast<double>(step + 1);
+        side_profile.push_back(point_at(run, -1.0, height));
+    }
+    const auto side_base = static_cast<std::uint32_t>(mesh.vertices.size());
+    mesh.vertices.insert(mesh.vertices.end(), side_profile.begin(), side_profile.end());
+    for (std::uint32_t index = 1; index + 1 < side_profile.size(); ++index) {
+        mesh.indices.insert(mesh.indices.end(), {side_base, side_base + index, side_base + index + 1});
+    }
+
+    std::vector<Point3> opposite_profile;
+    opposite_profile.reserve(side_profile.size());
+    for (const auto& point : side_profile) {
+        const auto run = ((point.x - stair.start.x) * unit.x) + ((point.y - stair.start.y) * unit.y);
+        opposite_profile.push_back(point_at(run, 1.0, point.z));
+    }
+    const auto opposite_base = static_cast<std::uint32_t>(mesh.vertices.size());
+    mesh.vertices.insert(mesh.vertices.end(), opposite_profile.begin(), opposite_profile.end());
+    for (std::uint32_t index = 1; index + 1 < opposite_profile.size(); ++index) {
+        mesh.indices.insert(mesh.indices.end(), {opposite_base, opposite_base + index + 1, opposite_base + index});
+    }
+
+    // One sloped underside closes the monolithic wedge.
+    add_quad(point_at(0.0, 1.0, 0.0), point_at(stair.total_run_meters, 1.0, stair.total_rise_meters),
+             point_at(stair.total_run_meters, -1.0, stair.total_rise_meters), point_at(0.0, -1.0, 0.0));
+    add_quad(point_at(0.0, -1.0, 0.0), point_at(0.0, 1.0, 0.0),
+             point_at(0.0, 1.0, rise), point_at(0.0, -1.0, rise));
+
+    for (int step = 0; step < step_count; ++step) {
+        const auto run_start = tread * static_cast<double>(step);
+        const auto run_end = tread * static_cast<double>(step + 1);
+        const auto lower = rise * static_cast<double>(step);
+        const auto upper = rise * static_cast<double>(step + 1);
+        // Tread and riser are the only horizontal/vertical exterior faces.
+        add_quad(point_at(run_start, -1.0, upper), point_at(run_start, 1.0, upper),
+                 point_at(run_end, 1.0, upper), point_at(run_end, -1.0, upper));
+        if (step > 0) {
+            add_quad(point_at(run_start, -1.0, lower), point_at(run_start, 1.0, lower),
+                     point_at(run_start, 1.0, upper), point_at(run_start, -1.0, upper));
+        }
+    }
+    return mesh;
 }
 
 double roof_plan_area(const RoofData& roof) {
@@ -452,6 +975,12 @@ double roof_plan_area(const RoofData& roof) {
 
 double roof_surface_area(const RoofData& roof) {
     const auto plan_area = roof_plan_area(roof);
+    if (roof.roof_type == RoofType::AutoFootprint && roof.slope_degrees.has_value()) {
+        const auto surface = auto_roof_surface_area(roof, roof.thickness_meters);
+        if (surface > epsilon) {
+            return surface;
+        }
+    }
     if (roof.roof_type == RoofType::SimpleGable && roof.slope_degrees.has_value()) {
         const auto radians = (*roof.slope_degrees) * 3.14159265358979323846 / 180.0;
         const auto cosine = std::cos(radians);
@@ -488,7 +1017,8 @@ ElementId Document::create_material(
     MaterialCategory category,
     std::optional<double> density_kg_per_m3,
     std::optional<double> unit_cost,
-    std::map<std::string, std::string> metadata
+    std::map<std::string, std::string> metadata,
+    std::string display_color
 ) {
     if (name.empty()) {
         throw std::invalid_argument("material name must not be empty");
@@ -501,6 +1031,7 @@ ElementId Document::create_material(
         .category = category,
         .density_kg_per_m3 = density_kg_per_m3,
         .unit_cost = unit_cost,
+        .display_color = display_color.empty() ? "#B0B7C3" : std::move(display_color),
         .metadata = std::move(metadata),
     };
     return material_id;
@@ -519,7 +1050,7 @@ void Document::update_material(MaterialDefinition material) {
     invalidate_dependency_graph_cache();
 }
 
-ElementId Document::create_wall_type(std::string name, std::vector<WallAssemblyLayer> layers) {
+ElementId Document::create_wall_type(std::string name, std::vector<WallAssemblyLayer> layers, WallTypeCategory category) {
     if (name.empty()) {
         throw std::invalid_argument("wall type name must not be empty");
     }
@@ -536,6 +1067,7 @@ ElementId Document::create_wall_type(std::string name, std::vector<WallAssemblyL
     wall_types_[wall_type_id] = WallTypeData{
         .wall_type_id = wall_type_id,
         .name = std::move(name),
+        .category = category,
         .layers = std::move(layers),
     };
     return wall_type_id;
@@ -589,7 +1121,44 @@ void Document::update_layered_assembly(LayeredAssemblyData assembly) {
             throw std::invalid_argument("assembly layer thickness must be positive");
         }
     }
-    layered_assemblies_[assembly.assembly_id] = std::move(assembly);
+    const auto assembly_id = assembly.assembly_id;
+    const auto previous = get_layered_assembly(assembly_id);
+    // Rendering uses a single proxy envelope. Material/function/priority edits
+    // are semantic-only and must not trigger a viewport geometry rebuild. The
+    // only current proxy-affecting layer value is total thickness.
+    const auto previous_thickness = previous == nullptr ? -1.0 : layered_assembly_total_thickness(*previous);
+    const auto next_thickness = layered_assembly_total_thickness(assembly);
+    const auto material_geometry_changed = previous == nullptr ||
+        std::abs(previous_thickness - next_thickness) > epsilon ||
+        previous->layers.size() != assembly.layers.size() ||
+        std::any_of(previous->layers.begin(), previous->layers.end(), [&](const auto& layer) {
+            const auto index = static_cast<std::size_t>(&layer - previous->layers.data());
+            const auto& next_layer = assembly.layers[index];
+            return layer.material_id != next_layer.material_id ||
+                std::abs(layer.thickness_meters - next_layer.thickness_meters) > epsilon;
+        });
+    layered_assemblies_[assembly_id] = std::move(assembly);
+    if (!material_geometry_changed) {
+        // Reports/export read the semantic layers on demand. Do not touch any
+        // element revision or mesh when only metadata changes.
+        invalidate_dependency_graph_cache();
+        return;
+    }
+    for (auto& element : elements_) {
+        if (auto* wall = element.wall(); wall != nullptr && wall->assembly_id == assembly_id) {
+            wall->thickness_meters = layered_assembly_total_thickness(layered_assemblies_.at(assembly_id));
+            mark_wall_dirty(element);
+        } else if (auto* slab = element.slab(); slab != nullptr && slab->assembly_id == assembly_id) {
+            slab->generated_geometry_dirty = true;
+            element.touch();
+        } else if (auto* roof = element.roof(); roof != nullptr && roof->assembly_id == assembly_id) {
+            roof->generated_geometry_dirty = true;
+            element.touch();
+        } else if (auto* stair = element.stair(); stair != nullptr && stair->assembly_id == assembly_id) {
+            stair->generated_geometry_dirty = true;
+            element.touch();
+        }
+    }
     invalidate_dependency_graph_cache();
 }
 
@@ -612,7 +1181,7 @@ ElementId Document::create_level(std::string name, double elevation_meters, doub
     return id;
 }
 
-ElementId Document::create_wall(std::string name, Line2 axis, double thickness_meters, double height_meters, ElementId level_id) {
+ElementId Document::create_wall(std::string name, Line2 axis, double thickness_meters, double height_meters, ElementId level_id, ElementId assembly_id) {
     if (name.empty()) {
         throw std::invalid_argument("wall name must not be empty");
     }
@@ -620,15 +1189,30 @@ ElementId Document::create_wall(std::string name, Line2 axis, double thickness_m
     if (level_id != 0) {
         (void)require_level(level_id);
     }
+    if (assembly_id != 0) {
+        const auto* assembly = get_layered_assembly(assembly_id);
+        if (assembly == nullptr || assembly->kind != LayeredAssemblyKind::Wall) {
+            throw std::invalid_argument("wall assembly must exist and have Wall kind");
+        }
+        thickness_meters = layered_assembly_total_thickness(*assembly);
+        validate_wall_axis(axis, thickness_meters, height_meters);
+    }
 
     const auto id = allocate_id();
     elements_.emplace_back(id, ElementKind::Wall, std::move(name), WallData{
         .level_id = level_id,
+        .base_level_id = level_id,
+        .assembly_id = assembly_id,
         .axis = axis,
         .thickness_meters = thickness_meters,
         .height_meters = height_meters,
     });
-    auto_join_walls();
+    if (level_id != 0) {
+        dirty_room_level_ids_.push_back(level_id);
+    }
+    if (automatic_wall_join_enabled_) {
+        auto_join_walls();
+    }
     invalidate_dependency_graph_cache();
     return id;
 }
@@ -644,6 +1228,128 @@ void Document::set_wall_type(ElementId wall_id, ElementId wall_type_id) {
         wall->thickness_meters = total_wall_type_thickness(*wall_type);
     }
     mark_wall_dirty(wall_element);
+    refresh_dependencies_for_wall(wall_id);
+}
+
+void Document::set_element_assembly(ElementId element_id, ElementId assembly_id) {
+    const auto* assembly = get_layered_assembly(assembly_id);
+    if (assembly == nullptr) throw std::invalid_argument("compound assembly does not exist");
+    auto* element = find_ptr(element_id);
+    if (element == nullptr) throw std::invalid_argument("element does not exist");
+    if (auto* wall = element->wall()) {
+        if (assembly->kind != LayeredAssemblyKind::Wall) throw std::invalid_argument("wall requires Wall assembly");
+        wall->assembly_id = assembly_id;
+        wall->wall_type_id = 0;
+        wall->thickness_meters = layered_assembly_total_thickness(*assembly);
+        mark_wall_dirty(*element);
+        refresh_dependencies_for_wall(element_id);
+    } else if (auto* slab = element->slab()) {
+        if (assembly->kind != LayeredAssemblyKind::Floor) throw std::invalid_argument("slab requires Floor assembly");
+        slab->assembly_id = assembly_id;
+        slab->thickness_meters = layered_assembly_total_thickness(*assembly);
+        slab->generated_geometry_dirty = true;
+        element->touch();
+    } else if (auto* roof = element->roof()) {
+        if (assembly->kind != LayeredAssemblyKind::Roof) throw std::invalid_argument("roof requires Roof assembly");
+        roof->assembly_id = assembly_id; roof->generated_geometry_dirty = true; element->touch();
+    } else if (auto* stair = element->stair()) {
+        if (assembly->kind != LayeredAssemblyKind::Stair) throw std::invalid_argument("stair requires Stair assembly");
+        stair->assembly_id = assembly_id; stair->generated_geometry_dirty = true; element->touch();
+    } else {
+        throw std::invalid_argument("element does not support compound assemblies");
+    }
+    invalidate_dependency_graph_cache();
+}
+
+void Document::update_roof_properties(ElementId roof_id, RoofType roof_type, std::optional<double> slope_degrees, std::optional<double> overhang_meters) {
+    auto* element = find_ptr(roof_id);
+    auto* roof = element == nullptr ? nullptr : element->roof();
+    if (roof == nullptr) throw std::invalid_argument("roof does not exist");
+    if (roof_type == RoofType::SimpleGable && (!slope_degrees.has_value() || *slope_degrees <= 0.0 || *slope_degrees >= 75.0 || !valid_gable_profile(roof->boundary_polygon))) {
+        throw std::invalid_argument("simple gable requires rectangular profile and 0-75 degree slope");
+    }
+    if (roof_type == RoofType::AutoFootprint && (!slope_degrees.has_value() || *slope_degrees <= 0.0 || *slope_degrees >= 75.0 || polygon_has_self_intersection(roof->boundary_polygon))) {
+        throw std::invalid_argument("automatic footprint roof requires a simple profile and 0-75 degree slope");
+    }
+    if (overhang_meters.has_value() && *overhang_meters < 0.0) throw std::invalid_argument("roof overhang cannot be negative");
+    roof->roof_type = roof_type;
+    roof->slope_degrees = slope_degrees;
+    roof->overhang_meters = overhang_meters;
+    roof->generated_geometry_dirty = true;
+    element->touch();
+}
+
+void Document::set_beam_column_join(ElementId beam_id, ElementId column_id, bool enabled) {
+    const auto* beam = find_ptr(beam_id);
+    const auto* column = find_ptr(column_id);
+    if (beam == nullptr || beam->beam() == nullptr || column == nullptr || column->column() == nullptr) {
+        throw std::invalid_argument("join requires a beam and a column");
+    }
+    const auto relation = std::make_pair(beam_id, column_id);
+    const auto found = std::find(beam_column_joins_.begin(), beam_column_joins_.end(), relation);
+    if (enabled && found == beam_column_joins_.end()) beam_column_joins_.push_back(relation);
+    if (!enabled && found != beam_column_joins_.end()) beam_column_joins_.erase(found);
+    invalidate_dependency_graph_cache();
+}
+
+void Document::set_structural_wall_cut(ElementId wall_id, ElementId cutter_id, bool enabled, double clearance_meters) {
+    if (clearance_meters < 0.0) throw std::invalid_argument("structural cut clearance cannot be negative");
+    auto& wall_element = require_wall(wall_id);
+    auto* wall = wall_element.wall();
+    auto* cutter = find_ptr(cutter_id);
+    if (cutter == nullptr || (cutter->column() == nullptr && cutter->beam() == nullptr)) {
+        throw std::invalid_argument("wall cut requires a column or beam cutter");
+    }
+    const auto cut_key = std::make_pair(wall_id, cutter_id);
+    if (!enabled) {
+        disabled_auto_structural_cuts_.insert(cut_key);
+    } else if (!resolving_structural_relations_) {
+        disabled_auto_structural_cuts_.erase(cut_key);
+    }
+    auto updated = *wall;
+    updated.openings.erase(std::remove_if(updated.openings.begin(), updated.openings.end(), [&](const HostedOpening& opening) {
+        return opening.element_id == cutter_id && opening.kind == OpeningKind::StructuralVoid;
+    }), updated.openings.end());
+    if (enabled) {
+        const auto dx = updated.axis.end.x - updated.axis.start.x;
+        const auto dy = updated.axis.end.y - updated.axis.start.y;
+        const auto length = std::sqrt(dx * dx + dy * dy);
+        if (length <= epsilon) throw std::invalid_argument("wall axis is invalid");
+        Point2 center{};
+        double width{};
+        double height{};
+        if (const auto* column = cutter->column()) {
+            center = column->position;
+            width = std::abs(dx / length) * column->width_meters + std::abs(dy / length) * column->depth_meters;
+            height = column->height_meters;
+        } else if (const auto* beam = cutter->beam()) {
+            center = {(beam->start.x + beam->end.x) * 0.5, (beam->start.y + beam->end.y) * 0.5};
+            width = beam->width_meters;
+            height = beam->height_meters;
+        }
+        const auto offset = ((center.x - updated.axis.start.x) * dx + (center.y - updated.axis.start.y) * dy) / length;
+        updated.openings.push_back(HostedOpening{
+            .element_id = cutter_id,
+            .kind = OpeningKind::StructuralVoid,
+            .offset_meters = offset,
+            .width_meters = width + (2.0 * clearance_meters),
+            .height_meters = std::min(height + clearance_meters, resolved_wall_height(updated)),
+            .sill_height_meters = 0.0,
+            .vertical_offset_meters = 0.0,
+        });
+        validate_wall_openings(updated);
+    }
+    wall->openings = std::move(updated.openings);
+    mark_wall_dirty(wall_element);
+    if (resolving_structural_relations_) {
+        // auto_join_structural_elements owns this transaction.  Calling the
+        // normal wall refresh path here would re-enter auto_join_walls(),
+        // which in turn invokes this resolver again.
+        mark_rooms_dirty_for_wall(wall_id);
+        touch_related_rooms(wall_id);
+        invalidate_dependency_graph_cache();
+        return;
+    }
     refresh_dependencies_for_wall(wall_id);
 }
 
@@ -663,7 +1369,7 @@ void Document::set_wall_properties(ElementId wall_id, double thickness_meters, d
         wall->thickness_meters = total_wall_type_thickness(*wall_type);
     }
     auto updated = *wall;
-    validate_wall_axis(updated.axis, wall->thickness_meters, wall->height_meters);
+    validate_wall_axis(updated.axis, wall->thickness_meters, resolved_wall_height(updated));
     validate_wall_openings(updated);
     mark_wall_dirty(wall_element);
     refresh_dependencies_for_wall(wall_id);
@@ -673,7 +1379,7 @@ void Document::set_wall_properties(ElementId wall_id, double thickness_meters, d
 void Document::set_wall_axis(ElementId wall_id, Line2 axis) {
     auto& wall_element = require_wall(wall_id);
     auto* wall = wall_element.wall();
-    validate_wall_axis(axis, wall->thickness_meters, wall->height_meters);
+    validate_wall_axis(axis, wall->thickness_meters, resolved_wall_height(*wall));
 
     auto updated = *wall;
     updated.axis = axis;
@@ -681,7 +1387,288 @@ void Document::set_wall_axis(ElementId wall_id, Line2 axis) {
 
     wall->axis = axis;
     mark_wall_dirty(wall_element);
+    for (auto& element : elements_) {
+        auto* roof = element.roof();
+        if (roof != nullptr && std::find(roof->source_wall_ids.begin(), roof->source_wall_ids.end(), wall_id) != roof->source_wall_ids.end()) {
+            roof->generated_geometry_dirty = true;
+            element.touch();
+        }
+    }
     refresh_dependencies_for_wall(wall_id);
+    // Axis edits are a normal authoring path, not only a low-level geometry
+    // update. Rebuild joins immediately so a moved endpoint cannot keep the
+    // previous miter/cap relation and make the next corner look torn.
+    if (automatic_wall_join_enabled_) {
+        auto_join_walls();
+    }
+    invalidate_dependency_graph_cache();
+}
+
+void Document::set_wall_axis_with_joins(ElementId wall_id, Line2 axis) {
+    auto& wall_element = require_wall(wall_id);
+    auto* wall = wall_element.wall();
+    validate_wall_axis(axis, wall->thickness_meters, resolved_wall_height(*wall));
+
+    struct AxisUpdate {
+        ElementId id{};
+        Line2 before{};
+        Line2 after{};
+    };
+    std::vector<AxisUpdate> updates{
+        AxisUpdate{.id = wall_id, .before = wall->axis, .after = axis},
+    };
+    // Endpoint drags are allowed to be a few pixels inaccurate on touch. If
+    // the moved endpoint lands close to another wall's endpoint or line,
+    // resolve that contact before the join graph is rebuilt. Otherwise the
+    // two walls can be recorded as joined at a shallow diagonal intersection
+    // even though the user's intention was a perpendicular/T connection.
+    if (std::abs(axis.start.x - wall->axis.start.x) > epsilon ||
+        std::abs(axis.start.y - wall->axis.start.y) > epsilon ||
+        std::abs(axis.end.x - wall->axis.end.x) > epsilon ||
+        std::abs(axis.end.y - wall->axis.end.y) > epsilon) {
+        constexpr double endpoint_snap_tolerance_meters = 0.35;
+        const auto point_on_segment = [](Point2 point, Line2 line) {
+            return between(point.x, line.start.x, line.end.x) &&
+                between(point.y, line.start.y, line.end.y);
+        };
+        const auto distance = [](Point2 first, Point2 second) {
+            return std::hypot(first.x - second.x, first.y - second.y);
+        };
+        const auto moved_start = distance(axis.start, wall->axis.start) > epsilon;
+        const auto moved_end = distance(axis.end, wall->axis.end) > epsilon;
+        auto snap_endpoint = [&](Point2& endpoint, bool moved) {
+            if (!moved) return;
+            auto best_distance = endpoint_snap_tolerance_meters;
+            std::optional<Point2> best;
+            for (const auto& other_element : elements_) {
+                const auto* other_wall = other_element.wall();
+                if (other_wall == nullptr || other_element.id() == wall_id ||
+                    other_wall->level_id != wall->level_id) {
+                    continue;
+                }
+                for (const auto candidate : {other_wall->axis.start, other_wall->axis.end}) {
+                    const auto candidate_distance = distance(endpoint, candidate);
+                    if (candidate_distance < best_distance) {
+                        best_distance = candidate_distance;
+                        best = candidate;
+                    }
+                }
+                const auto intersection = line_intersection(axis, other_wall->axis);
+                if (intersection.has_value() && point_on_segment(*intersection, other_wall->axis)) {
+                    const auto intersection_distance = distance(endpoint, *intersection);
+                    if (intersection_distance < best_distance) {
+                        best_distance = intersection_distance;
+                        best = intersection;
+                    }
+                }
+            }
+            if (best.has_value()) endpoint = *best;
+        };
+        snap_endpoint(axis.start, moved_start);
+        snap_endpoint(axis.end, moved_end);
+        updates.front().after = axis;
+    }
+    const auto translate = [](Point2 point, Point2 delta) {
+        return Point2{.x = point.x + delta.x, .y = point.y + delta.y};
+    };
+    const auto source = updates.front();
+    const auto start_delta = subtract(source.after.start, source.before.start);
+    const auto end_delta = subtract(source.after.end, source.before.end);
+    const auto is_translation = std::abs(start_delta.x - end_delta.x) <= epsilon &&
+        std::abs(start_delta.y - end_delta.y) <= epsilon;
+    const auto source_axis = wall->axis;
+    const auto source_level_id = wall->level_id;
+
+    // Only a body translation carries joined endpoints with it. Endpoint
+    // edits deliberately leave neighboring walls fixed; auto_join_walls()
+    // below then rebuilds the relation at the new intersection (including a
+    // T-junction when the moved endpoint lands on another wall's middle).
+    // Spatial proximity is intentionally not enough, and the graph is not
+    // recursively walked: a body move affects immediate joined endpoints
+    // only, never the rest of the building.
+    if (is_translation) {
+        constexpr double joined_endpoint_tolerance_meters = 0.35;
+        const auto endpoint_distance = [](Point2 point, Line2 line) {
+            return std::min(
+                length(Line2{.start = point, .end = line.start}),
+                length(Line2{.start = point, .end = line.end})
+            );
+        };
+        const auto point_on_segment = [](Point2 point, Line2 line) {
+            return between(point.x, line.start.x, line.end.x) &&
+                between(point.y, line.start.y, line.end.y);
+        };
+
+        // Resolve immediate attachment from the pre-move axes instead of
+        // trusting a possibly stale serialized join list. A body move carries
+        // an attached endpoint even when it slightly overruns a T host; it
+        // never walks beyond that directly attached wall.
+        for (const auto& other_element : elements_) {
+            const auto* other_wall = other_element.wall();
+            if (other_wall == nullptr || other_element.id() == wall_id ||
+                other_wall->level_id != source_level_id) {
+                continue;
+            }
+            const auto intersection = line_intersection(source_axis, other_wall->axis);
+            if (!intersection.has_value()) continue;
+
+            const auto source_on_segment = point_on_segment(*intersection, source_axis);
+            const auto other_on_segment = point_on_segment(*intersection, other_wall->axis);
+            const auto source_near_endpoint =
+                endpoint_distance(*intersection, source_axis) <= joined_endpoint_tolerance_meters;
+            const auto other_near_endpoint =
+                endpoint_distance(*intersection, other_wall->axis) <= joined_endpoint_tolerance_meters;
+            if ((!source_on_segment && !source_near_endpoint) ||
+                (!other_on_segment && !other_near_endpoint) ||
+                !other_near_endpoint) {
+                continue;
+            }
+
+            auto other_axis = other_wall->axis;
+            const auto start_distance = length(Line2{
+                .start = other_axis.start, .end = *intersection});
+            const auto end_distance = length(Line2{
+                .start = other_axis.end, .end = *intersection});
+            if (start_distance <= end_distance &&
+                start_distance <= joined_endpoint_tolerance_meters) {
+                other_axis.start = translate(other_axis.start, start_delta);
+            } else if (end_distance <= joined_endpoint_tolerance_meters) {
+                other_axis.end = translate(other_axis.end, start_delta);
+            } else {
+                continue;
+            }
+            updates.push_back(AxisUpdate{
+                .id = other_element.id(),
+                .before = other_wall->axis,
+                .after = other_axis,
+            });
+        }
+    }
+
+    // Validate the complete connected edit before writing any axis. This
+    // prevents a bad opening or too-short wall from leaving a partial chain.
+    for (const auto& update : updates) {
+        auto& element = require_wall(update.id);
+        auto* candidate = element.wall();
+        auto checked = *candidate;
+        checked.axis = update.after;
+        validate_wall_axis(update.after, candidate->thickness_meters, resolved_wall_height(checked));
+        validate_wall_openings(checked);
+        if (update.id != wall_id) {
+            const auto before_direction = subtract(update.before.end, update.before.start);
+            const auto after_direction = subtract(update.after.end, update.after.start);
+            const auto direction_dot = (before_direction.x * after_direction.x) +
+                (before_direction.y * after_direction.y);
+            if (direction_dot <= epsilon) {
+                throw std::invalid_argument(
+                    "wall move would invert or collapse an immediately joined wall");
+            }
+        }
+    }
+
+    for (const auto& update : updates) {
+        auto& element = require_wall(update.id);
+        element.wall()->axis = update.after;
+        mark_wall_dirty(element);
+        for (auto& related : elements_) {
+            auto* roof = related.roof();
+            if (roof != nullptr && std::find(roof->source_wall_ids.begin(), roof->source_wall_ids.end(), update.id) != roof->source_wall_ids.end()) {
+                roof->generated_geometry_dirty = true;
+                related.touch();
+            }
+        }
+        refresh_dependencies_for_wall(update.id);
+    }
+    if (automatic_wall_join_enabled_) {
+        auto_join_walls();
+    }
+    invalidate_dependency_graph_cache();
+}
+
+void Document::trim_extend_walls(
+    ElementId first_wall_id,
+    bool first_uses_start,
+    ElementId second_wall_id,
+    bool second_uses_start
+) {
+    if (first_wall_id == second_wall_id) {
+        throw std::invalid_argument("trim/extend requires two distinct walls");
+    }
+
+    auto& first_element = require_wall(first_wall_id);
+    auto& second_element = require_wall(second_wall_id);
+    auto* first_wall = first_element.wall();
+    auto* second_wall = second_element.wall();
+    if (first_wall == nullptr || second_wall == nullptr) {
+        throw std::invalid_argument("trim/extend requires wall elements");
+    }
+    if (std::abs(resolved_wall_base_elevation(*first_wall) -
+                 resolved_wall_base_elevation(*second_wall)) > epsilon) {
+        throw std::invalid_argument("trim/extend walls must share a base elevation");
+    }
+
+    const auto intersection = line_intersection(first_wall->axis, second_wall->axis);
+    if (!intersection.has_value()) {
+        throw std::invalid_argument("trim/extend walls must not be parallel");
+    }
+
+    auto first_axis = first_wall->axis;
+    auto second_axis = second_wall->axis;
+    if (first_uses_start) {
+        first_axis.start = *intersection;
+    } else {
+        first_axis.end = *intersection;
+    }
+    if (second_uses_start) {
+        second_axis.start = *intersection;
+    } else {
+        second_axis.end = *intersection;
+    }
+
+    constexpr double minimum_trimmed_length_meters = 0.10;
+    if (length(first_axis) < minimum_trimmed_length_meters ||
+        length(second_axis) < minimum_trimmed_length_meters) {
+        throw std::invalid_argument("trim/extend would leave a wall too short");
+    }
+
+    // Validate every changed wall before writing either one. This keeps an
+    // opening-validation failure atomic instead of leaving a half-trimmed
+    // pair in the project.
+    auto first_updated = *first_wall;
+    first_updated.axis = first_axis;
+    validate_wall_axis(first_axis, first_wall->thickness_meters, resolved_wall_height(first_updated));
+    validate_wall_openings(first_updated);
+    auto second_updated = *second_wall;
+    second_updated.axis = second_axis;
+    validate_wall_axis(second_axis, second_wall->thickness_meters, resolved_wall_height(second_updated));
+    validate_wall_openings(second_updated);
+
+    first_wall->axis = first_axis;
+    second_wall->axis = second_axis;
+    mark_wall_dirty(first_element);
+    mark_wall_dirty(second_element);
+    for (auto& element : elements_) {
+        auto* roof = element.roof();
+        if (roof == nullptr) {
+            continue;
+        }
+        const auto first_used = std::find(
+            roof->source_wall_ids.begin(), roof->source_wall_ids.end(), first_wall_id);
+        const auto second_used = std::find(
+            roof->source_wall_ids.begin(), roof->source_wall_ids.end(), second_wall_id);
+        if (first_used != roof->source_wall_ids.end() ||
+            second_used != roof->source_wall_ids.end()) {
+            roof->generated_geometry_dirty = true;
+            element.touch();
+        }
+    }
+    mark_rooms_dirty_for_wall(first_wall_id);
+    mark_rooms_dirty_for_wall(second_wall_id);
+    touch_related_rooms(first_wall_id);
+    touch_related_rooms(second_wall_id);
+    if (automatic_wall_join_enabled_) {
+        auto_join_walls();
+    }
     invalidate_dependency_graph_cache();
 }
 
@@ -706,9 +1693,14 @@ ElementId Document::split_wall(ElementId wall_id, double offset_meters) {
     const auto split_name = std::string(wall_element.name()) + " Split";
     elements_.emplace_back(new_wall_id, ElementKind::Wall, split_name, WallData{
         .level_id = wall->level_id,
+        .base_level_id = wall->base_level_id,
+        .top_level_id = wall->top_level_id,
         .axis = Line2{.start = split_point, .end = original_end},
         .thickness_meters = wall->thickness_meters,
         .height_meters = wall->height_meters,
+        .base_offset_meters = wall->base_offset_meters,
+        .top_offset_meters = wall->top_offset_meters,
+        .height_mode = wall->height_mode,
     });
 
     for (const auto& opening : original_openings) {
@@ -758,6 +1750,9 @@ ElementId Document::create_door(std::string name, ElementId host_wall_id, double
         .offset_meters = offset_meters,
         .width_meters = width_meters,
         .height_meters = height_meters,
+        .level_offset_meters = 0.0,
+        .vertical_offset_meters = 0.0,
+        .level_locked = true,
     });
 
     add_opening_to_wall(host_wall_id, HostedOpening{
@@ -767,6 +1762,7 @@ ElementId Document::create_door(std::string name, ElementId host_wall_id, double
         .width_meters = width_meters,
         .height_meters = height_meters,
         .sill_height_meters = 0.0,
+        .vertical_offset_meters = 0.0,
     });
 
     invalidate_dependency_graph_cache();
@@ -801,6 +1797,9 @@ ElementId Document::create_window(
         .width_meters = width_meters,
         .height_meters = height_meters,
         .sill_height_meters = sill_height_meters,
+        .level_offset_meters = 0.0,
+        .vertical_offset_meters = 0.0,
+        .level_locked = true,
     });
 
     add_opening_to_wall(host_wall_id, HostedOpening{
@@ -810,6 +1809,7 @@ ElementId Document::create_window(
         .width_meters = width_meters,
         .height_meters = height_meters,
         .sill_height_meters = sill_height_meters,
+        .vertical_offset_meters = 0.0,
     });
 
     invalidate_dependency_graph_cache();
@@ -831,24 +1831,33 @@ ElementId Document::create_slab(
     if (material_id != 0 && get_material(material_id) == nullptr) {
         throw std::invalid_argument("slab material does not exist");
     }
-    if (assembly_id != 0 && get_layered_assembly(assembly_id) == nullptr) {
+    const auto* slab_assembly = assembly_id == 0 ? nullptr : get_layered_assembly(assembly_id);
+    if (assembly_id != 0 && slab_assembly == nullptr) {
         throw std::invalid_argument("slab assembly does not exist");
     }
+    if (slab_assembly != nullptr && slab_assembly->kind != LayeredAssemblyKind::Floor) {
+        throw std::invalid_argument("slab assembly kind must be Floor");
+    }
+    const auto resolved_thickness = slab_assembly == nullptr
+        ? thickness_meters
+        : layered_assembly_total_thickness(*slab_assembly);
 
     const auto id = allocate_id();
     auto area = polygon_area(boundary_polygon);
-    auto mesh = extrude_polygon_mesh(boundary_polygon, thickness_meters, elevation_offset_meters);
+    auto mesh = slab_assembly == nullptr
+        ? extrude_polygon_mesh(boundary_polygon, resolved_thickness, elevation_offset_meters)
+        : build_layered_slab_mesh(boundary_polygon, *slab_assembly, elevation_offset_meters);
     elements_.emplace_back(id, ElementKind::Slab, "Slab", SlabData{
         .level_id = level_id,
         .boundary_polygon = std::move(boundary_polygon),
-        .thickness_meters = thickness_meters,
+        .thickness_meters = resolved_thickness,
         .material_id = material_id,
         .assembly_id = assembly_id,
         .elevation_offset_meters = elevation_offset_meters,
         .generated_geometry_dirty = false,
         .mesh = std::move(mesh),
         .area_square_meters = area,
-        .volume_cubic_meters = area * thickness_meters,
+        .volume_cubic_meters = area * resolved_thickness,
     });
     invalidate_dependency_graph_cache();
     return id;
@@ -862,7 +1871,8 @@ ElementId Document::create_roof(
     ElementId material_id,
     ElementId assembly_id,
     std::optional<double> slope_degrees,
-    std::optional<double> overhang_meters
+    std::optional<double> overhang_meters,
+    std::vector<ElementId> source_wall_ids
 ) {
     (void)require_level(level_id);
     if (boundary_polygon.size() < 3 || thickness_meters <= 0.0) {
@@ -874,27 +1884,41 @@ ElementId Document::create_roof(
     if (assembly_id != 0 && get_layered_assembly(assembly_id) == nullptr) {
         throw std::invalid_argument("roof assembly does not exist");
     }
+    if (assembly_id != 0 && get_layered_assembly(assembly_id)->kind != LayeredAssemblyKind::Roof) {
+        throw std::invalid_argument("roof assembly kind must be Roof");
+    }
+    if (roof_type == RoofType::SimpleGable &&
+        (!slope_degrees.has_value() || *slope_degrees <= 0.0 || *slope_degrees >= 75.0 || !valid_gable_profile(boundary_polygon))) {
+        throw std::invalid_argument("simple gable requires rectangular profile and 0-75 degree slope");
+    }
+    if (roof_type == RoofType::AutoFootprint &&
+        (!slope_degrees.has_value() || *slope_degrees <= 0.0 || *slope_degrees >= 75.0 || polygon_has_self_intersection(boundary_polygon))) {
+        throw std::invalid_argument("automatic footprint roof requires a simple profile and 0-75 degree slope");
+    }
 
     const auto id = allocate_id();
-    const auto area = roof_type == RoofType::SimpleGable
-        ? roof_surface_area(RoofData{.boundary_polygon = boundary_polygon, .roof_type = roof_type, .slope_degrees = slope_degrees})
-        : polygon_area(boundary_polygon);
+    const auto resolved_thickness = assembly_id != 0 ? layered_assembly_total_thickness(*get_layered_assembly(assembly_id)) : thickness_meters;
+    const RoofData area_roof{.boundary_polygon = boundary_polygon, .roof_type = roof_type, .thickness_meters = resolved_thickness, .slope_degrees = slope_degrees, .overhang_meters = overhang_meters};
+    const auto area = roof_type == RoofType::Flat ? polygon_area(boundary_polygon) : roof_surface_area(area_roof);
     const auto mesh = roof_type == RoofType::Flat
-        ? extrude_polygon_mesh(boundary_polygon, thickness_meters, 0.0)
-        : MeshBuffer{};
+        ? extrude_polygon_mesh(boundary_polygon, resolved_thickness, 0.0)
+        : roof_type == RoofType::SimpleGable
+            ? build_gable_roof_mesh(area_roof, resolved_thickness)
+            : build_auto_footprint_roof_mesh(area_roof, resolved_thickness);
     elements_.emplace_back(id, ElementKind::Roof, "Roof", RoofData{
         .level_id = level_id,
         .boundary_polygon = std::move(boundary_polygon),
+        .source_wall_ids = std::move(source_wall_ids),
         .roof_type = roof_type,
         .thickness_meters = thickness_meters,
         .slope_degrees = slope_degrees,
         .overhang_meters = overhang_meters,
         .material_id = material_id,
         .assembly_id = assembly_id,
-        .generated_geometry_dirty = roof_type != RoofType::Flat,
+        .generated_geometry_dirty = false,
         .mesh = mesh,
         .area_square_meters = area,
-        .volume_cubic_meters = area * thickness_meters,
+        .volume_cubic_meters = area * resolved_thickness,
     });
     invalidate_dependency_graph_cache();
     return id;
@@ -974,7 +1998,8 @@ ElementId Document::create_stair(
     double total_run_meters,
     int riser_count,
     int tread_count,
-    ElementId material_id
+    ElementId material_id,
+    ElementId assembly_id
 ) {
     (void)require_level(base_level_id);
     if (top_level_id != 0) {
@@ -985,6 +2010,12 @@ ElementId Document::create_stair(
     }
     if (material_id != 0 && get_material(material_id) == nullptr) {
         throw std::invalid_argument("stair material does not exist");
+    }
+    if (assembly_id != 0) {
+        const auto* assembly = get_layered_assembly(assembly_id);
+        if (assembly == nullptr || assembly->kind != LayeredAssemblyKind::Stair) {
+            throw std::invalid_argument("stair assembly must exist and have Stair kind");
+        }
     }
     const auto footprint_area = width_meters * total_run_meters;
     const auto id = allocate_id();
@@ -999,6 +2030,7 @@ ElementId Document::create_stair(
         .riser_count = riser_count,
         .tread_count = tread_count,
         .material_id = material_id,
+        .assembly_id = assembly_id,
         .generated_geometry_dirty = false,
         .mesh = {},
         .footprint_area_square_meters = footprint_area,
@@ -1013,11 +2045,11 @@ ElementId Document::create_stair(
 ElementId Document::create_floor_system_for_room(ElementId room_id, ElementId assembly_id) {
     const auto& room_element = require_room(room_id);
     const auto* room = room_element.room();
-    const auto* assembly = get_layered_assembly(assembly_id);
-    if (assembly == nullptr) {
+    const auto* assembly = assembly_id == 0 ? nullptr : get_layered_assembly(assembly_id);
+    if (assembly_id != 0 && assembly == nullptr) {
         throw std::invalid_argument("floor assembly does not exist");
     }
-    if (assembly->kind != LayeredAssemblyKind::Floor) {
+    if (assembly != nullptr && assembly->kind != LayeredAssemblyKind::Floor) {
         throw std::invalid_argument("assembly kind must be floor");
     }
     for (auto& [system_id, system] : floor_systems_) {
@@ -1047,13 +2079,14 @@ ElementId Document::create_floor_system_for_room(ElementId room_id, ElementId as
 ElementId Document::create_ceiling_system_for_room(ElementId room_id, ElementId assembly_id, double height_offset_meters) {
     const auto& room_element = require_room(room_id);
     const auto* room = room_element.room();
-    const auto* assembly = get_layered_assembly(assembly_id);
-    if (assembly == nullptr) {
+    const auto* assembly = assembly_id == 0 ? nullptr : get_layered_assembly(assembly_id);
+    if (assembly_id != 0 && assembly == nullptr) {
         throw std::invalid_argument("ceiling assembly does not exist");
     }
-    if (assembly->kind != LayeredAssemblyKind::Ceiling) {
+    if (assembly != nullptr && assembly->kind != LayeredAssemblyKind::Ceiling) {
         throw std::invalid_argument("assembly kind must be ceiling");
     }
+    height_offset_meters = normalized_ceiling_height_offset(height_offset_meters);
     for (auto& [system_id, system] : ceiling_systems_) {
         if (system.room_id == room_id) {
             system.assembly_id = assembly_id;
@@ -1074,6 +2107,95 @@ ElementId Document::create_ceiling_system_for_room(ElementId room_id, ElementId 
         .boundary_polygon = room->interior_boundary_polygon,
         .area_square_meters = room->interior_area_square_meters,
         .height_offset_meters = height_offset_meters,
+        .dirty = false,
+    };
+    invalidate_dependency_graph_cache();
+    return system_id;
+}
+
+ElementId Document::create_floor_system_from_profile(
+    ElementId level_id,
+    std::vector<Point2> boundary_polygon,
+    ElementId assembly_id,
+    double thickness_meters
+) {
+    (void)thickness_meters;
+    if (level_id != 0) {
+        (void)require_level(level_id);
+    }
+    const auto* assembly = assembly_id == 0 ? nullptr : get_layered_assembly(assembly_id);
+    if (assembly_id != 0 && assembly == nullptr) {
+        throw std::invalid_argument("floor assembly does not exist");
+    }
+    if (assembly != nullptr && assembly->kind != LayeredAssemblyKind::Floor) {
+        throw std::invalid_argument("assembly kind must be floor");
+    }
+    boundary_polygon = simplify_polygon(std::move(boundary_polygon));
+    if (boundary_polygon.size() < 3 || polygon_area(boundary_polygon) <= epsilon) {
+        throw std::invalid_argument("floor profile must be a valid closed polygon");
+    }
+    for (const auto& [existing_id, system] : floor_systems_) {
+        if (system.level_id == level_id &&
+            cyclic_polygon_equal(system.boundary_polygon, boundary_polygon)) {
+            throw std::invalid_argument("a floor already exists for this boundary on the selected level");
+        }
+        (void)existing_id;
+    }
+    const auto area = polygon_area(boundary_polygon);
+    const auto system_id = allocate_id();
+    floor_systems_[system_id] = FloorSystemData{
+        .system_id = system_id,
+        .room_id = 0,
+        .level_id = level_id,
+        .assembly_id = assembly_id,
+        .boundary_polygon = std::move(boundary_polygon),
+        .area_square_meters = area,
+        .dirty = false,
+    };
+    invalidate_dependency_graph_cache();
+    return system_id;
+}
+
+ElementId Document::create_ceiling_system_from_profile(
+    ElementId level_id,
+    std::vector<Point2> boundary_polygon,
+    ElementId assembly_id,
+    double height_offset_meters
+) {
+    height_offset_meters = normalized_ceiling_height_offset(height_offset_meters);
+    if (level_id != 0) {
+        (void)require_level(level_id);
+    }
+    const auto* assembly = assembly_id == 0 ? nullptr : get_layered_assembly(assembly_id);
+    if (assembly_id != 0 && assembly == nullptr) {
+        throw std::invalid_argument("ceiling assembly does not exist");
+    }
+    if (assembly != nullptr && assembly->kind != LayeredAssemblyKind::Ceiling) {
+        throw std::invalid_argument("assembly kind must be ceiling");
+    }
+    boundary_polygon = simplify_polygon(std::move(boundary_polygon));
+    if (boundary_polygon.size() < 3 || polygon_area(boundary_polygon) <= epsilon) {
+        throw std::invalid_argument("ceiling profile must be a valid closed polygon");
+    }
+    for (const auto& [existing_id, system] : ceiling_systems_) {
+        if (system.level_id == level_id &&
+            std::abs(system.height_offset_meters - height_offset_meters) <= epsilon &&
+            cyclic_polygon_equal(system.boundary_polygon, boundary_polygon)) {
+            throw std::invalid_argument("a ceiling already exists for this boundary on the selected level");
+        }
+        (void)existing_id;
+    }
+    const auto area = polygon_area(boundary_polygon);
+    const auto system_id = allocate_id();
+    ceiling_systems_[system_id] = CeilingSystemData{
+        .system_id = system_id,
+        .room_id = 0,
+        .level_id = level_id,
+        .assembly_id = assembly_id,
+        .boundary_polygon = std::move(boundary_polygon),
+        .area_square_meters = area,
+        .height_offset_meters = height_offset_meters,
+        .manual_profile = true,
         .dirty = false,
     };
     invalidate_dependency_graph_cache();
@@ -1138,7 +2260,13 @@ void Document::delete_element(ElementId element_id) {
     if (const auto* wall = element->wall()) {
         std::vector<ElementId> hosted_ids;
         for (const auto& opening : wall->openings) {
-            hosted_ids.push_back(opening.element_id);
+            // Doors and windows are owned by their host wall. Structural
+            // voids are only derived cut relations: their column/beam cutter
+            // remains an independent semantic element and must survive when
+            // the wall is deleted.
+            if (opening.kind == OpeningKind::Door || opening.kind == OpeningKind::Window) {
+                hosted_ids.push_back(opening.element_id);
+            }
         }
         for (const auto hosted_id : hosted_ids) {
             remove_element(hosted_id);
@@ -1166,7 +2294,13 @@ void Document::delete_element(ElementId element_id) {
         return;
     }
 
+    const auto is_structural = element->column() != nullptr || element->beam() != nullptr;
     remove_element(element_id);
+    if (is_structural) {
+        // Structural cuts and joins are derived, never owned by the deleted
+        // element. Re-resolve immediately so no wall retains a stale void.
+        auto_join_structural_elements();
+    }
     if (is_level) {
         detect_rooms();
     }
@@ -1188,6 +2322,7 @@ void Document::move_hosted_opening(ElementId opening_id, double offset_meters) {
             .width_meters = door->width_meters,
             .height_meters = door->height_meters,
             .sill_height_meters = 0.0,
+            .vertical_offset_meters = door->vertical_offset_meters,
         };
         auto wall_copy = *require_wall(host_wall_id).wall();
         for (auto& opening : wall_copy.openings) {
@@ -1212,6 +2347,7 @@ void Document::move_hosted_opening(ElementId opening_id, double offset_meters) {
             .width_meters = window->width_meters,
             .height_meters = window->height_meters,
             .sill_height_meters = window->sill_height_meters,
+            .vertical_offset_meters = window->vertical_offset_meters,
         };
         auto wall_copy = *require_wall(host_wall_id).wall();
         for (auto& opening : wall_copy.openings) {
@@ -1240,6 +2376,7 @@ void Document::resize_door(ElementId door_id, double width_meters, double height
         .width_meters = width_meters,
         .height_meters = height_meters,
         .sill_height_meters = 0.0,
+        .vertical_offset_meters = door->vertical_offset_meters,
     };
     auto wall_copy = *require_wall(door->host_wall_id).wall();
     for (auto& opening : wall_copy.openings) {
@@ -1265,6 +2402,7 @@ void Document::resize_window(ElementId window_id, double width_meters, double he
         .width_meters = width_meters,
         .height_meters = height_meters,
         .sill_height_meters = sill_height_meters,
+        .vertical_offset_meters = window->vertical_offset_meters,
     };
     auto wall_copy = *require_wall(window->host_wall_id).wall();
     for (auto& opening : wall_copy.openings) {
@@ -1282,6 +2420,8 @@ void Document::resize_window(ElementId window_id, double width_meters, double he
 }
 
 void Document::auto_join_walls() {
+    constexpr double endpoint_join_tolerance_meters = 0.35;
+
     for (auto& element : elements_) {
         if (auto* wall = element.wall()) {
             if (!wall->joins.empty()) {
@@ -1302,53 +2442,285 @@ void Document::auto_join_walls() {
             if (second_wall == nullptr) {
                 continue;
             }
-
-            // A wall join is a level-local relationship. Joining coincident
-            // axes from different storeys creates invalid 2D miter metadata.
             if (first_wall->level_id != second_wall->level_id) {
                 continue;
             }
 
-            std::vector<Point2> contacts;
-            if (const auto intersection = segment_intersection(first_wall->axis, second_wall->axis); intersection.has_value()) {
-                contacts.push_back(*intersection);
-            } else {
-                // Parallel/collinear walls are common when a user continues
-                // a wall from an existing endpoint. The old solver silently
-                // ignored these contacts, so the next wall could drift or
-                // receive incomplete join metadata.
-                contacts = collinear_segment_contacts(first_wall->axis, second_wall->axis);
+            auto line_intersection_point = line_intersection(first_wall->axis, second_wall->axis);
+            auto parallel_endpoint_join = false;
+            if (!line_intersection_point.has_value()) {
+                // Parallel axes are normally not a join. The one safe
+                // exception is a single, almost-collinear end-to-end contact
+                // caused by hand-drawn noise. Reject overlapping parallel
+                // segments so nearby walls never become accidental joins.
+                constexpr double collinear_tolerance_meters = 0.15;
+                const auto first_length = length(first_wall->axis);
+                const auto second_length = length(second_wall->axis);
+                if (first_length > epsilon && second_length > epsilon) {
+                    const auto first_direction = unit_direction(first_wall->axis);
+                    const auto second_offset = Point2{
+                        .x = second_wall->axis.start.x - first_wall->axis.start.x,
+                        .y = second_wall->axis.start.y - first_wall->axis.start.y,
+                    };
+                    const auto parallel_error = std::abs(
+                        first_direction.x * second_offset.y - first_direction.y * second_offset.x);
+                    if (parallel_error <= collinear_tolerance_meters) {
+                        const auto project = [&](Point2 point) {
+                            return (point.x - first_wall->axis.start.x) * first_direction.x +
+                                (point.y - first_wall->axis.start.y) * first_direction.y;
+                        };
+                        const auto first_min = 0.0;
+                        const auto first_max = first_length;
+                        const auto second_a = project(second_wall->axis.start);
+                        const auto second_b = project(second_wall->axis.end);
+                        const auto second_min = std::min(second_a, second_b);
+                        const auto second_max = std::max(second_a, second_b);
+                        const auto overlap = std::min(first_max, second_max) -
+                            std::max(first_min, second_min);
+                        std::optional<Point2> first_contact;
+                        std::optional<Point2> second_contact;
+                        int contact_count = 0;
+                        for (const auto first_point : {first_wall->axis.start, first_wall->axis.end}) {
+                            for (const auto second_point : {second_wall->axis.start, second_wall->axis.end}) {
+                                if (length(Line2{.start = first_point, .end = second_point}) <=
+                                    endpoint_join_tolerance_meters) {
+                                    ++contact_count;
+                                    first_contact = first_point;
+                                    second_contact = second_point;
+                                }
+                            }
+                        }
+                        if (contact_count == 1 && overlap <= collinear_tolerance_meters &&
+                            first_contact.has_value() && second_contact.has_value()) {
+                            line_intersection_point = Point2{
+                                .x = (first_contact->x + second_contact->x) * 0.5,
+                                .y = (first_contact->y + second_contact->y) * 0.5,
+                            };
+                            parallel_endpoint_join = true;
+                        }
+                    }
+                }
             }
-            for (const auto contact : contacts) {
-                const auto kind = join_kind(contact, first_wall->axis, second_wall->axis);
-                const auto duplicate_join = [&](const std::vector<WallJoin>& joins, ElementId other_wall_id) {
-                    return std::any_of(joins.begin(), joins.end(), [&](const WallJoin& join) {
-                        return join.other_wall_id == other_wall_id && same_point(join.point, contact);
-                    });
+            if (!line_intersection_point.has_value()) {
+                continue;
+            }
+
+            const auto endpoint_distance = [](Point2 point, Line2 line) {
+                return std::min(length(Line2{.start = point, .end = line.start}),
+                                length(Line2{.start = point, .end = line.end}));
+            };
+            const auto first_on_segment =
+                between(line_intersection_point->x, first_wall->axis.start.x, first_wall->axis.end.x) &&
+                between(line_intersection_point->y, first_wall->axis.start.y, first_wall->axis.end.y);
+            const auto second_on_segment =
+                between(line_intersection_point->x, second_wall->axis.start.x, second_wall->axis.end.x) &&
+                between(line_intersection_point->y, second_wall->axis.start.y, second_wall->axis.end.y);
+            const auto first_near_endpoint = endpoint_distance(*line_intersection_point, first_wall->axis) <= endpoint_join_tolerance_meters;
+            const auto second_near_endpoint = endpoint_distance(*line_intersection_point, second_wall->axis) <= endpoint_join_tolerance_meters;
+            if ((!first_on_segment && !first_near_endpoint) ||
+                (!second_on_segment && !second_near_endpoint)) {
+                continue;
+            }
+
+            // Extend only the endpoint that is close to the true line
+            // intersection. This is the small automatic trim that makes a
+            // hand-drawn 10–15 degree corner join without changing the rest
+            // of either wall.
+            const auto move_nearest_endpoint = [&](Line2& axis) {
+                if (first_on_segment && second_on_segment) return;
+                const auto start_distance = length(Line2{.start = axis.start, .end = *line_intersection_point});
+                const auto end_distance = length(Line2{.start = axis.end, .end = *line_intersection_point});
+                if (start_distance <= end_distance && start_distance <= endpoint_join_tolerance_meters) {
+                    axis.start = *line_intersection_point;
+                } else if (end_distance <= endpoint_join_tolerance_meters) {
+                    axis.end = *line_intersection_point;
+                }
+            };
+            auto first_axis = first_wall->axis;
+            auto second_axis = second_wall->axis;
+            if (parallel_endpoint_join) {
+                const auto snap_nearest_endpoint = [&](Line2& axis) {
+                    const auto start_distance = length(Line2{.start = axis.start, .end = *line_intersection_point});
+                    const auto end_distance = length(Line2{.start = axis.end, .end = *line_intersection_point});
+                    if (start_distance <= end_distance && start_distance <= endpoint_join_tolerance_meters) {
+                        axis.start = *line_intersection_point;
+                    } else if (end_distance <= endpoint_join_tolerance_meters) {
+                        axis.end = *line_intersection_point;
+                    }
                 };
-                if (!duplicate_join(first_wall->joins, second->id())) {
-                    first_wall->joins.push_back(WallJoin{
-                        .other_wall_id = second->id(),
-                        .point = contact,
-                        .other_axis = second_wall->axis,
-                        .kind = kind,
-                    });
-                }
-                if (!duplicate_join(second_wall->joins, first->id())) {
-                    second_wall->joins.push_back(WallJoin{
-                        .other_wall_id = first->id(),
-                        .point = contact,
-                        .other_axis = first_wall->axis,
-                        .kind = kind,
-                    });
-                }
+                snap_nearest_endpoint(first_axis);
+                snap_nearest_endpoint(second_axis);
+            } else {
+                move_nearest_endpoint(first_axis);
+                move_nearest_endpoint(second_axis);
+            }
+            if (!(first_axis.start.x == first_wall->axis.start.x &&
+                  first_axis.start.y == first_wall->axis.start.y &&
+                  first_axis.end.x == first_wall->axis.end.x &&
+                  first_axis.end.y == first_wall->axis.end.y)) {
+                first_wall->axis = first_axis;
                 mark_wall_dirty(*first);
+            }
+            if (!(second_axis.start.x == second_wall->axis.start.x &&
+                  second_axis.start.y == second_wall->axis.start.y &&
+                  second_axis.end.x == second_wall->axis.end.x &&
+                  second_axis.end.y == second_wall->axis.end.y)) {
+                second_wall->axis = second_axis;
                 mark_wall_dirty(*second);
+            }
+
+            auto intersection = segment_intersection(first_wall->axis, second_wall->axis);
+            if (!intersection.has_value() && parallel_endpoint_join) {
+                intersection = line_intersection_point;
+            }
+            if (!intersection.has_value()) {
+                continue;
+            }
+
+            const auto kind = join_kind(*intersection, first_wall->axis, second_wall->axis);
+            const auto duplicate_join = [&](const std::vector<WallJoin>& joins, ElementId other_wall_id) {
+                return std::any_of(joins.begin(), joins.end(), [&](const WallJoin& join) {
+                    return join.other_wall_id == other_wall_id && same_point(join.point, *intersection);
+                });
+            };
+            if (!duplicate_join(first_wall->joins, second->id())) {
+                first_wall->joins.push_back(WallJoin{
+                    .other_wall_id = second->id(),
+                    .point = *intersection,
+                    .other_axis = second_wall->axis,
+                    .kind = kind,
+                });
+            }
+            if (!duplicate_join(second_wall->joins, first->id())) {
+                second_wall->joins.push_back(WallJoin{
+                    .other_wall_id = first->id(),
+                    .point = *intersection,
+                    .other_axis = first_wall->axis,
+                    .kind = kind,
+                });
+            }
+            mark_wall_dirty(*first);
+            mark_wall_dirty(*second);
+        }
+    }
+
+    auto_join_structural_elements();
+    invalidate_dependency_graph_cache();
+}
+
+void Document::set_automatic_wall_join_enabled(bool enabled) noexcept {
+    automatic_wall_join_enabled_ = enabled;
+}
+
+void Document::auto_join_structural_elements() {
+    if (resolving_structural_relations_) {
+        return;
+    }
+    struct ResolutionScope {
+        bool& active;
+        ~ResolutionScope() { active = false; }
+    } scope{resolving_structural_relations_};
+    resolving_structural_relations_ = true;
+
+    // Relations are cheap semantic records. They deliberately do not boolean-
+    // union meshes, keeping edits and save/reload deterministic on mobile.
+    beam_column_joins_.clear();
+    host_relations_.clear();
+    for (auto& element : elements_) {
+        if (auto* wall = element.wall()) {
+            const auto before = wall->openings.size();
+            wall->openings.erase(std::remove_if(wall->openings.begin(), wall->openings.end(), [](const HostedOpening& opening) {
+                return opening.kind == OpeningKind::StructuralVoid;
+            }), wall->openings.end());
+            if (wall->openings.size() != before) mark_wall_dirty(element);
+        }
+    }
+    for (const auto& beam_element : elements_) {
+        const auto* beam = beam_element.beam();
+        if (beam == nullptr) continue;
+        const auto dx = beam->end.x - beam->start.x;
+        const auto dy = beam->end.y - beam->start.y;
+        const auto length_squared = dx * dx + dy * dy;
+        if (length_squared <= epsilon) continue;
+        for (const auto& column_element : elements_) {
+            const auto* column = column_element.column();
+            if (column == nullptr || column->level_id != beam->level_id) continue;
+            const auto t = std::clamp(((column->position.x - beam->start.x) * dx +
+                (column->position.y - beam->start.y) * dy) / length_squared, 0.0, 1.0);
+            const auto px = beam->start.x + t * dx;
+            const auto py = beam->start.y + t * dy;
+            const auto distance = std::hypot(column->position.x - px, column->position.y - py);
+            const auto tolerance = (beam->width_meters + std::max(column->width_meters, column->depth_meters)) * 0.5 + 0.02;
+            if (distance <= tolerance) {
+                beam_column_joins_.emplace_back(beam_element.id(), column_element.id());
+                host_relations_.push_back({.host_id = column_element.id(), .guest_id = beam_element.id(), .kind = HostRelationKind::Join, .priority = 100});
             }
         }
     }
 
+    // Columns precisely embedded in a same-level wall are cut automatically.
+    // Beams retain Embed by default: an arbitrary beam crossing a wall is not
+    // enough evidence for a destructive structural opening.
+    for (const auto& column_element : elements_) {
+        const auto* column = column_element.column();
+        if (column == nullptr) continue;
+        for (const auto& wall_element : elements_) {
+            const auto* wall = wall_element.wall();
+            if (wall == nullptr || wall->level_id != column->level_id) continue;
+            const auto dx = wall->axis.end.x - wall->axis.start.x;
+            const auto dy = wall->axis.end.y - wall->axis.start.y;
+            const auto length_squared = dx * dx + dy * dy;
+            if (length_squared <= epsilon) continue;
+            const auto t = ((column->position.x - wall->axis.start.x) * dx +
+                (column->position.y - wall->axis.start.y) * dy) / length_squared;
+            if (t <= 0.0 || t >= 1.0) continue;
+            const auto px = wall->axis.start.x + t * dx;
+            const auto py = wall->axis.start.y + t * dy;
+            const auto distance = std::hypot(column->position.x - px, column->position.y - py);
+            if (distance <= wall->thickness_meters * 0.5 + 0.01) {
+                if (disabled_auto_structural_cuts_.contains(std::make_pair(wall_element.id(), column_element.id()))) {
+                    host_relations_.push_back({.host_id = wall_element.id(), .guest_id = column_element.id(), .kind = HostRelationKind::Embed, .priority = 10});
+                    continue;
+                }
+                try {
+                    set_structural_wall_cut(wall_element.id(), column_element.id(), true);
+                    host_relations_.push_back({.host_id = wall_element.id(), .guest_id = column_element.id(), .kind = HostRelationKind::Cut, .priority = 100});
+                } catch (const std::invalid_argument&) {
+                    host_relations_.push_back({.host_id = wall_element.id(), .guest_id = column_element.id(), .kind = HostRelationKind::Embed, .priority = 10});
+                }
+            }
+        }
+    }
+
+    for (auto& [system_id, system] : floor_systems_) {
+        system.stair_opening_ids.clear();
+        for (const auto& element : elements_) {
+            const auto* stair = element.stair();
+            if (stair != nullptr && stair->top_level_id != 0 && stair->top_level_id == system.level_id) {
+                system.stair_opening_ids.push_back(element.id());
+                host_relations_.push_back({.host_id = system_id, .guest_id = element.id(), .kind = HostRelationKind::Host, .priority = 50});
+            }
+        }
+        system.dirty = true;
+        (void)system_id;
+    }
+    for (auto& [system_id, system] : ceiling_systems_) {
+        system.stair_opening_ids.clear();
+        for (const auto& element : elements_) {
+            const auto* stair = element.stair();
+            if (stair != nullptr && stair->top_level_id != 0 && stair->top_level_id == system.level_id) {
+                system.stair_opening_ids.push_back(element.id());
+                host_relations_.push_back({.host_id = system_id, .guest_id = element.id(), .kind = HostRelationKind::Host, .priority = 50});
+            }
+        }
+        system.dirty = true;
+        (void)system_id;
+    }
     invalidate_dependency_graph_cache();
+}
+
+const std::vector<HostRelation>& Document::host_relations() const noexcept {
+    return host_relations_;
 }
 
 std::vector<ElementId> Document::detect_rooms() {
@@ -1409,6 +2781,13 @@ std::vector<ElementId> Document::detect_rooms_for_levels(const std::vector<Eleme
     const auto max_global_y = *std::max_element(all_ys.begin(), all_ys.end()) + 1.0;
 
     std::vector<ElementId> room_ids;
+    // Room detection reads wall pointers from elements_.  Appending a room to
+    // that vector while the sweep is still running can reallocate it and
+    // invalidate every WallRef above.  Keep the discovered semantic rooms
+    // separate until all wall-derived work is complete, then publish them in
+    // one pass.  This is particularly important for multi-storey templates,
+    // where one level can discover many rooms.
+    std::vector<std::pair<ElementId, RoomData>> pending_rooms;
 
     for (const auto& [level_id, walls] : walls_by_level) {
         if (!target_levels.empty() && target_levels.find(level_id) == target_levels.end()) {
@@ -1735,7 +3114,7 @@ std::vector<ElementId> Document::detect_rooms_for_levels(const std::vector<Eleme
 
                 const auto reused = previous_room_ids.find(room_key.str());
                 const auto room_id = reused == previous_room_ids.end() ? allocate_id() : reused->second;
-                elements_.emplace_back(room_id, ElementKind::Room, "Room", RoomData{
+                pending_rooms.emplace_back(room_id, RoomData{
                     .boundary_wall_ids = boundary_wall_ids,
                     .level_id = level_id,
                     .preferred_boundary_mode = RoomBoundaryMode::InteriorFinishFace,
@@ -1748,14 +3127,23 @@ std::vector<ElementId> Document::detect_rooms_for_levels(const std::vector<Eleme
                     .floor_finish_area_square_meters = interior_area,
                     .ceiling_area_square_meters = interior_area,
                     .baseboard_length_meters = interior_perimeter,
-                    .interior_wall_finish_area_square_meters = std::max(0.0, (interior_perimeter * walls.front().wall->height_meters) - opening_area_on_boundary),
+                    .interior_wall_finish_area_square_meters = std::max(0.0, (interior_perimeter * resolved_wall_height(*walls.front().wall)) - opening_area_on_boundary),
                 });
                 room_ids.push_back(room_id);
             }
         }
     }
 
+    // See pending_rooms above: only now is it safe to grow elements_.
+    for (auto& [room_id, room] : pending_rooms) {
+        elements_.emplace_back(room_id, ElementKind::Room, "Room", std::move(room));
+    }
+
     for (auto it = floor_systems_.begin(); it != floor_systems_.end();) {
+        if (it->second.room_id == 0) {
+            ++it;
+            continue;
+        }
         const auto* room = find_ptr(it->second.room_id);
         if (room == nullptr || room->room() == nullptr) {
             it = floor_systems_.erase(it);
@@ -1766,6 +3154,10 @@ std::vector<ElementId> Document::detect_rooms_for_levels(const std::vector<Eleme
     }
 
     for (auto it = ceiling_systems_.begin(); it != ceiling_systems_.end();) {
+        if (it->second.room_id == 0) {
+            ++it;
+            continue;
+        }
         const auto* room = find_ptr(it->second.room_id);
         if (room == nullptr || room->room() == nullptr) {
             it = ceiling_systems_.erase(it);
@@ -1780,8 +3172,11 @@ std::vector<ElementId> Document::detect_rooms_for_levels(const std::vector<Eleme
 }
 
 void Document::mark_rooms_dirty_for_wall(ElementId wall_id) {
-    dirty_room_ids_ = dependency_graph().dependent_rooms(wall_id);
-    for (const auto room_id : dirty_room_ids_) {
+    const auto dependent_rooms = dependency_graph().dependent_rooms(wall_id);
+    for (const auto room_id : dependent_rooms) {
+        if (std::find(dirty_room_ids_.begin(), dirty_room_ids_.end(), room_id) == dirty_room_ids_.end()) {
+            dirty_room_ids_.push_back(room_id);
+        }
         for (auto& [_, system] : floor_systems_) {
             if (system.room_id == room_id) {
                 system.dirty = true;
@@ -1793,14 +3188,430 @@ void Document::mark_rooms_dirty_for_wall(ElementId wall_id) {
             }
         }
     }
+    const auto* wall_element = find_ptr(wall_id);
+    const auto* wall = wall_element == nullptr ? nullptr : wall_element->wall();
+    const auto level_id = wall == nullptr ? 0 : wall->level_id;
+    if (level_id != 0 && std::find(dirty_room_level_ids_.begin(), dirty_room_level_ids_.end(), level_id) == dirty_room_level_ids_.end()) {
+        dirty_room_level_ids_.push_back(level_id);
+    }
+}
+
+double Document::level_elevation(ElementId level_id) const {
+    if (level_id == 0) {
+        return 0.0;
+    }
+    const auto* element = find_ptr(level_id);
+    const auto* level = element == nullptr ? nullptr : element->level();
+    if (level == nullptr) {
+        throw std::invalid_argument("level does not exist");
+    }
+    return level->elevation_meters;
+}
+
+double Document::resolved_wall_base_elevation(const WallData& wall) const {
+    return level_elevation(wall.base_level_id != 0 ? wall.base_level_id : wall.level_id) + wall.base_offset_meters;
+}
+
+double Document::resolved_wall_height(const WallData& wall) const {
+    if (wall.height_mode == WallHeightMode::TopLevel && wall.top_level_id != 0) {
+        const auto top = level_elevation(wall.top_level_id) + wall.top_offset_meters;
+        return std::max(0.01, top - resolved_wall_base_elevation(wall));
+    }
+    return std::max(0.01, wall.height_meters);
+}
+
+double Document::resolved_roof_surface_area(const RoofData& roof) const {
+    return roof_surface_area(roof);
+}
+
+void Document::update_level(
+    ElementId level_id,
+    std::optional<std::string> name,
+    std::optional<double> elevation_meters,
+    std::optional<double> default_wall_height_meters
+) {
+    auto& level_element = require_level(level_id);
+    auto* level = const_cast<LevelData*>(level_element.level());
+    if (level == nullptr) {
+        throw std::invalid_argument("level does not exist");
+    }
+    if (name.has_value()) {
+        if (name->empty()) {
+            throw std::invalid_argument("level name must not be empty");
+        }
+        level->name = *name;
+    }
+    if (default_wall_height_meters.has_value()) {
+        if (*default_wall_height_meters <= 0.0) {
+            throw std::invalid_argument("default wall height must be positive");
+        }
+        level->default_wall_height_meters = *default_wall_height_meters;
+    }
+    if (elevation_meters.has_value()) {
+        move_level_elevation(level_id, *elevation_meters);
+        return;
+    }
+    level_element.touch();
+    invalidate_dependency_graph_cache();
+}
+
+void Document::move_level_elevation(ElementId level_id, double elevation_meters) {
+    auto& level_element = require_level(level_id);
+    auto* level = const_cast<LevelData*>(level_element.level());
+    if (level == nullptr) {
+        throw std::invalid_argument("level does not exist");
+    }
+    if (std::abs(level->elevation_meters - elevation_meters) <= epsilon) {
+        return;
+    }
+    level->elevation_meters = elevation_meters;
+    level_element.touch();
+
+    for (auto& element : elements_) {
+        if (auto* wall = element.wall(); wall != nullptr) {
+            if (wall->level_id == level_id || wall->base_level_id == level_id || wall->top_level_id == level_id) {
+                mark_wall_dirty(element);
+                for (const auto& opening : wall->openings) {
+                    const auto* opening_element = find_ptr(opening.element_id);
+                    const auto follows_level = opening_element != nullptr &&
+                        ((opening_element->door() != nullptr && opening_element->door()->level_locked) ||
+                         (opening_element->window() != nullptr && opening_element->window()->level_locked));
+                    if (follows_level) {
+                        sync_opening_level_constraint(opening.element_id);
+                    }
+                }
+                refresh_dependencies_for_wall(element.id());
+            }
+        } else if (auto* door = element.door(); door != nullptr) {
+            if (door->level_locked && door->level_id == level_id) {
+                sync_opening_level_constraint(element.id());
+                element.touch();
+            }
+        } else if (auto* window = element.window(); window != nullptr) {
+            if (window->level_locked && window->level_id == level_id) {
+                sync_opening_level_constraint(element.id());
+                element.touch();
+            }
+        } else if (auto* slab = element.slab(); slab != nullptr) {
+            if (slab->level_id == level_id) {
+                slab->generated_geometry_dirty = true;
+                element.touch();
+            }
+        } else if (auto* roof = element.roof(); roof != nullptr) {
+            if (roof->level_id == level_id) {
+                roof->generated_geometry_dirty = true;
+                element.touch();
+            }
+        } else if (auto* column = element.column(); column != nullptr) {
+            if (column->level_id == level_id) {
+                column->generated_geometry_dirty = true;
+                element.touch();
+            }
+        } else if (auto* beam = element.beam(); beam != nullptr) {
+            if (beam->level_id == level_id) {
+                beam->generated_geometry_dirty = true;
+                element.touch();
+            }
+        } else if (auto* stair = element.stair(); stair != nullptr) {
+            if (stair->base_level_id == level_id || stair->top_level_id == level_id) {
+                stair->generated_geometry_dirty = true;
+                element.touch();
+            }
+        }
+    }
+
+    for (auto& [system_id, system] : floor_systems_) {
+        if (system.level_id == level_id) {
+            system.dirty = true;
+        }
+    }
+    for (auto& [system_id, system] : ceiling_systems_) {
+        if (system.level_id == level_id) {
+            system.dirty = true;
+        }
+    }
+    invalidate_dependency_graph_cache();
+}
+
+void Document::set_wall_level_constraints(
+    ElementId wall_id,
+    ElementId base_level_id,
+    ElementId top_level_id,
+    double base_offset_meters,
+    double top_offset_meters,
+    WallHeightMode height_mode
+) {
+    auto& wall_element = require_wall(wall_id);
+    auto* wall = wall_element.wall();
+    if (base_level_id != 0) {
+        (void)require_level(base_level_id);
+    }
+    if (top_level_id != 0) {
+        (void)require_level(top_level_id);
+    }
+    if (height_mode == WallHeightMode::TopLevel && top_level_id == 0) {
+        throw std::invalid_argument("top level constraint requires top_level_id");
+    }
+    wall->base_level_id = base_level_id;
+    wall->level_id = base_level_id;
+    wall->top_level_id = top_level_id;
+    wall->base_offset_meters = base_offset_meters;
+    wall->top_offset_meters = top_offset_meters;
+    wall->height_mode = height_mode;
+    for (const auto& opening : wall->openings) {
+        const auto* opening_element = find_ptr(opening.element_id);
+        const auto follows_level = opening_element != nullptr &&
+            ((opening_element->door() != nullptr && opening_element->door()->level_locked) ||
+             (opening_element->window() != nullptr && opening_element->window()->level_locked));
+        if (follows_level) {
+            sync_opening_level_constraint(opening.element_id);
+        }
+    }
+    validate_wall_axis(wall->axis, wall->thickness_meters, resolved_wall_height(*wall));
+    validate_wall_openings(*wall);
+    mark_wall_dirty(wall_element);
+    refresh_dependencies_for_wall(wall_id);
+    invalidate_dependency_graph_cache();
+}
+
+void Document::set_opening_level_lock(ElementId opening_id, bool locked) {
+    auto* element = find_ptr(opening_id);
+    if (element == nullptr) {
+        throw std::invalid_argument("opening does not exist");
+    }
+    if (auto* door_data = element->door(); door_data != nullptr) {
+        door_data->level_locked = locked;
+        if (locked) {
+            sync_opening_level_constraint(opening_id);
+        }
+        element->touch();
+        invalidate_dependency_graph_cache();
+        return;
+    }
+    if (auto* window_data = element->window(); window_data != nullptr) {
+        window_data->level_locked = locked;
+        if (locked) {
+            sync_opening_level_constraint(opening_id);
+        }
+        element->touch();
+        invalidate_dependency_graph_cache();
+        return;
+    }
+    throw std::invalid_argument("element is not a hosted opening");
+}
+
+void Document::set_opening_level(ElementId opening_id, ElementId level_id) {
+    set_opening_level_constraint(opening_id, level_id, 0.0);
+}
+
+void Document::set_opening_level_constraint(
+    ElementId opening_id,
+    ElementId level_id,
+    double level_offset_meters
+) {
+    (void)require_level(level_id);
+    auto* element = find_ptr(opening_id);
+    if (element == nullptr) {
+        throw std::invalid_argument("opening does not exist");
+    }
+
+    if (auto* door_data = element->door(); door_data != nullptr) {
+        const auto* host = find_ptr(door_data->host_wall_id);
+        const auto* host_wall = host == nullptr ? nullptr : host->wall();
+        if (host_wall == nullptr) {
+            throw std::invalid_argument("opening host wall does not exist");
+        }
+        const auto offset = level_elevation(level_id) + level_offset_meters - resolved_wall_base_elevation(*host_wall);
+        auto updated = HostedOpening{
+            .element_id = opening_id,
+            .kind = OpeningKind::Door,
+            .offset_meters = door_data->offset_meters,
+            .width_meters = door_data->width_meters,
+            .height_meters = door_data->height_meters,
+            .sill_height_meters = 0.0,
+            .vertical_offset_meters = offset,
+        };
+        auto wall_copy = *host_wall;
+        for (auto& opening : wall_copy.openings) {
+            if (opening.element_id == opening_id) {
+                opening = updated;
+            }
+        }
+        validate_wall_openings(wall_copy);
+        door_data->level_id = level_id;
+        door_data->level_offset_meters = level_offset_meters;
+        door_data->level_locked = true;
+        door_data->vertical_offset_meters = offset;
+        element->touch();
+        update_wall_opening(door_data->host_wall_id, updated);
+        invalidate_dependency_graph_cache();
+        return;
+    }
+
+    if (auto* window_data = element->window(); window_data != nullptr) {
+        const auto* host = find_ptr(window_data->host_wall_id);
+        const auto* host_wall = host == nullptr ? nullptr : host->wall();
+        if (host_wall == nullptr) {
+            throw std::invalid_argument("opening host wall does not exist");
+        }
+        const auto offset = level_elevation(level_id) + level_offset_meters - resolved_wall_base_elevation(*host_wall);
+        auto updated = HostedOpening{
+            .element_id = opening_id,
+            .kind = OpeningKind::Window,
+            .offset_meters = window_data->offset_meters,
+            .width_meters = window_data->width_meters,
+            .height_meters = window_data->height_meters,
+            .sill_height_meters = window_data->sill_height_meters,
+            .vertical_offset_meters = offset,
+        };
+        auto wall_copy = *host_wall;
+        for (auto& opening : wall_copy.openings) {
+            if (opening.element_id == opening_id) {
+                opening = updated;
+            }
+        }
+        validate_wall_openings(wall_copy);
+        window_data->level_id = level_id;
+        window_data->level_offset_meters = level_offset_meters;
+        window_data->level_locked = true;
+        window_data->vertical_offset_meters = offset;
+        element->touch();
+        update_wall_opening(window_data->host_wall_id, updated);
+        invalidate_dependency_graph_cache();
+        return;
+    }
+
+    throw std::invalid_argument("element is not a hosted opening");
+}
+
+std::vector<Point2> Document::normalized_profile_polygon(const ProfileDraft& draft) const {
+    std::vector<Point2> polygon;
+    switch (draft.mode) {
+    case ProfileDraftMode::Rectangle: {
+        if (draft.points.size() < 2) {
+            break;
+        }
+        const auto first = draft.points.front();
+        const auto last = draft.points.back();
+        polygon = {
+            Point2{.x = std::min(first.x, last.x), .y = std::min(first.y, last.y)},
+            Point2{.x = std::max(first.x, last.x), .y = std::min(first.y, last.y)},
+            Point2{.x = std::max(first.x, last.x), .y = std::max(first.y, last.y)},
+            Point2{.x = std::min(first.x, last.x), .y = std::max(first.y, last.y)},
+        };
+        break;
+    }
+    case ProfileDraftMode::PickWalls: {
+        polygon = build_pick_wall_loop(*this, draft.picked_wall_ids).polygon;
+        break;
+    }
+    case ProfileDraftMode::Polyline:
+    case ProfileDraftMode::AutoRoom:
+        polygon = draft.points;
+        break;
+    }
+    if (!polygon.empty() && same_point(polygon.front(), polygon.back())) {
+        polygon.pop_back();
+    }
+    return simplify_polygon(std::move(polygon));
+}
+
+std::vector<ElementId> Document::create_elements_from_profile(const ProfileDraft& draft) {
+    if (draft.level_id != 0) {
+        (void)require_level(draft.level_id);
+    }
+
+    // Pick Walls is also an authoring operation: repair small touch gaps and
+    // refresh joins before the profile solver validates the selected loop.
+    if (draft.mode == ProfileDraftMode::PickWalls && automatic_wall_join_enabled_) {
+        auto_join_walls();
+    }
+
+    std::vector<ElementId> created_ids;
+    if (draft.target_kind == ProfileTargetKind::WallPath) {
+        const auto points = normalized_profile_polygon(draft);
+        if (points.size() < 2) {
+            throw std::invalid_argument("wall path needs at least 2 points");
+        }
+        const auto default_height = draft.level_id == 0 ? 3.0 : require_level(draft.level_id).level()->default_wall_height_meters;
+        for (std::size_t index = 1; index < points.size(); ++index) {
+            if (same_point(points[index - 1], points[index])) {
+                continue;
+            }
+            created_ids.push_back(create_wall(
+                "Wall",
+                Line2{.start = points[index - 1], .end = points[index]},
+                draft.thickness_meters > 0.0 ? draft.thickness_meters : 0.2,
+                draft.height_meters > 0.0 ? draft.height_meters : default_height,
+                draft.level_id
+            ));
+        }
+        if (draft.closed && points.size() > 2 && !same_point(points.front(), points.back())) {
+            created_ids.push_back(create_wall(
+                "Wall",
+                Line2{.start = points.back(), .end = points.front()},
+                draft.thickness_meters > 0.0 ? draft.thickness_meters : 0.2,
+                draft.height_meters > 0.0 ? draft.height_meters : default_height,
+                draft.level_id
+            ));
+        }
+        auto_join_walls();
+        return created_ids;
+    }
+
+    auto polygon = normalized_profile_polygon(draft);
+    validate_profile_polygon(polygon, draft.target_kind);
+
+    switch (draft.target_kind) {
+    case ProfileTargetKind::FloorBoundary:
+        created_ids.push_back(create_floor_system_from_profile(
+            draft.level_id,
+            std::move(polygon),
+            draft.assembly_id,
+            draft.thickness_meters
+        ));
+        break;
+    case ProfileTargetKind::CeilingBoundary:
+        created_ids.push_back(create_ceiling_system_from_profile(
+            draft.level_id,
+            std::move(polygon),
+            draft.assembly_id,
+            normalized_ceiling_height_offset(draft.vertical_offset_meters)
+        ));
+        break;
+    case ProfileTargetKind::RoofBoundary: {
+        // Keep the engine-side wall relationship.  The UI may provide a
+        // preview polygon, but it must not become the only source of truth.
+        std::vector<ElementId> roof_source_wall_ids;
+        if (draft.mode == ProfileDraftMode::PickWalls) {
+            roof_source_wall_ids = build_pick_wall_loop(*this, draft.picked_wall_ids).ordered_wall_ids;
+        }
+        created_ids.push_back(create_roof(
+            draft.level_id,
+            std::move(polygon),
+            draft.roof_type,
+            draft.thickness_meters > 0.0 ? draft.thickness_meters : 0.2,
+            draft.material_id,
+            draft.assembly_id,
+            std::nullopt,
+            std::nullopt,
+            std::move(roof_source_wall_ids)
+        ));
+        break;
+    }
+    case ProfileTargetKind::WallPath:
+        break;
+    }
+    invalidate_dependency_graph_cache();
+    return created_ids;
 }
 
 std::vector<ElementId> Document::recompute_dirty_rooms() {
-    if (dirty_room_ids_.empty()) {
+    if (dirty_room_ids_.empty() && dirty_room_level_ids_.empty()) {
         return {};
     }
 
-    std::vector<ElementId> level_ids;
+    auto level_ids = dirty_room_level_ids_;
     for (const auto room_id : dirty_room_ids_) {
         const auto* room_element = find_ptr(room_id);
         const auto* room = room_element == nullptr ? nullptr : room_element->room();
@@ -1809,6 +3620,7 @@ std::vector<ElementId> Document::recompute_dirty_rooms() {
         }
     }
     dirty_room_ids_.clear();
+    dirty_room_level_ids_.clear();
     return detect_rooms_for_levels(level_ids);
 }
 
@@ -1827,45 +3639,105 @@ const std::vector<ElementId>& Document::dirty_room_ids() const noexcept {
     return dirty_room_ids_;
 }
 
-void Document::regenerate_dirty_geometry() {
-    const auto backend = TBE_HAS_OCCT
-        ? GeometryService::Backend::OpenCascade
-        : GeometryService::Backend::Fallback;
-    GeometryService geometry{backend};
+void Document::clear_dirty_room_requests() noexcept {
+    dirty_room_ids_.clear();
+    dirty_room_level_ids_.clear();
+}
+
+void Document::regenerate_dirty_geometry(GeometryDetail detail) {
+    GeometryService geometry;
     for (auto& element : elements_) {
         auto* wall = element.wall();
         if (wall != nullptr && wall->geometry.dirty) {
-            wall->geometry = geometry.build_wall_geometry(*wall, element.revision());
+            auto resolved = *wall;
+            resolved.height_meters = resolved_wall_height(*wall);
+            const auto* wall_assembly = wall->assembly_id == 0 ? nullptr : get_layered_assembly(wall->assembly_id);
+            const auto* wall_type = wall->wall_type_id == 0 ? nullptr : get_wall_type(wall->wall_type_id);
+            const auto* layers = detail == GeometryDetail::Layered && wall_assembly != nullptr
+                ? &wall_assembly->layers
+                : (detail == GeometryDetail::Layered && wall_type != nullptr ? &wall_type->layers : nullptr);
+            wall->geometry = geometry.build_wall_geometry(
+                resolved,
+                element.revision(),
+                layers == nullptr ? std::vector<WallAssemblyLayer>{} : *layers
+            );
+            if (detail == GeometryDetail::Envelope && wall_assembly != nullptr &&
+                !wall_assembly->layers.empty() && !wall->geometry.mesh.indices.empty()) {
+                // One proxy slot keeps the envelope material-aware without
+                // expanding the viewport mesh into all assembly layers.
+                wall->geometry.mesh.triangle_material_ids.assign(
+                    wall->geometry.mesh.indices.size() / 3,
+                    wall_assembly->layers.front().material_id
+                );
+            }
         }
 
         auto* slab = element.slab();
         if (slab != nullptr && slab->generated_geometry_dirty) {
-            slab->area_square_meters = geometry.polygon_area(slab->boundary_polygon);
+            slab->area_square_meters = polygon_area(slab->boundary_polygon);
             slab->volume_cubic_meters = slab->area_square_meters * slab->thickness_meters;
-            const auto thickness = slab->assembly_id != 0
-                ? (get_layered_assembly(slab->assembly_id) == nullptr ? slab->thickness_meters : geometry.layered_assembly_thickness(*get_layered_assembly(slab->assembly_id)))
-                : slab->thickness_meters;
-            slab->mesh = geometry.build_extruded_polygon_mesh(slab->boundary_polygon, thickness, slab->elevation_offset_meters);
+            const auto* slab_assembly = slab->assembly_id == 0 ? nullptr : get_layered_assembly(slab->assembly_id);
+            const auto thickness = slab_assembly == nullptr
+                ? slab->thickness_meters
+                : layered_assembly_total_thickness(*slab_assembly);
+            slab->thickness_meters = thickness;
+            slab->volume_cubic_meters = slab->area_square_meters * thickness;
+            slab->mesh = detail == GeometryDetail::Envelope || slab_assembly == nullptr
+                ? extrude_polygon_mesh(slab->boundary_polygon, thickness, slab->elevation_offset_meters)
+                : build_layered_slab_mesh(slab->boundary_polygon, *slab_assembly, slab->elevation_offset_meters);
+            if (detail == GeometryDetail::Envelope && slab_assembly != nullptr &&
+                !slab_assembly->layers.empty() && !slab->mesh.indices.empty()) {
+                slab->mesh.triangle_material_ids.assign(
+                    slab->mesh.indices.size() / 3,
+                    slab_assembly->layers.front().material_id
+                );
+            }
             slab->generated_geometry_dirty = false;
         }
 
         auto* roof = element.roof();
         if (roof != nullptr && roof->generated_geometry_dirty) {
+            if (!roof->source_wall_ids.empty()) {
+                // A wall can be moved through a short invalid intermediate
+                // state while the user drags it.  Retain the last valid roof
+                // footprint until all source walls close into a loop again.
+                try {
+                    auto refreshed = build_pick_wall_loop(*this, roof->source_wall_ids);
+                    if (!cyclic_polygon_equal(roof->boundary_polygon, refreshed.polygon)) {
+                        roof->boundary_polygon = std::move(refreshed.polygon);
+                        element.touch();
+                    }
+                    roof->source_wall_ids = std::move(refreshed.ordered_wall_ids);
+                } catch (const std::invalid_argument&) {
+                    // Keep the previously valid boundary; the wall edit itself
+                    // remains authoritative and can be completed or repaired.
+                }
+            }
             const auto thickness = roof->assembly_id != 0
-                ? (get_layered_assembly(roof->assembly_id) == nullptr ? roof->thickness_meters : geometry.layered_assembly_thickness(*get_layered_assembly(roof->assembly_id)))
+                ? (get_layered_assembly(roof->assembly_id) == nullptr ? roof->thickness_meters : layered_assembly_total_thickness(*get_layered_assembly(roof->assembly_id)))
                 : roof->thickness_meters;
-            roof->area_square_meters = geometry.roof_surface_area(*roof);
+            roof->area_square_meters = roof->roof_type == RoofType::Flat
+                ? roof_plan_area(*roof)
+                : roof_surface_area(RoofData{
+                    .boundary_polygon = roof->boundary_polygon,
+                    .roof_type = roof->roof_type,
+                    .thickness_meters = thickness,
+                    .slope_degrees = roof->slope_degrees,
+                    .overhang_meters = roof->overhang_meters,
+                });
             roof->volume_cubic_meters = roof->area_square_meters * thickness;
             roof->mesh = roof->roof_type == RoofType::Flat
-                ? geometry.build_extruded_polygon_mesh(roof->boundary_polygon, thickness, 0.0)
-                : MeshBuffer{};
+                ? extrude_polygon_mesh(roof->boundary_polygon, thickness, 0.0)
+                : roof->roof_type == RoofType::SimpleGable
+                    ? build_gable_roof_mesh(*roof, thickness)
+                    : build_auto_footprint_roof_mesh(*roof, thickness);
             roof->generated_geometry_dirty = false;
         }
 
         auto* column = element.column();
         if (column != nullptr && column->generated_geometry_dirty) {
             column->volume_cubic_meters = column->width_meters * column->depth_meters * column->height_meters;
-            column->mesh = geometry.build_column_mesh(column->position, column->width_meters, column->depth_meters, column->height_meters);
+            column->mesh = extrude_column_mesh(column->position, column->width_meters, column->depth_meters, column->height_meters);
             column->generated_geometry_dirty = false;
         }
 
@@ -1873,794 +3745,108 @@ void Document::regenerate_dirty_geometry() {
         if (beam != nullptr && beam->generated_geometry_dirty) {
             beam->length_meters = length(Line2{.start = beam->start, .end = beam->end});
             beam->volume_cubic_meters = beam->length_meters * beam->width_meters * beam->height_meters;
-            beam->mesh = geometry.build_beam_mesh(beam->start, beam->end, beam->width_meters, beam->height_meters);
+            beam->mesh = extrude_beam_mesh(beam->start, beam->end, beam->width_meters, beam->height_meters);
             beam->generated_geometry_dirty = false;
         }
 
         auto* stair = element.stair();
         if (stair != nullptr && stair->generated_geometry_dirty) {
+            // Legacy/unconnected stairs may carry their own rise with base and
+            // top set to the same level. Only a distinct top level is a live
+            // vertical constraint.
+            if (stair->top_level_id != 0 && stair->top_level_id != stair->base_level_id) {
+                const auto* base_element = find_ptr(stair->base_level_id);
+                const auto* top_element = find_ptr(stair->top_level_id);
+                const auto* base = base_element == nullptr ? nullptr : base_element->level();
+                const auto* top = top_element == nullptr ? nullptr : top_element->level();
+                if (base != nullptr && top != nullptr) {
+                    stair->total_rise_meters = std::max(
+                        epsilon, top->elevation_meters - base->elevation_meters);
+                }
+            }
             stair->footprint_area_square_meters = stair->width_meters * stair->total_run_meters;
             stair->volume_cubic_meters = stair->footprint_area_square_meters * (stair->total_rise_meters / 2.0);
-            stair->mesh = geometry.build_stair_mesh(*stair);
+            stair->mesh = build_stair_mesh(*stair);
             stair->generated_geometry_dirty = false;
         }
     }
 }
 
 DependencyGraph Document::build_dependency_graph() const {
-    return dependency_graph_service_.build(*this);
-}
-
-const DependencyGraph& Document::dependency_graph() const {
-    return dependency_graph_service_.get(*this);
-}
-
-Revision Document::dependency_graph_version() const noexcept {
-    return dependency_graph_service_.version();
-}
-
-ValidationReport Document::validate_document() const {
-    ValidationReport report;
-    (void)dependency_graph();
-
-    for (const auto& [wall_type_id, wall_type] : wall_types_) {
-        if (total_wall_type_thickness(wall_type) <= 0.0) {
-            add_issue(report, ValidationSeverity::Error, ValidationIssueCode::WallTooShort, wall_type_id, "wall type total thickness must be positive");
-        }
-        for (const auto& layer : wall_type.layers) {
-            if (layer.thickness_meters <= 0.0) {
-                add_issue(report, ValidationSeverity::Error, ValidationIssueCode::WallTooShort, wall_type_id, "wall type layer thickness must be positive");
-            }
-            if (layer.material_id != 0 && get_material(layer.material_id) == nullptr) {
-                add_issue(report, ValidationSeverity::Error, ValidationIssueCode::InvalidJoin, wall_type_id, "wall type references missing material");
-            }
-        }
-    }
-    for (const auto& [assembly_id, assembly] : layered_assemblies_) {
-        if (layered_assembly_total_thickness(assembly) <= 0.0) {
-            add_issue(report, ValidationSeverity::Error, ValidationIssueCode::WallTooShort, assembly_id, "assembly total thickness must be positive");
-        }
-        for (const auto& layer : assembly.layers) {
-            if (layer.thickness_meters <= 0.0) {
-                add_issue(report, ValidationSeverity::Error, ValidationIssueCode::WallTooShort, assembly_id, "assembly layer thickness must be positive");
-            }
-            if (layer.material_id != 0 && get_material(layer.material_id) == nullptr) {
-                add_issue(report, ValidationSeverity::Error, ValidationIssueCode::InvalidJoin, assembly_id, "assembly references missing material");
-            }
-        }
-    }
+    DependencyGraph graph;
 
     for (const auto& element : elements_) {
         if (const auto* wall = element.wall()) {
-            if (length(wall->axis) <= epsilon) {
-                add_issue(report, ValidationSeverity::Error, ValidationIssueCode::WallTooShort, element.id(), "wall length must be positive");
-            }
-            if (wall->wall_type_id != 0 && get_wall_type(wall->wall_type_id) == nullptr) {
-                add_issue(report, ValidationSeverity::Error, ValidationIssueCode::InvalidJoin, element.id(), "wall references missing wall type");
-            }
+            auto& geometry = graph.geometry_by_element[element.id()];
+            append_unique(geometry, element.id());
 
-            std::set<std::pair<ElementId, std::string>> seen_joins;
             for (const auto& join : wall->joins) {
-                if (find_ptr(join.other_wall_id) == nullptr || find_ptr(join.other_wall_id)->wall() == nullptr) {
-                    add_issue(report, ValidationSeverity::Error, ValidationIssueCode::InvalidJoin, element.id(), "join references missing wall");
-                    continue;
-                }
-
-                std::ostringstream key;
-                key << join.other_wall_id << ':' << join.point.x << ':' << join.point.y;
-                if (!seen_joins.insert({join.other_wall_id, key.str()}).second) {
-                    add_issue(report, ValidationSeverity::Warning, ValidationIssueCode::DuplicateJoin, element.id(), "duplicate join detected");
-                }
+                append_unique(graph.connected_walls_by_wall[element.id()], join.other_wall_id);
             }
-
-            for (std::size_t index = 0; index < wall->openings.size(); ++index) {
-                const auto& opening = wall->openings[index];
-                const auto* opening_element = find_ptr(opening.element_id);
-                if (opening_element == nullptr || (opening_element->door() == nullptr && opening_element->window() == nullptr)) {
-                    add_issue(report, ValidationSeverity::Error, ValidationIssueCode::OrphanOpening, element.id(), "wall references missing opening");
-                    continue;
-                }
-
-                const auto opening_level_id = opening_element->door() != nullptr ? opening_element->door()->level_id : opening_element->window()->level_id;
-                if (opening_level_id != wall->level_id) {
-                    add_issue(report, ValidationSeverity::Error, ValidationIssueCode::LevelMismatch, opening.element_id, "opening level does not match host wall");
-                }
-
-                try {
-                    validate_wall_openings(*wall);
-                } catch (const std::invalid_argument& error) {
-                    const auto message = std::string(error.what());
-                    const auto code = message.find("overlaps") != std::string::npos
-                        ? ValidationIssueCode::OverlappingOpenings
-                        : ValidationIssueCode::OpeningOutsideWall;
-                    add_issue(report, ValidationSeverity::Error, code, opening.element_id, message);
-                    break;
-                }
-            }
-        } else if (const auto* door = element.door()) {
-            const auto* host = find_ptr(door->host_wall_id);
-            if (host == nullptr || host->wall() == nullptr) {
-                add_issue(report, ValidationSeverity::Error, ValidationIssueCode::OrphanOpening, element.id(), "door host wall does not exist");
-            } else if (host->wall()->level_id != door->level_id) {
-                add_issue(report, ValidationSeverity::Error, ValidationIssueCode::LevelMismatch, element.id(), "door level does not match host wall");
-            }
-        } else if (const auto* window = element.window()) {
-            const auto* host = find_ptr(window->host_wall_id);
-            if (host == nullptr || host->wall() == nullptr) {
-                add_issue(report, ValidationSeverity::Error, ValidationIssueCode::OrphanOpening, element.id(), "window host wall does not exist");
-            } else if (host->wall()->level_id != window->level_id) {
-                add_issue(report, ValidationSeverity::Error, ValidationIssueCode::LevelMismatch, element.id(), "window level does not match host wall");
-            }
-        } else if (const auto* room = element.room()) {
-            if (room->centerline_area_square_meters <= 0.0) {
-                add_issue(report, ValidationSeverity::Error, ValidationIssueCode::NonPositiveRoomArea, element.id(), "room area must be positive");
-            }
-            if (room->interior_area_square_meters <= 0.0) {
-                add_issue(report, ValidationSeverity::Error, ValidationIssueCode::NonPositiveRoomArea, element.id(), "room interior area must be positive");
-            }
-            if (std::abs(room->floor_finish_area_square_meters - room->interior_area_square_meters) > 1.0e-6) {
-                add_issue(report, ValidationSeverity::Warning, ValidationIssueCode::NonPositiveRoomArea, element.id(), "room floor area should match interior area");
-            }
-            if (std::abs(room->ceiling_area_square_meters - room->interior_area_square_meters) > 1.0e-6) {
-                add_issue(report, ValidationSeverity::Warning, ValidationIssueCode::NonPositiveRoomArea, element.id(), "room ceiling area should match interior area");
-            }
-            for (const auto boundary_id : room->boundary_wall_ids) {
-                const auto* boundary = find_ptr(boundary_id);
-                if (boundary == nullptr || boundary->wall() == nullptr) {
-                    add_issue(report, ValidationSeverity::Error, ValidationIssueCode::MissingRoomBoundaryWall, element.id(), "room boundary references missing wall");
-                }
+            for (const auto& opening : wall->openings) {
+                append_unique(graph.openings_by_wall[element.id()], opening.element_id);
+                append_unique(graph.geometry_by_element[opening.element_id], element.id());
             }
         } else if (const auto* slab = element.slab()) {
-            if (slab->thickness_meters <= 0.0) {
-                add_issue(report, ValidationSeverity::Error, ValidationIssueCode::WallTooShort, element.id(), "slab thickness must be positive");
-            }
-            if (polygon_area(slab->boundary_polygon) <= 0.0) {
-                add_issue(report, ValidationSeverity::Error, ValidationIssueCode::NonPositiveRoomArea, element.id(), "slab boundary area must be positive");
-            }
-            if (slab->material_id != 0 && get_material(slab->material_id) == nullptr) {
-                add_issue(report, ValidationSeverity::Error, ValidationIssueCode::InvalidJoin, element.id(), "slab references missing material");
-            }
-            if (slab->assembly_id != 0 && get_layered_assembly(slab->assembly_id) == nullptr) {
-                add_issue(report, ValidationSeverity::Error, ValidationIssueCode::InvalidJoin, element.id(), "slab references missing assembly");
-            }
+            auto& geometry = graph.geometry_by_element[element.id()];
+            append_unique(geometry, element.id());
+            append_unique(graph.geometry_by_element[slab->level_id], element.id());
         } else if (const auto* roof = element.roof()) {
-            if (roof->thickness_meters <= 0.0 || roof_plan_area(*roof) <= 0.0) {
-                add_issue(report, ValidationSeverity::Error, ValidationIssueCode::WallTooShort, element.id(), "roof dimensions must be positive");
-            }
-            if (roof->material_id != 0 && get_material(roof->material_id) == nullptr) {
-                add_issue(report, ValidationSeverity::Error, ValidationIssueCode::InvalidJoin, element.id(), "roof references missing material");
-            }
-            if (roof->assembly_id != 0 && get_layered_assembly(roof->assembly_id) == nullptr) {
-                add_issue(report, ValidationSeverity::Error, ValidationIssueCode::InvalidJoin, element.id(), "roof references missing assembly");
+            auto& geometry = graph.geometry_by_element[element.id()];
+            append_unique(geometry, element.id());
+            append_unique(graph.geometry_by_element[roof->level_id], element.id());
+            for (const auto wall_id : roof->source_wall_ids) {
+                append_unique(graph.geometry_by_element[wall_id], element.id());
             }
         } else if (const auto* column = element.column()) {
-            if (column->width_meters <= 0.0 || column->depth_meters <= 0.0 || column->height_meters <= 0.0) {
-                add_issue(report, ValidationSeverity::Error, ValidationIssueCode::WallTooShort, element.id(), "column dimensions must be positive");
-            }
-            if (column->material_id != 0 && get_material(column->material_id) == nullptr) {
-                add_issue(report, ValidationSeverity::Error, ValidationIssueCode::InvalidJoin, element.id(), "column references missing material");
-            }
+            auto& geometry = graph.geometry_by_element[element.id()];
+            append_unique(geometry, element.id());
+            append_unique(graph.geometry_by_element[column->level_id], element.id());
         } else if (const auto* beam = element.beam()) {
-            if (beam->width_meters <= 0.0 || beam->height_meters <= 0.0 || length(Line2{.start = beam->start, .end = beam->end}) <= 0.0) {
-                add_issue(report, ValidationSeverity::Error, ValidationIssueCode::WallTooShort, element.id(), "beam dimensions must be positive");
-            }
-            if (beam->material_id != 0 && get_material(beam->material_id) == nullptr) {
-                add_issue(report, ValidationSeverity::Error, ValidationIssueCode::InvalidJoin, element.id(), "beam references missing material");
-            }
+            auto& geometry = graph.geometry_by_element[element.id()];
+            append_unique(geometry, element.id());
+            append_unique(graph.geometry_by_element[beam->level_id], element.id());
         } else if (const auto* stair = element.stair()) {
-            if (stair->width_meters <= 0.0 || stair->total_rise_meters <= 0.0 || stair->total_run_meters <= 0.0 || stair->riser_count <= 0 || stair->tread_count <= 0) {
-                add_issue(report, ValidationSeverity::Error, ValidationIssueCode::WallTooShort, element.id(), "stair dimensions and counts must be positive");
+            auto& geometry = graph.geometry_by_element[element.id()];
+            append_unique(geometry, element.id());
+            append_unique(graph.geometry_by_element[stair->base_level_id], element.id());
+            if (stair->top_level_id != 0) {
+                append_unique(graph.geometry_by_element[stair->top_level_id], element.id());
             }
-            if (find_ptr(stair->base_level_id) == nullptr || find_ptr(stair->base_level_id)->level() == nullptr) {
-                add_issue(report, ValidationSeverity::Error, ValidationIssueCode::LevelMismatch, element.id(), "stair base level does not exist");
+        } else if (const auto* room = element.room()) {
+            for (const auto boundary_id : room->boundary_wall_ids) {
+                append_unique(graph.rooms_by_wall[boundary_id], element.id());
+                append_unique(graph.geometry_by_element[boundary_id], element.id());
             }
-            if (stair->top_level_id != 0 && (find_ptr(stair->top_level_id) == nullptr || find_ptr(stair->top_level_id)->level() == nullptr)) {
-                add_issue(report, ValidationSeverity::Error, ValidationIssueCode::LevelMismatch, element.id(), "stair top level does not exist");
-            }
-            if (stair->material_id != 0 && get_material(stair->material_id) == nullptr) {
-                add_issue(report, ValidationSeverity::Error, ValidationIssueCode::InvalidJoin, element.id(), "stair references missing material");
-            }
-        }
-    }
-
-    for (const auto& [system_id, system] : floor_systems_) {
-        const auto* room_element = find_ptr(system.room_id);
-        const auto* room = room_element == nullptr ? nullptr : room_element->room();
-        if (room == nullptr) {
-            add_issue(report, ValidationSeverity::Error, ValidationIssueCode::MissingRoomBoundaryWall, system_id, "floor system references missing room");
-        } else {
-            if (system.area_square_meters < 0.0) {
-                add_issue(report, ValidationSeverity::Error, ValidationIssueCode::NonPositiveRoomArea, system_id, "floor system area cannot be negative");
-            }
-            if (!cyclic_polygon_equal(system.boundary_polygon, room->interior_boundary_polygon)) {
-                add_issue(report, ValidationSeverity::Warning, ValidationIssueCode::MissingRoomBoundaryWall, system_id, "floor system boundary should match room interior boundary");
-            }
-            if (std::abs(system.area_square_meters - room->interior_area_square_meters) > 1.0e-6) {
-                add_issue(report, ValidationSeverity::Warning, ValidationIssueCode::NonPositiveRoomArea, system_id, "floor system area should match room interior area");
-            }
-            if (system.level_id != room->level_id) {
-                add_issue(report, ValidationSeverity::Error, ValidationIssueCode::LevelMismatch, system_id, "floor system level does not match room");
-            }
-        }
-        const auto* assembly = get_layered_assembly(system.assembly_id);
-        if (assembly == nullptr) {
-            add_issue(report, ValidationSeverity::Error, ValidationIssueCode::InvalidJoin, system_id, "floor system references missing assembly");
-        } else if (assembly->kind != LayeredAssemblyKind::Floor) {
-            add_issue(report, ValidationSeverity::Error, ValidationIssueCode::InvalidJoin, system_id, "floor system assembly must be floor kind");
-        }
-    }
-
-    for (const auto& [system_id, system] : ceiling_systems_) {
-        const auto* room_element = find_ptr(system.room_id);
-        const auto* room = room_element == nullptr ? nullptr : room_element->room();
-        if (room == nullptr) {
-            add_issue(report, ValidationSeverity::Error, ValidationIssueCode::MissingRoomBoundaryWall, system_id, "ceiling system references missing room");
-        } else {
-            if (system.area_square_meters < 0.0) {
-                add_issue(report, ValidationSeverity::Error, ValidationIssueCode::NonPositiveRoomArea, system_id, "ceiling system area cannot be negative");
-            }
-            if (!cyclic_polygon_equal(system.boundary_polygon, room->interior_boundary_polygon)) {
-                add_issue(report, ValidationSeverity::Warning, ValidationIssueCode::MissingRoomBoundaryWall, system_id, "ceiling system boundary should match room interior boundary");
-            }
-            if (std::abs(system.area_square_meters - room->interior_area_square_meters) > 1.0e-6) {
-                add_issue(report, ValidationSeverity::Warning, ValidationIssueCode::NonPositiveRoomArea, system_id, "ceiling system area should match room interior area");
-            }
-            if (system.level_id != room->level_id) {
-                add_issue(report, ValidationSeverity::Error, ValidationIssueCode::LevelMismatch, system_id, "ceiling system level does not match room");
-            }
-        }
-        const auto* assembly = get_layered_assembly(system.assembly_id);
-        if (assembly == nullptr) {
-            add_issue(report, ValidationSeverity::Error, ValidationIssueCode::InvalidJoin, system_id, "ceiling system references missing assembly");
-        } else if (assembly->kind != LayeredAssemblyKind::Ceiling) {
-            add_issue(report, ValidationSeverity::Error, ValidationIssueCode::InvalidJoin, system_id, "ceiling system assembly must be ceiling kind");
-        }
-    }
-
-    for (const auto& row : generate_wall_schedule()) {
-        if (row.opening_area_square_meters > row.gross_area_square_meters) {
-            add_issue(report, ValidationSeverity::Error, ValidationIssueCode::OpeningOutsideWall, row.wall_id, "opening area exceeds wall gross area");
-        }
-        if (row.net_area_square_meters < 0.0) {
-            add_issue(report, ValidationSeverity::Error, ValidationIssueCode::OpeningOutsideWall, row.wall_id, "wall net area cannot be negative");
-        }
-    }
-    for (const auto& row : generate_material_takeoff()) {
-        if (row.quantity < 0.0) {
-            add_issue(report, ValidationSeverity::Error, ValidationIssueCode::OpeningOutsideWall, row.material_id, "material takeoff quantity cannot be negative");
-        }
-    }
-
-    return report;
-}
-
-std::vector<WallRoomAdjacency> Document::wall_room_adjacencies() const {
-    std::vector<WallRoomAdjacency> rows;
-    std::map<ElementId, std::vector<WallRoomAdjacency>> by_wall;
-    for (const auto& element : elements_) {
-        const auto* room = element.room();
-        if (room == nullptr) {
-            continue;
-        }
-
-        for (const auto wall_id : room->boundary_wall_ids) {
-            const auto* wall_element = find_ptr(wall_id);
-            const auto* wall = wall_element == nullptr ? nullptr : wall_element->wall();
-            if (wall == nullptr) {
-                continue;
-            }
-
-            const auto polygon = room->centerline_boundary_polygon;
-            auto side = WallRoomSide::Exterior;
-            if (polygon.size() >= 2) {
-                const auto center = Point2{
-                    .x = (wall->axis.start.x + wall->axis.end.x) / 2.0,
-                    .y = (wall->axis.start.y + wall->axis.end.y) / 2.0,
-                };
-                const auto probe = is_vertical(wall->axis)
-                    ? Point2{.x = center.x + 0.01, .y = center.y}
-                    : Point2{.x = center.x, .y = center.y + 0.01};
-                auto inside = false;
-                for (std::size_t i = 0, j = polygon.size() - 1; i < polygon.size(); j = i++) {
-                    const auto intersect = ((polygon[i].y > probe.y) != (polygon[j].y > probe.y)) &&
-                        (probe.x < (polygon[j].x - polygon[i].x) * (probe.y - polygon[i].y) / (polygon[j].y - polygon[i].y + epsilon) + polygon[i].x);
-                    if (intersect) {
-                        inside = !inside;
-                    }
-                }
-                if (is_vertical(wall->axis)) {
-                    side = inside ? WallRoomSide::Right : WallRoomSide::Left;
-                } else {
-                    side = inside ? WallRoomSide::Left : WallRoomSide::Right;
+            for (const auto& [system_id, system] : floor_systems_) {
+                if (system.room_id == element.id()) {
+                    append_unique(graph.geometry_by_element[element.id()], system_id);
                 }
             }
-
-            by_wall[wall_id].push_back(WallRoomAdjacency{
-                .wall_id = wall_id,
-                .room_id = element.id(),
-                .side = side,
-            });
-        }
-    }
-    for (const auto& element : elements_) {
-        const auto* wall = element.wall();
-        if (wall == nullptr) {
-            continue;
-        }
-        auto& entries = by_wall[element.id()];
-        if (entries.empty()) {
-            entries.push_back(WallRoomAdjacency{
-                .wall_id = element.id(),
-                .room_id = 0,
-                .side = WallRoomSide::Exterior,
-            });
-        } else if (entries.size() == 1) {
-            entries.push_back(WallRoomAdjacency{
-                .wall_id = element.id(),
-                .room_id = 0,
-                .side = WallRoomSide::Exterior,
-            });
-        }
-        for (const auto& entry : entries) {
-            rows.push_back(entry);
-        }
-    }
-    return rows;
-}
-
-std::vector<WallScheduleRow> Document::generate_wall_schedule() const {
-    std::vector<WallScheduleRow> rows;
-    const auto adjacencies = wall_room_adjacencies();
-    for (const auto& element : elements_) {
-        const auto* wall = element.wall();
-        if (wall == nullptr) {
-            continue;
-        }
-
-        const auto length_meters = length(wall->axis);
-        const auto gross_area = length_meters * wall->height_meters;
-        auto opening_area = 0.0;
-        for (const auto& opening : wall->openings) {
-            opening_area += opening.width_meters * opening.height_meters;
-        }
-        const auto net_area = std::max(0.0, gross_area - opening_area);
-        std::map<ElementId, double> material_volumes;
-        if (const auto* wall_type = get_wall_type(wall->wall_type_id)) {
-            for (const auto& layer : wall_type->layers) {
-                material_volumes[layer.material_id] += net_area * layer.thickness_meters;
-            }
-        }
-        const auto room_count = std::count_if(adjacencies.begin(), adjacencies.end(), [&](const WallRoomAdjacency& adjacency) {
-            return adjacency.wall_id == element.id() && adjacency.room_id != 0;
-        });
-        rows.push_back(WallScheduleRow{
-            .wall_id = element.id(),
-            .level_id = wall->level_id,
-            .wall_type_id = wall->wall_type_id,
-            .wall_type_name = wall_type_name(wall->wall_type_id),
-            .length_meters = length_meters,
-            .thickness_meters = wall_thickness(*wall),
-            .height_meters = wall->height_meters,
-            .gross_area_square_meters = gross_area,
-            .opening_area_square_meters = opening_area,
-            .net_area_square_meters = net_area,
-            .gross_volume_cubic_meters = gross_area * wall_thickness(*wall),
-            .net_volume_cubic_meters = net_area * wall_thickness(*wall),
-            .interior_finish_area_square_meters = room_count == 0 ? 0.0 : net_area * static_cast<double>(std::min<std::size_t>(room_count, 2)),
-            .exterior_finish_area_square_meters = room_count < 2 ? net_area : 0.0,
-            .material_volume_by_id = std::move(material_volumes),
-        });
-    }
-    return rows;
-}
-
-std::vector<OpeningScheduleRow> Document::generate_opening_schedule() const {
-    std::vector<OpeningScheduleRow> rows;
-    for (const auto& element : elements_) {
-        if (const auto* door = element.door()) {
-            rows.push_back(OpeningScheduleRow{
-                .element_id = element.id(),
-                .type = OpeningKind::Door,
-                .host_wall_id = door->host_wall_id,
-                .width_meters = door->width_meters,
-                .height_meters = door->height_meters,
-                .area_square_meters = door->width_meters * door->height_meters,
-                .level_id = door->level_id,
-            });
-        } else if (const auto* window = element.window()) {
-            rows.push_back(OpeningScheduleRow{
-                .element_id = element.id(),
-                .type = OpeningKind::Window,
-                .host_wall_id = window->host_wall_id,
-                .width_meters = window->width_meters,
-                .height_meters = window->height_meters,
-                .area_square_meters = window->width_meters * window->height_meters,
-                .level_id = window->level_id,
-            });
-        }
-    }
-    return rows;
-}
-
-std::vector<RoomScheduleRow> Document::generate_room_schedule() const {
-    std::vector<RoomScheduleRow> rows;
-    for (const auto& element : elements_) {
-        const auto* room = element.room();
-        if (room == nullptr) {
-            continue;
-        }
-        rows.push_back(RoomScheduleRow{
-            .room_id = element.id(),
-            .level_id = room->level_id,
-            .centerline_area_square_meters = room->centerline_area_square_meters,
-            .interior_area_square_meters = room->interior_area_square_meters,
-            .interior_perimeter_meters = room->interior_perimeter_meters,
-            .baseboard_length_meters = room->baseboard_length_meters,
-            .floor_finish_area_square_meters = room->floor_finish_area_square_meters,
-            .ceiling_area_square_meters = room->ceiling_area_square_meters,
-            .interior_wall_finish_area_square_meters = room->interior_wall_finish_area_square_meters,
-        });
-    }
-    return rows;
-}
-
-std::vector<SlabScheduleRow> Document::generate_slab_schedule() const {
-    std::vector<SlabScheduleRow> rows;
-    for (const auto& element : elements_) {
-        const auto* slab = element.slab();
-        if (slab == nullptr) {
-            continue;
-        }
-        std::string label;
-        if (slab->assembly_id != 0) {
-            label = layered_assembly_name(slab->assembly_id);
-        } else if (slab->material_id != 0) {
-            const auto* material = get_material(slab->material_id);
-            label = material == nullptr ? std::string{} : material->name;
-        }
-        rows.push_back(SlabScheduleRow{
-            .slab_id = element.id(),
-            .level_id = slab->level_id,
-            .area_square_meters = slab->area_square_meters > 0.0 ? slab->area_square_meters : polygon_area(slab->boundary_polygon),
-            .thickness_meters = slab->thickness_meters,
-            .volume_cubic_meters = slab->volume_cubic_meters > 0.0 ? slab->volume_cubic_meters : polygon_area(slab->boundary_polygon) * slab->thickness_meters,
-            .material_or_assembly_name = std::move(label),
-        });
-    }
-    return rows;
-}
-
-std::vector<RoofScheduleRow> Document::generate_roof_schedule() const {
-    std::vector<RoofScheduleRow> rows;
-    for (const auto& element : elements_) {
-        const auto* roof = element.roof();
-        if (roof == nullptr) {
-            continue;
-        }
-        std::string label;
-        if (roof->assembly_id != 0) {
-            label = layered_assembly_name(roof->assembly_id);
-        } else if (roof->material_id != 0) {
-            const auto* material = get_material(roof->material_id);
-            label = material == nullptr ? std::string{} : material->name;
-        }
-        rows.push_back(RoofScheduleRow{
-            .roof_id = element.id(),
-            .level_id = roof->level_id,
-            .roof_type = roof->roof_type,
-            .area_square_meters = roof->area_square_meters > 0.0 ? roof->area_square_meters : roof_surface_area(*roof),
-            .thickness_meters = roof->thickness_meters,
-            .volume_cubic_meters = roof->volume_cubic_meters > 0.0 ? roof->volume_cubic_meters : roof_surface_area(*roof) * roof->thickness_meters,
-            .material_or_assembly_name = std::move(label),
-        });
-    }
-    return rows;
-}
-
-std::vector<ColumnScheduleRow> Document::generate_column_schedule() const {
-    std::vector<ColumnScheduleRow> rows;
-    for (const auto& element : elements_) {
-        const auto* column = element.column();
-        if (column == nullptr) {
-            continue;
-        }
-        const auto* material = get_material(column->material_id);
-        rows.push_back(ColumnScheduleRow{
-            .column_id = element.id(),
-            .level_id = column->level_id,
-            .width_meters = column->width_meters,
-            .depth_meters = column->depth_meters,
-            .height_meters = column->height_meters,
-            .volume_cubic_meters = column->volume_cubic_meters > 0.0 ? column->volume_cubic_meters : column->width_meters * column->depth_meters * column->height_meters,
-            .material_name = material == nullptr ? std::string{} : material->name,
-        });
-    }
-    return rows;
-}
-
-std::vector<BeamScheduleRow> Document::generate_beam_schedule() const {
-    std::vector<BeamScheduleRow> rows;
-    for (const auto& element : elements_) {
-        const auto* beam = element.beam();
-        if (beam == nullptr) {
-            continue;
-        }
-        const auto* material = get_material(beam->material_id);
-        const auto beam_length = beam->length_meters > 0.0 ? beam->length_meters : length(Line2{.start = beam->start, .end = beam->end});
-        rows.push_back(BeamScheduleRow{
-            .beam_id = element.id(),
-            .level_id = beam->level_id,
-            .length_meters = beam_length,
-            .width_meters = beam->width_meters,
-            .height_meters = beam->height_meters,
-            .volume_cubic_meters = beam->volume_cubic_meters > 0.0 ? beam->volume_cubic_meters : beam_length * beam->width_meters * beam->height_meters,
-            .material_name = material == nullptr ? std::string{} : material->name,
-        });
-    }
-    return rows;
-}
-
-std::vector<StairScheduleRow> Document::generate_stair_schedule() const {
-    std::vector<StairScheduleRow> rows;
-    for (const auto& element : elements_) {
-        const auto* stair = element.stair();
-        if (stair == nullptr) {
-            continue;
-        }
-        const auto* material = get_material(stair->material_id);
-        rows.push_back(StairScheduleRow{
-            .stair_id = element.id(),
-            .base_level_id = stair->base_level_id,
-            .top_level_id = stair->top_level_id,
-            .width_meters = stair->width_meters,
-            .total_rise_meters = stair->total_rise_meters,
-            .total_run_meters = stair->total_run_meters,
-            .riser_count = stair->riser_count,
-            .tread_count = stair->tread_count,
-            .footprint_area_square_meters = stair->footprint_area_square_meters > 0.0 ? stair->footprint_area_square_meters : stair->width_meters * stair->total_run_meters,
-            .volume_cubic_meters = stair->volume_cubic_meters > 0.0 ? stair->volume_cubic_meters : (stair->width_meters * stair->total_run_meters * stair->total_rise_meters / 2.0),
-            .material_name = material == nullptr ? std::string{} : material->name,
-        });
-    }
-    return rows;
-}
-
-std::vector<FloorFinishScheduleRow> Document::generate_floor_finish_schedule() const {
-    std::vector<FloorFinishScheduleRow> rows;
-    for (const auto& [system_id, system] : floor_systems_) {
-        FloorFinishScheduleRow row{
-            .floor_system_id = system_id,
-            .room_id = system.room_id,
-            .area_square_meters = system.area_square_meters,
-            .assembly_name = layered_assembly_name(system.assembly_id),
-        };
-        if (const auto* assembly = get_layered_assembly(system.assembly_id)) {
-            for (const auto& layer : assembly->layers) {
-                row.layer_quantities[layer.material_id] += system.area_square_meters * layer.thickness_meters;
-            }
-        }
-        rows.push_back(std::move(row));
-    }
-    return rows;
-}
-
-std::vector<CeilingScheduleRow> Document::generate_ceiling_schedule() const {
-    std::vector<CeilingScheduleRow> rows;
-    for (const auto& [system_id, system] : ceiling_systems_) {
-        CeilingScheduleRow row{
-            .ceiling_system_id = system_id,
-            .room_id = system.room_id,
-            .area_square_meters = system.area_square_meters,
-            .assembly_name = layered_assembly_name(system.assembly_id),
-        };
-        if (const auto* assembly = get_layered_assembly(system.assembly_id)) {
-            for (const auto& layer : assembly->layers) {
-                row.layer_quantities[layer.material_id] += system.area_square_meters * layer.thickness_meters;
-            }
-        }
-        rows.push_back(std::move(row));
-    }
-    return rows;
-}
-
-std::vector<MaterialTakeoffRow> Document::generate_material_takeoff() const {
-    std::map<std::pair<ElementId, QuantityType>, MaterialTakeoffRow> aggregated;
-
-    for (const auto& row : generate_wall_schedule()) {
-        for (const auto& [material_id, volume] : row.material_volume_by_id) {
-            const auto* material = get_material(material_id);
-            auto& takeoff = aggregated[{material_id, QuantityType::Volume}];
-            takeoff.material_id = material_id;
-            takeoff.material_name = material == nullptr ? "Unknown" : material->name;
-            takeoff.quantity_type = QuantityType::Volume;
-            takeoff.unit = "m3";
-            takeoff.quantity += volume;
-            takeoff.source_element_ids.push_back(row.wall_id);
-            if (material != nullptr && material->unit_cost.has_value()) {
-                takeoff.estimated_cost = takeoff.estimated_cost.value_or(0.0) + (volume * *material->unit_cost);
-            }
-        }
-    }
-
-    for (const auto& row : generate_opening_schedule()) {
-        if (row.type != OpeningKind::Window) {
-            continue;
-        }
-        ElementId material_id = 0;
-        if (const auto material = std::find_if(materials_.begin(), materials_.end(), [](const auto& item) {
-                return item.second.category == MaterialCategory::Glass;
-            }); material != materials_.end()) {
-            material_id = material->first;
-        }
-        if (material_id == 0) {
-            continue;
-        }
-        auto& takeoff = aggregated[{material_id, QuantityType::Area}];
-        takeoff.material_id = material_id;
-        takeoff.material_name = materials_.at(material_id).name;
-        takeoff.quantity_type = QuantityType::Area;
-        takeoff.unit = "m2";
-        takeoff.quantity += row.area_square_meters;
-        takeoff.source_element_ids.push_back(row.element_id);
-    }
-
-    for (const auto& row : generate_floor_finish_schedule()) {
-        for (const auto& [material_id, volume] : row.layer_quantities) {
-            const auto* material = get_material(material_id);
-            auto& takeoff = aggregated[{material_id, QuantityType::Volume}];
-            takeoff.material_id = material_id;
-            takeoff.material_name = material == nullptr ? "Unknown" : material->name;
-            takeoff.quantity_type = QuantityType::Volume;
-            takeoff.unit = "m3";
-            takeoff.quantity += volume;
-            takeoff.source_element_ids.push_back(row.floor_system_id);
-            if (material != nullptr && material->unit_cost.has_value()) {
-                takeoff.estimated_cost = takeoff.estimated_cost.value_or(0.0) + (volume * *material->unit_cost);
-            }
-        }
-    }
-
-    for (const auto& row : generate_ceiling_schedule()) {
-        for (const auto& [material_id, volume] : row.layer_quantities) {
-            const auto* material = get_material(material_id);
-            auto& takeoff = aggregated[{material_id, QuantityType::Volume}];
-            takeoff.material_id = material_id;
-            takeoff.material_name = material == nullptr ? "Unknown" : material->name;
-            takeoff.quantity_type = QuantityType::Volume;
-            takeoff.unit = "m3";
-            takeoff.quantity += volume;
-            takeoff.source_element_ids.push_back(row.ceiling_system_id);
-            if (material != nullptr && material->unit_cost.has_value()) {
-                takeoff.estimated_cost = takeoff.estimated_cost.value_or(0.0) + (volume * *material->unit_cost);
-            }
-        }
-    }
-
-    for (const auto& element : elements_) {
-        const auto* slab = element.slab();
-        if (slab == nullptr) {
-            if (const auto* roof = element.roof()) {
-                const auto area = roof->area_square_meters > 0.0 ? roof->area_square_meters : roof_surface_area(*roof);
-                const auto thickness = roof->assembly_id != 0
-                    ? (get_layered_assembly(roof->assembly_id) == nullptr ? roof->thickness_meters : layered_assembly_total_thickness(*get_layered_assembly(roof->assembly_id)))
-                    : roof->thickness_meters;
-                if (roof->assembly_id != 0) {
-                    if (const auto* assembly = get_layered_assembly(roof->assembly_id)) {
-                        for (const auto& layer : assembly->layers) {
-                            const auto volume = area * layer.thickness_meters;
-                            const auto* material = get_material(layer.material_id);
-                            auto& takeoff = aggregated[{layer.material_id, QuantityType::Volume}];
-                            takeoff.material_id = layer.material_id;
-                            takeoff.material_name = material == nullptr ? "Unknown" : material->name;
-                            takeoff.quantity_type = QuantityType::Volume;
-                            takeoff.unit = "m3";
-                            takeoff.quantity += volume;
-                            takeoff.source_element_ids.push_back(element.id());
-                            if (material != nullptr && material->unit_cost.has_value()) {
-                                takeoff.estimated_cost = takeoff.estimated_cost.value_or(0.0) + (volume * *material->unit_cost);
-                            }
-                        }
-                    }
-                } else if (roof->material_id != 0) {
-                    const auto* material = get_material(roof->material_id);
-                    auto& takeoff = aggregated[{roof->material_id, QuantityType::Volume}];
-                    takeoff.material_id = roof->material_id;
-                    takeoff.material_name = material == nullptr ? "Unknown" : material->name;
-                    takeoff.quantity_type = QuantityType::Volume;
-                    takeoff.unit = "m3";
-                    takeoff.quantity += area * thickness;
-                    takeoff.source_element_ids.push_back(element.id());
-                    if (material != nullptr && material->unit_cost.has_value()) {
-                        takeoff.estimated_cost = takeoff.estimated_cost.value_or(0.0) + (area * thickness * *material->unit_cost);
-                    }
-                }
-            } else if (const auto* column = element.column()) {
-                if (column->material_id != 0) {
-                    const auto* material = get_material(column->material_id);
-                    auto& takeoff = aggregated[{column->material_id, QuantityType::Volume}];
-                    takeoff.material_id = column->material_id;
-                    takeoff.material_name = material == nullptr ? "Unknown" : material->name;
-                    takeoff.quantity_type = QuantityType::Volume;
-                    takeoff.unit = "m3";
-                    takeoff.quantity += column->volume_cubic_meters;
-                    takeoff.source_element_ids.push_back(element.id());
-                    if (material != nullptr && material->unit_cost.has_value()) {
-                        takeoff.estimated_cost = takeoff.estimated_cost.value_or(0.0) + (column->volume_cubic_meters * *material->unit_cost);
-                    }
-                }
-            } else if (const auto* beam = element.beam()) {
-                if (beam->material_id != 0) {
-                    const auto* material = get_material(beam->material_id);
-                    auto& takeoff = aggregated[{beam->material_id, QuantityType::Volume}];
-                    takeoff.material_id = beam->material_id;
-                    takeoff.material_name = material == nullptr ? "Unknown" : material->name;
-                    takeoff.quantity_type = QuantityType::Volume;
-                    takeoff.unit = "m3";
-                    takeoff.quantity += beam->volume_cubic_meters;
-                    takeoff.source_element_ids.push_back(element.id());
-                    if (material != nullptr && material->unit_cost.has_value()) {
-                        takeoff.estimated_cost = takeoff.estimated_cost.value_or(0.0) + (beam->volume_cubic_meters * *material->unit_cost);
-                    }
-                }
-            } else if (const auto* stair = element.stair()) {
-                if (stair->material_id != 0) {
-                    const auto* material = get_material(stair->material_id);
-                    auto& takeoff = aggregated[{stair->material_id, QuantityType::Volume}];
-                    takeoff.material_id = stair->material_id;
-                    takeoff.material_name = material == nullptr ? "Unknown" : material->name;
-                    takeoff.quantity_type = QuantityType::Volume;
-                    takeoff.unit = "m3";
-                    takeoff.quantity += stair->volume_cubic_meters;
-                    takeoff.source_element_ids.push_back(element.id());
-                    if (material != nullptr && material->unit_cost.has_value()) {
-                        takeoff.estimated_cost = takeoff.estimated_cost.value_or(0.0) + (stair->volume_cubic_meters * *material->unit_cost);
-                    }
+            for (const auto& [system_id, system] : ceiling_systems_) {
+                if (system.room_id == element.id()) {
+                    append_unique(graph.geometry_by_element[element.id()], system_id);
                 }
             }
-            continue;
-        }
-        const auto slab_area = slab->area_square_meters > 0.0 ? slab->area_square_meters : polygon_area(slab->boundary_polygon);
-        if (slab->assembly_id != 0) {
-            if (const auto* assembly = get_layered_assembly(slab->assembly_id)) {
-                for (const auto& layer : assembly->layers) {
-                    const auto volume = slab_area * layer.thickness_meters;
-                    const auto* material = get_material(layer.material_id);
-                    auto& takeoff = aggregated[{layer.material_id, QuantityType::Volume}];
-                    takeoff.material_id = layer.material_id;
-                    takeoff.material_name = material == nullptr ? "Unknown" : material->name;
-                    takeoff.quantity_type = QuantityType::Volume;
-                    takeoff.unit = "m3";
-                    takeoff.quantity += volume;
-                    takeoff.source_element_ids.push_back(element.id());
-                    if (material != nullptr && material->unit_cost.has_value()) {
-                        takeoff.estimated_cost = takeoff.estimated_cost.value_or(0.0) + (volume * *material->unit_cost);
-                    }
-                }
-            }
-        } else if (slab->material_id != 0) {
-            const auto volume = slab_area * slab->thickness_meters;
-            const auto* material = get_material(slab->material_id);
-            auto& takeoff = aggregated[{slab->material_id, QuantityType::Volume}];
-            takeoff.material_id = slab->material_id;
-            takeoff.material_name = material == nullptr ? "Unknown" : material->name;
-            takeoff.quantity_type = QuantityType::Volume;
-            takeoff.unit = "m3";
-            takeoff.quantity += volume;
-            takeoff.source_element_ids.push_back(element.id());
-            if (material != nullptr && material->unit_cost.has_value()) {
-                takeoff.estimated_cost = takeoff.estimated_cost.value_or(0.0) + (volume * *material->unit_cost);
-            }
         }
     }
 
-    std::vector<MaterialTakeoffRow> rows;
-    for (auto& [_, row] : aggregated) {
-        std::sort(row.source_element_ids.begin(), row.source_element_ids.end());
-        row.source_element_ids.erase(std::unique(row.source_element_ids.begin(), row.source_element_ids.end()), row.source_element_ids.end());
-        rows.push_back(std::move(row));
-    }
-    return rows;
+    return graph;
 }
+
+const DependencyGraph& Document::dependency_graph() const {
+    if (dependency_graph_dirty_) {
+        dependency_graph_cache_ = build_dependency_graph();
+        dependency_graph_dirty_ = false;
+        ++dependency_graph_version_;
+    }
+    return dependency_graph_cache_;
+}
+
+Revision Document::dependency_graph_version() const noexcept {
+    return dependency_graph_version_;
+}
+
 
 void Document::export_floorplan_svg(const std::filesystem::path& path) const {
     std::ofstream out(path);
@@ -3337,7 +4523,7 @@ void Document::validate_opening(const WallData& wall, double offset_meters, doub
         throw std::invalid_argument("opening dimensions must be positive");
     }
 
-    if (height_meters > wall.height_meters) {
+    if (height_meters > resolved_wall_height(wall) + epsilon) {
         throw std::invalid_argument("opening is taller than host wall");
     }
 
@@ -3369,8 +4555,16 @@ void Document::validate_wall_openings(const WallData& wall, std::optional<Elemen
         if (opening.offset_meters < 0.0 || opening.width_meters <= 0.0 || opening.height_meters <= 0.0 || opening.sill_height_meters < 0.0) {
             throw std::invalid_argument("opening dimensions must be positive");
         }
-        if ((opening.height_meters + opening.sill_height_meters) > wall.height_meters) {
-            throw std::invalid_argument("opening is taller than host wall");
+        if (opening.vertical_offset_meters < 0.0) {
+            throw std::invalid_argument("opening vertical offset must not be negative");
+        }
+        if ((opening.height_meters + opening.sill_height_meters + opening.vertical_offset_meters) > resolved_wall_height(wall) + epsilon) {
+            throw std::invalid_argument(
+                "opening is taller than host wall: opening=" +
+                std::to_string(opening.element_id) + " required=" +
+                std::to_string(opening.height_meters + opening.sill_height_meters + opening.vertical_offset_meters) +
+                " host=" + std::to_string(resolved_wall_height(wall))
+            );
         }
         const auto wall_length = length(wall.axis);
         const auto half_width = opening.width_meters / 2.0;
@@ -3408,6 +4602,51 @@ void Document::update_wall_opening(ElementId host_wall_id, const HostedOpening& 
     mark_wall_dirty(wall_element);
 }
 
+void Document::sync_opening_level_constraint(ElementId opening_id) {
+    auto* opening_element = find_ptr(opening_id);
+    if (opening_element == nullptr) {
+        throw std::invalid_argument("opening does not exist");
+    }
+
+    const auto sync = [&](auto* data, OpeningKind kind, double sill_height_meters) {
+        const auto* host_element = find_ptr(data->host_wall_id);
+        const auto* host_wall = host_element == nullptr ? nullptr : host_element->wall();
+        if (host_wall == nullptr) {
+            throw std::invalid_argument("opening host wall does not exist");
+        }
+        const auto vertical_offset = level_elevation(data->level_id) +
+            data->level_offset_meters - resolved_wall_base_elevation(*host_wall);
+        HostedOpening updated{
+            .element_id = opening_id,
+            .kind = kind,
+            .offset_meters = data->offset_meters,
+            .width_meters = data->width_meters,
+            .height_meters = data->height_meters,
+            .sill_height_meters = sill_height_meters,
+            .vertical_offset_meters = vertical_offset,
+        };
+        auto wall_copy = *host_wall;
+        for (auto& opening : wall_copy.openings) {
+            if (opening.element_id == opening_id) {
+                opening = updated;
+            }
+        }
+        validate_wall_openings(wall_copy);
+        data->vertical_offset_meters = vertical_offset;
+        update_wall_opening(data->host_wall_id, updated);
+    };
+
+    if (auto* door = opening_element->door(); door != nullptr) {
+        sync(door, OpeningKind::Door, 0.0);
+        return;
+    }
+    if (auto* window = opening_element->window(); window != nullptr) {
+        sync(window, OpeningKind::Window, window->sill_height_meters);
+        return;
+    }
+    throw std::invalid_argument("element is not a hosted opening");
+}
+
 void Document::remove_hosted_opening(ElementId host_wall_id, ElementId opening_id) {
     auto& wall_element = require_wall(host_wall_id);
     auto* wall = wall_element.wall();
@@ -3430,17 +4669,14 @@ void Document::touch_related_rooms(ElementId wall_id) noexcept {
 }
 
 void Document::refresh_dependencies_for_wall(ElementId wall_id) {
-    auto_join_walls();
+    // Bulk imports/templates deliberately defer global joins.  Re-running the
+    // O(n²) join scan for each level-bound wall makes a 6×9 template behave
+    // like O(n³) work and can stall or crash a tablet before its first frame.
+    if (automatic_wall_join_enabled_) {
+        auto_join_walls();
+    }
     mark_rooms_dirty_for_wall(wall_id);
     touch_related_rooms(wall_id);
-    auto recomputed = recompute_dirty_rooms();
-    if (recomputed.empty()) {
-        const auto* wall_element = find_ptr(wall_id);
-        const auto* wall = wall_element == nullptr ? nullptr : wall_element->wall();
-        if (wall != nullptr) {
-            (void)detect_rooms_for_levels({wall->level_id});
-        }
-    }
     invalidate_dependency_graph_cache();
 }
 
@@ -3485,7 +4721,7 @@ void Document::replace_state(std::string name, std::vector<Element> elements, El
 }
 
 void Document::invalidate_dependency_graph_cache() noexcept {
-    dependency_graph_service_.invalidate();
+    dependency_graph_dirty_ = true;
 }
 
 } // namespace tbe::core

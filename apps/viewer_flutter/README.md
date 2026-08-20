@@ -1,26 +1,26 @@
 # viewer_flutter
 
-RenderScene-first Flutter viewer for the TabletBimEngine UI path.
+RenderScene-first Flutter viewer skeleton for the TabletBimEngine UI path.
 
-The default path loads `assets/sample_project.json` through the C API on a
-worker isolate, obtains the engine-generated RenderScene in memory, shows scene
-diagnostics, and hosts a renderer-neutral viewport contract.
+This app is intentionally minimal. It loads `render_scene.json`, shows scene
+diagnostics, and hosts a renderer-neutral viewport contract that is ready for a
+native Filament implementation.
+The older C ABI / FFI hooks stay in the package for future engine/status work,
+but they are not the primary 3D source in this pass.
 
 ## Scope
 
-- load bundled `assets/sample_project.json` through the engine
+- load bundled `assets/render_scene.json`
 - open an external RenderScene JSON file
 - parse and validate the scene safely
 - show object / vertex / triangle diagnostics
 - show object counts by kind
 - highlight/select elements from the object list
-- host the native Android Filament platform view
-- use the verified Flutter fallback viewport on non-Android platforms
-- use a shared 2D drawing kernel for wall, floor-outline and ceiling-outline tools
-- draw walls with endpoint, finite-intersection, grid, orthogonal and
-  parallel/perpendicular snapping; wall commits go through the engine worker
+- host a native Android platform-view skeleton
+- keep an iOS placeholder structure ready
 
-It does **not** implement cloud sync, schedules, or photorealistic rendering.
+It does **not** implement BIM editing, cloud sync, schedules, or photorealistic
+rendering.
 
 ## Why Flutter + Filament
 
@@ -29,13 +29,17 @@ is the future app UI path, and Filament is the native renderer planned for the
 mobile/desktop viewport. The current app proves the integration shape without
 making the UI depend on debug JSON, OBJ fallback files, or engine internals.
 
+Projection/view architecture notes:
+
+- `../../docs/projection_view_architecture.md`
+
 ## RenderScene flow
 
-The viewer loads a project through the engine worker or accepts a renderer-only
-JSON source for tests and tooling, then:
+The viewer loads `assets/render_scene.json` or a local file path, parses it in
+Dart, and then:
 
 1. shows diagnostics in Flutter,
-2. sends the scene payload to the mounted native Android viewport,
+2. sends the scene payload to the native Android Filament viewport by default,
 3. keeps a desktop fallback preview for macOS / Linux / Windows development.
 
 The renderer contract is intentionally neutral:
@@ -46,23 +50,6 @@ The renderer contract is intentionally neutral:
 - `setVisibleKinds`
 - `selectElement`
 - `highlightElement`
-- `setProjectionMode`
-- `setOrbitProjectionStyle`
-- `setDisplayStyle`
-
-## Tablet drafting flow
-
-In 2D mode, the drawing toolbar switches the viewport into a touch-first
-drafting surface. A wall can be dragged from an existing endpoint and the tool
-stays chained at the committed endpoint, so adjoining walls do not require
-pixel-perfect finger placement. The same `DrawingKernel` is used for wall
-segments and polygon outlines; floor and ceiling outline commit adapters remain
-separate because the semantic engine currently creates those systems from
-rooms, not arbitrary polygons.
-
-The 2D Flutter surface is intentionally used on Android while the native
-Filament view remains the 3D inspection path. This keeps tablet drafting and
-the preview/snap coordinate system aligned.
 
 ## Native renderer status
 
@@ -80,16 +67,18 @@ scene path:
   Z-up from the engine becoming Y-up in Filament.
 - Native logs include renderer creation, surface attach/detach, scene load
   counts, and any material-build failures.
+- Android now uses the Filament viewport as the primary renderer path.
 
-The Android app now builds the engine C API through `android/app/CMakeLists.txt`
-so `libtbe_capi.so` is packaged with the APK. APK/device validation still
-requires a local Android SDK, NDK and JDK 17.
+The local machine that produced this checkout does **not** have a complete
+Android SDK installed, so I could not run `flutter build apk` or launch on a
+device here. The code is structured for a normal Android Studio / SDK / NDK /
+JDK setup and should be the first native target once that toolchain is present.
 
 ### iOS
 
-The iOS runner no longer registers a fake native placeholder. It uses the same
-Flutter fallback renderer, while the engine source falls back to the validated
-RenderScene asset if the C API is not linked into the iOS process.
+The iOS runner includes a placeholder platform-view structure with the same
+Dart-facing contract, but full native rendering is deferred until the toolchain
+is available.
 
 ## Setup
 
@@ -215,11 +204,11 @@ doors, windows, and the rest of the RenderScene diagnostics data.
 ## Known limitations
 
 - the desktop preview is a fallback, not the final renderer
-- Android/iOS device builds still need toolchain smoke tests
-- floor/ceiling outlines currently stop at a shared-kernel preview until the
-  engine receives arbitrary polygon system commands
-- Android/iOS device builds still need toolchain smoke tests
-- selection/picking needs final device calibration for stylus-size tolerances
+- Android Filament rendering is wired in code, but the local SDK/toolchain was
+  not available here to run the APK proof
+- iOS is placeholder-only for now
+- no editing tools are implemented in this app
+- selection is still list-driven rather than full viewport picking
 
 ## Manual Android checklist
 
@@ -238,6 +227,6 @@ show:
 
 ## Future work
 
-- add arbitrary polygon floor/ceiling semantic commands
-- add editing panels and save/export actions
-- add an iOS native Metal renderer if native GPU parity is required
+- harden Android Filament rendering and add picking/highlight
+- add iOS/Metal rendering
+- connect live selection and editing after the renderer is stable

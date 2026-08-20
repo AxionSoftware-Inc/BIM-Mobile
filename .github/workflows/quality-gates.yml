@@ -1,0 +1,70 @@
+name: Production quality gates
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    name: Native core and API
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DTBE_ENABLE_OCCT=OFF
+      - name: Build
+        run: cmake --build build --parallel 2
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+      - name: Sanitizer configure
+        run: >-
+          cmake -S . -B build-asan -G Ninja -DTBE_ENABLE_OCCT=OFF
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_CXX_FLAGS=-fsanitize=address,undefined
+          -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined
+          -DCMAKE_SHARED_LINKER_FLAGS=-fsanitize=address,undefined
+      - name: Sanitizer build and test
+        env:
+          ASAN_OPTIONS: detect_leaks=0
+        run: |
+          cmake --build build-asan --parallel 2
+          ctest --test-dir build-asan --output-on-failure
+
+  flutter:
+    name: Flutter analyzer and regression suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Build native FFI dependency
+        run: |
+          cmake -S . -B build -G Ninja -DTBE_ENABLE_OCCT=OFF
+          cmake --build build --target tbe_capi_shared --parallel 2
+      - name: Fetch Flutter dependencies
+        working-directory: apps/viewer_flutter
+        run: flutter pub get
+      - name: Analyze
+        working-directory: apps/viewer_flutter
+        run: flutter analyze
+      - name: Test
+        working-directory: apps/viewer_flutter
+        env:
+          TBE_CAPI_PATH: ${{ github.workspace }}/build/src/api/libtbe_capi.so
+        run: flutter test
+      - name: Enforce architecture boundaries
+        run: bash tools/check_architecture.sh
+
+  whitespace:
+    name: Diff hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Check whitespace errors
+        run: git diff --check HEAD^ HEAD

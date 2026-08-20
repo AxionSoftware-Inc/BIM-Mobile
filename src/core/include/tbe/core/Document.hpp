@@ -1,15 +1,23 @@
 #pragma once
 
 #include "tbe/core/Element.hpp"
-#include "tbe/core/DependencyGraphService.hpp"
 
 #include <filesystem>
+#include <set>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace tbe::core {
+
+enum class GeometryDetail {
+    // Fast analytical envelope used by interactive viewport rendering.
+    Envelope,
+    // Per-layer mesh used by core-level authoring/tests and explicit detail
+    // exports. Quantities never require this mesh: assemblies are semantic.
+    Layered,
+};
 
 class Document {
 public:
@@ -23,18 +31,19 @@ public:
         MaterialCategory category,
         std::optional<double> density_kg_per_m3 = std::nullopt,
         std::optional<double> unit_cost = std::nullopt,
-        std::map<std::string, std::string> metadata = {}
+        std::map<std::string, std::string> metadata = {},
+        std::string display_color = "#B0B7C3"
     );
     [[nodiscard]] const MaterialDefinition* get_material(ElementId material_id) const noexcept;
     void update_material(MaterialDefinition material);
-    ElementId create_wall_type(std::string name, std::vector<WallAssemblyLayer> layers);
+    ElementId create_wall_type(std::string name, std::vector<WallAssemblyLayer> layers, WallTypeCategory category = WallTypeCategory::Generic);
     [[nodiscard]] const WallTypeData* get_wall_type(ElementId wall_type_id) const noexcept;
     void update_wall_type(WallTypeData wall_type);
     ElementId create_layered_assembly(LayeredAssemblyKind kind, std::string name, std::vector<WallAssemblyLayer> layers);
     [[nodiscard]] const LayeredAssemblyData* get_layered_assembly(ElementId assembly_id) const noexcept;
     void update_layered_assembly(LayeredAssemblyData assembly);
     ElementId create_level(std::string name, double elevation_meters, double default_wall_height_meters);
-    ElementId create_wall(std::string name, Line2 axis, double thickness_meters, double height_meters, ElementId level_id = 0);
+    ElementId create_wall(std::string name, Line2 axis, double thickness_meters, double height_meters, ElementId level_id = 0, ElementId assembly_id = 0);
     ElementId create_door(std::string name, ElementId host_wall_id, double offset_meters, double width_meters, double height_meters);
     ElementId create_window(
         std::string name,
@@ -60,7 +69,8 @@ public:
         ElementId material_id = 0,
         ElementId assembly_id = 0,
         std::optional<double> slope_degrees = std::nullopt,
-        std::optional<double> overhang_meters = std::nullopt
+        std::optional<double> overhang_meters = std::nullopt,
+        std::vector<ElementId> source_wall_ids = {}
     );
     ElementId create_column(
         ElementId level_id,
@@ -88,17 +98,65 @@ public:
         double total_run_meters,
         int riser_count,
         int tread_count,
-        ElementId material_id
+        ElementId material_id,
+        ElementId assembly_id = 0
     );
     ElementId create_floor_system_for_room(ElementId room_id, ElementId assembly_id);
     ElementId create_ceiling_system_for_room(ElementId room_id, ElementId assembly_id, double height_offset_meters = 0.0);
     std::vector<ElementId> generate_floor_systems_for_all_rooms(ElementId default_assembly_id);
     std::vector<ElementId> generate_ceiling_systems_for_all_rooms(ElementId default_assembly_id, double height_offset_meters = 0.0);
+    ElementId create_floor_system_from_profile(
+        ElementId level_id,
+        std::vector<Point2> boundary_polygon,
+        ElementId assembly_id,
+        double thickness_meters = 0.18
+    );
+    ElementId create_ceiling_system_from_profile(
+        ElementId level_id,
+        std::vector<Point2> boundary_polygon,
+        ElementId assembly_id,
+        double height_offset_meters = 0.0
+    );
     void update_floor_system_from_room(ElementId room_id);
     void update_ceiling_system_from_room(ElementId room_id);
+    void update_level(ElementId level_id, std::optional<std::string> name, std::optional<double> elevation_meters, std::optional<double> default_wall_height_meters);
+    void move_level_elevation(ElementId level_id, double elevation_meters);
+    void set_wall_level_constraints(
+        ElementId wall_id,
+        ElementId base_level_id,
+        ElementId top_level_id,
+        double base_offset_meters,
+        double top_offset_meters,
+        WallHeightMode height_mode
+    );
+    void set_opening_level_lock(ElementId opening_id, bool locked);
+    void set_opening_level(ElementId opening_id, ElementId level_id);
+    void set_opening_level_constraint(ElementId opening_id, ElementId level_id, double level_offset_meters);
+    std::vector<ElementId> create_elements_from_profile(const ProfileDraft& draft);
     void set_wall_type(ElementId wall_id, ElementId wall_type_id);
+    /// Applies a canonical compound assembly to a supported element. Legacy
+    /// wall types remain readable, but new authoring should use this API.
+    void set_element_assembly(ElementId element_id, ElementId assembly_id);
+    void update_roof_properties(ElementId roof_id, RoofType roof_type, std::optional<double> slope_degrees, std::optional<double> overhang_meters);
+    /// Creates/removes an explicit structural void in a wall. No destructive
+    /// boolean is performed; the host wall owns the cut profile semantically.
+    void set_structural_wall_cut(ElementId wall_id, ElementId cutter_id, bool enabled, double clearance_meters = 0.0);
+    /// Stores an explicit analytical beam-to-column join. Geometry remains
+    /// separate and cheap to regenerate.
+    void set_beam_column_join(ElementId beam_id, ElementId column_id, bool enabled);
     void set_wall_properties(ElementId wall_id, double thickness_meters, double height_meters, ElementId wall_type_id = 0);
     void set_wall_axis(ElementId wall_id, Line2 axis);
+    /// Applies an axis edit transactionally. A rigid body move carries only
+    /// immediate joined endpoints; an endpoint-handle edit stays local.
+    void set_wall_axis_with_joins(ElementId wall_id, Line2 axis);
+    /// Atomically trims or extends the explicitly chosen endpoint of two
+    /// same-storey wall axes to their infinite-line intersection.
+    void trim_extend_walls(
+        ElementId first_wall_id,
+        bool first_uses_start,
+        ElementId second_wall_id,
+        bool second_uses_start
+    );
     ElementId split_wall(ElementId wall_id, double offset_meters);
     void delete_element(ElementId element_id);
     void move_hosted_opening(ElementId opening_id, double offset_meters);
@@ -106,8 +164,15 @@ public:
     void resize_window(ElementId window_id, double width_meters, double height_meters, double sill_height_meters);
 
     void auto_join_walls();
+    /// Rebuilds deterministic host relations: beam-to-column joins, safe
+    /// column-to-wall cuts and stair openings in matching floor/ceiling systems.
+    void auto_join_structural_elements();
+    [[nodiscard]] const std::vector<HostRelation>& host_relations() const noexcept;
+    /// Bulk import/template construction can defer expensive join discovery
+    /// until a deliberate authoring operation asks for it.
+    void set_automatic_wall_join_enabled(bool enabled) noexcept;
     std::vector<ElementId> detect_rooms();
-    void regenerate_dirty_geometry();
+    void regenerate_dirty_geometry(GeometryDetail detail = GeometryDetail::Layered);
     [[nodiscard]] DependencyGraph build_dependency_graph() const;
     [[nodiscard]] const DependencyGraph& dependency_graph() const;
     [[nodiscard]] Revision dependency_graph_version() const noexcept;
@@ -115,6 +180,9 @@ public:
     std::vector<ElementId> recompute_dirty_rooms();
     std::vector<ElementId> recompute_all_rooms();
     [[nodiscard]] const std::vector<ElementId>& dirty_room_ids() const noexcept;
+    /// Drops only deferred room-discovery requests. Existing rooms remain
+    /// intact; final compute can still explicitly recompute all rooms.
+    void clear_dirty_room_requests() noexcept;
     [[nodiscard]] ValidationReport validate_document() const;
     [[nodiscard]] std::vector<WallRoomAdjacency> wall_room_adjacencies() const;
     [[nodiscard]] std::vector<WallScheduleRow> generate_wall_schedule() const;
@@ -161,11 +229,17 @@ private:
     [[nodiscard]] std::string wall_type_name(ElementId wall_type_id) const;
     [[nodiscard]] double total_wall_type_thickness(const WallTypeData& wall_type) const;
     [[nodiscard]] std::string layered_assembly_name(ElementId assembly_id) const;
+    [[nodiscard]] double level_elevation(ElementId level_id) const;
+    [[nodiscard]] double resolved_wall_base_elevation(const WallData& wall) const;
+    [[nodiscard]] double resolved_wall_height(const WallData& wall) const;
+    [[nodiscard]] double resolved_roof_surface_area(const RoofData& roof) const;
+    [[nodiscard]] std::vector<Point2> normalized_profile_polygon(const ProfileDraft& draft) const;
     void add_opening_to_wall(ElementId host_wall_id, HostedOpening opening);
     void validate_opening(const WallData& wall, double offset_meters, double width_meters, double height_meters) const;
     void validate_wall_axis(Line2 axis, double thickness_meters, double height_meters) const;
     void validate_wall_openings(const WallData& wall, std::optional<ElementId> ignored_opening_id = std::nullopt) const;
     void update_wall_opening(ElementId host_wall_id, const HostedOpening& opening);
+    void sync_opening_level_constraint(ElementId opening_id);
     void remove_hosted_opening(ElementId host_wall_id, ElementId opening_id);
     void touch_related_rooms(ElementId wall_id) noexcept;
     void refresh_dependencies_for_wall(ElementId wall_id);
@@ -183,8 +257,22 @@ private:
     std::map<ElementId, LayeredAssemblyData> layered_assemblies_{};
     std::map<ElementId, FloorSystemData> floor_systems_{};
     std::map<ElementId, CeilingSystemData> ceiling_systems_{};
+    std::vector<std::pair<ElementId, ElementId>> beam_column_joins_{};
+    std::vector<HostRelation> host_relations_{};
+    // An explicit "remove wall cut" is a user decision, not an invitation
+    // for the automatic resolver to recreate the same void on the next edit.
+    std::set<std::pair<ElementId, ElementId>> disabled_auto_structural_cuts_{};
     std::vector<ElementId> dirty_room_ids_{};
-    mutable DependencyGraphService dependency_graph_service_{};
+    // Levels whose room topology changed. This lets interactive snapshots
+    // recompute only the edited storey instead of scanning the whole model.
+    std::vector<ElementId> dirty_room_level_ids_{};
+    bool automatic_wall_join_enabled_{true};
+    // Structural resolution can create semantic wall cuts. Those cuts mark a
+    // wall dirty, but must never recursively start a second resolver pass.
+    bool resolving_structural_relations_{false};
+    mutable DependencyGraph dependency_graph_cache_{};
+    mutable bool dependency_graph_dirty_{true};
+    mutable Revision dependency_graph_version_{};
 };
 
 } // namespace tbe::core
