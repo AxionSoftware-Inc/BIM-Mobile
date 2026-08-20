@@ -35,6 +35,13 @@ class ViewerDocumentController extends ChangeNotifier {
 
   Future<RenderSceneLoadResult> reload() => loadBundledSample();
 
+  /// Applies a scene returned by an edit/refresh operation to the document
+  /// state as well as to the viewport. Initial loads already call [_apply]
+  /// internally; this public entry point keeps post-edit refreshes in sync.
+  void applyResult(RenderSceneLoadResult result) {
+    _apply(result);
+  }
+
   void _apply(RenderSceneLoadResult result) {
     scene = result.scene;
     warnings = result.warnings;

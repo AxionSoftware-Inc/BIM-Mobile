@@ -27,11 +27,18 @@ android {
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
         }
+
+        externalNativeBuild {
+            cmake {
+                targets += "tbe_capi_shared"
+            }
+        }
     }
 
     externalNativeBuild {
         cmake {
             path = file("CMakeLists.txt")
+            version = "3.30.3"
         }
     }
 

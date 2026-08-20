@@ -506,7 +506,9 @@ class TbeViewerApi {
     final attempted = <String>[];
     for (final candidate in candidates) {
       final file = File(candidate);
-      if (candidate == 'libtbe_capi.dylib' || file.existsSync()) {
+      final isPlatformLibraryName = libraryNames.contains(candidate);
+      if (isPlatformLibraryName || candidate == 'libtbe_capi.dylib' ||
+          file.existsSync()) {
         try {
           return ffi.DynamicLibrary.open(candidate);
         } catch (_) {

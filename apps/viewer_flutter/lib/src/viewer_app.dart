@@ -117,6 +117,9 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       return;
     }
     final scene = result.scene;
+    if (!identical(_documentController.scene, scene)) {
+      _documentController.applyResult(result);
+    }
     setState(() {
       _statusMessage = scene == null
           ? 'RenderScene load failed.'
