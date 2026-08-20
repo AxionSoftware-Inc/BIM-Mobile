@@ -484,11 +484,8 @@ const std::vector<ElementId>& DetectRoomsCommand::detected_room_ids() const noex
 
 void CommandProcessor::execute(Document& document, ICommand& command) {
     command.execute(document);
-    executed_deltas_.push_back(StoredDelta{
-        .command_name = std::string(command.name()),
-        .delta = command.delta(),
-    });
-    undone_deltas_.clear();
+    executed_commands_.push_back(&command);
+    undone_commands_.clear();
     history_.push_back(TransactionEntry{
         .command_name = std::string(command.name()),
         .affected_element_ids = command.affected_element_ids(),
@@ -498,32 +495,28 @@ void CommandProcessor::execute(Document& document, ICommand& command) {
 }
 
 bool CommandProcessor::undo_last(Document& document) {
-    if (executed_deltas_.empty()) {
+    if (executed_commands_.empty()) {
         return false;
     }
 
-    auto stored = std::move(executed_deltas_.back());
-    executed_deltas_.pop_back();
-    restore_snapshots(document, stored.delta.before);
-    document.auto_join_walls();
-    document.detect_rooms();
-    transaction_log_.emplace_back("Undo " + stored.command_name);
-    undone_deltas_.push_back(std::move(stored));
+    auto* command = executed_commands_.back();
+    executed_commands_.pop_back();
+    command->undo(document);
+    undone_commands_.push_back(command);
+    transaction_log_.emplace_back(std::string("Undo") + std::string(command->name()));
     return true;
 }
 
 bool CommandProcessor::redo_last(Document& document) {
-    if (undone_deltas_.empty()) {
+    if (undone_commands_.empty()) {
         return false;
     }
 
-    auto stored = std::move(undone_deltas_.back());
-    undone_deltas_.pop_back();
-    restore_snapshots(document, stored.delta.after);
-    document.auto_join_walls();
-    document.detect_rooms();
-    transaction_log_.emplace_back("Redo " + stored.command_name);
-    executed_deltas_.push_back(std::move(stored));
+    auto* command = undone_commands_.back();
+    undone_commands_.pop_back();
+    command->redo(document);
+    executed_commands_.push_back(command);
+    transaction_log_.emplace_back(std::string("Redo") + std::string(command->name()));
     return true;
 }
 

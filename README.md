@@ -11,11 +11,7 @@ Tablet-first CAD/BIM engine foundation built around a small C++ core, with room 
 
 Open CASCADE is treated as an optional geometry backend at this stage. The project builds without it, but switches on OCCT integration automatically when CMake can find a valid installation and `TBE_ENABLE_OCCT=ON`.
 
-The fallback engine generates wall-local 2D profiles, opening rectangles, and 3D extrusion mesh buffers without OCCT. When OCCT is installed, the same profile/opening data is passed through the exact solid backend to create real `TopoDS_Shape` solids and tessellated render meshes.
-
-Geometry is selected through `IGeometryBackend`: the portable fallback is used
-when OCCT is unavailable, while an OCCT-enabled build uses the exact solid
-adapter for wall extrusion, opening cuts, and tessellation.
+The fallback engine already generates wall-local 2D profiles, opening rectangles, and 3D extrusion mesh buffers without OCCT. OCCT can later consume the same profile/opening data to create real `TopoDS_Shape` solids.
 
 Level 2 engine MVP also supports simple levels, rectangular room detection from four connected walls, room area/perimeter calculation, command transaction logging, JSON serialization, reload, and geometry regeneration after load.
 

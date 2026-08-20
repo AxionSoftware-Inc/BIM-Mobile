@@ -248,8 +248,6 @@ struct TransactionEntry {
 
 class CommandProcessor {
 public:
-    // The processor copies command deltas at execution time. Callers may keep
-    // commands on the stack; their lifetime is no longer tied to undo/redo.
     void execute(Document& document, ICommand& command);
     bool undo_last(Document& document);
     bool redo_last(Document& document);
@@ -258,15 +256,12 @@ public:
     [[nodiscard]] const std::vector<std::string>& transaction_log() const noexcept;
 
 private:
-    struct StoredDelta {
-        std::string command_name{};
-        DocumentDelta delta{};
-    };
-
+    // TODO: extend this structure into full undo/redo transactions once commands
+    // can capture inverse operations and semantic diffs.
     std::vector<TransactionEntry> history_{};
     std::vector<std::string> transaction_log_;
-    std::vector<StoredDelta> executed_deltas_{};
-    std::vector<StoredDelta> undone_deltas_{};
+    std::vector<ICommand*> executed_commands_{};
+    std::vector<ICommand*> undone_commands_{};
 };
 
 } // namespace tbe::core

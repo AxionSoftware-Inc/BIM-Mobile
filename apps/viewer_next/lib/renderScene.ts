@@ -181,9 +181,7 @@ export function normalizeRenderScene(value: unknown, source = "render_scene.json
   const objects = asArray<unknown>(value.objects)
     .map((entry) => parseRenderSceneObject(entry))
     .filter((entry): entry is RenderSceneObject => entry !== null);
-  // An empty project is a valid RenderScene. Reject only payloads that do not
-  // contain the required object list at all.
-  if (!Array.isArray(value.objects)) {
+  if (objects.length === 0) {
     return null;
   }
   return {

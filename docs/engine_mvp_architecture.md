@@ -21,14 +21,14 @@ The repository is currently a C++20 engine foundation with an early automated BI
 - `tbe_core` library exists.
 - `Project`, `Document`, and basic `Element` types exist.
 - Levels, walls, doors, windows, rooms, joins, openings, and generated geometry cache exist as semantic data.
-- `GeometryService` selects a portable fallback or isolated Open CASCADE backend and owns generated mesh construction.
+- `GeometryService` creates fallback 2D profiles and 3D extrusion mesh buffers.
 - `JobSystem` exists for multi-core background work.
 - Command objects and transaction logging exist for basic engine operations.
 - Documents can serialize to JSON, reload, and regenerate geometry.
 - CLI and unit tests exist for smoke testing.
-- Open CASCADE is optional; when present, the backend builds wall solids, cuts hosted openings, and tessellates them without leaking OCCT types into the public model.
+- Open CASCADE is optional and not yet used for real solid modeling.
 
-Current limitation: builds without OCCT use a lightweight deterministic mesh/profile generator. Room detection is intentionally simple and currently focused on axis-aligned rectangular loops.
+Current limitation: fallback geometry is still a lightweight mesh/profile generator, not real OCCT solids or boolean cuts. Room detection is intentionally simple and currently focused on axis-aligned rectangular loops.
 
 ## Target MVP State
 
@@ -74,7 +74,7 @@ The engine must stay independent from Flutter, Android, iOS, Win32, or Cocoa. Pl
    - This is the main product value.
 
 4. Geometry adapter
-   - `IGeometryBackend` with portable fallback and Open CASCADE implementations for solids, booleans, curve operations, and tessellation.
+   - Open CASCADE implementation for solids, booleans, curve operations, tessellation.
    - Hidden behind engine interfaces.
 
 5. Regeneration pipeline
@@ -166,13 +166,14 @@ Avoid leaking OCCT types into public engine APIs. That keeps the door open for c
 
 ## Near-Term Implementation Order
 
-1. Keep typed semantic elements, stable IDs, revisions, dirty flags, and relationship tracking behind the `Document` facade.
-2. Keep edit operations in command objects and snapshot-based transaction history.
-3. Expand the wall baseline geometry and 2D intersection/join solver beyond the MVP cases.
-4. Add hosted door/window placement rules for non-rectangular and multi-level cases.
-5. Add serialization, backend, and geometry rule tests for every new element type.
-6. Add cancellable background regeneration and cloud/offline job adapters.
-7. Add a minimal native debug viewer only after engine behavior is testable.
+1. Replace placeholder `Element` with typed element data for level, wall, door, window, slab.
+2. Add command objects for create/edit operations.
+3. Add stable IDs, revisions, dirty flags, and relationship tracking.
+4. Add wall baseline geometry and 2D intersection/join solver.
+5. Add OCCT adapter for wall extrusion.
+6. Add hosted door/window placement and opening cuts.
+7. Add serialization tests and geometry rule tests.
+8. Add a minimal native debug viewer only after engine behavior is testable.
 
 ## What To Avoid For Now
 

@@ -36,8 +36,6 @@ The C ABI uses:
 - POD structs
 - integer status codes
 - explicitly allocated result buffers for strings and interval arrays
-- per-handle serialization, so calls on one `TbeEngineHandle` may safely come
-  from different threads
 
 ## Ownership Rules
 
@@ -53,14 +51,6 @@ Free them with:
 
 - `tbe_free_string()`
 - `tbe_free_memory()`
-
-`tbe_get_last_error()` returns a thread-local copy of the handle's latest
-message. The pointer remains valid until the next `tbe_get_last_error()` call
-on that thread and is intended for diagnostics immediately after a failed call.
-Destroying a handle must not race with any other call using that handle.
-
-The C++ `EngineSession` API is deliberately single-owner. If one C++ session
-is shared between threads, the application must provide its own mutex.
 
 Passing `NULL` to these free functions is safe.
 
@@ -134,14 +124,6 @@ Placement:
 - `find_wall_host_at_point()`
 
 Snap options let you enable only the candidate families needed by your tool.
-
-## Shared viewer contracts
-
-- RenderScene v1 is defined in `docs/contracts/render_scene.schema.json`.
-- Edit command names and payloads are defined in
-  `docs/contracts/edit_commands.md`.
-- Native commands regenerate semantic JSON and RenderScene together; viewers
-  consume those artifacts and do not edit semantic JSON directly.
 
 ## Minimal C++ Example
 

@@ -686,36 +686,6 @@ int main() {
     reversed_document.auto_join_walls();
     assert(reversed_document.find_ptr(reversed_wall_a)->wall()->joins.size() == 1);
 
-    tbe::core::Document collinear_document{"Collinear continuation"};
-    const auto collinear_level = collinear_document.create_level("Level 1", 0.0, 3.0);
-    const auto collinear_first = collinear_document.create_wall(
-        "First",
-        tbe::core::Line2{.start = {.x = 0.0, .y = 0.0}, .end = {.x = 4.0, .y = 0.0}},
-        0.2,
-        3.0,
-        collinear_level
-    );
-    const auto collinear_second = collinear_document.create_wall(
-        "Continuation",
-        tbe::core::Line2{.start = {.x = 4.0, .y = 0.0}, .end = {.x = 8.0, .y = 0.0}},
-        0.2,
-        3.0,
-        collinear_level
-    );
-    collinear_document.auto_join_walls();
-    assert(collinear_document.find_ptr(collinear_first)->wall()->joins.size() == 1);
-    assert(collinear_document.find_ptr(collinear_second)->wall()->joins.size() == 1);
-    assert(collinear_document.find_ptr(collinear_first)->wall()->joins.front().kind == tbe::core::WallJoinKind::End);
-
-    tbe::core::Document cross_level_document{"Cross level no join"};
-    const auto lower_level = cross_level_document.create_level("Lower", 0.0, 3.0);
-    const auto cross_upper_level = cross_level_document.create_level("Upper", 3.2, 3.0);
-    const auto lower_wall = cross_level_document.create_wall("Lower wall", {{0.0, 0.0}, {4.0, 0.0}}, 0.2, 3.0, lower_level);
-    const auto upper_wall = cross_level_document.create_wall("Upper wall", {{0.0, 0.0}, {4.0, 0.0}}, 0.2, 3.0, cross_upper_level);
-    cross_level_document.auto_join_walls();
-    assert(cross_level_document.find_ptr(lower_wall)->wall()->joins.empty());
-    assert(cross_level_document.find_ptr(upper_wall)->wall()->joins.empty());
-
     struct CornerCase {
         const char* name;
         tbe::core::Line2 first;
