@@ -225,7 +225,12 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
         final size = constraints.biggest;
-        final nativeOwnedInteraction = controller.nativeOwnsClipGestures;
+        // The Android Filament host owns all 3D camera gestures. The previous
+        // flag only covered section-box handles, so normal 3D pinch updates
+        // could also reach Flutter's camera controller and replay a stale orbit
+        // snapshot when the pinch ended.
+        final nativeOwnedInteraction =
+            widget.nativeRenderer && controller.projectionMode.is3D;
         controller.setViewportSize(size);
         RenderSceneLevel? inlineLevel;
         Offset? inlineLevelOrigin;

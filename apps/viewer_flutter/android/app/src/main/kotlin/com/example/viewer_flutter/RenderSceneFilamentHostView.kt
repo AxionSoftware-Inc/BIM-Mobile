@@ -524,6 +524,10 @@ internal class RenderSceneFilamentHostView(
   private var touchDownY = 0f
   private var touchMoved = false
   private var touching = false
+  // A pinch must never fall through to the one-finger orbit path when one
+  // pointer is released. Keeping this state also lets us reset the orbit
+  // baseline to the pointer that remains on the surface.
+  private var multiTouching = false
 
   init {
     setBackgroundColor(Color.rgb(243, 247, 244))
@@ -1659,12 +1663,13 @@ internal class RenderSceneFilamentHostView(
     wallJunctionElevations: List<Double>,
   ): GeometryData? {
     val kind = normalizeKind(objectData.kind)
-    // In orbit view floors/ceilings are surfaces, not architectural linework,
-    // and columns are narrow solids whose edge prisms overlap ceiling/beam
-    // intersections. Their coplanar borders were being depth-tested as
-    // repeated heavy storey bands and could flicker while orbiting. Sections
-    // still get their section edges from the clipped wall geometry.
-    if (projectionMode == "isometric" && kind in setOf("floor", "ceiling", "slab", "column")) {
+    // In orbit view floors/ceilings are surfaces, not architectural linework.
+    // Their coplanar borders were being depth-tested as repeated heavy storey
+    // bands and could flicker while orbiting. Columns keep only their vertical
+    // edges below; those are readable without reintroducing the horizontal
+    // edges that overlap beams and slabs. Sections still get their section
+    // edges from the clipped wall geometry.
+    if (projectionMode == "isometric" && kind in setOf("floor", "ceiling", "slab")) {
       return null
     }
     val wallEdges = kind == "wall"
@@ -1690,9 +1695,23 @@ internal class RenderSceneFilamentHostView(
     val points = if (clipVolume.active) geometry.points else visual.points
     val triangles = if (clipVolume.active) geometry.triangles else visual.triangles
     val edges = if (clipVolume.active) clippedFeatureEdges(points, triangles) else visual.featureEdges
+    val stableColumnEdges = if (projectionMode == "isometric" && kind == "column") {
+      edges.filter { edge ->
+        val first = points.getOrNull(edge.first) ?: return@filter false
+        val second = points.getOrNull(edge.second) ?: return@filter false
+        val dx = kotlin.math.abs(second.x - first.x)
+        val dy = kotlin.math.abs(second.y - first.y)
+        val dz = kotlin.math.abs(second.z - first.z)
+        // A box column's vertical edges are the useful 3D linework. Horizontal
+        // top/bottom edges are exactly the coplanar borders that used to flicker.
+        dy > 0.05 && dy > max(dx, dz) * 3.0
+      }
+    } else {
+      edges
+    }
     val generated = edgeGeometry(
       points,
-      edges,
+      stableColumnEdges,
       triangles,
       wallJunctionEdges = wallEdges && isSectionLike,
       wallJunctionElevations = relevantJunctions,
@@ -3285,6 +3304,7 @@ internal class RenderSceneFilamentHostView(
     scaleGestureDetector.onTouchEvent(event)
     when (event.actionMasked) {
       MotionEvent.ACTION_DOWN -> {
+        multiTouching = false
         lastTouchX = event.x
         lastTouchY = event.y
         touchDownX = event.x
@@ -3295,8 +3315,16 @@ internal class RenderSceneFilamentHostView(
         activeSectionHandle = selectionOverlay.hitSectionHandle(event.x, event.y)
         return true
       }
+      MotionEvent.ACTION_POINTER_DOWN -> {
+        // From this event until the final pointer is released, all movement
+        // belongs to ScaleGestureDetector. Do not let the first pointer's old
+        // orbit baseline leak into the next one-finger MOVE event.
+        multiTouching = true
+        touchMoved = true
+        return true
+      }
       MotionEvent.ACTION_MOVE -> {
-        if (scaleGestureDetector.isInProgress) {
+        if (event.pointerCount > 1 || multiTouching || scaleGestureDetector.isInProgress) {
           touchMoved = true
           return true
         }
@@ -3325,11 +3353,26 @@ internal class RenderSceneFilamentHostView(
         }
         return true
       }
+      MotionEvent.ACTION_POINTER_UP -> {
+        touchMoved = true
+        val releasedIndex = event.actionIndex
+        val remainingIndex = (0 until event.pointerCount)
+          .firstOrNull { index -> index != releasedIndex }
+        if (remainingIndex != null) {
+          lastTouchX = event.getX(remainingIndex)
+          lastTouchY = event.getY(remainingIndex)
+          multiTouching = event.pointerCount - 1 > 1
+        } else {
+          multiTouching = false
+        }
+        return true
+      }
       MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
         if (event.actionMasked == MotionEvent.ACTION_UP && !touchMoved && activeSectionHandle == null) {
           pickVisibleObject(event.x, event.y)
         }
         activeSectionHandle = null
+        multiTouching = false
         touching = false
         requestRender()
         return true
