@@ -20,7 +20,12 @@ extension _ViewerWorkspaceInteractions on _ViewerHomePageState {
     }
   }
 
-  Future<void> _showSectionDialog() async {
+  Future<void> _showSectionDialog() {
+    if (_workspaceBusy || !mounted) return Future<void>.value();
+    return _runViewNavigation(_showSectionDialogNow);
+  }
+
+  Future<void> _showSectionDialogNow() async {
     final scene = _scene;
     if (_engineRepository == null ||
         scene == null ||

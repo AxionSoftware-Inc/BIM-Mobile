@@ -42,6 +42,7 @@ import 'tools/wall_tool_controller.dart';
 import 'tools/wall_authoring_geometry.dart';
 import 'tools/wall_repair_geometry.dart';
 import 'view_tabs.dart';
+import 'view_navigation_coordinator.dart';
 import 'view_navigation_policy.dart';
 import 'view_workspace_store.dart';
 import 'viewer_app_dependencies.dart';
@@ -109,6 +110,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   String? _statusMessage;
   String? _loadError;
   bool _isBusy = false;
+  bool _isViewNavigationBusy = false;
   bool _projectHasChanges = false;
   bool _showInspector = false;
   bool _showObjectList = true;
@@ -117,6 +119,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   int? _activeLevelId;
   RenderSceneSection? _activeSectionView;
   final ViewWorkspaceStore _viewWorkspace = ViewWorkspaceStore.standard();
+  final ViewNavigationCoordinator _viewNavigation = ViewNavigationCoordinator();
 
   List<OpenedViewTab> get _openedViewTabs => _viewWorkspace.tabs;
   String? get _activeViewTabId => _viewWorkspace.activeTabId;
@@ -127,6 +130,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   RenderScene? get _sheetSourceScene => _viewWorkspace.sheetSourceScene;
   set _sheetSourceScene(RenderScene? value) =>
       _viewWorkspace.cacheSheetSource(value);
+  bool get _workspaceBusy => _isBusy || _isViewNavigationBusy;
   double _planViewRangeMeters = 2.0;
 
   RenderSceneProjectionMode _projectionMode = kDefaultPlanProjectionMode;
@@ -393,6 +397,21 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
 
   void _updateViewportState(VoidCallback callback) {
     if (mounted) setState(callback);
+  }
+
+  Future<void> _runViewNavigation(Future<void> Function() operation) {
+    return _viewNavigation.run(() async {
+      if (mounted) {
+        _updateViewportState(() => _isViewNavigationBusy = true);
+      }
+      try {
+        await operation();
+      } finally {
+        if (mounted) {
+          _updateViewportState(() => _isViewNavigationBusy = false);
+        }
+      }
+    });
   }
 
   @override

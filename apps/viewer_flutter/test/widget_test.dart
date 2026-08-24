@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -44,6 +45,7 @@ import 'package:viewer_flutter/src/viewer_app.dart';
 import 'package:viewer_flutter/src/viewport_interaction.dart';
 import 'package:viewer_flutter/src/viewport_gesture_controller.dart';
 import 'package:viewer_flutter/src/view_workspace_store.dart';
+import 'package:viewer_flutter/src/view_navigation_coordinator.dart';
 import 'package:viewer_flutter/src/view_tabs.dart';
 import 'package:viewer_flutter/src/view_navigation_policy.dart';
 

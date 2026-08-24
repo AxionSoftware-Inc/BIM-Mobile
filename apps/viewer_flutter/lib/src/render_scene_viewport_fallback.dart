@@ -291,7 +291,20 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
               );
             },
             onPointerDown: (PointerDownEvent event) {
-              if (nativeOwnedInteraction) return;
+              if (nativeOwnedInteraction) {
+                // Section camera gestures stay native, but keep enough
+                // pointer state to route a stationary one-finger tap through
+                // the shared Flutter picker. This restores level-line and
+                // context-menu interactions without taking camera drags away
+                // from Filament.
+                _activePointerCount += 1;
+                _activePointer = event.pointer;
+                _pointerDownPosition = event.localPosition;
+                _lastPointerPosition = event.localPosition;
+                _isSecondaryDrag = event.buttons == kSecondaryMouseButton ||
+                    event.buttons == kMiddleMouseButton;
+                return;
+              }
               _activePointerCount += 1;
               if (_activePointerCount > 1) {
                 // A second finger belongs to pan/zoom navigation. Cancel the
@@ -409,7 +422,10 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
               _emitHover(scene, size, event.localPosition, event.position);
             },
             onPointerMove: (PointerMoveEvent event) {
-              if (nativeOwnedInteraction) return;
+              if (nativeOwnedInteraction) {
+                _lastPointerPosition = event.localPosition;
+                return;
+              }
               if (_activePointer != event.pointer) {
                 return;
               }
@@ -516,6 +532,22 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
             },
             onPointerUp: (PointerUpEvent event) async {
               if (nativeOwnedInteraction) {
+                final down = _pointerDownPosition;
+                final moved = down == null
+                    ? double.infinity
+                    : (event.localPosition - down).distance;
+                if (_activePointer == event.pointer &&
+                    _activePointerCount <= 1 &&
+                    !_isSecondaryDrag &&
+                    moved < _tapDistanceThreshold(event)) {
+                  widget.onSceneTap?.call(_sceneDetails(
+                    scene,
+                    size,
+                    event.localPosition,
+                    event.position,
+                    touchFriendly: _usesTouchNavigation(event),
+                  ));
+                }
                 _clearPointerState();
                 return;
               }

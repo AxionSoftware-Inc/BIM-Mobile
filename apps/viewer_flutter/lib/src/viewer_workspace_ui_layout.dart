@@ -32,7 +32,7 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
                   OpenedViewTabBar(
                     tabs: List<OpenedViewTab>.unmodifiable(_openedViewTabs),
                     activeTabId: _activeViewTabId,
-                    enabled: !_isBusy,
+                    enabled: !_workspaceBusy,
                     onSelect: (tabId) => unawaited(
                       _selectOpenedViewTab(tabId),
                     ),
@@ -46,7 +46,7 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
                       AuthoringToolPalette(
                         mode: _interactionMode,
                         enabled: scene != null &&
-                            !_isBusy &&
+                            !_workspaceBusy &&
                             _sheetWorkspace.activeSheet == null,
                         onModeChanged: _setInteractionMode,
                       ),
@@ -78,7 +78,7 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
   ) {
     return WorkspaceAppBar(
       statusMessage: _statusMessage,
-      busy: _isBusy,
+      busy: _workspaceBusy,
       engineBacked: _engineBackedMode,
       hasScene: fullScene != null,
       hasSelection: _viewportController.selectedElementId != null,
@@ -187,8 +187,9 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
                   ),
                   const SizedBox(width: 8),
                   FilledButton.tonalIcon(
-                    onPressed:
-                        scene == null || _isBusy ? null : _showSectionBoxDialog,
+                    onPressed: scene == null || _workspaceBusy
+                        ? null
+                        : _showSectionBoxDialog,
                     icon: const Icon(Icons.crop_free_outlined, size: 18),
                     label: Text(_viewportController.hasSectionBox
                         ? 'Section Box on'
@@ -197,14 +198,15 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
                 ],
                 const SizedBox(width: 10),
                 FilledButton.tonalIcon(
-                  onPressed: scene == null || _isBusy ? null : _fitCamera,
+                  onPressed:
+                      scene == null || _workspaceBusy ? null : _fitCamera,
                   icon: const Icon(Icons.fit_screen, size: 18),
                   label: const Text('Fit'),
                 ),
                 const SizedBox(width: 8),
                 FilledButton.tonalIcon(
                   onPressed: scene == null ||
-                          _isBusy ||
+                          _workspaceBusy ||
                           _viewportController.selectedElementIds.isEmpty
                       ? null
                       : _deleteSelectedObject,
@@ -450,7 +452,9 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
   }
 
   Future<void> _openProjectSection(RenderSceneSection section) async {
-    if (_engineRepository == null || !_engineBackedMode || !mounted) return;
+    if (_engineRepository == null || !_engineBackedMode || !mounted) {
+      throw StateError('Section view requires an active engine project.');
+    }
     _updateViewportState(() {
       _isBusy = true;
       _statusMessage = 'Opening ${section.name}...';
@@ -462,10 +466,10 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
     } catch (error) {
       if (!mounted) return;
       _updateViewportState(() {
-        _isBusy = false;
         _loadError = error.toString();
         _statusMessage = 'Section failed.';
       });
+      rethrow;
     }
   }
 
@@ -517,7 +521,7 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
             child: SurfaceDrawingContextBar(
               mode: _interactionMode,
               drawMode: _surfaceDrawMode,
-              enabled: _scene != null && !_isBusy,
+              enabled: _scene != null && !_workspaceBusy,
               canFinish: _draftCanConfirm,
               canUndo: _surfaceTool.canUndo,
               canCloseBoundary: _draftSurfacePoints.length >= 3,
@@ -541,7 +545,7 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
             top: 16,
             child: LineDrawingContextBar(
               mode: _interactionMode,
-              enabled: _scene != null && !_isBusy,
+              enabled: _scene != null && !_workspaceBusy,
               hasDraft: _interactionMode == RenderSceneInteractionMode.addWall
                   ? _wallTool.hasStart
                   : _stairTool.hasStart,
@@ -557,7 +561,7 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
           right: 16,
           bottom: 16,
           child: ViewportControlDeck(
-            hasScene: _scene != null && !_isBusy,
+            hasScene: _scene != null && !_workspaceBusy,
             projectionMode: _projectionMode,
             displayStyle: _displayStyle,
             shadowsEnabled: _viewportController.shadowsEnabled,
@@ -571,7 +575,7 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
             onSectionBox: _showSectionBoxDialog,
           ),
         ),
-        if (_isBusy)
+        if (_workspaceBusy)
           Positioned.fill(
             child: ColoredBox(
               color: Colors.black.withValues(alpha: 0.08),

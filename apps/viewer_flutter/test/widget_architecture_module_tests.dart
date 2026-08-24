@@ -1,6 +1,48 @@
 part of 'widget_test.dart';
 
 void registerArchitectureModuleTests() {
+  test('view navigation coordinator serializes engine-backed transitions',
+      () async {
+    final coordinator = ViewNavigationCoordinator();
+    final events = <String>[];
+    final firstStarted = Completer<void>();
+    final releaseFirst = Completer<void>();
+
+    final first = coordinator.run(() async {
+      events.add('first-start');
+      firstStarted.complete();
+      await releaseFirst.future;
+      events.add('first-end');
+    });
+    await firstStarted.future;
+
+    final second = coordinator.run(() async {
+      events.add('second');
+    });
+    expect(events, <String>['first-start']);
+
+    releaseFirst.complete();
+    await Future.wait(<Future<void>>[first, second]);
+    expect(events, <String>['first-start', 'first-end', 'second']);
+  });
+
+  test('view navigation coordinator continues after a failed transition',
+      () async {
+    final coordinator = ViewNavigationCoordinator();
+    final events = <String>[];
+
+    final failed = coordinator.run(() async {
+      events.add('failed');
+      throw StateError('engine response failed');
+    });
+    await expectLater(failed, throwsA(isA<StateError>()));
+
+    await coordinator.run(() async {
+      events.add('recovered');
+    });
+    expect(events, <String>['failed', 'recovered']);
+  });
+
   test('viewport gesture module owns shared two-finger camera rules', () {
     final target = _RecordingCameraTarget();
     final gestures = ViewportGestureController();

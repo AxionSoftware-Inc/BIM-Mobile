@@ -470,11 +470,18 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
     return _viewWorkspace.withSavedPresentation(tab);
   }
 
-  Future<void> _openViewTab(OpenedViewTab tab) async {
-    if (_isBusy || !mounted) return;
+  Future<void> _openViewTab(OpenedViewTab tab) {
+    if (_workspaceBusy || !mounted) return Future<void>.value();
+    return _runViewNavigation(() => _openViewTabNow(tab));
+  }
+
+  Future<void> _openViewTabNow(OpenedViewTab tab) async {
     _saveActiveViewPresentation();
     final requested = _tabWithSavedPresentation(tab);
     final existing = _openedViewTabById(requested.id);
+    final previousTabId = _activeViewTabId;
+    final previousTab =
+        previousTabId == null ? null : _openedViewTabById(previousTabId);
     if (existing == null) {
       _viewWorkspace.addTab(requested);
     }
@@ -487,10 +494,21 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
     } catch (error) {
       if (!mounted) return;
       _updateViewportState(() {
+        if (existing == null) {
+          _viewWorkspace.removeTab(requested.id);
+        }
+        _activeViewTabId = previousTabId;
         _loadError = error.toString();
         _statusMessage = '${target.label} ochilmadi.';
-        _isBusy = false;
       });
+      if (previousTab != null) {
+        try {
+          await _activateViewTab(previousTab);
+        } catch (_) {
+          // Keep the failed navigation error visible if the previous view
+          // also cannot be restored.
+        }
+      }
     }
   }
 
@@ -501,18 +519,18 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
     }
     switch (tab.kind) {
       case OpenedViewKind.threeD:
-        await _setProjectionMode(
+        await _setProjectionModeNow(
           tab.projectionMode ?? RenderSceneProjectionMode.isometric,
         );
       case OpenedViewKind.floorPlan:
         if (tab.levelId != null) {
-          await _setActiveLevel(tab.levelId);
+          await _setActiveLevelNow(tab.levelId);
         }
-        await _setProjectionMode(
+        await _setProjectionModeNow(
           tab.projectionMode ?? RenderSceneProjectionMode.topDown,
         );
       case OpenedViewKind.elevation:
-        await _setProjectionMode(
+        await _setProjectionModeNow(
           tab.projectionMode ?? RenderSceneProjectionMode.northElevation,
         );
       case OpenedViewKind.section:
@@ -582,12 +600,36 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
     ));
   }
 
-  Future<void> _selectOpenedViewTab(String tabId) async {
+  Future<void> _selectOpenedViewTab(String tabId) {
+    if (_workspaceBusy || !mounted) return Future<void>.value();
+    return _runViewNavigation(() => _selectOpenedViewTabNow(tabId));
+  }
+
+  Future<void> _selectOpenedViewTabNow(String tabId) async {
     final tab = _openedViewTabById(tabId);
     if (tab == null || _activeViewTabId == tabId) return;
+    final previousTabId = _activeViewTabId;
     _saveActiveViewPresentation();
     _updateViewportState(() => _activeViewTabId = tabId);
-    await _activateViewTab(tab);
+    try {
+      await _activateViewTab(tab);
+    } catch (error) {
+      if (!mounted) return;
+      _updateViewportState(() {
+        _activeViewTabId = previousTabId;
+        _loadError = error.toString();
+        _statusMessage = '${tab.label} ochilmadi.';
+      });
+      final previousTab =
+          previousTabId == null ? null : _openedViewTabById(previousTabId);
+      if (previousTab != null) {
+        try {
+          await _activateViewTab(previousTab);
+        } catch (_) {
+          // Preserve the original navigation error in the workspace.
+        }
+      }
+    }
   }
 
   Future<void> _closeOpenedViewTab(String tabId) async {

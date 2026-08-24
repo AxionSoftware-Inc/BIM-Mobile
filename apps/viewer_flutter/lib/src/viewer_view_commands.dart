@@ -3,6 +3,17 @@
 part of 'viewer_app.dart';
 
 extension _ViewerViewCommands on _ViewerHomePageState {
+  void _ensureNavigationScene(
+    RenderSceneLoadResult result, {
+    required String label,
+  }) {
+    if (result.scene != null) return;
+    final detail = result.errors.isEmpty
+        ? 'The engine returned an empty RenderScene.'
+        : result.errors.join('\n');
+    throw StateError('$label failed: $detail');
+  }
+
   Future<void> _fitCamera() async {
     _updateViewportState(() {
       _statusMessage = _projectionMode.fitLabel;
@@ -11,7 +22,12 @@ extension _ViewerViewCommands on _ViewerHomePageState {
     await _viewportController.fitCamera();
   }
 
-  Future<void> _setProjectionMode(RenderSceneProjectionMode mode) async {
+  Future<void> _setProjectionMode(RenderSceneProjectionMode mode) {
+    if (!mounted || _workspaceBusy) return Future<void>.value();
+    return _runViewNavigation(() => _setProjectionModeNow(mode));
+  }
+
+  Future<void> _setProjectionModeNow(RenderSceneProjectionMode mode) async {
     final wasGeneratedSection = _activeSectionView != null;
     if (wasGeneratedSection) {
       await _viewportController.setSectionView(null);
@@ -38,6 +54,7 @@ extension _ViewerViewCommands on _ViewerHomePageState {
           result,
           sourceLabel: navigationScope.sourceLabel,
         );
+        _ensureNavigationScene(result, label: navigationScope.sourceLabel);
       } else {
         // Project Browser can be used after a renderer reload. Reassert the
         // controller state even when the Flutter state already has this mode.
@@ -92,6 +109,7 @@ extension _ViewerViewCommands on _ViewerHomePageState {
         result,
         sourceLabel: scope.sourceLabel,
       );
+      _ensureNavigationScene(result, label: scope.sourceLabel);
       return;
     }
 
@@ -113,6 +131,7 @@ extension _ViewerViewCommands on _ViewerHomePageState {
         _activeSectionView = null;
       });
       await _applyLoadResult(result, sourceLabel: section.name);
+      _ensureNavigationScene(result, label: section.name);
       return;
     }
 

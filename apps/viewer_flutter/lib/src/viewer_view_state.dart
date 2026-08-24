@@ -214,19 +214,26 @@ extension _ViewerViewState on _ViewerHomePageState {
     );
   }
 
-  Future<void> _setActiveLevel(int? levelId) async {
-    var scene = _scene;
+  Future<void> _setActiveLevel(int? levelId) {
+    if (!mounted || _workspaceBusy) return Future<void>.value();
+    return _runViewNavigation(() => _setActiveLevelNow(levelId));
+  }
+
+  Future<void> _setActiveLevelNow(int? levelId) async {
+    final initialScene = _scene;
     final wasGeneratedSection = _activeSectionView != null;
-    if (scene == null ||
+    if (initialScene == null ||
         levelId == null ||
         (_activeLevelId == levelId && !wasGeneratedSection)) {
       return;
     }
+    var activeScene = initialScene;
     if (wasGeneratedSection) {
       // Selecting a plan level is an explicit navigation away from the
       // generated cut scene. The engine call below reloads the authoritative
       // model snapshot for that level.
       _updateViewportState(() => _activeSectionView = null);
+      await _viewportController.setSectionView(null);
     }
     final repository = _engineRepository;
     if (_engineBackedMode && repository != null) {
@@ -234,9 +241,15 @@ extension _ViewerViewState on _ViewerHomePageState {
       if (!mounted) {
         return;
       }
-      scene = result.scene ?? scene;
+      final loadedScene = result.scene;
+      if (loadedScene == null) {
+        final detail = result.errors.isEmpty
+            ? 'The engine returned an empty RenderScene.'
+            : result.errors.join('\n');
+        throw StateError('Level $levelId activation failed: $detail');
+      }
+      activeScene = loadedScene;
     }
-    final activeScene = scene;
     final level = activeScene.levelById(levelId);
     _updateViewportState(() {
       _scene = activeScene;
