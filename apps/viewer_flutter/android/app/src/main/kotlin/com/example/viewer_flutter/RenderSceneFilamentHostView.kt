@@ -1659,11 +1659,12 @@ internal class RenderSceneFilamentHostView(
     wallJunctionElevations: List<Double>,
   ): GeometryData? {
     val kind = normalizeKind(objectData.kind)
-    // In orbit view floors/ceilings are surfaces, not architectural linework.
-    // Their coplanar borders were being composited with wall junction prisms
-    // and read as repeated heavy storey bands. Sections still get their
-    // section edges from the clipped wall geometry.
-    if (projectionMode == "isometric" && kind in setOf("floor", "ceiling", "slab")) {
+    // In orbit view floors/ceilings are surfaces, not architectural linework,
+    // and columns are narrow solids whose edge prisms overlap ceiling/beam
+    // intersections. Their coplanar borders were being depth-tested as
+    // repeated heavy storey bands and could flicker while orbiting. Sections
+    // still get their section edges from the clipped wall geometry.
+    if (projectionMode == "isometric" && kind in setOf("floor", "ceiling", "slab", "column")) {
       return null
     }
     val wallEdges = kind == "wall"
