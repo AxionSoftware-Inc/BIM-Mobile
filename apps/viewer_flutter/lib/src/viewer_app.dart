@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'authoring_command_service.dart';
+import 'app_settings.dart';
 import 'documentation/document_models.dart';
 import 'documentation/documentation_workspace.dart';
 import 'documentation/sheet_canvas.dart';
@@ -309,6 +310,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   @override
   void initState() {
     super.initState();
+    unawaited(_viewportController.setViewportTheme(widget.viewportTheme));
     _selectionController = SelectionController(_viewportController);
     _inspectorController = InspectorController(_selectionController);
     _authoringCommands = AuthoringCommandService(
@@ -383,6 +385,14 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
       _dependencies.dispose();
     }
     super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(covariant ViewerHomePage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.viewportTheme != widget.viewportTheme) {
+      unawaited(_viewportController.setViewportTheme(widget.viewportTheme));
+    }
   }
 
   @override

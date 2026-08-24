@@ -9,6 +9,7 @@ mixin _FallbackSceneOverlayMixin {
   RenderSceneProjectionMode get projectionMode;
   RenderSceneOrbitProjectionStyle get orbitProjectionStyle;
   RenderSceneDisplayStyle get displayStyle;
+  RenderSceneViewportTheme get viewportTheme;
   RenderSceneOpeningDraft? get draftOpening;
   RenderSceneSurfaceDraft? get draftSurface;
   RenderScenePoint? get draftWallStart;
@@ -402,8 +403,14 @@ mixin _FallbackSceneOverlayMixin {
     final spacing = _niceGridSpacing(maxExtent);
 
     final paint = Paint()
-      ..color = const Color(0xFFD1D5DB)
-          .withValues(alpha: projectionMode.isElevation ? 0.42 : 0.75)
+      ..color = (viewportTheme == RenderSceneViewportTheme.light
+              ? const Color(0xFFD1D5DB)
+              : const Color(0xFFCBD5E1))
+          .withValues(
+        alpha: viewportTheme == RenderSceneViewportTheme.light
+            ? (projectionMode.isElevation ? 0.42 : 0.75)
+            : (projectionMode.isElevation ? 0.18 : 0.28),
+      )
       ..strokeWidth = 0.7;
 
     if (descriptor == null) {

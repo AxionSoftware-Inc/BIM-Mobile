@@ -48,6 +48,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
   RenderSceneOrbitProjectionStyle _orbitProjectionStyle =
       RenderSceneOrbitProjectionStyle.orthographic;
   RenderSceneDisplayStyle _displayStyle = RenderSceneDisplayStyle.solid;
+  RenderSceneViewportTheme _viewportTheme = RenderSceneViewportTheme.light;
   bool _shadowsEnabled = false;
   RenderSceneViewportBackend _backend;
   RenderSceneInteractionMode _interactionMode =
@@ -117,6 +118,9 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
 
   @override
   RenderSceneDisplayStyle get displayStyle => _displayStyle;
+
+  @override
+  RenderSceneViewportTheme get viewportTheme => _viewportTheme;
 
   @override
   bool get shadowsEnabled => _shadowsEnabled;
@@ -332,6 +336,14 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     _displayStyle = style;
     notifyListeners();
     await _invoke('setDisplayStyle', style.name);
+  }
+
+  @override
+  Future<void> setViewportTheme(RenderSceneViewportTheme theme) async {
+    if (_viewportTheme == theme) return;
+    _viewportTheme = theme;
+    notifyListeners();
+    await _invoke('setViewportTheme', theme.name);
   }
 
   @override

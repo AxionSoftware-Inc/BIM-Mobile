@@ -369,6 +369,11 @@ internal class RenderScenePlatformView(
         result.success(null)
       }
 
+      "setViewportTheme" -> {
+        view.setViewportTheme(call.arguments as? String ?: "light")
+        result.success(null)
+      }
+
       "setShadowsEnabled" -> {
         view.setShadowsEnabled(call.arguments as? Boolean ?: false)
         result.success(null)

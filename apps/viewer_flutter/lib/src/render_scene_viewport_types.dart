@@ -43,6 +43,32 @@ enum RenderSceneViewportBackend {
   fallback,
 }
 
+enum RenderSceneViewportTheme {
+  light,
+  standardDark,
+  amoledBlack,
+}
+
+extension RenderSceneViewportThemeX on RenderSceneViewportTheme {
+  String get label => switch (this) {
+        RenderSceneViewportTheme.light => 'Light viewport',
+        RenderSceneViewportTheme.standardDark => 'Standard dark viewport',
+        RenderSceneViewportTheme.amoledBlack => 'AMOLED black viewport',
+      };
+
+  String get description => switch (this) {
+        RenderSceneViewportTheme.light => 'White modelling canvas',
+        RenderSceneViewportTheme.standardDark => 'Revit-style dark grey canvas',
+        RenderSceneViewportTheme.amoledBlack => 'Pure black modelling canvas',
+      };
+
+  IconData get icon => switch (this) {
+        RenderSceneViewportTheme.light => Icons.wb_sunny_outlined,
+        RenderSceneViewportTheme.standardDark => Icons.view_in_ar_outlined,
+        RenderSceneViewportTheme.amoledBlack => Icons.brightness_2_outlined,
+      };
+}
+
 enum RenderSceneInteractionMode {
   select,
   addWall,
@@ -264,6 +290,7 @@ abstract class RenderSceneViewportActions extends ChangeNotifier
   RenderSceneProjectionMode get projectionMode;
   RenderSceneOrbitProjectionStyle get orbitProjectionStyle;
   RenderSceneDisplayStyle get displayStyle;
+  RenderSceneViewportTheme get viewportTheme;
   bool get shadowsEnabled;
   RenderSceneViewportBackend get backend;
   RenderSceneInteractionMode get interactionMode;
@@ -281,6 +308,7 @@ abstract class RenderSceneViewportActions extends ChangeNotifier
   Future<void> setProjectionMode(RenderSceneProjectionMode mode);
   Future<void> setOrbitProjectionStyle(RenderSceneOrbitProjectionStyle style);
   Future<void> setDisplayStyle(RenderSceneDisplayStyle style);
+  Future<void> setViewportTheme(RenderSceneViewportTheme theme);
   Future<void> setShadowsEnabled(bool enabled);
   Future<void> setBackend(RenderSceneViewportBackend backend);
   Future<void> setInteractionMode(RenderSceneInteractionMode mode);

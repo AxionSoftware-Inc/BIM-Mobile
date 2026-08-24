@@ -30,6 +30,7 @@ class FallbackRenderScenePainter extends CustomPainter
     required this.projectionMode,
     required this.orbitProjectionStyle,
     required this.displayStyle,
+    this.viewportTheme = RenderSceneViewportTheme.light,
     required this.camera,
     required this.planCamera,
     required this.draftWallStart,
@@ -63,6 +64,8 @@ class FallbackRenderScenePainter extends CustomPainter
   @override
   final RenderSceneDisplayStyle displayStyle;
   @override
+  final RenderSceneViewportTheme viewportTheme;
+  @override
   final RenderSceneCameraState camera;
   final RenderScenePlanCameraState planCamera;
   @override
@@ -84,7 +87,12 @@ class FallbackRenderScenePainter extends CustomPainter
   void paint(Canvas canvas, Size size) {
     canvas.drawRect(
       Offset.zero & size,
-      Paint()..color = const Color(0xFFF5F8F6),
+      Paint()
+        ..color = switch (viewportTheme) {
+          RenderSceneViewportTheme.light => const Color(0xFFF5F8F6),
+          RenderSceneViewportTheme.standardDark => const Color(0xFF202427),
+          RenderSceneViewportTheme.amoledBlack => Colors.black,
+        },
     );
 
     if (size.width <= 1 || size.height <= 1) {

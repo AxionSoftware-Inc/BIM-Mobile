@@ -490,7 +490,7 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
       fit: StackFit.expand,
       children: <Widget>[
         Container(
-          color: const Color(0xFFF4F7F5),
+          color: Theme.of(context).colorScheme.surface,
           child: RenderSceneViewport(
             controller: _viewportController,
             interactionMode: _interactionMode,
@@ -617,7 +617,7 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
       width: 340,
       child: Container(
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: theme.colorScheme.surface,
           border: Border(
             left: BorderSide(color: theme.colorScheme.outlineVariant),
           ),
@@ -656,7 +656,7 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
     return Container(
       width: 340,
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: theme.colorScheme.surface,
         border: Border(
           left: BorderSide(color: theme.colorScheme.outlineVariant),
         ),

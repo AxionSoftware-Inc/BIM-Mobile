@@ -9,7 +9,7 @@ enum _ResidentialTemplateKind {
   campus6x9,
 }
 
-class ViewerApp extends StatelessWidget {
+class ViewerApp extends StatefulWidget {
   const ViewerApp({
     super.key,
     this.source,
@@ -20,35 +20,73 @@ class ViewerApp extends StatelessWidget {
   final bool preferEngineBackedBundledSample;
 
   @override
+  State<ViewerApp> createState() => _ViewerAppState();
+}
+
+class _ViewerAppState extends State<ViewerApp> {
+  ViewerAppSettings _settings = const ViewerAppSettings.defaults();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSettings();
+  }
+
+  Future<void> _loadSettings() async {
+    final settings = await ViewerAppSettingsStore.load();
+    if (!mounted) return;
+    setState(() => _settings = settings);
+  }
+
+  void _updateSettings(ViewerAppSettings settings) {
+    setState(() => _settings = settings);
+    unawaited(ViewerAppSettingsStore.save(settings));
+  }
+
+  @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Tablet BIM',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF1F5D4E),
-          brightness: Brightness.light,
-        ),
-        scaffoldBackgroundColor: const Color(0xFFF3F6F4),
-        useMaterial3: true,
-        visualDensity: VisualDensity.standard,
-      ),
-      home: source == null
+      theme: viewerThemeFor(_settings.appTheme),
+      themeMode: ThemeMode.light,
+      home: widget.source == null
           ? _StartScreenGate(
-              preferEngineBackedBundledSample: preferEngineBackedBundledSample,
+              preferEngineBackedBundledSample:
+                  widget.preferEngineBackedBundledSample,
+              appTheme: _settings.appTheme,
+              viewportTheme: _settings.viewportTheme,
+              onAppThemeChanged: (theme) => _updateSettings(
+                _settings.copyWith(appTheme: theme),
+              ),
+              onViewportThemeChanged: (theme) => _updateSettings(
+                _settings.copyWith(viewportTheme: theme),
+              ),
             )
           : ViewerHomePage(
-              source: source!,
-              preferEngineBackedBundledSample: preferEngineBackedBundledSample,
+              source: widget.source!,
+              preferEngineBackedBundledSample:
+                  widget.preferEngineBackedBundledSample,
+              viewportTheme: _settings.viewportTheme,
             ),
     );
   }
 }
 
 class _StartScreenGate extends StatefulWidget {
-  const _StartScreenGate({required this.preferEngineBackedBundledSample});
+  const _StartScreenGate({
+    required this.preferEngineBackedBundledSample,
+    required this.appTheme,
+    required this.viewportTheme,
+    required this.onAppThemeChanged,
+    required this.onViewportThemeChanged,
+  });
 
   final bool preferEngineBackedBundledSample;
+  final AppThemeMode appTheme;
+  final RenderSceneViewportTheme viewportTheme;
+  final ValueChanged<AppThemeMode> onAppThemeChanged;
+  final ValueChanged<RenderSceneViewportTheme> onViewportThemeChanged;
 
   @override
   State<_StartScreenGate> createState() => _StartScreenGateState();
@@ -132,6 +170,7 @@ class _StartScreenGateState extends State<_StartScreenGate> {
         initialProjectJson: json,
         initialProjectName: _projectName,
         initialProjectPath: _projectPath,
+        viewportTheme: widget.viewportTheme,
         onReturnToStart: _returnToStart,
       );
     }
@@ -139,8 +178,21 @@ class _StartScreenGateState extends State<_StartScreenGate> {
       onOpen: _openProject,
       onCreate: _createProject,
       onSelectTemplate: _selectTemplate,
+      onSettings: () => _showSettings(context),
       busy: _busy,
       errorMessage: _errorMessage,
+    );
+  }
+
+  Future<void> _showSettings(BuildContext context) async {
+    await showDialog<void>(
+      context: context,
+      builder: (_) => ViewerSettingsDialog(
+        appTheme: widget.appTheme,
+        viewportTheme: widget.viewportTheme,
+        onAppThemeChanged: widget.onAppThemeChanged,
+        onViewportThemeChanged: widget.onViewportThemeChanged,
+      ),
     );
   }
 
@@ -168,6 +220,7 @@ class ViewerHomePage extends StatefulWidget {
     this.initialProjectName,
     this.initialProjectPath,
     this.initialBlankProject = false,
+    this.viewportTheme = RenderSceneViewportTheme.light,
     this.onReturnToStart,
   });
 
@@ -179,6 +232,7 @@ class ViewerHomePage extends StatefulWidget {
   final String? initialProjectName;
   final String? initialProjectPath;
   final bool initialBlankProject;
+  final RenderSceneViewportTheme viewportTheme;
   final Future<void> Function()? onReturnToStart;
 
   @override

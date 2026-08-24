@@ -151,19 +151,11 @@ void material(inout MaterialInputs material) {
     float2 relative = world.xz - materialParams.gridCenter.xz;
     float distanceFromCenter = length(relative);
     float fade = 1.0 - smoothstep(materialParams.gridFadeStart, materialParams.gridRadius, distanceFromCenter);
-
-    float2 minorCoord = relative / materialParams.gridMinorStep;
-    float2 majorCoord = relative / materialParams.gridMajorStep;
-    float minorWidth = max(fwidth(minorCoord.x), fwidth(minorCoord.y)) * 1.35;
-    float majorWidth = max(fwidth(majorCoord.x), fwidth(majorCoord.y)) * 1.35;
-    float minorDistance = min(abs(fract(minorCoord.x + 0.5) - 0.5), abs(fract(minorCoord.y + 0.5) - 0.5));
-    float majorDistance = min(abs(fract(majorCoord.x + 0.5) - 0.5), abs(fract(majorCoord.y + 0.5) - 0.5));
-    float minorLine = 1.0 - smoothstep(0.0, minorWidth, minorDistance);
-    float majorLine = 1.0 - smoothstep(0.0, majorWidth, majorDistance);
-    // Keep the plane deliberately quiet. The grid should provide orientation
-    // without reading as a solid floor underneath the BIM model.
-    float line = max(minorLine * 0.13, majorLine * 0.28);
-    material.baseColor = float4(materialParams.baseColor.rgb, materialParams.baseColor.a * fade * line);
+    float majorX = 1.0 - smoothstep(0.0, 0.06, abs(fract(relative.x / 5.0 + 0.5) - 0.5));
+    float majorZ = 1.0 - smoothstep(0.0, 0.06, abs(fract(relative.y / 5.0 + 0.5) - 0.5));
+    float major = max(majorX, majorZ);
+    float strength = mix(0.68, 1.0, major);
+    material.baseColor = float4(materialParams.baseColor.rgb, materialParams.baseColor.a * fade * strength);
 }
 """
 
@@ -459,6 +451,7 @@ internal class RenderSceneFilamentHostView(
   private var scene: Scene? = null
   private var filamentView: View? = null
   private var camera: Camera? = null
+  private var skybox: Skybox? = null
   private var sunLightEntity: Int? = null
   private var fillLightEntity: Int? = null
   private var colorGrading: ColorGrading? = null
@@ -525,6 +518,7 @@ internal class RenderSceneFilamentHostView(
   private var projectionMode = "topDown"
   private var orbitProjectionStyle = "orthographic"
   private var displayStyle = "solid"
+  private var viewportTheme = "light"
   private var shadowsEnabled = false
   private var clipVolume = ClipVolumeState.none()
   private val sectionBoxEnabled get() = clipVolume.isSectionBox
@@ -622,8 +616,11 @@ internal class RenderSceneFilamentHostView(
       filamentView?.colorGrading = colorGrading
       filamentView?.viewport = Viewport(0, 0, 1, 1)
       // Light paper canvas preserves true-white Solid geometry without the
-      // old overall grey cast.
-      scene?.skybox = Skybox.Builder().color(0.91f, 0.92f, 0.91f, 1.0f).build(filamentEngine)
+      // old overall grey cast. The selected viewport theme can replace both
+      // the clear color and skybox later without rebuilding model geometry.
+      skybox = Skybox.Builder().color(0.91f, 0.92f, 0.91f, 1.0f).build(filamentEngine)
+      scene?.skybox = skybox
+      applyViewportTheme()
       statusMessage = "Filament renderer created."
       Log.i(TAG, statusMessage)
       updateStatus()
@@ -671,7 +668,8 @@ internal class RenderSceneFilamentHostView(
   }
 
   private fun realShadowVisible(mode: String = projectionMode): Boolean =
-    shadowsEnabled && sunLightEntity != null && mode == "isometric" && displayStyle != "wireframe"
+    viewportTheme == "light" && shadowsEnabled && sunLightEntity != null &&
+      mode == "isometric" && displayStyle != "wireframe"
 
   private fun createFillLight(engine: Engine) {
     val entity = EntityManager.get().create()
@@ -942,6 +940,73 @@ internal class RenderSceneFilamentHostView(
     updateStatus(if (style == "wireframe") "Wireframe: faces hidden, mesh edges shown." else null)
     requestRender(250L)
     invalidate()
+  }
+
+  fun setViewportTheme(theme: String) {
+    val normalized = when (theme) {
+      "standardDark", "amoledBlack" -> theme
+      else -> "light"
+    }
+    if (viewportTheme == normalized) return
+    viewportTheme = normalized
+    applyViewportTheme()
+    if (materialBuilderReady) refreshTintState()
+    syncVisibility()
+    requestRender(120L)
+    invalidate()
+  }
+
+  private fun applyViewportTheme() {
+    val background = when (viewportTheme) {
+      "standardDark" -> intArrayOf(32, 36, 39)
+      "amoledBlack" -> intArrayOf(0, 0, 0)
+      else -> intArrayOf(243, 247, 244)
+    }
+    val clear = when (viewportTheme) {
+      "standardDark" -> doubleArrayOf(0.125, 0.141, 0.153, 1.0)
+      "amoledBlack" -> doubleArrayOf(0.0, 0.0, 0.0, 1.0)
+      else -> doubleArrayOf(0.95, 0.96, 0.95, 1.0)
+    }
+    val sky = when (viewportTheme) {
+      "standardDark" -> floatArrayOf(0.018f, 0.021f, 0.024f, 1.0f)
+      "amoledBlack" -> floatArrayOf(0.0f, 0.0f, 0.0f, 1.0f)
+      else -> floatArrayOf(0.91f, 0.92f, 0.91f, 1.0f)
+    }
+    setBackgroundColor(Color.rgb(background[0], background[1], background[2]))
+    renderer?.setClearOptions(Renderer.ClearOptions().apply {
+      this.clear = true
+      clearColor = clear
+    })
+    selectionOverlay.setViewportTheme(viewportTheme)
+    val engine = engine ?: return
+    val nativeScene = scene ?: return
+    val previousSkybox = skybox
+    val nextSkybox = Skybox.Builder()
+      .color(sky[0], sky[1], sky[2], sky[3])
+      .build(engine)
+    skybox = nextSkybox
+    nativeScene.skybox = nextSkybox
+    previousSkybox?.let { engine.destroySkybox(it) }
+  }
+
+  private fun viewportEdgeColor(): FloatArray = if (viewportTheme == "light") {
+    floatArrayOf(0.0f, 0.0f, 0.0f, 1.0f)
+  } else {
+    floatArrayOf(0.72f, 0.77f, 0.80f, 1.0f)
+  }
+
+  private fun viewportGridColor(): FloatArray = if (viewportTheme == "light") {
+    floatArrayOf(0.30f, 0.36f, 0.37f, 0.08f)
+  } else {
+    floatArrayOf(0.78f, 0.82f, 0.84f, 0.045f)
+  }
+
+  private fun viewportGroundColor(): FloatArray = if (viewportTheme == "light") {
+    floatArrayOf(0.88f, 0.89f, 0.90f, 1.0f)
+  } else if (viewportTheme == "amoledBlack") {
+    floatArrayOf(0.0f, 0.0f, 0.0f, 1.0f)
+  } else {
+    floatArrayOf(0.0f, 0.0f, 0.0f, 1.0f)
   }
 
   fun setShadowsEnabled(enabled: Boolean) {
@@ -1424,6 +1489,9 @@ internal class RenderSceneFilamentHostView(
     colorGrading?.let { grading ->
       engine?.destroyColorGrading(grading)
     }
+    skybox?.let { box ->
+      engine?.destroySkybox(box)
+    }
     renderer?.let { renderer ->
       engine?.destroyRenderer(renderer)
     }
@@ -1451,6 +1519,7 @@ internal class RenderSceneFilamentHostView(
     scene = null
     filamentView = null
     camera = null
+    skybox = null
     colorGrading = null
     engine = null
     material = null
@@ -1739,7 +1808,12 @@ internal class RenderSceneFilamentHostView(
   private fun displayBaseColor(objectData: SceneObject): FloatArray {
     val isWindow = normalizeKind(objectData.kind) == "window"
     return if (displayStyle == "solid") {
-      floatArrayOf(0.98f, 0.98f, 0.98f, if (isWindow) 0.30f else 1.0f)
+      val surface = when (viewportTheme) {
+        "standardDark" -> 0.34f
+        "amoledBlack" -> 0.24f
+        else -> 0.98f
+      }
+      floatArrayOf(surface, surface, surface, if (isWindow) 0.30f else 1.0f)
     } else {
       kindColor(normalizeKind(objectData.kind))
     }
@@ -2103,7 +2177,12 @@ internal class RenderSceneFilamentHostView(
       val entity = EntityManager.get().create()
       val materialInstance = edgeMaterial.createInstance().also { instance ->
         applyDisplayStyle(instance)
-        instance.setParameter("baseColor", Colors.RgbaType.LINEAR, 0.0f, 0.0f, 0.0f, 1.0f)
+        val edgeColor = viewportEdgeColor()
+        instance.setParameter(
+          "baseColor",
+          Colors.RgbaType.LINEAR,
+          edgeColor[0], edgeColor[1], edgeColor[2], edgeColor[3],
+        )
         applySectionBoxState(instance)
       }
       RenderableManager.Builder(1)
@@ -2187,7 +2266,12 @@ internal class RenderSceneFilamentHostView(
     val materialInstance = receiverMaterial.createInstance().also { instance ->
       applySectionBoxState(instance)
       instance.setParameter("displayShade", 0.0f)
-      instance.setParameter("baseColor", Colors.RgbaType.LINEAR, 0.88f, 0.89f, 0.90f, 1.0f)
+      val groundColor = viewportGroundColor()
+      instance.setParameter(
+        "baseColor",
+        Colors.RgbaType.LINEAR,
+        groundColor[0], groundColor[1], groundColor[2], groundColor[3],
+      )
     }
     val entity = EntityManager.get().create()
     RenderableManager.Builder(1)
@@ -2229,33 +2313,66 @@ internal class RenderSceneFilamentHostView(
     val maxX = centerX + radius
     val minZ = centerZ - radius
     val maxZ = centerZ + radius
-    val vertexData = ByteBuffer.allocateDirect(4 * 12).order(ByteOrder.nativeOrder()).apply {
-      putFloat(minX.toFloat()); putFloat(groundY.toFloat()); putFloat(minZ.toFloat())
-      putFloat(maxX.toFloat()); putFloat(groundY.toFloat()); putFloat(minZ.toFloat())
-      putFloat(maxX.toFloat()); putFloat(groundY.toFloat()); putFloat(maxZ.toFloat())
-      putFloat(minX.toFloat()); putFloat(groundY.toFloat()); putFloat(maxZ.toFloat())
-      flip()
+    val lineVertices = mutableListOf<Float>()
+    val lineIndices = mutableListOf<Int>()
+    val lineHalfWidth = 0.012
+
+    fun addVerticalLine(x: Double) {
+      val base = lineVertices.size / 3
+      lineVertices += (x - lineHalfWidth).toFloat(); lineVertices += groundY.toFloat(); lineVertices += minZ.toFloat()
+      lineVertices += (x + lineHalfWidth).toFloat(); lineVertices += groundY.toFloat(); lineVertices += minZ.toFloat()
+      lineVertices += (x + lineHalfWidth).toFloat(); lineVertices += groundY.toFloat(); lineVertices += maxZ.toFloat()
+      lineVertices += (x - lineHalfWidth).toFloat(); lineVertices += groundY.toFloat(); lineVertices += maxZ.toFloat()
+      lineIndices += base; lineIndices += base + 2; lineIndices += base + 1
+      lineIndices += base; lineIndices += base + 3; lineIndices += base + 2
     }
-    val indexData = ByteBuffer.allocateDirect(6 * Int.SIZE_BYTES)
+
+    fun addHorizontalLine(z: Double) {
+      val base = lineVertices.size / 3
+      lineVertices += minX.toFloat(); lineVertices += groundY.toFloat(); lineVertices += (z - lineHalfWidth).toFloat()
+      lineVertices += maxX.toFloat(); lineVertices += groundY.toFloat(); lineVertices += (z - lineHalfWidth).toFloat()
+      lineVertices += maxX.toFloat(); lineVertices += groundY.toFloat(); lineVertices += (z + lineHalfWidth).toFloat()
+      lineVertices += minX.toFloat(); lineVertices += groundY.toFloat(); lineVertices += (z + lineHalfWidth).toFloat()
+      lineIndices += base; lineIndices += base + 2; lineIndices += base + 1
+      lineIndices += base; lineIndices += base + 3; lineIndices += base + 2
+    }
+
+    var offset = -radius
+    while (offset <= radius + 0.001) {
+      addVerticalLine(centerX + offset)
+      addHorizontalLine(centerZ + offset)
+      offset += 1.0
+    }
+    val vertexData = ByteBuffer.allocateDirect(lineVertices.size * Float.SIZE_BYTES)
+      .order(ByteOrder.nativeOrder()).apply {
+        lineVertices.forEach { putFloat(it) }
+        flip()
+      }
+    val indexData = ByteBuffer.allocateDirect(lineIndices.size * Int.SIZE_BYTES)
       .order(ByteOrder.nativeOrder()).asIntBuffer().apply {
-        put(0); put(2); put(1); put(0); put(3); put(2)
+        lineIndices.forEach { put(it) }
         flip()
       }
     val vertexBuffer = VertexBuffer.Builder()
       .bufferCount(1)
-      .vertexCount(4)
+      .vertexCount(lineVertices.size / 3)
       .attribute(VertexBuffer.VertexAttribute.POSITION, 0, VertexBuffer.AttributeType.FLOAT3, 0, 12)
       .build(engine)
       .also { it.setBufferAt(engine, 0, vertexData) }
     val indexBuffer = IndexBuffer.Builder()
-      .indexCount(6)
+      .indexCount(lineIndices.size)
       .bufferType(IndexBuffer.Builder.IndexType.UINT)
       .build(engine)
       .also { it.setBuffer(engine, indexData) }
     val materialInstance = gridMaterial.createInstance().also { instance ->
       applySectionBoxState(instance)
       applyDisplayStyle(instance)
-      instance.setParameter("baseColor", Colors.RgbaType.LINEAR, 0.30f, 0.36f, 0.37f, 0.11f)
+      val gridColor = viewportGridColor()
+      instance.setParameter(
+        "baseColor",
+        Colors.RgbaType.LINEAR,
+        gridColor[0], gridColor[1], gridColor[2], gridColor[3],
+      )
       instance.setParameter("gridCenter", centerX.toFloat(), groundY.toFloat(), centerZ.toFloat(), 0.0f)
       instance.setParameter("gridRadius", radius.toFloat())
       instance.setParameter("gridFadeStart", 34.0f)
@@ -2276,7 +2393,7 @@ internal class RenderSceneFilamentHostView(
       .castShadows(false)
       .receiveShadows(false)
       .priority(0)
-      .geometry(0, PrimitiveType.TRIANGLES, vertexBuffer, indexBuffer, 0, 6)
+      .geometry(0, PrimitiveType.TRIANGLES, vertexBuffer, indexBuffer, 0, lineIndices.size)
       .material(0, materialInstance)
       .build(engine, entity)
     val attached = projectionMode == "isometric"
@@ -2446,7 +2563,8 @@ internal class RenderSceneFilamentHostView(
   }
 
   private fun staticShadowVisible(): Boolean =
-    shadowsEnabled && sunLightEntity == null && projectionMode == "isometric" && displayStyle != "wireframe"
+    viewportTheme == "light" && shadowsEnabled && sunLightEntity == null &&
+      projectionMode == "isometric" && displayStyle != "wireframe"
 
   private fun combineGeometry(geometries: List<GeometryData>): GeometryData? {
     if (geometries.isEmpty()) return null
@@ -3259,6 +3377,28 @@ internal class RenderSceneFilamentHostView(
     }
     for (batch in edgeBatches) {
       applyDisplayStyle(batch.materialInstance)
+      val edgeColor = viewportEdgeColor()
+      batch.materialInstance.setParameter(
+        "baseColor",
+        Colors.RgbaType.LINEAR,
+        edgeColor[0], edgeColor[1], edgeColor[2], edgeColor[3],
+      )
+    }
+    gridBatch?.materialInstance?.let { instance ->
+      val gridColor = viewportGridColor()
+      instance.setParameter(
+        "baseColor",
+        Colors.RgbaType.LINEAR,
+        gridColor[0], gridColor[1], gridColor[2], gridColor[3],
+      )
+    }
+    groundReceiver?.materialInstance?.let { instance ->
+      val groundColor = viewportGroundColor()
+      instance.setParameter(
+        "baseColor",
+        Colors.RgbaType.LINEAR,
+        groundColor[0], groundColor[1], groundColor[2], groundColor[3],
+      )
     }
     requestRender()
   }
@@ -4207,6 +4347,7 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
   private var perspective = false
   private var showNativeLevels = true
   private var wireframe = false
+  private var viewportTheme = "light"
   private var showObjectEdges = true
   private var sectionBoxEnabled = false
   private var sectionBoxMin = ScenePoint(0.0, 0.0, 0.0)
@@ -4590,6 +4731,23 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
       else -> Color.TRANSPARENT
     }
     outline.strokeWidth = resources.displayMetrics.density * if (wireframe) 1.45f else 1.6f
+    invalidate()
+  }
+
+  fun setViewportTheme(theme: String) {
+    viewportTheme = when (theme) {
+      "standardDark", "amoledBlack" -> theme
+      else -> "light"
+    }
+    val dark = viewportTheme != "light"
+    outline.color = if (dark) Color.argb(210, 218, 226, 231) else Color.argb(155, 24, 39, 52)
+    openingPaint.color = if (dark) Color.rgb(220, 228, 232) else Color.rgb(17, 24, 39)
+    windowPaint.color = if (dark) Color.rgb(190, 211, 219) else Color.rgb(17, 24, 39)
+    openingCutPaint.color = if (dark) {
+      if (viewportTheme == "amoledBlack") Color.BLACK else Color.rgb(32, 36, 39)
+    } else {
+      Color.rgb(244, 247, 245)
+    }
     invalidate()
   }
 

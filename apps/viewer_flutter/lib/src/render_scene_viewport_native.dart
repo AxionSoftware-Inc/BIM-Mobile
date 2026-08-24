@@ -30,6 +30,7 @@ extension _RenderSceneViewportNative on RenderSceneViewportController {
       if (sectionBox != null) 'max': sectionBox.max.toJson(),
     });
     await _invoke('setDisplayStyle', _displayStyle.name);
+    await _invoke('setViewportTheme', _viewportTheme.name);
     await _invoke('setShadowsEnabled', _shadowsEnabled);
     await _invoke('setProjectionMode', _projectionMode.name);
     await _invoke('setOrbitProjectionStyle', _orbitProjectionStyle.name);

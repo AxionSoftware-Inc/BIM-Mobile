@@ -9,6 +9,7 @@ class StartScreen extends StatelessWidget {
     required this.onOpen,
     required this.onCreate,
     required this.onSelectTemplate,
+    required this.onSettings,
     this.busy = false,
     this.errorMessage,
   });
@@ -16,6 +17,7 @@ class StartScreen extends StatelessWidget {
   final VoidCallback onOpen;
   final VoidCallback onCreate;
   final ValueChanged<WorkspaceTemplate> onSelectTemplate;
+  final VoidCallback onSettings;
   final bool busy;
   final String? errorMessage;
 
@@ -53,6 +55,21 @@ class StartScreen extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: <Widget>[
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: IconButton(
+                          tooltip: 'Settings',
+                          onPressed: busy ? null : onSettings,
+                          style: IconButton.styleFrom(
+                            backgroundColor:
+                                theme.colorScheme.secondaryContainer,
+                            foregroundColor:
+                                theme.colorScheme.onSecondaryContainer,
+                          ),
+                          icon: const Icon(Icons.settings_outlined),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
                       _StartHero(
                         busy: busy,
                         onOpen: onOpen,
@@ -172,7 +189,7 @@ class _StartHero extends StatelessWidget {
             'Start a project',
             style: theme.textTheme.headlineSmall?.copyWith(
               fontWeight: FontWeight.w800,
-              color: const Color(0xFF173D35),
+              color: colors.onPrimaryContainer,
             ),
           );
           if (constraints.maxWidth < 620) {

@@ -694,6 +694,7 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                           projectionMode: controller.projectionMode,
                           orbitProjectionStyle: controller.orbitProjectionStyle,
                           displayStyle: controller.displayStyle,
+                          viewportTheme: controller.viewportTheme,
                           camera: controller.camera,
                           planCamera: controller.planCamera,
                           draftWallStart: controller.draftWallStart,
