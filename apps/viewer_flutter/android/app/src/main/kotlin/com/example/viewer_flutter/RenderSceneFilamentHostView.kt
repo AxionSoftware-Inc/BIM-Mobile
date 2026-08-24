@@ -370,13 +370,30 @@ internal class RenderSceneFilamentHostView(
     invalidate()
   }
   private val scaleGestureDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+    private var previousFocusX = 0f
+    private var previousFocusY = 0f
+
+    override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
+      previousFocusX = detector.focusX
+      previousFocusY = detector.focusY
+      return true
+    }
+
     override fun onScale(detector: ScaleGestureDetector): Boolean {
       if (isPlanarProjection()) {
+        // A pinch is also a two-finger pan on a tablet. Keeping the gesture
+        // focus moving with the camera makes elevation and section navigation
+        // feel like the top-down plan instead of zooming around a fixed point.
+        val focusDx = detector.focusX - previousFocusX
+        val focusDy = detector.focusY - previousFocusY
+        if (focusDx != 0f || focusDy != 0f) {
+          panPlanarCamera(focusDx, focusDy)
+        }
         if (projectionMode == "topDown") {
           topDownZoom = (topDownZoom / detector.scaleFactor.toDouble()).coerceIn(0.5, 200.0)
         } else {
           orbitDistance = (orbitDistance / detector.scaleFactor.toDouble())
-            .coerceIn(minimumOrbitDistance(), 250.0)
+            .coerceIn(minimumPlanarOrbitDistance(), 250.0)
         }
       } else {
         val nextDistance = orbitDistance / detector.scaleFactor.toDouble()
@@ -395,7 +412,14 @@ internal class RenderSceneFilamentHostView(
       )
       requestRender(250L)
       invalidate()
+      previousFocusX = detector.focusX
+      previousFocusY = detector.focusY
       return true
+    }
+
+    override fun onScaleEnd(detector: ScaleGestureDetector) {
+      previousFocusX = 0f
+      previousFocusY = 0f
     }
   })
   private val visibleKinds = linkedSetOf<String>().apply {
@@ -825,15 +849,21 @@ internal class RenderSceneFilamentHostView(
   fun setCamera(payload: Map<*, *>?) {
     val orbitCenterPayload = parsePoint(payload?.get("orbitCenter"))
     val planCenterPayload = parsePoint(payload?.get("planCenter"))
-    if (projectionMode == "topDown" && planCenterPayload != null) {
+    if (isPlanarProjection() && planCenterPayload != null) {
       orbitCenter = toFilamentPoint(planCenterPayload)
       val planZoom = toDouble(payload?.get("planZoom"))
       val planViewportHeight = toDouble(payload?.get("planViewportHeight"))
       if (planZoom != null && planZoom > 0.0 && planViewportHeight != null && planViewportHeight > 0.0) {
-        // Flutter owns the plan camera in logical pixels/metre.  Convert that
-        // directly to Filament's orthographic half-height in metres; using a
-        // fixed pixel reference made the native plan camera differ by device.
-        topDownZoom = (planViewportHeight / (2.0 * planZoom)).coerceIn(0.5, 200.0)
+        // Flutter owns the planar camera in logical pixels/metre. Convert it
+        // directly to Filament's orthographic half-height in metres. Elevation
+        // uses the same camera scale as plan; previously it silently fell back
+        // to the stale orbit distance and ignored every Flutter pan/zoom.
+        val halfHeight = (planViewportHeight / (2.0 * planZoom)).coerceIn(0.3, 200.0)
+        if (projectionMode == "topDown") {
+          topDownZoom = halfHeight
+        } else {
+          orbitDistance = (halfHeight / 0.6).coerceIn(minimumPlanarOrbitDistance(), 250.0)
+        }
       }
     } else if (orbitCenterPayload != null) {
       orbitCenter = toFilamentPoint(orbitCenterPayload)
@@ -848,7 +878,7 @@ internal class RenderSceneFilamentHostView(
     }
     val distance = toDouble(payload?.get("orbitDistance"))
     val zoom = toDouble(payload?.get("orbitZoomScale"))
-    if (distance != null) {
+    if (distance != null && !isPlanarProjection()) {
       orbitDistance = (distance / (zoom ?: 1.0)).coerceIn(minimumOrbitDistance(), 250.0)
     }
     configureCameraProjection()
@@ -3526,6 +3556,8 @@ internal class RenderSceneFilamentHostView(
     // available for close inspection.
     return max(span * 0.30, 1.75)
   }
+
+  private fun minimumPlanarOrbitDistance(): Double = 0.5
 
   private fun boxCorners(bounds: SceneBounds): List<ScenePoint> {
     return listOf(
