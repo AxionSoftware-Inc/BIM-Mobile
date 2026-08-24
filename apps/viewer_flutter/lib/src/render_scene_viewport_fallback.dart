@@ -708,6 +708,22 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                         size: Size.infinite,
                       ),
                     ),
+                if (widget.nativeRenderer &&
+                    controller.projectionMode.isElevation)
+                  IgnorePointer(
+                    child: CustomPaint(
+                      painter: RenderSceneLevelOverlayPainter(
+                        scene: scene,
+                        projectionMode: controller.projectionMode,
+                        orbitProjectionStyle: controller.orbitProjectionStyle,
+                        planCamera: controller.planCamera,
+                        camera: controller.camera,
+                        selectedLevelId: controller.selectedLevelId,
+                        padding: FallbackRenderScenePainter.padding,
+                      ),
+                      size: Size.infinite,
+                    ),
+                  ),
                 if (inlineLevel != null && inlineLevelOrigin != null)
                   Positioned(
                     left: inlineLevelOrigin.dx.clamp(8.0, size.width - 132.0),

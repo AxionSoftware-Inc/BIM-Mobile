@@ -3511,6 +3511,7 @@ internal class RenderSceneFilamentHostView(
       topDownZoom = topDownZoom,
       topDown = projectionMode == "topDown",
       perspective = orbitProjectionStyle == "perspective",
+      showNativeLevels = !isElevationProjection() && projectionMode != "section",
     )
   }
 
@@ -3774,6 +3775,7 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
   private var topDownZoom = 8.0
   private var topDown = true
   private var perspective = false
+  private var showNativeLevels = true
   private var wireframe = false
   private var showObjectEdges = true
   private var sectionBoxEnabled = false
@@ -4167,6 +4169,7 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
     topDownZoom: Double,
     topDown: Boolean,
     perspective: Boolean,
+    showNativeLevels: Boolean,
   ) {
     this.center = center
     this.yawRadians = yawRadians
@@ -4175,6 +4178,7 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
     this.topDownZoom = topDownZoom
     this.topDown = topDown
     this.perspective = perspective
+    this.showNativeLevels = showNativeLevels
     invalidate()
   }
 
@@ -4246,7 +4250,7 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
         }
       }
     }
-    if (!topDown) {
+    if (showNativeLevels && !topDown) {
       val widthSpan = max(sceneBounds.max.x - sceneBounds.min.x, 1.0)
       val backZ = sceneBounds.max.z
       for ((name, elevation) in levels) {
