@@ -1265,10 +1265,11 @@ internal class RenderSceneFilamentHostView(
     // Reserve the upper-right quadrant for Flutter's compact model card.
     // Telemetry wraps here instead of disappearing behind that card.
     statusView.maxWidth = (width * 0.60f).toInt().coerceAtLeast(220)
-    // Flutter owns the section/elevation camera scale and center. A resize
-    // must only update the projection matrix; fitting here resets the section
-    // direction and makes the model drift away from the level overlay.
-    if (projectionMode == "section") {
+    // Flutter owns every planar camera's scale and center. A TextureView
+    // resize must only update the projection matrix; fitting here uses the
+    // native 3D bounds and makes a floor plan open zoomed too far out until
+    // the next Flutter gesture restores its authoritative camera.
+    if (isPlanarProjection()) {
       configureCameraProjection()
       updateOrbitCamera()
     } else {
@@ -3796,6 +3797,25 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
   private var selectedIds = emptySet<Long>()
   private var activeId: Long? = null
   private var levels = emptyList<Pair<String, Double>>()
+  private val openingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    style = Paint.Style.STROKE
+    color = Color.rgb(17, 24, 39)
+    strokeWidth = context.resources.displayMetrics.density * 1.05f
+    strokeCap = Paint.Cap.SQUARE
+    strokeJoin = Paint.Join.MITER
+  }
+  private val windowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    style = Paint.Style.STROKE
+    color = Color.rgb(17, 24, 39)
+    strokeWidth = context.resources.displayMetrics.density * 1.35f
+    strokeCap = Paint.Cap.SQUARE
+    strokeJoin = Paint.Join.MITER
+  }
+  private val openingCutPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    style = Paint.Style.FILL
+    color = Color.rgb(244, 247, 245)
+  }
+  private var planOpeningSpecs = emptyList<PlanOpeningSpec>()
   private var sceneBounds = SceneBounds(ScenePoint(0.0, 0.0, 0.0), ScenePoint(0.0, 0.0, 0.0))
   private var center = ScenePoint(0.0, 0.0, 0.0)
   private var yawRadians = 0.0
@@ -3917,6 +3937,7 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
     val stride = max(1, (value.size + 649) / 650)
     allObjects = value
     objects = value.filterIndexed { index, _ -> index % stride == 0 }
+    planOpeningSpecs = buildPlanOpeningSpecs(value)
     levels = levelValues
     sceneBounds = bounds
     invalidate()
@@ -4162,6 +4183,7 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
   fun clearVisualScene() {
     objects = emptyList()
     allObjects = emptyList()
+    planOpeningSpecs = emptyList()
     levels = emptyList()
     invalidate()
   }
@@ -4214,6 +4236,9 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
   override fun onDraw(canvas: Canvas) {
     super.onDraw(canvas)
     drawAuthoringEdges(canvas)
+    // NativeSelectionOverlay is the single owner of committed 2D opening
+    // symbols on Android. Flutter keeps only draft/selection overlays, so
+    // doors and windows are not painted twice on every plan frame.
     drawPlanOpeningSymbols(canvas)
     drawSectionBox(canvas)
     val rect = rectangle ?: return
@@ -4299,25 +4324,13 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
 
   private fun drawPlanOpeningSymbols(canvas: Canvas) {
     if (!topDown) return
-    val density = resources.displayMetrics.density
-    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-      style = Paint.Style.STROKE
-      color = Color.rgb(17, 24, 39)
-      strokeWidth = density * 1.05f
-      strokeCap = Paint.Cap.SQUARE
-      strokeJoin = Paint.Join.MITER
-    }
-    for (opening in allObjects) {
-      if (opening.kind != "door" && opening.kind != "window") continue
-      val hostId = opening.metadata["host_wall_id"]?.toLongOrNull() ?: continue
-      val host = allObjects.firstOrNull { it.kind == "wall" && it.elementId == hostId } ?: continue
-      val startX = host.metadata["start_x"]?.toDoubleOrNull() ?: continue
-      val startY = host.metadata["start_y"]?.toDoubleOrNull() ?: continue
-      val endX = host.metadata["end_x"]?.toDoubleOrNull() ?: continue
-      val endY = host.metadata["end_y"]?.toDoubleOrNull() ?: continue
-      val offset = opening.metadata["offset_meters"]?.toDoubleOrNull() ?: continue
-      val widthMeters = opening.metadata["width_meters"]?.toDoubleOrNull() ?: continue
-      if (widthMeters <= 1.0e-6) continue
+    for (opening in planOpeningSpecs) {
+      val startX = opening.startX
+      val startY = opening.startY
+      val endX = opening.endX
+      val endY = opening.endY
+      val offset = opening.offset
+      val widthMeters = opening.widthMeters
 
       val dx = endX - startX
       val dy = endY - startY
@@ -4332,9 +4345,7 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
       val halfWidth = widthMeters * 0.5
       val start = sourcePlanPoint(centerX - ux * halfWidth, centerY - uy * halfWidth)
       val end = sourcePlanPoint(centerX + ux * halfWidth, centerY + uy * halfWidth)
-      val centerPoint = sourcePlanPoint(centerX, centerY)
-      val wallThickness = host.metadata["thickness_meters"]?.toDoubleOrNull() ?: 0.20
-      val halfThickness = wallThickness * 0.5
+      val halfThickness = opening.halfThickness
       val cutStart = project(
         sourcePlanPoint(
           centerX - ux * halfWidth + nx * halfThickness,
@@ -4362,10 +4373,6 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
       // The opening objects are hidden as full prisms in top-down mode. Clear
       // their host wall footprint here before drawing the familiar symbol so
       // the wall itself visibly contains the opening.
-      val cutPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.FILL
-        color = Color.rgb(244, 247, 245)
-      }
       val cutPath = Path().apply {
         moveTo(cutStart.x, cutStart.y)
         lineTo(cutEnd.x, cutEnd.y)
@@ -4373,66 +4380,57 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
         lineTo(cutStartBack.x, cutStartBack.y)
         close()
       }
-      canvas.drawPath(cutPath, cutPaint)
+      canvas.drawPath(cutPath, openingCutPaint)
       val openEnd = sourcePlanPoint(
         centerX - ux * halfWidth + nx * widthMeters,
         centerY - uy * halfWidth + ny * widthMeters,
       )
       val first = project(start) ?: continue
       val second = project(end) ?: continue
-      val center = project(centerPoint) ?: continue
       val open = project(openEnd) ?: continue
-      val selected = opening.elementId != null && selectedIds.contains(opening.elementId)
-      paint.color = if (selected) Color.rgb(37, 99, 235) else Color.rgb(17, 24, 39)
+      openingPaint.color = if (opening.elementId != null && selectedIds.contains(opening.elementId)) {
+        Color.rgb(37, 99, 235)
+      } else {
+        Color.rgb(17, 24, 39)
+      }
       if (opening.kind == "window") {
-        // Double-casement window: two door-like leaves side by side. Each
-        // leaf is hinged at its outer jamb and swings toward the centre split,
-        // giving the window two clean quarter-circle arcs instead of a V.
-        val panelWidth = halfWidth
-        val leftOpenPoint = project(
-          sourcePlanPoint(centerX - ux * halfWidth + nx * panelWidth,
-            centerY - uy * halfWidth + ny * panelWidth),
+        // Windows use the compact architectural plan symbol: two glazing
+        // lines parallel to the host wall. Swing arcs belong to doors and
+        // make small windows noisy and visually ambiguous.
+        val glassOffset = opening.halfThickness * 0.70
+        val glassFirst = project(
+          sourcePlanPoint(
+            centerX - ux * halfWidth + nx * glassOffset,
+            centerY - uy * halfWidth + ny * glassOffset,
+          ),
         ) ?: continue
-        val rightOpenPoint = project(
-          sourcePlanPoint(centerX + ux * halfWidth + nx * panelWidth,
-            centerY + uy * halfWidth + ny * panelWidth),
+        val glassSecond = project(
+          sourcePlanPoint(
+            centerX + ux * halfWidth + nx * glassOffset,
+            centerY + uy * halfWidth + ny * glassOffset,
+          ),
         ) ?: continue
-        canvas.drawLine(first.x, first.y, leftOpenPoint.x, leftOpenPoint.y, paint)
-        canvas.drawLine(second.x, second.y, rightOpenPoint.x, rightOpenPoint.y, paint)
-
-        fun drawSwingArc(hinge: PointF, closed: PointF, openPoint: PointF) {
-          val radius = kotlin.math.hypot(
-            (closed.x - hinge.x).toDouble(),
-            (closed.y - hinge.y).toDouble(),
-          ).toFloat()
-          if (radius <= 1.0f) return
-          val startAngle = Math.toDegrees(
-            atan2((closed.y - hinge.y).toDouble(), (closed.x - hinge.x).toDouble()),
-          ).toFloat()
-          val endAngle = Math.toDegrees(
-            atan2((openPoint.y - hinge.y).toDouble(), (openPoint.x - hinge.x).toDouble()),
-          ).toFloat()
-          var sweep = endAngle - startAngle
-          while (sweep > 180f) sweep -= 360f
-          while (sweep < -180f) sweep += 360f
-          canvas.drawArc(
-            RectF(hinge.x - radius, hinge.y - radius,
-              hinge.x + radius, hinge.y + radius),
-            startAngle,
-            sweep,
-            false,
-            paint,
-          )
-        }
-
-        drawSwingArc(first, center, leftOpenPoint)
-        drawSwingArc(second, center, rightOpenPoint)
+        val glassFirstBack = project(
+          sourcePlanPoint(
+            centerX - ux * halfWidth - nx * glassOffset,
+            centerY - uy * halfWidth - ny * glassOffset,
+          ),
+        ) ?: continue
+        val glassSecondBack = project(
+          sourcePlanPoint(
+            centerX + ux * halfWidth - nx * glassOffset,
+            centerY + uy * halfWidth - ny * glassOffset,
+          ),
+        ) ?: continue
+        windowPaint.color = openingPaint.color
+        canvas.drawLine(glassFirst.x, glassFirst.y, glassSecond.x, glassSecond.y, windowPaint)
+        canvas.drawLine(glassFirstBack.x, glassFirstBack.y, glassSecondBack.x, glassSecondBack.y, windowPaint)
         continue
       }
 
       // Revit-like plan door: the leaf is shown open and the swing is a
       // quarter-circle arc from the closed wall direction to the open leaf.
-      canvas.drawLine(first.x, first.y, open.x, open.y, paint)
+      canvas.drawLine(first.x, first.y, open.x, open.y, openingPaint)
       val radius = kotlin.math.hypot((second.x - first.x).toDouble(), (second.y - first.y).toDouble()).toFloat()
       if (radius <= 1.0f) continue
       val startAngle = Math.toDegrees(atan2((second.y - first.y).toDouble(), (second.x - first.x).toDouble())).toFloat()
@@ -4446,10 +4444,55 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
         startAngle,
         sweep,
         false,
-        paint,
+        openingPaint,
       )
     }
   }
+
+  private fun buildPlanOpeningSpecs(value: List<NativeVisualObject>): List<PlanOpeningSpec> {
+    val wallsById = value.asSequence()
+      .filter { it.kind == "wall" }
+      .mapNotNull { wall -> wall.elementId?.let { it to wall } }
+      .toMap()
+    return value.asSequence()
+      .filter { it.kind == "door" || it.kind == "window" }
+      .mapNotNull { opening ->
+        val hostId = opening.metadata["host_wall_id"]?.toLongOrNull() ?: return@mapNotNull null
+        val host = wallsById[hostId] ?: return@mapNotNull null
+        val startX = host.metadata["start_x"]?.toDoubleOrNull() ?: return@mapNotNull null
+        val startY = host.metadata["start_y"]?.toDoubleOrNull() ?: return@mapNotNull null
+        val endX = host.metadata["end_x"]?.toDoubleOrNull() ?: return@mapNotNull null
+        val endY = host.metadata["end_y"]?.toDoubleOrNull() ?: return@mapNotNull null
+        val offset = opening.metadata["offset_meters"]?.toDoubleOrNull() ?: return@mapNotNull null
+        val widthMeters = opening.metadata["width_meters"]?.toDoubleOrNull() ?: return@mapNotNull null
+        if (widthMeters <= 1.0e-6) return@mapNotNull null
+        val thickness = host.metadata["thickness_meters"]?.toDoubleOrNull() ?: 0.20
+        PlanOpeningSpec(
+          kind = opening.kind,
+          elementId = opening.elementId,
+          startX = startX,
+          startY = startY,
+          endX = endX,
+          endY = endY,
+          offset = offset,
+          widthMeters = widthMeters,
+          halfThickness = thickness * 0.5,
+        )
+      }
+      .toList()
+  }
+
+  private data class PlanOpeningSpec(
+    val kind: String,
+    val elementId: Long?,
+    val startX: Double,
+    val startY: Double,
+    val endX: Double,
+    val endY: Double,
+    val offset: Double,
+    val widthMeters: Double,
+    val halfThickness: Double,
+  )
 
   private fun sourcePlanPoint(x: Double, y: Double): ScenePoint =
     ScenePoint(x, 0.0, -y)

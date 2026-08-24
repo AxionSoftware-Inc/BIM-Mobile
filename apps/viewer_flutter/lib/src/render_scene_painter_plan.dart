@@ -345,6 +345,12 @@ mixin _FallbackScenePlanPainterMixin {
       ..strokeCap = StrokeCap.square
       ..strokeJoin = StrokeJoin.miter
       ..color = const Color(0xFF111827);
+    final windowPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.35
+      ..strokeCap = StrokeCap.square
+      ..strokeJoin = StrokeJoin.miter
+      ..color = const Color(0xFF111827);
     for (final opening in objects) {
       if (opening.kindKey != 'door' && opening.kindKey != 'window') continue;
       final hostId = int.tryParse('${opening.metadata['host_wall_id'] ?? ''}');
@@ -399,7 +405,6 @@ mixin _FallbackScenePlanPainterMixin {
       final openEnd = first + normal.scale(width);
       final p0 = projection.project(first).screen;
       final p1 = projection.project(second).screen;
-      final pc = projection.project(center).screen;
       final po = projection.project(openEnd).screen;
       // Do not leave the cut as a blank white rectangle. The jamb strokes
       // make the opening visibly part of its host wall even when the native
@@ -415,48 +420,20 @@ mixin _FallbackScenePlanPainterMixin {
       canvas.drawLine(firstOuter, firstInner, paint);
       canvas.drawLine(secondOuter, secondInner, paint);
       if (opening.kindKey == 'window') {
-        // Double-casement window: draw two door-like leaves side by side.
-        // Each leaf is hinged at its outer jamb and swings toward the
-        // centre, so the two quarter-circle arcs meet at the centre split.
-        final panelWidth = halfWidth;
-        final leftOpen = first + normal.scale(panelWidth);
-        final rightOpen = second + normal.scale(panelWidth);
-        final leftHinge = projection.project(first).screen;
-        final rightHinge = projection.project(second).screen;
-        final leftOpenPoint = projection.project(leftOpen).screen;
-        final rightOpenPoint = projection.project(rightOpen).screen;
-        canvas.drawLine(leftHinge, leftOpenPoint, paint);
-        canvas.drawLine(rightHinge, rightOpenPoint, paint);
-
-        void drawSwingArc(Offset hinge, Offset closed, Offset open) {
-          final radius = (closed - hinge).distance;
-          if (radius <= 1.0) return;
-          final startAngle = math.atan2(
-            closed.dy - hinge.dy,
-            closed.dx - hinge.dx,
-          );
-          final endAngle = math.atan2(
-            open.dy - hinge.dy,
-            open.dx - hinge.dx,
-          );
-          var sweep = endAngle - startAngle;
-          while (sweep > math.pi) {
-            sweep -= math.pi * 2;
-          }
-          while (sweep < -math.pi) {
-            sweep += math.pi * 2;
-          }
-          canvas.drawArc(
-            Rect.fromCircle(center: hinge, radius: radius),
-            startAngle,
-            sweep,
-            false,
-            paint,
-          );
-        }
-
-        drawSwingArc(leftHinge, pc, leftOpenPoint);
-        drawSwingArc(rightHinge, pc, rightOpenPoint);
+        // Windows use the compact architectural plan symbol: two glazing
+        // lines parallel to the host wall. Swing arcs belong to doors and
+        // make small windows noisy and visually ambiguous.
+        final glassOffset = halfThickness * 0.70;
+        final glassFirst =
+            projection.project(first + normal.scale(glassOffset)).screen;
+        final glassSecond =
+            projection.project(second + normal.scale(glassOffset)).screen;
+        final glassFirstBack =
+            projection.project(first - normal.scale(glassOffset)).screen;
+        final glassSecondBack =
+            projection.project(second - normal.scale(glassOffset)).screen;
+        canvas.drawLine(glassFirst, glassSecond, windowPaint);
+        canvas.drawLine(glassFirstBack, glassSecondBack, windowPaint);
         continue;
       }
       canvas.drawLine(p0, po, paint);

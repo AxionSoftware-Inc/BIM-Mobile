@@ -264,6 +264,10 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     notifyListeners();
 
     await _invoke('fitCamera');
+    // Native fit uses renderable bounds and is only a surface-level fallback.
+    // Re-apply Flutter's plan camera after it so a floor plan cannot open with
+    // the native 3D framing and require a gesture to recover.
+    _scheduleNativeCameraSync();
   }
 
   static double _emptyPlanZoomForViewport(Size viewportSize) {
@@ -451,6 +455,11 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
 
     if (shouldRefit) {
       _scheduleViewportRefit();
+    } else {
+      // Android's TextureView fits itself when its physical size changes.
+      // Re-send Flutter's authoritative plan camera after that resize so the
+      // first frame cannot use the stale pre-layout zoom.
+      _scheduleNativeCameraSync();
     }
   }
 

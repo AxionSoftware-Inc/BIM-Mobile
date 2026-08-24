@@ -82,6 +82,7 @@ extension _RenderSceneViewportCamera on RenderSceneViewportController {
       }
       _resetPlanForBounds(_scene?.bounds ?? _sceneBounds);
       _notifyViewportListeners();
+      _scheduleNativeCameraSync();
     });
   }
 
