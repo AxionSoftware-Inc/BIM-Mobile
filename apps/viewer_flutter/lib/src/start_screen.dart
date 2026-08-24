@@ -22,7 +22,6 @@ class StartScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final colors = theme.colorScheme;
 
     return Scaffold(
       body: SafeArea(
@@ -63,35 +62,11 @@ class StartScreen extends StatelessWidget {
                         const SizedBox(height: 18),
                         _StartError(message: errorMessage!),
                       ],
-                      const SizedBox(height: 32),
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: <Widget>[
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: <Widget>[
-                                Text(
-                                  'Templates',
-                                  style: theme.textTheme.headlineSmall
-                                      ?.copyWith(fontWeight: FontWeight.w700),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  'Lightweight previews, ready-to-edit BIM models.',
-                                  style: theme.textTheme.bodyMedium?.copyWith(
-                                    color: colors.onSurfaceVariant,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          if (columnCount > 1)
-                            _TemplateCountBadge(
-                              color: colors.primaryContainer,
-                              textColor: colors.onPrimaryContainer,
-                            ),
-                        ],
+                      const SizedBox(height: 28),
+                      Text(
+                        'Templates',
+                        style: theme.textTheme.headlineSmall
+                            ?.copyWith(fontWeight: FontWeight.w700),
                       ),
                       const SizedBox(height: 14),
                       Wrap(
@@ -140,23 +115,6 @@ class StartScreen extends StatelessWidget {
                           ),
                         ],
                       ),
-                      const SizedBox(height: 22),
-                      Row(
-                        children: <Widget>[
-                          Icon(
-                            Icons.touch_app_outlined,
-                            size: 18,
-                            color: colors.primary,
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            'Choose a template to open a ready-to-edit model in the BIM workspace.',
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: colors.onSurfaceVariant,
-                            ),
-                          ),
-                        ],
-                      ),
                     ],
                   ),
                 ),
@@ -186,59 +144,15 @@ class _StartHero extends StatelessWidget {
     final colors = theme.colorScheme;
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(24, 24, 24, 22),
+      padding: const EdgeInsets.fromLTRB(20, 17, 20, 17),
       decoration: BoxDecoration(
-        color: colors.primaryContainer.withValues(alpha: 0.42),
-        borderRadius: BorderRadius.circular(24),
+        color: colors.primaryContainer.withValues(alpha: 0.32),
+        borderRadius: BorderRadius.circular(18),
         border: Border.all(color: colors.primary.withValues(alpha: 0.12)),
       ),
-      child: Wrap(
-        alignment: WrapAlignment.spaceBetween,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        runSpacing: 18,
-        children: <Widget>[
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 620),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    Icon(Icons.view_in_ar_outlined,
-                        size: 18, color: colors.primary),
-                    const SizedBox(width: 8),
-                    Text(
-                      'TABLET BIM  ·  PROJECT WORKSPACE',
-                      style: theme.textTheme.labelMedium?.copyWith(
-                        color: colors.primary,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.8,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  'Start a project',
-                  style: theme.textTheme.displaySmall?.copyWith(
-                    fontWeight: FontWeight.w800,
-                    color: const Color(0xFF173D35),
-                    height: 1.0,
-                  ),
-                ),
-                const SizedBox(height: 9),
-                Text(
-                  'Open an existing BIM project or begin with a lightweight starter model.',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    color: colors.onSurfaceVariant,
-                    height: 1.35,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Wrap(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final actions = Wrap(
             spacing: 10,
             runSpacing: 10,
             children: <Widget>[
@@ -253,37 +167,27 @@ class _StartHero extends StatelessWidget {
                 label: const Text('Create new'),
               ),
             ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _TemplateCountBadge extends StatelessWidget {
-  const _TemplateCountBadge({
-    required this.color,
-    required this.textColor,
-  });
-
-  final Color color;
-  final Color textColor;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
-      decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(30),
-      ),
-      child: Text(
-        '3 STARTER MODELS',
-        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: textColor,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.5,
+          );
+          final title = Text(
+            'Start a project',
+            style: theme.textTheme.headlineSmall?.copyWith(
+              fontWeight: FontWeight.w800,
+              color: const Color(0xFF173D35),
             ),
+          );
+          if (constraints.maxWidth < 620) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[title, const SizedBox(height: 14), actions],
+            );
+          }
+          return Row(
+            children: <Widget>[
+              Expanded(child: title),
+              actions,
+            ],
+          );
+        },
       ),
     );
   }
@@ -315,7 +219,7 @@ class _TemplateCard extends StatelessWidget {
     final enabled = onPressed != null;
     return SizedBox(
       width: width,
-      height: 238,
+      height: 316,
       child: Card(
         clipBehavior: Clip.antiAlias,
         elevation: enabled ? 1.5 : 0,
@@ -326,11 +230,11 @@ class _TemplateCard extends StatelessWidget {
         ),
         child: InkWell(
           onTap: onPressed,
-          child: Row(
+          child: Column(
             children: <Widget>[
               SizedBox(
-                width: width < 500 ? width * 0.42 : 218,
-                height: double.infinity,
+                width: double.infinity,
+                height: 188,
                 child: RepaintBoundary(
                   child: _TemplatePreview(
                     template: template,
@@ -340,15 +244,31 @@ class _TemplateCard extends StatelessWidget {
                   ),
                 ),
               ),
+              Divider(
+                height: 1,
+                color: colors.outlineVariant.withValues(alpha: 0.68),
+              ),
               Expanded(
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(17, 18, 15, 15),
+                  padding: const EdgeInsets.fromLTRB(17, 14, 15, 14),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: <Widget>[
                       Row(
                         children: <Widget>[
-                          Icon(icon, size: 20, color: colors.primary),
+                          Icon(icon, size: 18, color: colors.primary),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              title,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.w700,
+                                height: 1.08,
+                              ),
+                            ),
+                          ),
                           const Spacer(),
                           Icon(
                             Icons.arrow_forward_rounded,
@@ -357,27 +277,17 @@ class _TemplateCard extends StatelessWidget {
                           ),
                         ],
                       ),
-                      const Spacer(),
-                      Text(
-                        title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.w700,
-                          height: 1.05,
-                        ),
-                      ),
-                      const SizedBox(height: 7),
+                      const SizedBox(height: 5),
                       Text(
                         subtitle,
-                        maxLines: 2,
+                        maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: colors.onSurfaceVariant,
                           height: 1.25,
                         ),
                       ),
-                      const SizedBox(height: 12),
+                      const SizedBox(height: 8),
                       Text(
                         meta.toUpperCase(),
                         style: theme.textTheme.labelSmall?.copyWith(
@@ -460,21 +370,61 @@ class _TemplatePreviewPainter extends CustomPainter {
       case WorkspaceTemplate.tower9:
         _drawBuilding(canvas, size, floors: 9, scale: 0.78, offsetX: 0.0);
       case WorkspaceTemplate.campus6x9:
+        _drawCampusGround(canvas, size);
+        // The engine template is a 3 x 2 campus of nine-storey L-shaped
+        // buildings. Keep the same silhouette here without starting the
+        // native renderer or decoding a large bitmap on the start screen.
         for (final offset in <Offset>[
-          const Offset(-0.25, 0.11),
-          const Offset(0.02, -0.08),
-          const Offset(0.27, 0.14),
-          const Offset(-0.08, 0.28),
+          const Offset(-0.28, -0.10),
+          const Offset(0.00, -0.16),
+          const Offset(0.28, -0.10),
+          const Offset(-0.28, 0.13),
+          const Offset(0.00, 0.19),
+          const Offset(0.28, 0.13),
         ]) {
           _drawBuilding(
             canvas,
             size,
-            floors: 5,
-            scale: 0.38,
+            floors: 9,
+            scale: 0.43,
             offsetX: offset.dx,
             offsetY: offset.dy,
           );
         }
+    }
+  }
+
+  void _drawCampusGround(Canvas canvas, Size size) {
+    final center = Offset(size.width * 0.5, size.height * 0.68);
+    final ground = Path()
+      ..moveTo(center.dx, center.dy - size.height * 0.25)
+      ..lineTo(center.dx + size.width * 0.43, center.dy - size.height * 0.04)
+      ..lineTo(center.dx, center.dy + size.height * 0.18)
+      ..lineTo(center.dx - size.width * 0.43, center.dy - size.height * 0.04)
+      ..close();
+    canvas.drawPath(
+      ground,
+      Paint()..color = secondary.withValues(alpha: 0.075),
+    );
+    canvas.drawPath(
+      ground,
+      Paint()
+        ..color = primary.withValues(alpha: 0.16)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.1,
+    );
+
+    final pathPaint = Paint()
+      ..color = primary.withValues(alpha: 0.11)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1;
+    for (var index = -2; index <= 2; index++) {
+      final dx = size.width * index * 0.12;
+      canvas.drawLine(
+        Offset(center.dx + dx, center.dy - size.height * 0.12),
+        Offset(center.dx + dx * 0.55, center.dy + size.height * 0.11),
+        pathPaint,
+      );
     }
   }
 
@@ -486,70 +436,144 @@ class _TemplatePreviewPainter extends CustomPainter {
     required double offsetX,
     double offsetY = 0,
   }) {
+    const footprint = <Offset>[
+      Offset(0.00, 0.00),
+      Offset(1.00, 0.00),
+      Offset(1.00, 0.50),
+      Offset(0.58, 0.50),
+      Offset(0.58, 1.00),
+      Offset(0.00, 1.00),
+    ];
     final center = Offset(
-      size.width * (0.52 + offsetX),
-      size.height * (0.63 + offsetY),
+      size.width * (0.50 + offsetX),
+      size.height * (0.67 + offsetY),
     );
-    final width = size.width * 0.34 * scale;
-    final depth = size.width * 0.17 * scale;
+    final width = size.width * 0.31 * scale;
+    final depth = size.width * 0.16 * scale;
+    final depthProjection = depth * 0.56;
     final floorHeight = size.height * 0.055 * scale;
     final height = floorHeight * floors;
-    final top = center.translate(-width * 0.5, -height);
-    final frontBottom = center.translate(-width * 0.5, 0);
-    final sideBottom = center.translate(width * 0.5, 0);
-    final roof = Path()
-      ..moveTo(top.dx, top.dy)
-      ..lineTo(top.dx + width, top.dy)
-      ..lineTo(top.dx + width + depth, top.dy - depth * 0.55)
-      ..lineTo(top.dx + depth, top.dy - depth * 0.55)
-      ..close();
-    final front = Path()
-      ..moveTo(top.dx, top.dy)
-      ..lineTo(top.dx + width, top.dy)
-      ..lineTo(sideBottom.dx, sideBottom.dy)
-      ..lineTo(frontBottom.dx, frontBottom.dy)
-      ..close();
-    final side = Path()
-      ..moveTo(top.dx + width, top.dy)
-      ..lineTo(top.dx + width + depth, top.dy - depth * 0.55)
-      ..lineTo(sideBottom.dx + depth, sideBottom.dy - depth * 0.55)
-      ..lineTo(sideBottom.dx, sideBottom.dy)
-      ..close();
 
-    final frontFill = Paint()..color = primary.withValues(alpha: 0.18);
-    final sideFill = Paint()..color = secondary.withValues(alpha: 0.17);
-    final roofFill = Paint()..color = primary.withValues(alpha: 0.29);
-    canvas.drawPath(front, frontFill);
-    canvas.drawPath(side, sideFill);
-    canvas.drawPath(roof, roofFill);
+    Offset project(Offset point, double z) {
+      return Offset(
+        center.dx + (point.dx - 0.5) * width - (point.dy - 0.5) * depth,
+        center.dy + (point.dx + point.dy - 1.0) * depthProjection - z,
+      );
+    }
 
+    final bottom = footprint.map((point) => project(point, 0)).toList();
+    final top = footprint.map((point) => project(point, height)).toList();
     final linePaint = Paint()
       ..color = primary.withValues(alpha: 0.72)
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.4;
-    canvas
-      ..drawPath(front, linePaint)
-      ..drawPath(side, linePaint)
-      ..drawPath(roof, linePaint);
+      ..strokeWidth = 1.25;
+
+    for (var edge = footprint.length - 1; edge >= 0; edge--) {
+      final next = (edge + 1) % footprint.length;
+      final face = Path()
+        ..moveTo(bottom[edge].dx, bottom[edge].dy)
+        ..lineTo(bottom[next].dx, bottom[next].dy)
+        ..lineTo(top[next].dx, top[next].dy)
+        ..lineTo(top[edge].dx, top[edge].dy)
+        ..close();
+      final faceColor = edge == 0 || edge == 1 || edge == 2
+          ? primary.withValues(alpha: 0.19)
+          : secondary.withValues(alpha: 0.16);
+      canvas.drawPath(face, Paint()..color = faceColor);
+      canvas.drawPath(face, linePaint);
+    }
+
+    final roof = Path()..moveTo(top.first.dx, top.first.dy);
+    for (final point in top.skip(1)) {
+      roof.lineTo(point.dx, point.dy);
+    }
+    roof.close();
+    canvas.drawPath(
+      roof,
+      Paint()..color = primary.withValues(alpha: 0.30),
+    );
+    canvas.drawPath(roof, linePaint);
 
     final detailPaint = Paint()
-      ..color = primary.withValues(alpha: 0.36)
+      ..color = primary.withValues(alpha: 0.29)
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 1;
+      ..strokeWidth = 0.9;
     for (var floor = 1; floor < floors; floor++) {
-      final y = top.dy + floorHeight * floor;
-      canvas.drawLine(
-          Offset(top.dx, y), Offset(top.dx + width, y), detailPaint);
+      final z = floorHeight * floor;
+      for (final edge in <int>[0, 1, 2, 3]) {
+        final next = (edge + 1) % footprint.length;
+        canvas.drawLine(project(footprint[edge], z),
+            project(footprint[next], z), detailPaint);
+      }
     }
+
     final windowPaint = Paint()..color = secondary.withValues(alpha: 0.62);
-    final windowW = width * 0.09;
-    final windowH = floorHeight * 0.30;
-    final windowGap = width * 0.11;
+    _drawWindowsOnEdge(
+      canvas,
+      project,
+      footprint,
+      edge: 0,
+      floors: floors,
+      floorHeight: floorHeight,
+      columns: 3,
+      paint: windowPaint,
+    );
+    _drawWindowsOnEdge(
+      canvas,
+      project,
+      footprint,
+      edge: 1,
+      floors: floors,
+      floorHeight: floorHeight,
+      columns: 1,
+      paint: windowPaint,
+    );
+    _drawWindowsOnEdge(
+      canvas,
+      project,
+      footprint,
+      edge: 3,
+      floors: floors,
+      floorHeight: floorHeight,
+      columns: 1,
+      paint: windowPaint,
+    );
+  }
+
+  void _drawWindowsOnEdge(
+    Canvas canvas,
+    Offset Function(Offset point, double z) project,
+    List<Offset> footprint, {
+    required int edge,
+    required int floors,
+    required double floorHeight,
+    required int columns,
+    required Paint paint,
+  }) {
+    final next = (edge + 1) % footprint.length;
+    final start = footprint[edge];
+    final end = footprint[next];
+    Offset between(double t) => Offset(
+          start.dx + (end.dx - start.dx) * t,
+          start.dy + (end.dy - start.dy) * t,
+        );
     for (var floor = 0; floor < floors; floor++) {
-      final y = top.dy + floorHeight * floor + floorHeight * 0.35;
-      for (var column = 0; column < 3; column++) {
-        final x = top.dx + width * 0.18 + column * (windowW + windowGap);
-        canvas.drawRect(Rect.fromLTWH(x, y, windowW, windowH), windowPaint);
+      final lower = floor * floorHeight + floorHeight * 0.28;
+      final upper = lower + floorHeight * 0.30;
+      for (var column = 0; column < columns; column++) {
+        final t0 = 0.14 + column * (0.72 / columns);
+        final t1 = t0 + (0.12 / columns.clamp(1, 3));
+        final window = Path()
+          ..moveTo(
+              project(between(t0), lower).dx, project(between(t0), lower).dy)
+          ..lineTo(
+              project(between(t1), lower).dx, project(between(t1), lower).dy)
+          ..lineTo(
+              project(between(t1), upper).dx, project(between(t1), upper).dy)
+          ..lineTo(
+              project(between(t0), upper).dx, project(between(t0), upper).dy)
+          ..close();
+        canvas.drawPath(window, paint);
       }
     }
   }
