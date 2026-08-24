@@ -536,9 +536,9 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
 
     final minDimension =
         math.max(math.min(viewportSize.width, viewportSize.height), 1.0);
-    // Dragging left must turn the model left. Pitch intentionally keeps its
-    // existing sign because vertical tablet motion already matches expectation.
-    _orbitYawRadians -= delta.dx / minDimension * math.pi * 1.25;
+    // Horizontal orbit follows the finger. Keep this sign aligned with the
+    // native Android gesture path so tablet and fallback input feel identical.
+    _orbitYawRadians += delta.dx / minDimension * math.pi * 1.25;
     _orbitPitchRadians =
         (_orbitPitchRadians + delta.dy / minDimension * math.pi * 0.95)
             .clamp(-math.pi / 2.0 + 0.12, math.pi / 2.0 - 0.12);

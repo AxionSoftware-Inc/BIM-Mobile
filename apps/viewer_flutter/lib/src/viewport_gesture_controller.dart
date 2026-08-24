@@ -103,7 +103,7 @@ final class ViewportGestureController {
 
     if (event.panDelta.distanceSquared > 0.0) {
       target.orbitBy(
-        Offset(-event.panDelta.dx * 0.9, event.panDelta.dy * 0.9),
+        Offset(event.panDelta.dx * 0.9, event.panDelta.dy * 0.9),
         viewportSize,
       );
     }

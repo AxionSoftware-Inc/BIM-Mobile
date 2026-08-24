@@ -2606,17 +2606,23 @@ internal class RenderSceneFilamentHostView(
     // narrowed here.
     // 3D borders remain visible, but the previous 28 mm prisms read as
     // oversized black bars in the orbit view. Keep the lighter plan weight
-    // and use a separate, still-readable 3D weight.
+    // and use a separate, still-readable 3D weight. At fit-to-model zoom a
+    // 6 mm radius becomes sub-pixel on a tablet, so the edge can alternate
+    // between covered and visible fragments as the camera moves.
     val normalRadius = when {
       isFloorPlan -> 0.004
       projectionMode != "isometric" -> 0.006
-      else -> 0.006
+      else -> 0.010
     }
     // Junction borders deliberately get a stronger visual treatment than
     // ordinary silhouette edges. They are the only reliable room boundary
     // after an exterior wall has been removed and an adjacent floor/ceiling
     // occupies the same depth range.
-    val junctionRadius = if (isFloorPlan) 0.008 else 0.006
+    val junctionRadius = when {
+      isFloorPlan -> 0.008
+      projectionMode == "isometric" -> 0.012
+      else -> 0.006
+    }
     val sourceBounds = boundsForPoints(points)
     data class EdgeKey(val first: Int, val second: Int)
     fun edgeKey(first: Int, second: Int) = if (first < second) {
@@ -3308,7 +3314,7 @@ internal class RenderSceneFilamentHostView(
           } else if (isPlanarProjection()) {
             panPlanarCamera(dx, dy)
           } else {
-            orbitYawRadians -= dx * 0.01
+            orbitYawRadians += dx * 0.01
             orbitPitchRadians = (orbitPitchRadians + dy * 0.01).coerceIn(Math.toRadians(0.1), Math.toRadians(88.0))
           }
           updateOrbitCamera()
@@ -3548,16 +3554,27 @@ internal class RenderSceneFilamentHostView(
   private fun configureCameraProjection() {
     val camera = camera ?: return
     val aspect = aspectRatio()
-    // A fixed 10 cm near plane clips whole storeys as an orbit camera gets
-    // close to a model. Keep it extremely close but scale it with distance;
-    // the far plane remains bounded for depth precision on a campus.
-    val near = (orbitDistance * 0.0015).coerceIn(0.002, 0.025)
     val bounds = sceneMetrics.bounds
     val sceneSpan = max(
       bounds.max.x - bounds.min.x,
       max(bounds.max.y - bounds.min.y, bounds.max.z - bounds.min.z),
     )
-    val far = max(orbitDistance * 7.0 + sceneSpan * 2.5, 160.0)
+    // Keep the 3D depth range close to the actual model. The previous range
+    // started at a few millimetres and always ended at 160 m+, which gives
+    // poor depth precision for the small edge prisms at fit-to-model zoom and
+    // makes them flicker against the model faces. A generous scene margin
+    // still leaves room for the camera while materially improving precision.
+    val depthMargin = max(sceneSpan * 1.75, 2.0)
+    val near = if (projectionMode == "isometric") {
+      max(0.01, orbitDistance - depthMargin)
+    } else {
+      (orbitDistance * 0.0015).coerceIn(0.002, 0.025)
+    }
+    val far = if (projectionMode == "isometric") {
+      max(orbitDistance + depthMargin, near + 1.0)
+    } else {
+      max(orbitDistance * 7.0 + sceneSpan * 2.5, 160.0)
+    }
     if (projectionMode != "isometric" || orbitProjectionStyle == "orthographic") {
       val halfHeight = if (projectionMode == "topDown") topDownZoom else max(orbitDistance * 0.6, 2.0)
       val halfWidth = halfHeight * aspect
