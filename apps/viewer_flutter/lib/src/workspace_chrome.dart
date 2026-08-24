@@ -14,7 +14,6 @@ class WorkspaceAppBar extends StatelessWidget implements PreferredSizeWidget {
     required this.hasSelection,
     required this.browserVisible,
     required this.inspectorVisible,
-    required this.onCreateTemplate,
     required this.onSave,
     required this.onDocumentation,
     required this.onCreateSection,
@@ -34,7 +33,6 @@ class WorkspaceAppBar extends StatelessWidget implements PreferredSizeWidget {
   final bool hasSelection;
   final bool browserVisible;
   final bool inspectorVisible;
-  final ValueChanged<WorkspaceTemplate> onCreateTemplate;
   final VoidCallback onSave;
   final VoidCallback onDocumentation;
   final VoidCallback onCreateSection;
@@ -86,26 +84,6 @@ class WorkspaceAppBar extends StatelessWidget implements PreferredSizeWidget {
             onPressed: busy ? null : onExitSection,
             icon: const Icon(Icons.close_fullscreen_outlined),
           ),
-        PopupMenuButton<WorkspaceTemplate>(
-          tooltip: 'New project template',
-          enabled: !busy,
-          icon: const Icon(Icons.apartment_outlined),
-          onSelected: onCreateTemplate,
-          itemBuilder: (context) => const <PopupMenuEntry<WorkspaceTemplate>>[
-            PopupMenuItem<WorkspaceTemplate>(
-              value: WorkspaceTemplate.tower9,
-              child: Text('9-storey residential tower'),
-            ),
-            PopupMenuItem<WorkspaceTemplate>(
-              value: WorkspaceTemplate.default3,
-              child: Text('3-storey default building'),
-            ),
-            PopupMenuItem<WorkspaceTemplate>(
-              value: WorkspaceTemplate.campus6x9,
-              child: Text('6 × 9-storey campus'),
-            ),
-          ],
-        ),
         IconButton(
           tooltip: 'Save project',
           onPressed: busy || !engineBacked ? null : onSave,

@@ -88,9 +88,6 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
       onExitSection: _activeSectionView == null
           ? null
           : () => _setProjectionMode(RenderSceneProjectionMode.isometric),
-      onCreateTemplate: (template) => _createResidentialTemplate(
-        _residentialTemplateKind(template),
-      ),
       onSave: _saveCurrentProject,
       onDocumentation: _openDocumentationWorkspace,
       onCreateSection: _showSectionDialog,
