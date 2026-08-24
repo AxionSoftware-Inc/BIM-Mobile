@@ -144,6 +144,27 @@ void material(inout MaterialInputs material) {
 }
 """
 
+private const val GRID_MAT = """
+void material(inout MaterialInputs material) {
+    prepareMaterial(material);
+    float3 world = getWorldPosition();
+    float2 relative = world.xz - materialParams.gridCenter.xz;
+    float distanceFromCenter = length(relative);
+    float fade = 1.0 - smoothstep(materialParams.gridFadeStart, materialParams.gridRadius, distanceFromCenter);
+
+    float2 minorCoord = relative / materialParams.gridMinorStep;
+    float2 majorCoord = relative / materialParams.gridMajorStep;
+    float minorWidth = max(fwidth(minorCoord.x), fwidth(minorCoord.y)) * 1.35;
+    float majorWidth = max(fwidth(majorCoord.x), fwidth(majorCoord.y)) * 1.35;
+    float minorDistance = min(abs(fract(minorCoord.x + 0.5) - 0.5), abs(fract(minorCoord.y + 0.5) - 0.5));
+    float majorDistance = min(abs(fract(majorCoord.x + 0.5) - 0.5), abs(fract(majorCoord.y + 0.5) - 0.5));
+    float minorLine = 1.0 - smoothstep(0.0, minorWidth, minorDistance);
+    float majorLine = 1.0 - smoothstep(0.0, majorWidth, majorDistance);
+    float line = max(minorLine * 0.42, majorLine * 0.88);
+    material.baseColor = float4(materialParams.baseColor.rgb, materialParams.baseColor.a * fade * line);
+}
+"""
+
 private data class FilamentRenderableEntry(
   val objectData: SceneObject,
   val entity: Int,
@@ -248,6 +269,14 @@ private data class StaticShadowBatchEntry(
 )
 
 private data class GroundReceiverEntry(
+  val entity: Int,
+  val vertexBuffer: VertexBuffer,
+  val indexBuffer: IndexBuffer,
+  val materialInstance: MaterialInstance,
+  var attached: Boolean = false,
+)
+
+private data class GridBatchEntry(
   val entity: Int,
   val vertexBuffer: VertexBuffer,
   val indexBuffer: IndexBuffer,
@@ -374,21 +403,25 @@ internal class RenderSceneFilamentHostView(
     private var previousFocusY = 0f
 
     override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
+      cancelOrbitInertia()
+      orbitYawVelocity = 0.0
+      orbitPitchVelocity = 0.0
       previousFocusX = detector.focusX
       previousFocusY = detector.focusY
       return true
     }
 
     override fun onScale(detector: ScaleGestureDetector): Boolean {
-      if (isPlanarProjection()) {
-        // A pinch is also a two-finger pan on a tablet. Keeping the gesture
-        // focus moving with the camera makes elevation and section navigation
-        // feel like the top-down plan instead of zooming around a fixed point.
-        val focusDx = detector.focusX - previousFocusX
-        val focusDy = detector.focusY - previousFocusY
-        if (focusDx != 0f || focusDy != 0f) {
+      val focusDx = detector.focusX - previousFocusX
+      val focusDy = detector.focusY - previousFocusY
+      if (focusDx != 0f || focusDy != 0f) {
+        if (isPlanarProjection()) {
           panPlanarCamera(focusDx, focusDy)
+        } else {
+          panOrbitCamera(focusDx, focusDy)
         }
+      }
+      if (isPlanarProjection()) {
         if (projectionMode == "topDown") {
           topDownZoom = (topDownZoom / detector.scaleFactor.toDouble()).coerceIn(0.5, 200.0)
         } else {
@@ -489,6 +522,7 @@ internal class RenderSceneFilamentHostView(
   private var roofMaterial: Material? = null
   private var concreteMaterial: Material? = null
   private var edgeMaterial: Material? = null
+  private var gridMaterial: Material? = null
   private var groundMaterial: Material? = null
   private var shadowMaterial: Material? = null
   private val renderables = linkedMapOf<Long, FilamentRenderableEntry>()
@@ -496,6 +530,7 @@ internal class RenderSceneFilamentHostView(
   private val instanceFaceGroups = mutableListOf<InstanceFaceGroupEntry>()
   private val edgeBatches = mutableListOf<EdgeBatchEntry>()
   private var staticShadowBatch: StaticShadowBatchEntry? = null
+  private var gridBatch: GridBatchEntry? = null
   private var groundReceiver: GroundReceiverEntry? = null
   private val edgeGeometryCache = linkedMapOf<Long, CachedEdgeGeometry>()
   private val attachedEntities = linkedSetOf<Int>()
@@ -528,6 +563,11 @@ internal class RenderSceneFilamentHostView(
   // pointer is released. Keeping this state also lets us reset the orbit
   // baseline to the pointer that remains on the surface.
   private var multiTouching = false
+  private var orbitYawVelocity = 0.0
+  private var orbitPitchVelocity = 0.0
+  private var lastOrbitMotionTimeMs = 0L
+  private var orbitInertiaActive = false
+  private var lastInertiaFrameNanos = 0L
 
   init {
     setBackgroundColor(Color.rgb(243, 247, 244))
@@ -825,6 +865,11 @@ internal class RenderSceneFilamentHostView(
       rebuildEdgeBatchesForProjection()
       syncVisibility()
       refreshTintState()
+    }
+    if (mode == "isometric" && gridBatch == null && currentScene != null && materialBuilderReady) {
+      createGridBatch(engine ?: return, scene ?: return, currentScene!!)
+    } else if (mode != "isometric" && gridBatch != null) {
+      destroyGridBatch(engine, scene)
     }
     // Static shadow visibility follows the view mode, but its geometry is not
     // rebuilt when the camera or projection changes.
@@ -1179,6 +1224,7 @@ internal class RenderSceneFilamentHostView(
     for (batch in faceBatches) applySectionBoxState(batch.materialInstance)
     for (group in instanceFaceGroups) applySectionBoxState(group.materialInstance)
     for (batch in edgeBatches) applySectionBoxState(batch.materialInstance)
+    gridBatch?.let { batch -> applySectionBoxState(batch.materialInstance) }
     requestRender()
   }
 
@@ -1285,6 +1331,7 @@ internal class RenderSceneFilamentHostView(
 
   override fun doFrame(frameTimeNanos: Long) {
     framePosted = false
+    updateOrbitInertia(frameTimeNanos)
     val renderer = renderer
     val view = filamentView
     val swapChain = swapChain
@@ -1292,7 +1339,7 @@ internal class RenderSceneFilamentHostView(
     // 30 FPS made every face and border draw call a permanent battery cost.
     // Gestures retain display-cadence feedback; after interaction one final
     // dirty frame is submitted and the Choreographer loop goes completely idle.
-    val interactive = touching || SystemClock.uptimeMillis() < interactiveUntilMs
+    val interactive = touching || orbitInertiaActive || SystemClock.uptimeMillis() < interactiveUntilMs
     val shouldRender = renderDirty || interactive
     if (shouldRender && renderer != null && view != null && swapChain != null && renderer.beginFrame(swapChain, frameTimeNanos)) {
       renderer.render(view)
@@ -1303,6 +1350,54 @@ internal class RenderSceneFilamentHostView(
       sampleTelemetry()
     }
     if (interactive || (renderDirty && surfaceReady)) scheduleFrame()
+  }
+
+  private fun updateOrbitInertia(frameTimeNanos: Long) {
+    if (!orbitInertiaActive || projectionMode != "isometric") return
+    if (lastInertiaFrameNanos == 0L) {
+      lastInertiaFrameNanos = frameTimeNanos
+      return
+    }
+    val deltaSeconds = ((frameTimeNanos - lastInertiaFrameNanos).toDouble() / 1_000_000_000.0)
+      .coerceIn(0.0, 0.05)
+    lastInertiaFrameNanos = frameTimeNanos
+    if (deltaSeconds <= 0.0) return
+
+    orbitYawRadians += orbitYawVelocity * deltaSeconds
+    orbitPitchRadians = (orbitPitchRadians + orbitPitchVelocity * deltaSeconds)
+      .coerceIn(Math.toRadians(0.1), Math.toRadians(88.0))
+    val friction = Math.exp(-6.5 * deltaSeconds)
+    orbitYawVelocity *= friction
+    orbitPitchVelocity *= friction
+    if (max(kotlin.math.abs(orbitYawVelocity), kotlin.math.abs(orbitPitchVelocity)) < 0.015) {
+      cancelOrbitInertia()
+      return
+    }
+    configureCameraProjection()
+    updateOrbitCamera()
+    syncVisualOverlay()
+    renderDirty = true
+  }
+
+  private fun cancelOrbitInertia() {
+    orbitInertiaActive = false
+    lastInertiaFrameNanos = 0L
+    orbitYawVelocity = 0.0
+    orbitPitchVelocity = 0.0
+  }
+
+  private fun startOrbitInertia() {
+    if (projectionMode != "isometric") return
+    val speed = max(kotlin.math.abs(orbitYawVelocity), kotlin.math.abs(orbitPitchVelocity))
+    if (speed < 0.10) {
+      cancelOrbitInertia()
+      return
+    }
+    orbitYawVelocity = orbitYawVelocity.coerceIn(-3.2, 3.2)
+    orbitPitchVelocity = orbitPitchVelocity.coerceIn(-2.4, 2.4)
+    orbitInertiaActive = true
+    lastInertiaFrameNanos = 0L
+    requestRender()
   }
 
   override fun onDetachedFromWindow() {
@@ -1363,6 +1458,7 @@ internal class RenderSceneFilamentHostView(
     roofMaterial?.let { material -> engine?.destroyMaterial(material) }
     concreteMaterial?.let { material -> engine?.destroyMaterial(material) }
     edgeMaterial?.let { material -> engine?.destroyMaterial(material) }
+    gridMaterial?.let { material -> engine?.destroyMaterial(material) }
     groundMaterial?.let { material -> engine?.destroyMaterial(material) }
     shadowMaterial?.let { material -> engine?.destroyMaterial(material) }
     engine?.destroy()
@@ -1382,6 +1478,7 @@ internal class RenderSceneFilamentHostView(
     roofMaterial = null
     concreteMaterial = null
     edgeMaterial = null
+    gridMaterial = null
     groundMaterial = null
     shadowMaterial = null
     materialBuilderReady = false
@@ -1399,6 +1496,14 @@ internal class RenderSceneFilamentHostView(
       roofMaterial = buildMaterial(engine, "RenderSceneRoof", ROOF_MAT, lit = false)
       concreteMaterial = buildMaterial(engine, "RenderSceneConcrete", CONCRETE_MAT, lit = false)
       edgeMaterial = buildMaterial(engine, "RenderSceneEdges", FLAT_COLOR_MAT, lit = false)
+      gridMaterial = buildMaterial(
+        engine,
+        "RenderSceneGrid",
+        GRID_MAT,
+        transparent = true,
+        lit = false,
+        grid = true,
+      )
       groundMaterial = buildMaterial(engine, "RenderSceneShadowReceiver", FLAT_COLOR_MAT, lit = true)
       shadowMaterial = buildMaterial(
         engine,
@@ -1409,7 +1514,7 @@ internal class RenderSceneFilamentHostView(
       )
       if (listOf(material, wallMaterial, windowMaterial, plasterMaterial,
           woodMaterial, floorMaterial, roofMaterial, concreteMaterial,
-          edgeMaterial, groundMaterial, shadowMaterial).any { it == null }) {
+           edgeMaterial, gridMaterial, groundMaterial, shadowMaterial).any { it == null }) {
         statusMessage = "Filament material build returned an invalid package."
         updateStatus()
         return false
@@ -1429,6 +1534,7 @@ internal class RenderSceneFilamentHostView(
     source: String,
     transparent: Boolean = false,
     lit: Boolean = false,
+    grid: Boolean = false,
   ): Material? {
       val builder = MaterialBuilder()
         .name(name)
@@ -1440,10 +1546,18 @@ internal class RenderSceneFilamentHostView(
         .uniformParameter(MaterialBuilder.UniformType.FLOAT, "sectionBoxEnabled")
         .uniformParameter(MaterialBuilder.UniformType.FLOAT4, "sectionBoxMin")
         .uniformParameter(MaterialBuilder.UniformType.FLOAT4, "sectionBoxMax")
-        .material(source)
         .targetApi(MaterialBuilder.TargetApi.OPENGL)
         .platform(MaterialBuilder.Platform.MOBILE)
         .optimization(MaterialBuilder.Optimization.NONE)
+      if (grid) {
+        builder
+          .uniformParameter(MaterialBuilder.UniformType.FLOAT4, "gridCenter")
+          .uniformParameter(MaterialBuilder.UniformType.FLOAT, "gridRadius")
+          .uniformParameter(MaterialBuilder.UniformType.FLOAT, "gridFadeStart")
+          .uniformParameter(MaterialBuilder.UniformType.FLOAT, "gridMinorStep")
+          .uniformParameter(MaterialBuilder.UniformType.FLOAT, "gridMajorStep")
+      }
+      builder.material(source)
       if (transparent) {
         builder
           .blending(MaterialBuilder.BlendingMode.TRANSPARENT)
@@ -1464,8 +1578,9 @@ internal class RenderSceneFilamentHostView(
     val sceneState = currentScene ?: return
     if ((material == null || wallMaterial == null || windowMaterial == null ||
         plasterMaterial == null || woodMaterial == null || floorMaterial == null ||
-        roofMaterial == null || concreteMaterial == null || edgeMaterial == null ||
-        groundMaterial == null || shadowMaterial == null) &&
+         roofMaterial == null || concreteMaterial == null || edgeMaterial == null ||
+         gridMaterial == null ||
+         groundMaterial == null || shadowMaterial == null) &&
       materialBuilderReady) {
       buildRuntimeMaterial()
     }
@@ -1555,6 +1670,9 @@ internal class RenderSceneFilamentHostView(
     }
     if (batchFaces) createFaceBatches(engine, scene, faceChunks)
     createEdgeBatches(engine, scene, edgeChunks)
+    if (projectionMode == "isometric") {
+      createGridBatch(engine, scene, sceneState)
+    }
     if (projectionMode == "isometric" && shadowsEnabled && sunLightEntity == null) {
       createStaticShadowBatch(engine, scene, sceneState)
     }
@@ -2106,6 +2224,98 @@ internal class RenderSceneFilamentHostView(
       attached = attached,
     )
     Log.i(TAG, "Real shadow receiver: ${horizontalMargin.format(2)}m perimeter plane")
+  }
+
+  private fun createGridBatch(
+    engine: Engine,
+    scene: Scene,
+    sceneState: SceneState,
+  ) {
+    destroyGridBatch(engine, scene)
+    val gridMaterial = gridMaterial ?: return
+    if (sceneState.objects.isEmpty()) return
+    val allBounds = sceneState.objects
+      .map { transformBounds(it.bounds) }
+      .reduce(::unionBounds)
+    val centerX = (allBounds.min.x + allBounds.max.x) * 0.5
+    val centerZ = (allBounds.min.z + allBounds.max.z) * 0.5
+    val groundY = allBounds.min.y + 0.025
+    val radius = 50.0
+    val minX = centerX - radius
+    val maxX = centerX + radius
+    val minZ = centerZ - radius
+    val maxZ = centerZ + radius
+    val vertexData = ByteBuffer.allocateDirect(4 * 12).order(ByteOrder.nativeOrder()).apply {
+      putFloat(minX.toFloat()); putFloat(groundY.toFloat()); putFloat(minZ.toFloat())
+      putFloat(maxX.toFloat()); putFloat(groundY.toFloat()); putFloat(minZ.toFloat())
+      putFloat(maxX.toFloat()); putFloat(groundY.toFloat()); putFloat(maxZ.toFloat())
+      putFloat(minX.toFloat()); putFloat(groundY.toFloat()); putFloat(maxZ.toFloat())
+      flip()
+    }
+    val indexData = ByteBuffer.allocateDirect(6 * Int.SIZE_BYTES)
+      .order(ByteOrder.nativeOrder()).asIntBuffer().apply {
+        put(0); put(2); put(1); put(0); put(3); put(2)
+        flip()
+      }
+    val vertexBuffer = VertexBuffer.Builder()
+      .bufferCount(1)
+      .vertexCount(4)
+      .attribute(VertexBuffer.VertexAttribute.POSITION, 0, VertexBuffer.AttributeType.FLOAT3, 0, 12)
+      .build(engine)
+      .also { it.setBufferAt(engine, 0, vertexData) }
+    val indexBuffer = IndexBuffer.Builder()
+      .indexCount(6)
+      .bufferType(IndexBuffer.Builder.IndexType.UINT)
+      .build(engine)
+      .also { it.setBuffer(engine, indexData) }
+    val materialInstance = gridMaterial.createInstance().also { instance ->
+      applySectionBoxState(instance)
+      applyDisplayStyle(instance)
+      instance.setParameter("baseColor", Colors.RgbaType.LINEAR, 0.16f, 0.22f, 0.24f, 0.20f)
+      instance.setParameter("gridCenter", centerX.toFloat(), groundY.toFloat(), centerZ.toFloat(), 0.0f)
+      instance.setParameter("gridRadius", radius.toFloat())
+      instance.setParameter("gridFadeStart", 34.0f)
+      instance.setParameter("gridMinorStep", 1.0f)
+      instance.setParameter("gridMajorStep", 5.0f)
+    }
+    val entity = EntityManager.get().create()
+    RenderableManager.Builder(1)
+      .boundingBox(
+        filamentBox(
+          SceneBounds(
+            ScenePoint(minX, groundY, minZ),
+            ScenePoint(maxX, groundY, maxZ),
+          ),
+        ),
+      )
+      .culling(false)
+      .castShadows(false)
+      .receiveShadows(false)
+      .priority(0)
+      .geometry(0, PrimitiveType.TRIANGLES, vertexBuffer, indexBuffer, 0, 6)
+      .material(0, materialInstance)
+      .build(engine, entity)
+    val attached = projectionMode == "isometric"
+    if (attached) scene.addEntity(entity)
+    gridBatch = GridBatchEntry(
+      entity = entity,
+      vertexBuffer = vertexBuffer,
+      indexBuffer = indexBuffer,
+      materialInstance = materialInstance,
+      attached = attached,
+    )
+    Log.i(TAG, "3D grid enabled: ${radius.format(0)}m radius, fade=${34.0.format(0)}-${radius.format(0)}m")
+  }
+
+  private fun destroyGridBatch(engine: Engine?, scene: Scene?) {
+    val batch = gridBatch ?: return
+    if (batch.attached) scene?.removeEntity(batch.entity)
+    engine?.destroyEntity(batch.entity)
+    engine?.destroyMaterialInstance(batch.materialInstance)
+    engine?.destroyVertexBuffer(batch.vertexBuffer)
+    engine?.destroyIndexBuffer(batch.indexBuffer)
+    EntityManager.get().destroy(batch.entity)
+    gridBatch = null
   }
 
   private fun createStaticShadowBatch(
@@ -2989,6 +3199,16 @@ internal class RenderSceneFilamentHostView(
         batch.attached = false
       }
     }
+    gridBatch?.let { batch ->
+      val visible = projectionMode == "isometric"
+      if (visible && !batch.attached) {
+        scene.addEntity(batch.entity)
+        batch.attached = true
+      } else if (!visible && batch.attached) {
+        scene.removeEntity(batch.entity)
+        batch.attached = false
+      }
+    }
     staticShadowBatch?.let { batch ->
       val visible = staticShadowVisible()
       if (visible && !batch.attached) {
@@ -3065,6 +3285,7 @@ internal class RenderSceneFilamentHostView(
       faceBatches.clear()
       instanceFaceGroups.clear()
       edgeBatches.clear()
+      gridBatch = null
       attachedEntities.clear()
       return
     }
@@ -3072,6 +3293,7 @@ internal class RenderSceneFilamentHostView(
     destroyFaceBatches(engine, scene)
     destroyInstanceFaceGroups(engine, scene)
     destroyEdgeBatches(engine, scene)
+    destroyGridBatch(engine, scene)
     destroyGroundReceiver(engine, scene)
     destroyStaticShadowBatch(engine, scene)
     for (entry in renderables.values) {
@@ -3304,7 +3526,9 @@ internal class RenderSceneFilamentHostView(
     scaleGestureDetector.onTouchEvent(event)
     when (event.actionMasked) {
       MotionEvent.ACTION_DOWN -> {
+        cancelOrbitInertia()
         multiTouching = false
+        lastOrbitMotionTimeMs = SystemClock.uptimeMillis()
         lastTouchX = event.x
         lastTouchY = event.y
         touchDownX = event.x
@@ -3319,7 +3543,9 @@ internal class RenderSceneFilamentHostView(
         // From this event until the final pointer is released, all movement
         // belongs to ScaleGestureDetector. Do not let the first pointer's old
         // orbit baseline leak into the next one-finger MOVE event.
+        cancelOrbitInertia()
         multiTouching = true
+        lastOrbitMotionTimeMs = 0L
         touchMoved = true
         return true
       }
@@ -3331,6 +3557,15 @@ internal class RenderSceneFilamentHostView(
         if (touching) {
           val dx = event.x - lastTouchX
           val dy = event.y - lastTouchY
+          val nowMs = SystemClock.uptimeMillis()
+          if (projectionMode == "isometric" && activeSectionHandle == null && lastOrbitMotionTimeMs > 0L) {
+            val deltaSeconds = ((nowMs - lastOrbitMotionTimeMs).coerceIn(1L, 50L)).toDouble() / 1000.0
+            val instantYawVelocity = dx.toDouble() * 0.01 / deltaSeconds
+            val instantPitchVelocity = dy.toDouble() * 0.01 / deltaSeconds
+            orbitYawVelocity = orbitYawVelocity * 0.65 + instantYawVelocity * 0.35
+            orbitPitchVelocity = orbitPitchVelocity * 0.65 + instantPitchVelocity * 0.35
+          }
+          lastOrbitMotionTimeMs = nowMs
           if (kotlin.math.hypot(event.x - touchDownX, event.y - touchDownY) >
             resources.displayMetrics.density * 8f) {
             touchMoved = true
@@ -3355,6 +3590,9 @@ internal class RenderSceneFilamentHostView(
       }
       MotionEvent.ACTION_POINTER_UP -> {
         touchMoved = true
+        orbitYawVelocity = 0.0
+        orbitPitchVelocity = 0.0
+        lastOrbitMotionTimeMs = 0L
         val releasedIndex = event.actionIndex
         val remainingIndex = (0 until event.pointerCount)
           .firstOrNull { index -> index != releasedIndex }
@@ -3371,8 +3609,14 @@ internal class RenderSceneFilamentHostView(
         if (event.actionMasked == MotionEvent.ACTION_UP && !touchMoved && activeSectionHandle == null) {
           pickVisibleObject(event.x, event.y)
         }
+        if (event.actionMasked == MotionEvent.ACTION_UP && touchMoved && activeSectionHandle == null) {
+          startOrbitInertia()
+        } else {
+          cancelOrbitInertia()
+        }
         activeSectionHandle = null
         multiTouching = false
+        lastOrbitMotionTimeMs = 0L
         touching = false
         requestRender()
         return true
@@ -3580,6 +3824,41 @@ internal class RenderSceneFilamentHostView(
       )
       else -> orbitCenter
     }
+  }
+
+  private fun panOrbitCamera(dx: Float, dy: Float) {
+    if (renderSurface.width <= 1 || renderSurface.height <= 1) return
+    fun crossVector(first: ScenePoint, second: ScenePoint) = ScenePoint(
+      first.y * second.z - first.z * second.y,
+      first.z * second.x - first.x * second.z,
+      first.x * second.y - first.y * second.x,
+    )
+    fun normalizeVector(value: ScenePoint): ScenePoint {
+      val length = kotlin.math.sqrt(value.x * value.x + value.y * value.y + value.z * value.z)
+        .coerceAtLeast(1.0e-9)
+      return ScenePoint(value.x / length, value.y / length, value.z / length)
+    }
+    val cosPitch = cos(orbitPitchRadians)
+    val forward = normalizeVector(
+      ScenePoint(
+        -cosPitch * kotlin.math.cos(orbitYawRadians),
+        -sin(orbitPitchRadians),
+        -cosPitch * kotlin.math.sin(orbitYawRadians),
+      ),
+    )
+    val right = normalizeVector(crossVector(forward, ScenePoint(0.0, 1.0, 0.0)))
+    val up = normalizeVector(crossVector(right, forward))
+    val visibleHalfHeight = if (orbitProjectionStyle == "perspective") {
+      orbitDistance * tan(Math.toRadians(45.0) * 0.5)
+    } else {
+      max(orbitDistance * 0.6, 2.0)
+    }
+    val metersPerPixel = (visibleHalfHeight * 2.0) / renderSurface.height.toDouble()
+    orbitCenter = orbitCenter.copy(
+      x = orbitCenter.x - right.x * dx * metersPerPixel + up.x * dy * metersPerPixel,
+      y = orbitCenter.y - right.y * dx * metersPerPixel + up.y * dy * metersPerPixel,
+      z = orbitCenter.z - right.z * dx * metersPerPixel + up.z * dy * metersPerPixel,
+    )
   }
 
   private fun syncVisualOverlay() {
