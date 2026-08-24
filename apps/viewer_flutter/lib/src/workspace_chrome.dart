@@ -44,7 +44,7 @@ class WorkspaceAppBar extends StatelessWidget implements PreferredSizeWidget {
   final VoidCallback onToggleInspector;
   final String? activeSectionName;
   final VoidCallback? onExitSection;
-  final VoidCallback? onReturnToStart;
+  final Future<void> Function()? onReturnToStart;
 
   @override
   Size get preferredSize => const Size.fromHeight(64);
@@ -63,7 +63,7 @@ class WorkspaceAppBar extends StatelessWidget implements PreferredSizeWidget {
             const Text('Tablet BIM')
           else
             InkWell(
-              onTap: busy ? null : onReturnToStart,
+              onTap: busy ? null : () => onReturnToStart?.call(),
               borderRadius: BorderRadius.circular(8),
               child: const Padding(
                 padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),

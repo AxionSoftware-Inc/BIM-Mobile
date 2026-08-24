@@ -2,6 +2,8 @@
 
 part of 'viewer_app.dart';
 
+enum _WorkspaceExitChoice { save, discard }
+
 extension _ViewerProjectLifecycle on _ViewerHomePageState {
   Future<void> _createBlankProject() async {
     if (_isBusy) return;
@@ -273,12 +275,16 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
   }
 
   Future<void> _saveCurrentProject() async {
+    await _saveProjectForExit();
+  }
+
+  Future<bool> _saveProjectForExit() async {
     final repository = _engineRepository;
     if (!_engineBackedMode || repository == null || _isBusy) {
       _updateViewportState(() {
         _statusMessage = 'Save uchun native engine session kerak.';
       });
-      return;
+      return false;
     }
     _updateViewportState(() {
       _isBusy = true;
@@ -287,19 +293,66 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
     });
     try {
       final file = await _projectPersistence.saveToDefaultLocation();
-      if (!mounted) return;
+      if (!mounted) return false;
       _updateViewportState(() {
         _isBusy = false;
         _statusMessage = 'Saved: ${file.path}';
       });
+      return true;
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted) return false;
       _updateViewportState(() {
         _isBusy = false;
         _loadError = error.toString();
         _statusMessage = 'Project save failed.';
       });
+      return false;
     }
+  }
+
+  Future<void> _requestReturnToStart() async {
+    final returnToStart = widget.onReturnToStart;
+    if (returnToStart == null || !mounted || _isBusy || _scene == null) {
+      return;
+    }
+
+    final choice = await showDialog<_WorkspaceExitChoice>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Text('Close project?'),
+        content: const Text(
+          'Save the open project before leaving Tablet BIM?',
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(
+              _WorkspaceExitChoice.discard,
+            ),
+            child: const Text("Don't save"),
+          ),
+          FilledButton(
+            onPressed: _engineBackedMode
+                ? () => Navigator.of(context).pop(
+                      _WorkspaceExitChoice.save,
+                    )
+                : null,
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+
+    if (!mounted || choice == null) return;
+    if (choice == _WorkspaceExitChoice.save) {
+      final saved = await _saveProjectForExit();
+      if (!saved || !mounted) return;
+    }
+    await returnToStart();
   }
 
   Future<void> _openDocumentationWorkspace() async {
@@ -524,7 +577,12 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
   }
 
   Future<void> _closeOpenedViewTab(String tabId) async {
-    if (_openedViewTabs.length <= 1) return;
+    if (_openedViewTabs.length <= 1) {
+      if (_openedViewTabs.any((tab) => tab.id == tabId)) {
+        await _requestReturnToStart();
+      }
+      return;
+    }
     _saveActiveViewPresentation();
     final index = _openedViewTabs.indexWhere((tab) => tab.id == tabId);
     if (index < 0) return;

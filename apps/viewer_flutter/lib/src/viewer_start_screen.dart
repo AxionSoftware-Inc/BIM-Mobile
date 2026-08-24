@@ -144,7 +144,7 @@ class _StartScreenGateState extends State<_StartScreenGate> {
     );
   }
 
-  void _returnToStart() {
+  Future<void> _returnToStart() async {
     if (_busy) return;
     setState(() {
       _selectedTemplate = null;
@@ -179,7 +179,7 @@ class ViewerHomePage extends StatefulWidget {
   final String? initialProjectName;
   final String? initialProjectPath;
   final bool initialBlankProject;
-  final VoidCallback? onReturnToStart;
+  final Future<void> Function()? onReturnToStart;
 
   @override
   State<ViewerHomePage> createState() => _ViewerHomePageState();

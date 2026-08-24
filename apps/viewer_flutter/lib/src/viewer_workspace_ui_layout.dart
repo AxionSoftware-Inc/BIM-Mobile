@@ -102,7 +102,8 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
       onToggleInspector: () => _updateViewportState(() {
         _showInspector = !_showInspector;
       }),
-      onReturnToStart: widget.onReturnToStart,
+      onReturnToStart:
+          widget.onReturnToStart == null ? null : _requestReturnToStart,
     );
   }
 
