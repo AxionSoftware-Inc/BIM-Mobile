@@ -109,6 +109,7 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   String? _statusMessage;
   String? _loadError;
   bool _isBusy = false;
+  bool _projectHasChanges = false;
   bool _showInspector = false;
   bool _showObjectList = true;
   bool _showDiagnostics = false;

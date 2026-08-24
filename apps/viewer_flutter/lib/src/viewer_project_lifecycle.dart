@@ -27,6 +27,7 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
       await _applyLoadResult(
         launch.renderScene!,
         sourceLabel: 'New Project',
+        resetProjectChanges: true,
       );
     } catch (error) {
       if (!mounted) return;
@@ -110,6 +111,7 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
       await _applyLoadResult(
         result,
         sourceLabel: 'Sample model',
+        resetProjectChanges: true,
       );
       if (!_engineBackedMode) {
         _updateViewportState(() {
@@ -153,7 +155,11 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
       _projectSession.activate(launch.session);
       _engineLoadDiagnostic = null;
       final result = await _sceneViews.refresh();
-      await _applyLoadResult(result, sourceLabel: projectName);
+      await _applyLoadResult(
+        result,
+        sourceLabel: projectName,
+        resetProjectChanges: true,
+      );
     } catch (error) {
       if (!mounted) return;
       _updateViewportState(() {
@@ -200,6 +206,7 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
       await _applyLoadResult(
         launch.renderScene!,
         sourceLabel: '$label template',
+        resetProjectChanges: true,
       );
       if (buildingCount == 1) {
         // A tower is most useful as a whole-building visual test on first
@@ -227,6 +234,7 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
       await _applyLoadResult(
         launch.renderScene!,
         sourceLabel: 'Layered house',
+        resetProjectChanges: true,
       );
       // The bundled engine sample is the first visual proof of the complete
       // building path. Open it in 3D so the top-level roof and monolithic
@@ -296,6 +304,7 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
       if (!mounted) return false;
       _updateViewportState(() {
         _isBusy = false;
+        _projectHasChanges = false;
         _statusMessage = 'Saved: ${file.path}';
       });
       return true;
@@ -313,6 +322,11 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
   Future<void> _requestReturnToStart() async {
     final returnToStart = widget.onReturnToStart;
     if (returnToStart == null || !mounted || _isBusy || _scene == null) {
+      return;
+    }
+
+    if (!_projectHasChanges) {
+      await returnToStart();
       return;
     }
 
@@ -706,6 +720,7 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
   Future<void> _applyLoadResult(
     RenderSceneLoadResult result, {
     required String sourceLabel,
+    bool resetProjectChanges = false,
   }) async {
     final rawScene = result.scene;
     final scene = rawScene == null
@@ -715,6 +730,9 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
 
     _updateViewportState(() {
       _scene = scene;
+      if (resetProjectChanges) {
+        _projectHasChanges = false;
+      }
       _loadError = result.errors.isNotEmpty ? result.errors.join('\n') : null;
       _statusMessage = scene == null
           ? 'RenderScene load failed.'

@@ -385,6 +385,7 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
 
     _updateViewportState(() {
       _scene = nextScene;
+      _projectHasChanges = true;
       _activeLevelId = resolvedLevelId;
       _activeSectionView = null;
       _statusMessage = message;
