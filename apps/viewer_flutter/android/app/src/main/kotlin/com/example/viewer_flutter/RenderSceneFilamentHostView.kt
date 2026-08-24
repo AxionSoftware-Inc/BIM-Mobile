@@ -1102,7 +1102,16 @@ internal class RenderSceneFilamentHostView(
       sectionLength = length,
     )
     projectionMode = "section"
-    fitSectionViewOnNextRebuild = true
+    // Flutter has already supplied the authoritative planar center and scale
+    // immediately before this clip state arrives. Preserve them instead of
+    // fitting a second native camera, otherwise the model drifts away from
+    // Flutter's level overlay on the first section frame.
+    orbitYawRadians = kotlin.math.atan2(inward.z, inward.x)
+    orbitPitchRadians = 0.0
+    fitSectionViewOnNextRebuild = false
+    configureCameraProjection()
+    updateOrbitCamera()
+    syncVisualOverlay()
     sectionBoxHandler.removeCallbacks(sectionBoxRebuild)
     sectionBoxHandler.post(sectionBoxRebuild)
     invalidate()

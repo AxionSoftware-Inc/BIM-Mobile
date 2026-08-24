@@ -106,10 +106,8 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
     }
 
     if (_shouldUseNativeAndroidView) {
-      final nativeClipOwnsInteraction = (widget.controller.hasSectionBox &&
-              widget.controller.projectionMode.is3D) ||
-          (widget.controller.hasSectionView &&
-              widget.controller.projectionMode.isElevation);
+      final nativeClipOwnsInteraction =
+          widget.controller.nativeOwnsClipGestures;
       return _FallbackRenderSceneView(
         controller: widget.controller,
         interactionMode: widget.interactionMode,
@@ -128,9 +126,9 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
         draftWallHeightMeters: widget.draftWallHeightMeters,
         nativeRenderer: true,
         rendererChild: IgnorePointer(
-          // Native Filament owns camera gestures for section views and the
-          // Section Box only in their matching projection. A stale clip state
-          // must never swallow plan-authoring taps such as Auto Room/Pick Walls.
+          // Native Filament owns gestures only for the 3D Section Box. Planar
+          // section views use the shared Flutter camera/gesture path so the
+          // model, levels and authoring hit tests cannot drift apart.
           ignoring: !nativeClipOwnsInteraction &&
               !widget.controller.projectionMode.is3D,
           child: _AndroidRenderSceneView(controller: widget.controller),

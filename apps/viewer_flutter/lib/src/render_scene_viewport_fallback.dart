@@ -10,9 +10,7 @@ class _AndroidRenderSceneView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final nativeClipOwnsInteraction = (controller.hasSectionBox &&
-            controller.projectionMode.is3D) ||
-        (controller.hasSectionView && controller.projectionMode.isElevation);
+    final nativeClipOwnsInteraction = controller.nativeOwnsClipGestures;
     return AndroidView(
       viewType: 'tbe/render_scene_view',
       layoutDirection: TextDirection.ltr,
@@ -227,10 +225,7 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
         final size = constraints.biggest;
-        final nativeOwnedInteraction =
-            (controller.hasSectionBox && controller.projectionMode.is3D) ||
-                (controller.hasSectionView &&
-                    controller.projectionMode.isElevation);
+        final nativeOwnedInteraction = controller.nativeOwnsClipGestures;
         controller.setViewportSize(size);
         RenderSceneLevel? inlineLevel;
         Offset? inlineLevelOrigin;
@@ -292,11 +287,10 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
             },
             onPointerDown: (PointerDownEvent event) {
               if (nativeOwnedInteraction) {
-                // Section camera gestures stay native, but keep enough
-                // pointer state to route a stationary one-finger tap through
-                // the shared Flutter picker. This restores level-line and
-                // context-menu interactions without taking camera drags away
-                // from Filament.
+                // The 3D Section Box stays native, but keep enough pointer
+                // state to route a stationary one-finger tap through the
+                // shared Flutter picker. Planar section views never enter
+                // this branch: Flutter owns their camera gestures.
                 _activePointerCount += 1;
                 _activePointer = event.pointer;
                 _pointerDownPosition = event.localPosition;

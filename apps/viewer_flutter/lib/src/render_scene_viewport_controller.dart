@@ -160,6 +160,12 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
   bool get hasSectionBox => _sectionBox != null;
   bool get hasSectionView => _sectionView != null;
 
+  /// Flutter owns planar section/elevation gestures so the model, levels and
+  /// hit testing all use the same [RenderScenePlanarDescriptor]. Native keeps
+  /// interaction for the 3D Section Box, whose handles live in Filament.
+  bool get nativeOwnsClipGestures =>
+      _sectionBox != null && _projectionMode.is3D;
+
   Future<Map<Object?, Object?>?> nativeDiagnostics() async {
     final channel = _channel;
     if (channel == null) return null;
