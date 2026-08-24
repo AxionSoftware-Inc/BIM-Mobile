@@ -203,7 +203,7 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
       _surfaceTool.reopenBoundary();
       _editStatusMessage = switch (value) {
         RenderSceneSurfaceDrawMode.polyline =>
-          'Boundary sketch: tap corners. Pink line is a draft; close it, then Finish.',
+          'Boundary sketch: drag one straight segment at a time around the room. Close it, then Finish.',
         RenderSceneSurfaceDrawMode.rectangle =>
           'Rectangle sketch: tap two opposite corners.',
         RenderSceneSurfaceDrawMode.pickWalls =>

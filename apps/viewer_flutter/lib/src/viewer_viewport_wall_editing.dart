@@ -560,54 +560,16 @@ extension _ViewerViewportWallEditing on _ViewerHomePageState {
       return;
     }
 
-    final snapped = _surfaceDrawMode == RenderSceneSurfaceDrawMode.polyline
-        ? _draftLinePoint(
-            rawPoint: modelPoint,
-            referenceStart: _draftSurfacePoints.lastOrNull,
-          )
-        : (_snapDraftToGrid ? _snapPoint(modelPoint) : modelPoint);
     if (_surfaceDrawMode == RenderSceneSurfaceDrawMode.polyline) {
-      if (_surfaceTool.boundaryClosed) {
-        _updateViewportState(() {
-          _editStatusMessage =
-              'Boundary closed. Pink outline-ni tekshiring, keyin Finish bosing.';
-        });
-        return;
+      final hadBoundaryStart = _draftSurfacePoints.isNotEmpty;
+      _beginSurfaceBoundarySegment(modelPoint);
+      if (hadBoundaryStart) {
+        _commitSurfaceBoundarySegment(modelPoint);
       }
-      final first = _draftSurfacePoints.firstOrNull;
-      if (first != null &&
-          _draftSurfacePoints.length >= 3 &&
-          SurfaceAuthoringGeometry.isNearFirstPoint(
-            _draftSurfacePoints,
-            snapped,
-            toleranceMeters: PlanSketchGeometry.defaultEndpointToleranceMeters,
-          )) {
-        _updateViewportState(() {
-          _draftSurfaceEnd = first;
-          _editStatusMessage = 'First point snapped. Closing boundary...';
-        });
-        _syncSurfaceDraftPreview();
-        _toggleBoundaryClosed();
-        return;
-      }
-      final previous = _draftSurfacePoints.lastOrNull;
-      if (previous != null &&
-          PlanSketchGeometry.planDistance(previous, snapped) <
-              PlanSketchGeometry.minimumSegmentMeters) {
-        return;
-      }
-      _updateViewportState(() {
-        _draftSurfaceWallIds.clear();
-        _draftSurfacePoints.add(snapped);
-        _draftSurfaceStart ??= snapped;
-        _draftSurfaceEnd = snapped;
-        _editStatusMessage = _draftSurfacePoints.length < 3
-            ? 'Boundary point ${_draftSurfacePoints.length} added. Add the next corner.'
-            : 'Pink boundary draft ready. Close contour, then Finish.';
-      });
-      _syncSurfaceDraftPreview();
       return;
     }
+
+    final snapped = _snapDraftToGrid ? _snapPoint(modelPoint) : modelPoint;
 
     if (_draftSurfaceStart == null) {
       _updateViewportState(() {

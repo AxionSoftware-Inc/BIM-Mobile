@@ -500,7 +500,8 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
             onSceneHover: _handleSceneHover,
             authoringPickKinds: _authoringPickKinds,
             directSurfaceDrag: _isSurfaceAuthoring &&
-                _surfaceDrawMode == RenderSceneSurfaceDrawMode.rectangle,
+                (_surfaceDrawMode == RenderSceneSurfaceDrawMode.rectangle ||
+                    _surfaceDrawMode == RenderSceneSurfaceDrawMode.polyline),
             planPickResolver: _engineBackedMode ? _resolvePlanPick : null,
             onLevelElevationSubmitted: _moveSelectedLevelElevation,
             draftSurfaceWallIds: _draftSurfaceWallIds,

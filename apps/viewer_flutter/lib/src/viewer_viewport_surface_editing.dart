@@ -141,6 +141,111 @@ extension _ViewerViewportSurfaceEditing on _ViewerHomePageState {
     _viewportController.setSurfaceDraft(null);
   }
 
+  RenderScenePoint _surfaceBoundarySnap(RenderScenePoint rawPoint) {
+    return _draftLinePoint(
+      rawPoint: rawPoint,
+      referenceStart: _draftSurfacePoints.lastOrNull,
+      useOrthogonalSnap: false,
+    );
+  }
+
+  /// Starts one live, straight boundary segment. Only the first touch of the
+  /// entire contour is committed immediately; every later touch is previewed
+  /// until the finger is released.
+  void _beginSurfaceBoundarySegment(RenderScenePoint? rawPoint) {
+    if (rawPoint == null || _surfaceTool.boundaryClosed) return;
+
+    final snapped = _surfaceBoundarySnap(rawPoint);
+    final points = _draftSurfacePoints;
+    if (points.isEmpty) {
+      _updateViewportState(() {
+        _draftSurfaceWallIds.clear();
+        points.add(snapped);
+        _draftSurfaceStart = snapped;
+        _draftSurfaceEnd = snapped;
+        _editStatusMessage =
+            'Boundary start set. Drag the first straight segment.';
+      });
+    } else {
+      _draftSurfaceEnd = snapped;
+      _updateViewportState(() {
+        _editStatusMessage =
+            'Drag the next straight boundary segment, then release.';
+      });
+    }
+    _syncSurfaceDraftPreview();
+  }
+
+  /// Keeps the current segment as a single live cursor point. This runs for
+  /// every pointer move, so no model point is allocated for finger jitter.
+  void _updateSurfaceBoundarySegment(
+    RenderScenePoint? rawPoint, {
+    bool announce = true,
+  }) {
+    if (rawPoint == null || _surfaceTool.boundaryClosed) return;
+
+    final points = _draftSurfacePoints;
+    if (points.isEmpty) {
+      _beginSurfaceBoundarySegment(rawPoint);
+      return;
+    }
+
+    _draftSurfaceEnd = _surfaceBoundarySnap(rawPoint);
+    if (announce) {
+      _updateViewportState(() {
+        _editStatusMessage = 'Release to place this straight boundary segment.';
+      });
+    }
+    _syncSurfaceDraftPreview();
+  }
+
+  /// Commits exactly one endpoint for the current finger gesture. Releasing
+  /// near the first point closes the contour instead of adding another point.
+  void _commitSurfaceBoundarySegment(RenderScenePoint? rawPoint) {
+    if (rawPoint == null || _surfaceTool.boundaryClosed) return;
+
+    final points = _draftSurfacePoints;
+    if (points.isEmpty) {
+      _beginSurfaceBoundarySegment(rawPoint);
+      return;
+    }
+
+    final snapped = _surfaceBoundarySnap(rawPoint);
+    final first = points.firstOrNull;
+    if (first != null &&
+        points.length >= 3 &&
+        SurfaceAuthoringGeometry.isNearFirstPoint(
+          points,
+          snapped,
+          toleranceMeters: PlanSketchGeometry.defaultEndpointToleranceMeters,
+        )) {
+      _draftSurfaceEnd = first;
+      _toggleBoundaryClosed();
+      return;
+    }
+
+    final previous = points.last;
+    if (PlanSketchGeometry.planDistance(previous, snapped) <
+        PlanSketchGeometry.minimumSegmentMeters) {
+      _draftSurfaceEnd = previous;
+      _syncSurfaceDraftPreview();
+      _updateViewportState(() {
+        _editStatusMessage =
+            'Segment juda qisqa. Barmoqni keyingi burchakkacha torting.';
+      });
+      return;
+    }
+
+    _updateViewportState(() {
+      points.add(snapped);
+      _draftSurfaceEnd = snapped;
+      _editStatusMessage = points.length < 3
+          ? 'Segment added. Drag the next boundary segment.'
+          : 'Boundary segment added. Continue around the room or close it.';
+    });
+    _syncSurfaceDraftPreview();
+  }
+
   List<RenderScenePoint> _surfaceProfilePointsForCommit() {
     return SurfaceAuthoringGeometry.profilePoints(
       mode: _surfaceDrawMode,

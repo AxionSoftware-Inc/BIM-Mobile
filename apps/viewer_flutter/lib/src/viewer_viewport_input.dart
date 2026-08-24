@@ -237,10 +237,10 @@ extension _ViewerViewportInput on _ViewerHomePageState {
             _editStatusMessage = first != null &&
                     _draftSurfacePoints.length >= 3 &&
                     previewPoint == first
-                ? 'Close target: tap the first point or press Close contour.'
+                ? 'Close target: release near the first point or press Close contour.'
                 : _draftSurfacePoints.isEmpty
-                    ? 'Tap the first boundary corner.'
-                    : 'Pink preview: tap to add the next boundary corner.';
+                    ? 'Touch the first boundary corner, then drag the next segment.'
+                    : 'Pink preview: drag to the next corner and release.';
           });
           _syncSurfaceDraftPreview();
           return;

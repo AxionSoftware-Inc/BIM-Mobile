@@ -255,9 +255,13 @@ extension _ViewerWorkspaceInteractions on _ViewerHomePageState {
       case RenderSceneInteractionMode.addFloor:
       case RenderSceneInteractionMode.addCeiling:
       case RenderSceneInteractionMode.addRoof:
-        if (_surfaceDrawMode != RenderSceneSurfaceDrawMode.rectangle) return;
         final point = details.modelPoint;
         if (point == null) return;
+        if (_surfaceDrawMode == RenderSceneSurfaceDrawMode.polyline) {
+          _beginSurfaceBoundarySegment(point);
+          return;
+        }
+        if (_surfaceDrawMode != RenderSceneSurfaceDrawMode.rectangle) return;
         final snapped = _snapDraftToGrid ? _snapPoint(point) : point;
         _updateViewportState(() {
           if (_draftSurfaceStart == null) {
@@ -356,6 +360,13 @@ extension _ViewerWorkspaceInteractions on _ViewerHomePageState {
       case RenderSceneInteractionMode.addCeiling:
       case RenderSceneInteractionMode.addRoof:
       case RenderSceneInteractionMode.addStair:
+        if ((_interactionMode == RenderSceneInteractionMode.addFloor ||
+                _interactionMode == RenderSceneInteractionMode.addCeiling ||
+                _interactionMode == RenderSceneInteractionMode.addRoof) &&
+            _surfaceDrawMode == RenderSceneSurfaceDrawMode.polyline) {
+          _updateSurfaceBoundarySegment(point, announce: false);
+          return;
+        }
         _handleSceneHover(details);
         return;
       default:
@@ -389,6 +400,10 @@ extension _ViewerWorkspaceInteractions on _ViewerHomePageState {
       case RenderSceneInteractionMode.addFloor:
       case RenderSceneInteractionMode.addCeiling:
       case RenderSceneInteractionMode.addRoof:
+        if (_surfaceDrawMode == RenderSceneSurfaceDrawMode.polyline) {
+          _commitSurfaceBoundarySegment(details.modelPoint);
+          return;
+        }
         if (_surfaceDrawMode != RenderSceneSurfaceDrawMode.rectangle) return;
         _handleSceneHover(details);
         if (SurfaceAuthoringGeometry.isUsableRectangle(

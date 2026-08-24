@@ -480,7 +480,7 @@ class SurfaceDrawingContextBar extends StatelessWidget {
                           ? 'Tap inside a closed room · created immediately'
                           : boundaryClosed
                               ? '$draftPointCount points · pink loop closed · review it, then Finish'
-                              : '$draftPointCount points · pink preview · Close contour · Finish',
+                              : '$draftPointCount points · drag corner-to-corner · Close contour · Finish',
               style: theme.textTheme.labelSmall?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
               ),
@@ -516,7 +516,7 @@ String _surfaceDrawModeLabel(RenderSceneSurfaceDrawMode mode) => switch (mode) {
 
 String _surfaceDrawModeHint(RenderSceneSurfaceDrawMode mode) => switch (mode) {
       RenderSceneSurfaceDrawMode.polyline =>
-        'Tap corners to make the pink draft; close the loop, review it, then Finish',
+        'Drag one straight segment with one finger; repeat around the room, then close the loop and Finish',
       RenderSceneSurfaceDrawMode.rectangle => 'Click two opposite corners',
       RenderSceneSurfaceDrawMode.pickWalls =>
         'Select enclosing walls to derive the footprint',

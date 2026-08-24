@@ -293,6 +293,16 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
             onPointerDown: (PointerDownEvent event) {
               if (nativeOwnedInteraction) return;
               _activePointerCount += 1;
+              if (_activePointerCount > 1) {
+                // A second finger belongs to pan/zoom navigation. Cancel the
+                // active one-finger authoring gesture so lifting the second
+                // finger cannot accidentally finish a boundary or rectangle.
+                _longPressTimer?.cancel();
+                _touchRectangleArmed = false;
+                if (_usesDirectAuthoringDrag) {
+                  _sceneDragStarted = false;
+                }
+              }
               _activePointer = event.pointer;
               _pointerDownPosition = event.localPosition;
               _lastPointerPosition = event.localPosition;
