@@ -195,7 +195,7 @@ class ProjectBrowserViews extends StatelessWidget {
                     id: 'section-${section.name}',
                     label: section.name,
                     kind: SheetViewKind.section,
-                    projectionMode: RenderSceneProjectionMode.northElevation,
+                    projectionMode: projectionModeForSection(section),
                     section: section,
                   ),
                 ),

@@ -42,6 +42,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
 
   int _fitRevision = 0;
   int _sceneRevision = 0;
+  bool _nativeCameraSyncScheduled = false;
 
   RenderSceneProjectionMode _projectionMode = kDefaultPlanProjectionMode;
   RenderSceneOrbitProjectionStyle _orbitProjectionStyle =

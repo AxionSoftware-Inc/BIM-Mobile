@@ -204,8 +204,8 @@ class RenderSceneProjectionSpec {
 }
 
 const Map<RenderSceneProjectionMode, RenderSceneProjectionSpec>
-    kRenderSceneProjectionSpecs = <RenderSceneProjectionMode,
-        RenderSceneProjectionSpec>{
+    kRenderSceneProjectionSpecs =
+    <RenderSceneProjectionMode, RenderSceneProjectionSpec>{
   RenderSceneProjectionMode.topDown: RenderSceneProjectionSpec(
     mode: RenderSceneProjectionMode.topDown,
     shortLabel: '2D',
@@ -338,4 +338,19 @@ extension RenderSceneProjectionPlanarDescriptorX on RenderSceneProjectionMode {
   bool get showLevelsOverlay => spec.showLevelsOverlay;
   bool get useBoundsCenterLabelAnchor => spec.useBoundsCenterLabelAnchor;
   bool get useProjectedBoundsOutline => spec.useProjectedBoundsOutline;
+}
+
+/// Sections use the same planar camera contract as elevations. The authored
+/// line direction decides which model axis is horizontal, so Section B does
+/// not accidentally reuse North's X/Z projection and show the wrong facade.
+RenderSceneProjectionMode projectionModeForSection(RenderSceneSection section) {
+  final dx = (section.end.x - section.start.x).abs();
+  final dy = (section.end.y - section.start.y).abs();
+  // The native section camera looks from the removed side of the cut. A line
+  // along X therefore reads as a South elevation; a line along Y reads as an
+  // East elevation. This keeps draw, pan, zoom, hit-test and level overlays
+  // on one descriptor.
+  return dx >= dy
+      ? RenderSceneProjectionMode.southElevation
+      : RenderSceneProjectionMode.eastElevation;
 }

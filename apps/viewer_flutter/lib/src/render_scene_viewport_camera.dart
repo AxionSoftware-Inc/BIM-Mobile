@@ -86,7 +86,18 @@ extension _RenderSceneViewportCamera on RenderSceneViewportController {
   }
 
   void _scheduleNativeCameraSync() {
-    unawaited(_invoke('setCamera', _nativeCameraPayload()));
+    if (_nativeCameraSyncScheduled) {
+      return;
+    }
+    _nativeCameraSyncScheduled = true;
+    // Pointer events can arrive several times before Flutter presents the
+    // next frame. Send only the newest camera state once per frame; otherwise
+    // MethodChannel calls queue up and make planar tablet navigation visibly
+    // lag behind the finger.
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      _nativeCameraSyncScheduled = false;
+      unawaited(_invoke('setCamera', _nativeCameraPayload()));
+    });
   }
 
   Map<String, Object?> _nativeCameraPayload() {

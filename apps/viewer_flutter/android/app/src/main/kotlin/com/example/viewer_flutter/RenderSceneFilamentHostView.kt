@@ -883,9 +883,10 @@ internal class RenderSceneFilamentHostView(
     }
     configureCameraProjection()
     updateOrbitCamera()
-    interactiveUntilMs = SystemClock.uptimeMillis() + 500L
-    syncVisualOverlay()
-    requestRender(500L)
+    // The Flutter controller coalesces planar camera updates to one call per
+    // frame. Render the new state once instead of extending a native 500 ms
+    // animation window for every pointer event.
+    requestRender()
     invalidate()
   }
 
@@ -1106,7 +1107,9 @@ internal class RenderSceneFilamentHostView(
     // immediately before this clip state arrives. Preserve them instead of
     // fitting a second native camera, otherwise the model drifts away from
     // Flutter's level overlay on the first section frame.
-    orbitYawRadians = kotlin.math.atan2(inward.z, inward.x)
+    // Keep the camera on the removed side of the authored cut line so the
+    // newly generated cut faces are visible instead of the opposite facade.
+    orbitYawRadians = kotlin.math.atan2(-inward.z, -inward.x)
     orbitPitchRadians = 0.0
     fitSectionViewOnNextRebuild = false
     configureCameraProjection()
@@ -1262,7 +1265,15 @@ internal class RenderSceneFilamentHostView(
     // Reserve the upper-right quadrant for Flutter's compact model card.
     // Telemetry wraps here instead of disappearing behind that card.
     statusView.maxWidth = (width * 0.60f).toInt().coerceAtLeast(220)
-    fitCamera()
+    // Flutter owns the section/elevation camera scale and center. A resize
+    // must only update the projection matrix; fitting here resets the section
+    // direction and makes the model drift away from the level overlay.
+    if (projectionMode == "section") {
+      configureCameraProjection()
+      updateOrbitCamera()
+    } else {
+      fitCamera()
+    }
     syncVisualOverlay()
     requestRender()
   }
@@ -3479,6 +3490,15 @@ internal class RenderSceneFilamentHostView(
       "westElevation" -> {
         orbitYawRadians = 0.0
         orbitPitchRadians = 0.0
+      }
+      "section" -> {
+        val inward = clipVolume.sectionDirection
+        if (inward != null) {
+          // The camera is on the removed side and looks into the retained
+          // half, matching the planar descriptor selected by Flutter.
+          orbitYawRadians = kotlin.math.atan2(-inward.z, -inward.x)
+          orbitPitchRadians = 0.0
+        }
       }
       else -> {
         orbitYawRadians = Math.toRadians(45.0)

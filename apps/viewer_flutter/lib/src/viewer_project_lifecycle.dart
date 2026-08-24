@@ -581,7 +581,7 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
       id: 'section-${section.name}',
       label: section.name,
       kind: OpenedViewKind.section,
-      projectionMode: RenderSceneProjectionMode.northElevation,
+      projectionMode: projectionModeForSection(section),
       section: section,
     ));
   }

@@ -135,12 +135,14 @@ extension _ViewerViewCommands on _ViewerHomePageState {
       return;
     }
 
-    // A section snapshot has its own X/Z coordinate system. Set the
-    // projection first, then apply the scene once; calling the normal
-    // elevation navigation here would reload and overwrite this cut view.
+    // A section keeps the authoritative full scene and selects its planar
+    // descriptor from the authored line. Set that projection first, then
+    // apply the scene once; normal elevation navigation would reload and
+    // overwrite this cut view.
+    final sectionProjection = projectionModeForSection(section);
     _updateViewportState(() {
       _activeSectionView = section;
-      _projectionMode = RenderSceneProjectionMode.northElevation;
+      _projectionMode = sectionProjection;
       _statusMessage = 'Opening ${section.name} cut...';
       if (_usesProjectionDefaultDisplayStyle) {
         _displayStyle = _defaultDisplayStyleForProjection();
