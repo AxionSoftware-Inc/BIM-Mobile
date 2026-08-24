@@ -160,7 +160,9 @@ void material(inout MaterialInputs material) {
     float majorDistance = min(abs(fract(majorCoord.x + 0.5) - 0.5), abs(fract(majorCoord.y + 0.5) - 0.5));
     float minorLine = 1.0 - smoothstep(0.0, minorWidth, minorDistance);
     float majorLine = 1.0 - smoothstep(0.0, majorWidth, majorDistance);
-    float line = max(minorLine * 0.42, majorLine * 0.88);
+    // Keep the plane deliberately quiet. The grid should provide orientation
+    // without reading as a solid floor underneath the BIM model.
+    float line = max(minorLine * 0.13, majorLine * 0.28);
     material.baseColor = float4(materialParams.baseColor.rgb, materialParams.baseColor.a * fade * line);
 }
 """
@@ -399,28 +401,14 @@ internal class RenderSceneFilamentHostView(
     invalidate()
   }
   private val scaleGestureDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
-    private var previousFocusX = 0f
-    private var previousFocusY = 0f
-
     override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
       cancelOrbitInertia()
       orbitYawVelocity = 0.0
       orbitPitchVelocity = 0.0
-      previousFocusX = detector.focusX
-      previousFocusY = detector.focusY
       return true
     }
 
     override fun onScale(detector: ScaleGestureDetector): Boolean {
-      val focusDx = detector.focusX - previousFocusX
-      val focusDy = detector.focusY - previousFocusY
-      if (focusDx != 0f || focusDy != 0f) {
-        if (isPlanarProjection()) {
-          panPlanarCamera(focusDx, focusDy)
-        } else {
-          panOrbitCamera(focusDx, focusDy)
-        }
-      }
       if (isPlanarProjection()) {
         if (projectionMode == "topDown") {
           topDownZoom = (topDownZoom / detector.scaleFactor.toDouble()).coerceIn(0.5, 200.0)
@@ -445,14 +433,7 @@ internal class RenderSceneFilamentHostView(
       )
       requestRender(250L)
       invalidate()
-      previousFocusX = detector.focusX
-      previousFocusY = detector.focusY
       return true
-    }
-
-    override fun onScaleEnd(detector: ScaleGestureDetector) {
-      previousFocusX = 0f
-      previousFocusY = 0f
     }
   })
   private val visibleKinds = linkedSetOf<String>().apply {
@@ -563,6 +544,9 @@ internal class RenderSceneFilamentHostView(
   // pointer is released. Keeping this state also lets us reset the orbit
   // baseline to the pointer that remains on the surface.
   private var multiTouching = false
+  private var multiTouchFocusX = 0f
+  private var multiTouchFocusY = 0f
+  private var multiTouchFocusValid = false
   private var orbitYawVelocity = 0.0
   private var orbitPitchVelocity = 0.0
   private var lastOrbitMotionTimeMs = 0L
@@ -2271,7 +2255,7 @@ internal class RenderSceneFilamentHostView(
     val materialInstance = gridMaterial.createInstance().also { instance ->
       applySectionBoxState(instance)
       applyDisplayStyle(instance)
-      instance.setParameter("baseColor", Colors.RgbaType.LINEAR, 0.16f, 0.22f, 0.24f, 0.20f)
+      instance.setParameter("baseColor", Colors.RgbaType.LINEAR, 0.30f, 0.36f, 0.37f, 0.11f)
       instance.setParameter("gridCenter", centerX.toFloat(), groundY.toFloat(), centerZ.toFloat(), 0.0f)
       instance.setParameter("gridRadius", radius.toFloat())
       instance.setParameter("gridFadeStart", 34.0f)
@@ -3520,6 +3504,28 @@ internal class RenderSceneFilamentHostView(
     return width.toDouble() / height.toDouble()
   }
 
+  private fun pointerFocusX(event: MotionEvent, ignoredIndex: Int = -1): Float {
+    var total = 0f
+    var count = 0
+    for (index in 0 until event.pointerCount) {
+      if (index == ignoredIndex) continue
+      total += event.getX(index)
+      count += 1
+    }
+    return if (count == 0) event.x else total / count
+  }
+
+  private fun pointerFocusY(event: MotionEvent, ignoredIndex: Int = -1): Float {
+    var total = 0f
+    var count = 0
+    for (index in 0 until event.pointerCount) {
+      if (index == ignoredIndex) continue
+      total += event.getY(index)
+      count += 1
+    }
+    return if (count == 0) event.y else total / count
+  }
+
   private fun Double.format(digits: Int): String = "%.${digits}f".format(this)
 
   private fun handleTouchEvent(event: MotionEvent): Boolean {
@@ -3528,6 +3534,7 @@ internal class RenderSceneFilamentHostView(
       MotionEvent.ACTION_DOWN -> {
         cancelOrbitInertia()
         multiTouching = false
+        multiTouchFocusValid = false
         lastOrbitMotionTimeMs = SystemClock.uptimeMillis()
         lastTouchX = event.x
         lastTouchY = event.y
@@ -3540,17 +3547,42 @@ internal class RenderSceneFilamentHostView(
         return true
       }
       MotionEvent.ACTION_POINTER_DOWN -> {
-        // From this event until the final pointer is released, all movement
-        // belongs to ScaleGestureDetector. Do not let the first pointer's old
-        // orbit baseline leak into the next one-finger MOVE event.
+        // Keep a native focus baseline for two-finger pan. ScaleGestureDetector
+        // is still responsible for pinch distance, but on some tablet builds
+        // it does not emit onScale for a pure focus translation.
         cancelOrbitInertia()
         multiTouching = true
+        multiTouchFocusX = pointerFocusX(event)
+        multiTouchFocusY = pointerFocusY(event)
+        multiTouchFocusValid = true
         lastOrbitMotionTimeMs = 0L
         touchMoved = true
         return true
       }
       MotionEvent.ACTION_MOVE -> {
         if (event.pointerCount > 1 || multiTouching || scaleGestureDetector.isInProgress) {
+          if (event.pointerCount > 1) {
+            val focusX = pointerFocusX(event)
+            val focusY = pointerFocusY(event)
+            if (!multiTouchFocusValid) {
+              multiTouchFocusX = focusX
+              multiTouchFocusY = focusY
+              multiTouchFocusValid = true
+            } else {
+              val focusDx = focusX - multiTouchFocusX
+              val focusDy = focusY - multiTouchFocusY
+              if (focusDx != 0f || focusDy != 0f) {
+                if (projectionMode == "isometric") {
+                  panOrbitCamera(focusDx, focusDy)
+                  updateOrbitCamera()
+                  requestRender(250L)
+                  invalidate()
+                }
+              }
+              multiTouchFocusX = focusX
+              multiTouchFocusY = focusY
+            }
+          }
           touchMoved = true
           return true
         }
@@ -3594,6 +3626,14 @@ internal class RenderSceneFilamentHostView(
         orbitPitchVelocity = 0.0
         lastOrbitMotionTimeMs = 0L
         val releasedIndex = event.actionIndex
+        val remainingCount = event.pointerCount - 1
+        if (remainingCount > 1) {
+          multiTouchFocusX = pointerFocusX(event, releasedIndex)
+          multiTouchFocusY = pointerFocusY(event, releasedIndex)
+          multiTouchFocusValid = true
+        } else {
+          multiTouchFocusValid = false
+        }
         val remainingIndex = (0 until event.pointerCount)
           .firstOrNull { index -> index != releasedIndex }
         if (remainingIndex != null) {
@@ -3616,6 +3656,7 @@ internal class RenderSceneFilamentHostView(
         }
         activeSectionHandle = null
         multiTouching = false
+        multiTouchFocusValid = false
         lastOrbitMotionTimeMs = 0L
         touching = false
         requestRender()
