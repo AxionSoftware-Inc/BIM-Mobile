@@ -495,7 +495,6 @@ internal class RenderSceneFilamentHostView(
   private val faceBatches = mutableListOf<FaceBatchEntry>()
   private val instanceFaceGroups = mutableListOf<InstanceFaceGroupEntry>()
   private val edgeBatches = mutableListOf<EdgeBatchEntry>()
-  private var edgeLodSuppressed = false
   private var staticShadowBatch: StaticShadowBatchEntry? = null
   private var groundReceiver: GroundReceiverEntry? = null
   private val edgeGeometryCache = linkedMapOf<Long, CachedEdgeGeometry>()
@@ -1651,45 +1650,6 @@ internal class RenderSceneFilamentHostView(
     (displayStyle == "solid" || displayStyle == "shaded") &&
       kindVisible(kind) && openingVisibleInPlan(kind)
 
-  private fun edgeVisibleAtCurrentLod(kind: String): Boolean =
-    !edgeLodSuppressed && edgeVisible(kind)
-
-  /**
-   * Very distant edge prisms become smaller than a physical pixel. Keeping
-   * drawing them makes mobile depth/coverage quantization read as flicker.
-   * Use hysteresis so the edge layer does not pop on and off at the threshold.
-   */
-  private fun updateEdgeLodVisibility() {
-    val scene = scene ?: return
-    val projectedEdgeDiameter = if (projectionMode == "isometric") {
-      val halfHeight = max(orbitDistance * 0.6, 2.0)
-      // The normal 3D edge diameter is 20 mm. Convert it to pixels using the
-      // current orthographic viewport height; perspective uses the same
-      // conservative scale and therefore suppresses detail no later than it
-      // becomes unstable.
-      0.020 * max(renderSurface.height.toDouble(), 1.0) / (2.0 * halfHeight)
-    } else {
-      Double.POSITIVE_INFINITY
-    }
-    val nextSuppressed = if (edgeLodSuppressed) {
-      projectedEdgeDiameter < 0.72
-    } else {
-      projectedEdgeDiameter < 0.55
-    }
-    if (nextSuppressed == edgeLodSuppressed) return
-    edgeLodSuppressed = nextSuppressed
-    for (batch in edgeBatches) {
-      val visible = edgeVisibleAtCurrentLod(batch.key.kind)
-      if (visible && !batch.attached) {
-        scene.addEntity(batch.entity)
-        batch.attached = true
-      } else if (!visible && batch.attached) {
-        scene.removeEntity(batch.entity)
-        batch.attached = false
-      }
-    }
-  }
-
   private fun baseColorForObject(objectData: SceneObject): FloatArray =
     kindColor(normalizeKind(objectData.kind))
 
@@ -2032,7 +1992,7 @@ internal class RenderSceneFilamentHostView(
         .geometry(0, PrimitiveType.TRIANGLES, vertexBuffer, indexBuffer, 0, geometry.indexCount)
         .material(0, materialInstance)
         .build(engine, entity)
-      val visible = edgeVisibleAtCurrentLod(key.kind)
+      val visible = edgeVisible(key.kind)
       if (visible) scene.addEntity(entity)
       edgeBatches.add(
         EdgeBatchEntry(
@@ -3001,7 +2961,7 @@ internal class RenderSceneFilamentHostView(
     // feedback remains in NativeSelectionOverlay, so one border batch can
     // safely represent many BIM elements without losing per-object picking.
     for (batch in edgeBatches) {
-      val visible = edgeVisibleAtCurrentLod(batch.key.kind)
+      val visible = edgeVisible(batch.key.kind)
       if (visible && !batch.attached) {
         scene.addEntity(batch.entity)
         batch.attached = true
@@ -3492,7 +3452,6 @@ internal class RenderSceneFilamentHostView(
         0.0,
         -1.0,
       )
-      updateEdgeLodVisibility()
       syncVisualOverlay()
       return
     }
@@ -3511,7 +3470,6 @@ internal class RenderSceneFilamentHostView(
       1.0,
       0.0,
     )
-    updateEdgeLodVisibility()
     syncVisualOverlay()
   }
 
