@@ -581,6 +581,55 @@ bool has_exact_ifc_geometry(const Element& element) {
     return found != element.metadata().end() && found->second.value == "true";
 }
 
+std::string_view ifc_entity_type(const Element& element) {
+    const auto found = element.metadata().find("ifc_entity");
+    return found == element.metadata().end() ? std::string_view{} : found->second.value;
+}
+
+bool is_small_ifc_detail_proxy(const Element& element) {
+    if (!element.proxy() || !has_exact_ifc_geometry(element)) return false;
+
+    const auto type = ifc_entity_type(element);
+    // These categories are useful for coordination and selection, but their
+    // dense source meshes should not determine the architectural viewport
+    // budget. The exact meshes remain in the document JSON and IFC export.
+    if (type == "IFCFURNISHINGELEMENT" || type == "IFCFURNITURE" ||
+        type == "IFCRAILING" || type == "IFCFASTENER" ||
+        type == "IFCMECHANICALFASTENER" || type == "IFCDISCRETEACCESSORY" ||
+        type == "IFCELECTRICAPPLIANCE" || type == "IFCFLOWSEGMENT" ||
+        type == "IFCFLOWFITTING" || type == "IFCFLOWTERMINAL" ||
+        type == "IFCOPENINGELEMENT" ||
+        type == "IFCFLOWCONTROLLER" || type == "IFCFLOWMOVINGDEVICE" ||
+        type == "IFCFLOWSTORAGEDEVICE" || type == "IFCFLOWTREATMENTDEVICE" ||
+        type == "IFCFLOWINSTRUMENT" || type == "IFCDISTRIBUTIONELEMENT" ||
+        type == "IFCDISTRIBUTIONFLOWELEMENT" || type == "IFCDISTRIBUTIONCONTROLELEMENT" ||
+        type == "IFCENERGYCONVERSIONDEVICE" || type == "IFCMOTORCONNECTION" ||
+        type == "IFCLIGHTFIXTURE" || type == "IFCSENSOR" ||
+        type == "IFCSANITARYTERMINAL" || type == "IFCSPACEHEATER" ||
+        type == "IFCUNITARYEQUIPMENT" || type == "IFCVEHICLE") {
+        return true;
+    }
+
+    // Generic proxies are ambiguous. Only small ones are treated as detail;
+    // large structural/architectural proxies stay exact by default.
+    if (type != "IFCBUILDINGELEMENTPROXY") return false;
+    const auto* proxy = element.proxy();
+    const auto largest_dimension = std::max({
+        proxy->width_meters,
+        proxy->depth_meters,
+        proxy->height_meters,
+    });
+    return largest_dimension > 0.0 && largest_dimension <= 2.5;
+}
+
+bool is_runtime_hidden_ifc_proxy(const Element& element, RenderSceneDetail detail) {
+    // IFCOPENINGELEMENT describes a void/cutter, not a visible architectural
+    // object. It remains in the exact document for round-trip fidelity but is
+    // never useful as a selectable render mesh in the interactive viewport.
+    return detail == RenderSceneDetail::Interactive && element.proxy() != nullptr &&
+        ifc_entity_type(element) == "IFCOPENINGELEMENT";
+}
+
 RenderSceneMeshDTO mesh_dto_from_mesh_buffer(
     const tbe::core::MeshBuffer& mesh,
     double z_offset = 0.0,
@@ -680,16 +729,11 @@ RenderSceneMeshDTO mesh_dto_from_mesh_buffer(
 std::size_t interactive_triangle_budget(
     const Element& element,
     const tbe::core::MeshBuffer& mesh,
-    RenderSceneDetail detail,
-    std::size_t document_element_count
+    RenderSceneDetail detail
 ) {
-    constexpr std::size_t kSingleObjectTriangleBudget = 2048;
-    constexpr std::size_t kDenseSceneTriangleBudget = 128;
-    constexpr std::size_t kDenseSceneElementThreshold = 250;
-    if (detail == RenderSceneDetail::Exact || !has_exact_ifc_geometry(element)) return 0;
-    const auto budget = document_element_count > kDenseSceneElementThreshold
-        ? kDenseSceneTriangleBudget
-        : kSingleObjectTriangleBudget;
+    constexpr std::size_t kDetailTriangleBudget = 128;
+    if (detail == RenderSceneDetail::Exact || !is_small_ifc_detail_proxy(element)) return 0;
+    const auto budget = kDetailTriangleBudget;
     return mesh.indices.size() / 3 > budget
         ? budget
         : 0;
@@ -1375,7 +1419,7 @@ RenderSceneDTO build_render_scene(
         return mesh_dto_from_mesh_buffer(
             mesh,
             z_offset,
-            interactive_triangle_budget(owner, mesh, detail, document.elements().size()));
+            interactive_triangle_budget(owner, mesh, detail));
     };
 
     auto append_object = [&](RenderSceneObjectDTO object) {
@@ -1649,8 +1693,11 @@ RenderSceneDTO build_render_scene(
             continue;
         }
         if (const auto* proxy = element.proxy(); proxy != nullptr) {
+            if (is_runtime_hidden_ifc_proxy(element, detail)) continue;
             const auto elevation = level_elevation(elevations, proxy->level_id, 0.0);
-            auto proxy_mesh = proxy->mesh.vertices.empty() || proxy->mesh.indices.empty()
+            const auto simplify_detail = detail == RenderSceneDetail::Interactive &&
+                is_small_ifc_detail_proxy(element);
+            auto proxy_mesh = simplify_detail || proxy->mesh.vertices.empty() || proxy->mesh.indices.empty()
                 ? make_section_box(
                     proxy->position.x - proxy->width_meters * 0.5,
                     proxy->position.x + proxy->width_meters * 0.5,
