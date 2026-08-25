@@ -35,6 +35,42 @@ enum IfcTemplateKind { building, structure, infrastructure }
 
 const List<IfcTemplate> onlineIfcTemplates = <IfcTemplate>[
   IfcTemplate(
+    id: 'openifc-energy-tower',
+    title: 'Energy Tower',
+    subtitle: 'Large tower building sample from the OpenIFC repository',
+    meta: 'IFC · 10.6 MB · large building',
+    fileName: 'openifc-energy-tower.ifc',
+    downloadUrl:
+        'https://openifcmodel.cs.auckland.ac.nz/api/download/2022032920220131Energy%20Tower.ifc',
+    sourceUrl: 'https://openifcmodel.cs.auckland.ac.nz/Model/Details/235',
+    kind: IfcTemplateKind.building,
+    sizeLabel: '10.6 MB',
+  ),
+  IfcTemplate(
+    id: 'openifc-primark',
+    title: 'PRIMARK building',
+    subtitle: 'Large retail building coordination sample',
+    meta: 'IFC · 12.9 MB · large building',
+    fileName: 'openifc-primark.ifc',
+    downloadUrl:
+        'https://openifcmodel.cs.auckland.ac.nz/api/download/20210221PRIMARK.ifc',
+    sourceUrl: 'https://openifcmodel.cs.auckland.ac.nz/Model/Details/226',
+    kind: IfcTemplateKind.building,
+    sizeLabel: '12.9 MB',
+  ),
+  IfcTemplate(
+    id: 'openifc-wellness-center',
+    title: 'Wellness Center',
+    subtitle: 'Multi-storey wellness center building sample',
+    meta: 'IFC · 21.3 MB · large building',
+    fileName: 'openifc-wellness-center.ifc',
+    downloadUrl:
+        'https://openifcmodel.cs.auckland.ac.nz/api/download/2022020320211122Wellness%20center%20Sama.ifc',
+    sourceUrl: 'https://openifcmodel.cs.auckland.ac.nz/Model/Details/232',
+    kind: IfcTemplateKind.building,
+    sizeLabel: '21.3 MB',
+  ),
+  IfcTemplate(
     id: 'kit-office-building',
     title: 'KIT office building',
     subtitle: 'Large multi-storey office model from ArchiCAD',
