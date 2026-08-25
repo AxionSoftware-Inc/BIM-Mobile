@@ -554,6 +554,11 @@ internal class RenderSceneFilamentHostView(
       renderSurface,
       LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT),
     )
+    // TextureView may otherwise expose an uninitialised tile while the
+    // SurfaceTexture is handing a new frame to Flutter's compositor.  The
+    // Filament clear pass is opaque, so make that contract explicit to the
+    // Android compositor as well.
+    renderSurface.isOpaque = true
     renderSurface.setOnTouchListener { _, event -> handleTouchEvent(event) }
     addView(
       selectionOverlay,
@@ -584,6 +589,9 @@ internal class RenderSceneFilamentHostView(
     renderSurface.isClickable = false
 
     try {
+      // Keep the known-good OpenGL backend for the connected tablet. Vulkan
+      // was tested here but the device terminated the app while opening the
+      // large KIT scene, so it is not a safe runtime fallback yet.
       val filamentEngine = Engine.create(Engine.Backend.OPENGL)
       // Repeated BIM types share one geometry and MaterialInstance below.
       // Filament can then collapse their independent entities/transforms into
@@ -2753,11 +2761,8 @@ internal class RenderSceneFilamentHostView(
   }
 
   private fun objectGeometry(objectData: SceneObject): GeometryData? {
-    val sourcePoints = if (objectData.mesh.positions.isNotEmpty() && objectData.mesh.indices.size >= 3) {
-      objectData.mesh.positions.map(::toFilamentPoint)
-    } else {
-      boxCorners(objectData.bounds).map(::toFilamentPoint)
-    }
+    val meshGeometry = meshGeometryFor(objectData)
+    val sourcePoints = meshGeometry?.first ?: boxCorners(objectData.bounds).map(::toFilamentPoint)
     if (sourcePoints.isEmpty()) {
       return null
     }
@@ -2779,15 +2784,7 @@ internal class RenderSceneFilamentHostView(
         if (minimumDistance < -1.0e-6) fullyInsideClipVolume = false
       }
     }
-    val sourceTriangles = if (objectData.mesh.positions.isNotEmpty() && objectData.mesh.indices.size >= 3) {
-      objectData.mesh.indices.chunked(3).mapNotNull { group ->
-        if (group.size == 3) {
-          intArrayOf(group[0], group[1], group[2])
-        } else {
-          null
-        }
-      }
-    } else {
+    val sourceTriangles = meshGeometry?.second ?: run {
       listOf(
         intArrayOf(0, 1, 2), intArrayOf(0, 2, 3),
         intArrayOf(4, 6, 5), intArrayOf(4, 7, 6),
@@ -2865,6 +2862,58 @@ internal class RenderSceneFilamentHostView(
       points = meshPoints,
       triangles = triangles,
     )
+  }
+
+  /**
+   * Validate imported triangle data before it reaches an Android GPU index
+   * buffer. A single out-of-range index is undefined behaviour on GLES and
+   * can present as intermittent red/black tiles while the camera exposes a
+   * different part of a large IFC mesh. Invalid or zero-area faces are safe
+   * to skip; supported IFC geometry remains exact and unsupported elements
+   * still use the bounds box fallback.
+   */
+  private fun meshGeometryFor(objectData: SceneObject): Pair<List<ScenePoint>, List<IntArray>>? {
+    val mesh = objectData.mesh
+    if (mesh.positions.isEmpty() || mesh.indices.size < 3) return null
+    val points = mesh.positions.map(::toFilamentPoint)
+    if (points.isEmpty() || points.any { point ->
+        !point.x.isFinite() || !point.y.isFinite() || !point.z.isFinite()
+      }) {
+      return null
+    }
+    var rejectedFaces = 0
+    val triangles = mesh.indices.chunked(3).mapNotNull { group ->
+      if (group.size != 3 || group.any { it !in points.indices }) {
+        rejectedFaces += 1
+        return@mapNotNull null
+      }
+      val first = points[group[0]]
+      val second = points[group[1]]
+      val third = points[group[2]]
+      val abX = second.x - first.x
+      val abY = second.y - first.y
+      val abZ = second.z - first.z
+      val acX = third.x - first.x
+      val acY = third.y - first.y
+      val acZ = third.z - first.z
+      val crossX = abY * acZ - abZ * acY
+      val crossY = abZ * acX - abX * acZ
+      val crossZ = abX * acY - abY * acX
+      val areaSquared = crossX * crossX + crossY * crossY + crossZ * crossZ
+      if (!areaSquared.isFinite() || areaSquared <= 1.0e-16) {
+        rejectedFaces += 1
+        null
+      } else {
+        intArrayOf(group[0], group[1], group[2])
+      }
+    }
+    if (rejectedFaces > 0) {
+      Log.w(
+        TAG,
+        "Skipped $rejectedFaces invalid IFC faces for ${objectData.elementId ?: "unassigned"}.",
+      )
+    }
+    return triangles.takeIf { it.isNotEmpty() }?.let { points to it }
   }
 
   /**
@@ -4232,16 +4281,9 @@ internal class RenderSceneFilamentHostView(
   }
 
   private fun toVisualObject(objectData: SceneObject): NativeVisualObject {
-    val points = if (objectData.mesh.positions.isNotEmpty() && objectData.mesh.indices.size >= 3) {
-      objectData.mesh.positions.map(::toFilamentPoint)
-    } else {
-      boxCorners(objectData.bounds).map(::toFilamentPoint)
-    }
-    val triangles = if (objectData.mesh.positions.isNotEmpty() && objectData.mesh.indices.size >= 3) {
-      objectData.mesh.indices.chunked(3).mapNotNull { group ->
-        if (group.size == 3 && group.all { it in points.indices }) intArrayOf(group[0], group[1], group[2]) else null
-      }
-    } else {
+    val meshGeometry = meshGeometryFor(objectData)
+    val points = meshGeometry?.first ?: boxCorners(objectData.bounds).map(::toFilamentPoint)
+    val triangles = meshGeometry?.second ?: run {
       listOf(
         intArrayOf(0, 1, 2), intArrayOf(0, 2, 3), intArrayOf(4, 6, 5), intArrayOf(4, 7, 6),
         intArrayOf(0, 4, 5), intArrayOf(0, 5, 1), intArrayOf(1, 5, 6), intArrayOf(1, 6, 2),
