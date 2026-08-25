@@ -2,6 +2,7 @@ package com.example.viewer_flutter
 
 import java.io.File
 import android.os.Bundle
+import android.view.WindowManager
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.plugin.common.MethodChannel
@@ -11,6 +12,10 @@ class MainActivity : FlutterActivity() {
   private var nativeEngineError: String? = null
 
   override fun onCreate(savedInstanceState: Bundle?) {
+    // A BIM session is an active authoring session. Keep the tablet awake
+    // while this activity is visible so long IFC loads and inspections do
+    // not get interrupted by the system's screen timeout.
+    window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     // The C++ authoring engine is packaged by Gradle as libtbe_capi.so. Load
     // it through Android's namespace-aware loader before Dart FFI opens it;
     // relying on a bare dlopen name is device/loader-version dependent.

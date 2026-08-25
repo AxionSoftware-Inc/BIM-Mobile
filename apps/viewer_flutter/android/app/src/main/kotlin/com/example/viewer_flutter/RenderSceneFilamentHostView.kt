@@ -1848,6 +1848,15 @@ internal class RenderSceneFilamentHostView(
     wallJunctionElevations: List<Double>,
   ): GeometryData? {
     val kind = normalizeKind(objectData.kind)
+    // Large IFC coordination files can contain thousands of tiny proxy
+    // objects (fasteners, accessories and void markers). Their face geometry
+    // remains in the interactive scene, but generating a second feature-edge
+    // mesh for every proxy blocks the Android UI thread and provides no useful
+    // architectural linework at fit-to-model scale. Keep edges for the real
+    // architectural categories and for small scenes where they are useful.
+    if (kind == "proxy" && (currentScene?.objects?.size ?: 0) >= 256) {
+      return null
+    }
     // In orbit view floors/ceilings are surfaces, not architectural linework.
     // Their coplanar borders were being depth-tested as repeated heavy storey
     // bands and could flicker while orbiting. Columns keep only their vertical
