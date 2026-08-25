@@ -1029,7 +1029,14 @@ internal class RenderSceneFilamentHostView(
       elementId = primitive.elementId,
       kind = primitive.kind,
       selectable = true,
-      metadata = mapOf("native_cache" to "true", "level_id" to primitive.levelId.toString()),
+      metadata = buildMap {
+        put("native_cache", "true")
+        put("level_id", primitive.levelId.toString())
+        NativeBimCacheBridge.virtualIfcPartSourceId(primitive.elementId)?.let { sourceElementId ->
+          put("source_element_id", sourceElementId.toString())
+          put("selection_scope", "imported_mesh_part")
+        }
+      },
       points = points,
       triangles = triangles,
       featureEdges = selectionBoundsEdges,

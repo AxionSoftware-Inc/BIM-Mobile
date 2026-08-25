@@ -1721,6 +1721,11 @@ RenderSceneDTO build_render_scene(
                     {"depth_meters", std::to_string(proxy->depth_meters)},
                     {"height_meters", std::to_string(proxy->height_meters)},
                     {"ifc_proxy", "true"},
+                    // Keep the source entity at the render/cache boundary.
+                    // In particular, a CAD import can be a single
+                    // IFCBUILDINGELEMENTPROXY that needs part-level touch
+                    // targets even though the source has no Door/Window IDs.
+                    {"ifc_entity", std::string(ifc_entity_type(element))},
                 }
             ));
         }

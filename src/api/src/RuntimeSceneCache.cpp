@@ -11,6 +11,7 @@
 #include <stdexcept>
 #include <tuple>
 #include <type_traits>
+#include <unordered_map>
 #include <vector>
 
 #ifdef _WIN32
@@ -162,6 +163,162 @@ AABB3D union_bounds(const AABB3D& first, const AABB3D& second) {
             .z = std::max(first.max.z, second.max.z),
         },
     };
+}
+
+constexpr std::size_t kMinCompoundProxyTriangles = 4;
+constexpr std::size_t kMaxCompoundProxyParts = 4096;
+constexpr double kCompoundProxyWeldScale = 100000.0;
+constexpr std::uint64_t kVirtualIfcPartTag = std::uint64_t{1} << 62;
+constexpr std::uint64_t kVirtualIfcPartSourceMask = (std::uint64_t{1} << 46) - 1;
+constexpr std::uint64_t kVirtualIfcPartOrdinalMask = (std::uint64_t{1} << 16) - 1;
+
+struct WeldedPositionKey {
+    std::int64_t x{};
+    std::int64_t y{};
+    std::int64_t z{};
+
+    bool operator==(const WeldedPositionKey&) const = default;
+};
+
+struct WeldedPositionKeyHash {
+    std::size_t operator()(const WeldedPositionKey& key) const {
+        const auto mix = [](std::uint64_t value) {
+            value ^= value >> 30;
+            value *= 0xbf58476d1ce4e5b9ULL;
+            value ^= value >> 27;
+            value *= 0x94d049bb133111ebULL;
+            return value ^ (value >> 31);
+        };
+        return static_cast<std::size_t>(mix(static_cast<std::uint64_t>(key.x)) ^
+            mix(static_cast<std::uint64_t>(key.y)) ^
+            mix(static_cast<std::uint64_t>(key.z)));
+    }
+};
+
+class TriangleDisjointSet {
+public:
+    explicit TriangleDisjointSet(std::size_t size)
+        : parent_(size), rank_(size, 0) {
+        for (std::size_t index = 0; index < size; ++index) parent_[index] = index;
+    }
+
+    std::size_t find(std::size_t value) {
+        while (parent_[value] != value) {
+            parent_[value] = parent_[parent_[value]];
+            value = parent_[value];
+        }
+        return value;
+    }
+
+    void merge(std::size_t first, std::size_t second) {
+        first = find(first);
+        second = find(second);
+        if (first == second) return;
+        if (rank_[first] < rank_[second]) std::swap(first, second);
+        parent_[second] = first;
+        if (rank_[first] == rank_[second]) ++rank_[first];
+    }
+
+private:
+    std::vector<std::size_t> parent_;
+    std::vector<std::uint8_t> rank_;
+};
+
+struct CompoundProxyPart {
+    std::vector<std::uint32_t> triangle_indices{};
+    AABB3D bounds{
+        .min = {
+            .x = std::numeric_limits<double>::max(),
+            .y = std::numeric_limits<double>::max(),
+            .z = std::numeric_limits<double>::max(),
+        },
+        .max = {
+            .x = std::numeric_limits<double>::lowest(),
+            .y = std::numeric_limits<double>::lowest(),
+            .z = std::numeric_limits<double>::lowest(),
+        },
+    };
+};
+
+bool is_compound_ifc_proxy(const RenderSceneObjectDTO& object) {
+    if (object.kind != ApiElementKind::Proxy) return false;
+    const auto entity = object.metadata.find("ifc_entity");
+    return entity != object.metadata.end() && entity->second == "IFCBUILDINGELEMENTPROXY";
+}
+
+std::optional<WeldedPositionKey> welded_position_key(const Vec3& point) {
+    if (!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z)) {
+        return std::nullopt;
+    }
+    const auto maximum = static_cast<double>(std::numeric_limits<std::int64_t>::max()) / kCompoundProxyWeldScale;
+    if (std::abs(point.x) > maximum || std::abs(point.y) > maximum || std::abs(point.z) > maximum) {
+        return std::nullopt;
+    }
+    return WeldedPositionKey{
+        .x = static_cast<std::int64_t>(std::llround(point.x * kCompoundProxyWeldScale)),
+        .y = static_cast<std::int64_t>(std::llround(point.y * kCompoundProxyWeldScale)),
+        .z = static_cast<std::int64_t>(std::llround(point.z * kCompoundProxyWeldScale)),
+    };
+}
+
+void extend_bounds(AABB3D& bounds, const Vec3& point) {
+    bounds.min.x = std::min(bounds.min.x, point.x);
+    bounds.min.y = std::min(bounds.min.y, point.y);
+    bounds.min.z = std::min(bounds.min.z, point.z);
+    bounds.max.x = std::max(bounds.max.x, point.x);
+    bounds.max.y = std::max(bounds.max.y, point.y);
+    bounds.max.z = std::max(bounds.max.z, point.z);
+}
+
+std::vector<CompoundProxyPart> split_compound_ifc_proxy(const RenderSceneObjectDTO& object) {
+    const auto& mesh = object.mesh;
+    const auto triangle_count = mesh.indices.size() / 3;
+    if (!is_compound_ifc_proxy(object) || triangle_count < kMinCompoundProxyTriangles ||
+        mesh.indices.size() % 3 != 0) {
+        return {};
+    }
+
+    TriangleDisjointSet components(triangle_count);
+    std::unordered_map<WeldedPositionKey, std::size_t, WeldedPositionKeyHash> first_triangle_by_position;
+    first_triangle_by_position.reserve(mesh.indices.size());
+    for (std::size_t triangle_index = 0; triangle_index < triangle_count; ++triangle_index) {
+        const auto first_index = triangle_index * 3;
+        for (std::size_t corner = 0; corner < 3; ++corner) {
+            const auto vertex_index = mesh.indices[first_index + corner];
+            if (vertex_index >= mesh.positions.size()) return {};
+            const auto key = welded_position_key(mesh.positions[vertex_index]);
+            if (!key.has_value()) return {};
+            const auto [found, inserted] = first_triangle_by_position.emplace(*key, triangle_index);
+            if (!inserted) components.merge(triangle_index, found->second);
+        }
+    }
+
+    std::unordered_map<std::size_t, std::size_t> part_by_root;
+    part_by_root.reserve(triangle_count);
+    std::vector<CompoundProxyPart> parts;
+    for (std::size_t triangle_index = 0; triangle_index < triangle_count; ++triangle_index) {
+        const auto root = components.find(triangle_index);
+        const auto [found, inserted] = part_by_root.emplace(root, parts.size());
+        if (inserted) parts.emplace_back();
+        auto& part = parts[found->second];
+        part.triangle_indices.push_back(static_cast<std::uint32_t>(triangle_index));
+        const auto first_index = triangle_index * 3;
+        for (std::size_t corner = 0; corner < 3; ++corner) {
+            extend_bounds(part.bounds, mesh.positions[mesh.indices[first_index + corner]]);
+        }
+    }
+
+    if (parts.size() <= 1 || parts.size() > kMaxCompoundProxyParts) return {};
+    return parts;
+}
+
+ElementIdDTO virtual_ifc_part_id(ElementIdDTO source_element_id, std::size_t ordinal) {
+    // Some CAD/Revit exports store an entire building as one
+    // IFCBUILDINGELEMENTPROXY.  The cache owns these transient part IDs only;
+    // the source IFC and editable document remain untouched.
+    const auto source = source_element_id.value & kVirtualIfcPartSourceMask;
+    const auto part = (static_cast<std::uint64_t>(ordinal) + 1) & kVirtualIfcPartOrdinalMask;
+    return {.value = kVirtualIfcPartTag | (source << 16) | part};
 }
 
 Vec3 bounds_center(const AABB3D& bounds) {
@@ -545,20 +702,44 @@ BimCacheSceneDTO compile(
             chunk.positions.push_back(static_cast<float>(point.y));
             chunk.positions.push_back(static_cast<float>(point.z));
         }
-        for (const auto index : object.mesh.indices) {
-            if (index >= object.mesh.positions.size() || vertex_offset + index > std::numeric_limits<std::uint32_t>::max()) {
+        const auto append_index = [&](std::uint32_t index) {
+            if (index >= object.mesh.positions.size() ||
+                vertex_offset + index > std::numeric_limits<std::uint32_t>::max()) {
                 throw std::runtime_error("BIM cache compiler received an invalid mesh index");
             }
             chunk.indices.push_back(static_cast<std::uint32_t>(vertex_offset + index));
+        };
+        const auto parts = split_compound_ifc_proxy(object);
+        if (parts.empty()) {
+            for (const auto index : object.mesh.indices) append_index(index);
+            chunk.primitives.push_back(BimCachePrimitiveDTO{
+                .element_id = object.element_id,
+                .kind = object.kind,
+                .revision = object.revision,
+                .first_index = static_cast<std::uint32_t>(first_index),
+                .index_count = static_cast<std::uint32_t>(object.mesh.indices.size()),
+                .bounds = object.bounds,
+            });
+        } else {
+            for (std::size_t part_index = 0; part_index < parts.size(); ++part_index) {
+                const auto& part = parts[part_index];
+                const auto part_first_index = chunk.indices.size();
+                for (const auto triangle_index : part.triangle_indices) {
+                    const auto source_index = static_cast<std::size_t>(triangle_index) * 3;
+                    append_index(object.mesh.indices[source_index]);
+                    append_index(object.mesh.indices[source_index + 1]);
+                    append_index(object.mesh.indices[source_index + 2]);
+                }
+                chunk.primitives.push_back(BimCachePrimitiveDTO{
+                    .element_id = virtual_ifc_part_id(object.element_id, part_index),
+                    .kind = object.kind,
+                    .revision = object.revision,
+                    .first_index = static_cast<std::uint32_t>(part_first_index),
+                    .index_count = static_cast<std::uint32_t>(part.triangle_indices.size() * 3),
+                    .bounds = part.bounds,
+                });
+            }
         }
-        chunk.primitives.push_back(BimCachePrimitiveDTO{
-            .element_id = object.element_id,
-            .kind = object.kind,
-            .revision = object.revision,
-            .first_index = static_cast<std::uint32_t>(first_index),
-            .index_count = static_cast<std::uint32_t>(object.mesh.indices.size()),
-            .bounds = object.bounds,
-        });
         chunk.bounds = union_bounds(chunk.bounds, object.bounds);
     }
 

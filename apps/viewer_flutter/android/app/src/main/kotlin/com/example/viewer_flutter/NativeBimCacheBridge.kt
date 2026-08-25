@@ -12,6 +12,12 @@ import java.nio.IntBuffer
  * receives the mesh payload.
  */
 internal object NativeBimCacheBridge {
+  // Must match RuntimeSceneCache.cpp. These IDs exist only in the runtime
+  // cache when an IFC export has collapsed a full CAD symbol into one proxy.
+  private const val virtualIfcPartTag = 0x4000000000000000L
+  private const val virtualIfcPartSourceMask = 0x00003FFFFFFFFFFFL
+  private const val virtualIfcPartOrdinalMask = 0xFFFFL
+
   init {
     System.loadLibrary("tbe_capi")
   }
@@ -143,6 +149,12 @@ internal object NativeBimCacheBridge {
           sectionMap("Section B", centerX(bounds), bounds.min.y - margin, centerX(bounds), bounds.max.y + margin),
         ),
         "objects" to cache.primitives.map { primitive ->
+          val sourceElementId = virtualIfcPartSourceId(primitive.elementId)
+          val metadata = linkedMapOf<String, Any?>("native_cache" to true)
+          if (sourceElementId != null) {
+            metadata["source_element_id"] = sourceElementId
+            metadata["selection_scope"] = "imported_mesh_part"
+          }
           linkedMapOf<String, Any?>(
             "element_id" to primitive.elementId,
             "kind" to primitive.kind,
@@ -156,8 +168,13 @@ internal object NativeBimCacheBridge {
               "indices" to emptyList<Int>(),
             ),
             "material_category" to "generic",
-            "metadata" to linkedMapOf<String, Any?>("native_cache" to true),
-          )
+            "metadata" to metadata,
+          ).also { summary ->
+            if (sourceElementId != null) {
+              summary["name"] =
+                "Imported mesh part ${primitive.elementId and virtualIfcPartOrdinalMask}"
+            }
+          }
         },
       )
     } finally {
@@ -175,6 +192,11 @@ internal object NativeBimCacheBridge {
         sourceBounds = sceneBounds(bounds, index * 6),
       )
     }
+  }
+
+  internal fun virtualIfcPartSourceId(elementId: Long): Long? {
+    if ((elementId and virtualIfcPartTag) != virtualIfcPartTag) return null
+    return (elementId ushr 16) and virtualIfcPartSourceMask
   }
 
   private fun kindFromNativeValue(value: Long): String = when (value.toInt()) {

@@ -10,8 +10,8 @@
 namespace tbe::api::runtime_cache {
 
 inline constexpr std::uint32_t kBimCacheFormatVersion = 2;
-inline constexpr std::uint32_t kBimCacheSceneCompilerVersion = 2;
-inline constexpr std::uint32_t kBimCacheObjectMappingVersion = 1;
+inline constexpr std::uint32_t kBimCacheSceneCompilerVersion = 5;
+inline constexpr std::uint32_t kBimCacheObjectMappingVersion = 4;
 inline constexpr std::uint32_t kBimCacheFormatFlags = 0x00000001u;
 
 // A 24 m seed tile gives the compiler a predictable spatial starting point,

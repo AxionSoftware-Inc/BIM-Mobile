@@ -1594,6 +1594,62 @@ int main() {
             std::uint64_t{1} << static_cast<std::uint32_t>(tbe::api::ApiElementKind::Door)
         );
         assert(!hidden_cache_hit.has_value());
+
+        // Some third-party exports contain one IFCBUILDINGELEMENTPROXY for a
+        // complete imported CAD symbol.  Its disconnected mesh parts still
+        // need individual touch targets even though the source has no Door or
+        // Window entities to preserve.  The runtime cache keeps the source
+        // IFC intact and emits transient, stable part IDs for selection only.
+        const tbe::api::RenderSceneDTO compound_proxy_scene{
+            .objects = {
+                tbe::api::RenderSceneObjectDTO{
+                    .element_id = {.value = 42},
+                    .kind = tbe::api::ApiElementKind::Proxy,
+                    .level_id = {.value = 1},
+                    .bounds = {
+                        .min = {.x = 0.0, .y = 0.0, .z = 0.0},
+                        .max = {.x = 4.0, .y = 1.0, .z = 0.0},
+                    },
+                    .mesh = {
+                        .positions = {
+                            {.x = 0.0, .y = 0.0, .z = 0.0},
+                            {.x = 1.0, .y = 0.0, .z = 0.0},
+                            {.x = 1.0, .y = 1.0, .z = 0.0},
+                            {.x = 0.0, .y = 1.0, .z = 0.0},
+                            {.x = 3.0, .y = 0.0, .z = 0.0},
+                            {.x = 4.0, .y = 0.0, .z = 0.0},
+                            {.x = 4.0, .y = 1.0, .z = 0.0},
+                            {.x = 3.0, .y = 1.0, .z = 0.0},
+                        },
+                        .indices = {0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7},
+                    },
+                    .metadata = {{"ifc_entity", "IFCBUILDINGELEMENTPROXY"}},
+                },
+            },
+            .object_count = 1,
+            .vertex_count = 8,
+            .index_count = 12,
+        };
+        const auto compound_cache = tbe::api::runtime_cache::compile(
+            compound_proxy_scene,
+            tbe::api::runtime_cache::source_signature(ifc_path.string())
+        );
+        assert(compound_cache.chunks.size() == 1);
+        assert(compound_cache.chunks.front().primitives.size() == 2);
+        const auto left_part = tbe::api::runtime_cache::pick(
+            compound_cache,
+            {.x = 0.5, .y = 0.5, .z = 2.0},
+            {.x = 0.0, .y = 0.0, .z = -1.0}
+        );
+        const auto right_part = tbe::api::runtime_cache::pick(
+            compound_cache,
+            {.x = 3.5, .y = 0.5, .z = 2.0},
+            {.x = 0.0, .y = 0.0, .z = -1.0}
+        );
+        assert(left_part.has_value() && right_part.has_value());
+        assert(left_part->value != 42 && right_part->value != 42);
+        assert(left_part->value != right_part->value);
+
         const auto original_ifc_timestamp = std::filesystem::last_write_time(ifc_path);
         std::filesystem::last_write_time(
             ifc_path,
