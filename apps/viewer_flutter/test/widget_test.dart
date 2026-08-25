@@ -141,6 +141,10 @@ class _RecordingProjectGateway implements ViewerProjectGateway {
   Future<String> saveProjectJson() async => '{"schema_version": 1}';
 
   @override
+  Future<String> snapshotImportedProjectJson() async =>
+      '{"schema_version": 1}';
+
+  @override
   Future<File> saveProjectToDefaultLocation() async =>
       File('/tmp/example.tbe.json');
 

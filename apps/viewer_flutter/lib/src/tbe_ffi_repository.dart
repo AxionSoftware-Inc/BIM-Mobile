@@ -264,6 +264,13 @@ class ViewerRepository
     return json;
   }
 
+  @override
+  Future<String> snapshotImportedProjectJson() async {
+    final json = _currentJson;
+    if (json != null && json.isNotEmpty) return json;
+    return snapshotProjectJson();
+  }
+
   Future<ViewerSnapshot> _buildSnapshot(
     ffi.Pointer<ffi.Void> handle,
     String projectName,

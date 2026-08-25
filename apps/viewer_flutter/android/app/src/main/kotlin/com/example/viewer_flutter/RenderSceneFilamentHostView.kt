@@ -2872,7 +2872,10 @@ internal class RenderSceneFilamentHostView(
    * to skip; supported IFC geometry remains exact and unsupported elements
    * still use the bounds box fallback.
    */
-  private fun meshGeometryFor(objectData: SceneObject): Pair<List<ScenePoint>, List<IntArray>>? {
+  private fun meshGeometryFor(
+    objectData: SceneObject,
+    triangleBudget: Int? = null,
+  ): Pair<List<ScenePoint>, List<IntArray>>? {
     val mesh = objectData.mesh
     if (mesh.positions.isEmpty() || mesh.indices.size < 3) return null
     val points = mesh.positions.map(::toFilamentPoint)
@@ -2882,7 +2885,17 @@ internal class RenderSceneFilamentHostView(
       return null
     }
     var rejectedFaces = 0
-    val triangles = mesh.indices.chunked(3).mapNotNull { group ->
+    val sourceTriangleCount = mesh.indices.size / 3
+    val stride = triangleBudget
+      ?.takeIf { it > 0 && sourceTriangleCount > it }
+      ?.let { max(1, (sourceTriangleCount + it - 1) / it) }
+      ?: 1
+    val triangles = (0 until sourceTriangleCount).mapNotNull { triangleIndex ->
+      if (stride > 1 && triangleIndex % stride != 0 && triangleIndex != sourceTriangleCount - 1) {
+        return@mapNotNull null
+      }
+      val offset = triangleIndex * 3
+      val group = mesh.indices.subList(offset, offset + 3)
       if (group.size != 3 || group.any { it !in points.indices }) {
         rejectedFaces += 1
         return@mapNotNull null
@@ -4281,7 +4294,12 @@ internal class RenderSceneFilamentHostView(
   }
 
   private fun toVisualObject(objectData: SceneObject): NativeVisualObject {
-    val meshGeometry = meshGeometryFor(objectData)
+    // Selection/edge overlays do not need the full render mesh. On large IFC
+    // scenes, retaining a tiny deterministic sample here avoids rebuilding a
+    // second triangle soup on the UI thread while Filament keeps its separate
+    // runtime LOD geometry for rendering.
+    val overlayBudget = if ((currentScene?.objects?.size ?: 0) > 600) 16 else null
+    val meshGeometry = meshGeometryFor(objectData, overlayBudget)
     val points = meshGeometry?.first ?: boxCorners(objectData.bounds).map(::toFilamentPoint)
     val triangles = meshGeometry?.second ?: run {
       listOf(

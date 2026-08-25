@@ -4,6 +4,93 @@ part of 'viewer_app.dart';
 
 enum _WorkspaceExitChoice { save, discard }
 
+extension _IfcImportCache on _ViewerHomePageState {
+  Future<Directory> _ifcCacheDirectory() async {
+    final projectDirectory = await AppProjectStorage.projectDirectory();
+    final directory = Directory(
+      '${projectDirectory.path}${Platform.pathSeparator}ifc-cache',
+    );
+    if (!await directory.exists()) await directory.create(recursive: true);
+    return directory;
+  }
+
+  String _ifcCacheKey(String path) {
+    var hash = 2166136261;
+    for (final codeUnit in path.codeUnits) {
+      hash = ((hash ^ codeUnit) * 16777619) & 0x7fffffff;
+    }
+    final baseName = path
+        .split(Platform.pathSeparator)
+        .last
+        .replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
+    return '${baseName}_$hash';
+  }
+
+  Future<({String json, String path})?> _readIfcImportCache(String ifcPath) async {
+    try {
+      final source = File(ifcPath);
+      final stat = await source.stat();
+      if (stat.type != FileSystemEntityType.file || stat.size <= 0) return null;
+      final directory = await _ifcCacheDirectory();
+      final key = _ifcCacheKey(ifcPath);
+      final cached = File(
+        '${directory.path}${Platform.pathSeparator}$key.json',
+      );
+      final signatureFile = File(
+        '${directory.path}${Platform.pathSeparator}$key.sig',
+      );
+      if (!await cached.exists() || await cached.length() <= 0) return null;
+      if (!await signatureFile.exists() ||
+          await signatureFile.readAsString() != _ifcCacheSignature(ifcPath, stat)) {
+        return null;
+      }
+      final json = await cached.readAsString();
+      // Validate the cache before handing it to the native loader. A partial
+      // file from a killed tablet session must never hide the original IFC.
+      final decoded = jsonDecode(json);
+      if (decoded is! Map<String, dynamic> || decoded['schema_version'] == null) {
+        return null;
+      }
+      return (json: json, path: cached.path);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _writeIfcImportCache(String ifcPath, String json) async {
+    try {
+      final source = File(ifcPath);
+      final stat = await source.stat();
+      if (stat.type != FileSystemEntityType.file || stat.size <= 0 || json.isEmpty) return;
+      final directory = await _ifcCacheDirectory();
+      final key = _ifcCacheKey(ifcPath);
+      final cached = File(
+        '${directory.path}${Platform.pathSeparator}$key.json',
+      );
+      final signatureFile = File(
+        '${directory.path}${Platform.pathSeparator}$key.sig',
+      );
+      if (await cached.exists() && await cached.length() > 0 &&
+          await signatureFile.exists() &&
+          await signatureFile.readAsString() == _ifcCacheSignature(ifcPath, stat)) {
+        return;
+      }
+      final partial = File('${cached.path}.download');
+      await partial.writeAsString(json, flush: true);
+      if (await cached.exists()) await cached.delete();
+      await partial.rename(cached.path);
+      await signatureFile.writeAsString(_ifcCacheSignature(ifcPath, stat), flush: true);
+    } catch (_) {
+      // The IFC itself remains the source of truth. Cache storage is best
+      // effort because external/document-provider paths can be read-only.
+    }
+  }
+
+  String _ifcCacheSignature(String path, FileStat stat) =>
+      'tbe-ifc-cache-v2|$path|${stat.size}|'
+      '${stat.modified.millisecondsSinceEpoch}';
+}
+
 extension _ViewerProjectLifecycle on _ViewerHomePageState {
   Future<void> _createBlankProject() async {
     if (_isBusy) return;
@@ -325,7 +412,31 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
       });
       _currentProjectName = projectName;
       final repository = _engineRepository;
-      if (!_engineBackedMode || repository == null) {
+      final cached = await _readIfcImportCache(path);
+      if (cached != null) {
+        _updateViewportState(() {
+          _statusMessage = 'Opening cached IFC model...';
+        });
+        if (repository != null) {
+          await repository.loadFromJson(
+            projectName: projectName,
+            json: cached.json,
+            sourcePath: cached.path,
+          );
+        } else {
+          final launch = await _projectLifecycle.loadJson(
+            projectName: projectName,
+            json: cached.json,
+            sourcePath: cached.path,
+          );
+          if (!mounted) {
+            launch.session.dispose();
+            return;
+          }
+          _projectSession.activate(launch.session);
+          _engineLoadDiagnostic = null;
+        }
+      } else if (repository == null) {
         final launch = await _projectLifecycle.loadIfc(
           projectName: projectName,
           ifcPath: path,
@@ -336,8 +447,17 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
         }
         _projectSession.activate(launch.session);
         _engineLoadDiagnostic = null;
+        final exactProjectJson =
+            await launch.session.snapshotImportedProjectJson();
+        await _writeIfcImportCache(path, exactProjectJson);
       } else {
         await repository.loadFromIfc(ifcPath: path);
+        // Keep the exact semantic/project representation for the next open.
+        // The runtime LOD is produced later by the render-scene query and is
+        // never written into this cache.
+        final exactProjectJson =
+            await repository.snapshotImportedProjectJson();
+        await _writeIfcImportCache(path, exactProjectJson);
       }
       final result = await _sceneViews.refresh();
       await _applyLoadResult(

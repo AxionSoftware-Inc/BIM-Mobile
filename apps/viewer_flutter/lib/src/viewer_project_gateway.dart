@@ -52,4 +52,11 @@ abstract interface class ViewerProjectGateway {
 
   /// Captures native JSON without changing the user's explicit save path.
   Future<String> snapshotProjectJson();
+
+  /// Returns the exact JSON captured during the most recent IFC import.
+  ///
+  /// IFC import already creates this authoritative checkpoint so the native
+  /// adapter can discover the active level. Reusing it avoids serializing a
+  /// large model a second time just to populate the import cache.
+  Future<String> snapshotImportedProjectJson();
 }

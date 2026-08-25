@@ -571,17 +571,128 @@ std::vector<Vec3> mesh_positions(const tbe::core::MeshBuffer& mesh) {
     return positions;
 }
 
-RenderSceneMeshDTO mesh_dto_from_mesh_buffer(const tbe::core::MeshBuffer& mesh, double z_offset = 0.0) {
+enum class RenderSceneDetail {
+    Interactive,
+    Exact,
+};
+
+bool has_exact_ifc_geometry(const Element& element) {
+    const auto found = element.metadata().find("ifc_exact_geometry");
+    return found != element.metadata().end() && found->second.value == "true";
+}
+
+RenderSceneMeshDTO mesh_dto_from_mesh_buffer(
+    const tbe::core::MeshBuffer& mesh,
+    double z_offset = 0.0,
+    std::size_t triangle_budget = 0
+) {
     RenderSceneMeshDTO dto;
-    dto.positions = mesh_positions(mesh);
-    if (z_offset != 0.0) {
-        for (auto& point : dto.positions) {
-            point.z += z_offset;
+    const auto triangle_count = mesh.indices.size() / 3;
+    if (triangle_budget == 0 || triangle_count <= triangle_budget) {
+        dto.positions = mesh_positions(mesh);
+        if (z_offset != 0.0) {
+            for (auto& point : dto.positions) {
+                point.z += z_offset;
+            }
+        }
+        dto.indices = mesh.indices;
+        dto.triangle_material_ids = mesh.triangle_material_ids;
+        return dto;
+    }
+
+    // Runtime LOD is deliberately deterministic and preserves the six
+    // coordinate extremes before uniform sampling. This keeps the object's
+    // culling/fit envelope stable while dropping dense IFC tessellation. The
+    // source MeshBuffer is never modified, so project save/export remains exact.
+    std::array<std::size_t, 6> extreme_vertices{};
+    std::array<double, 6> extreme_values{
+        std::numeric_limits<double>::max(),
+        std::numeric_limits<double>::lowest(),
+        std::numeric_limits<double>::max(),
+        std::numeric_limits<double>::lowest(),
+        std::numeric_limits<double>::max(),
+        std::numeric_limits<double>::lowest(),
+    };
+    for (std::size_t vertex_index = 0; vertex_index < mesh.vertices.size(); ++vertex_index) {
+        const auto& vertex = mesh.vertices[vertex_index];
+        const std::array<double, 6> values{
+            vertex.x, vertex.x, vertex.y, vertex.y, vertex.z, vertex.z,
+        };
+        for (std::size_t axis = 0; axis < values.size(); ++axis) {
+            const bool lower = axis % 2 == 0;
+            if ((lower && values[axis] < extreme_values[axis]) ||
+                (!lower && values[axis] > extreme_values[axis])) {
+                extreme_values[axis] = values[axis];
+                extreme_vertices[axis] = vertex_index;
+            }
         }
     }
-    dto.indices = mesh.indices;
-    dto.triangle_material_ids = mesh.triangle_material_ids;
+
+    std::vector<bool> selected_triangles(triangle_count, false);
+    const auto select_triangle = [&](std::size_t triangle_index) {
+        if (triangle_index < selected_triangles.size()) selected_triangles[triangle_index] = true;
+    };
+    for (const auto extreme_vertex : extreme_vertices) {
+        for (std::size_t triangle_index = 0; triangle_index < triangle_count; ++triangle_index) {
+            const auto offset = triangle_index * 3;
+            if (mesh.indices[offset] == extreme_vertex ||
+                mesh.indices[offset + 1] == extreme_vertex ||
+                mesh.indices[offset + 2] == extreme_vertex) {
+                select_triangle(triangle_index);
+                break;
+            }
+        }
+    }
+    const auto stride = std::max<std::size_t>(1, (triangle_count + triangle_budget - 1) / triangle_budget);
+    for (std::size_t triangle_index = 0; triangle_index < triangle_count; triangle_index += stride) {
+        select_triangle(triangle_index);
+    }
+    select_triangle(triangle_count - 1);
+
+    const auto invalid_index = std::numeric_limits<std::uint32_t>::max();
+    std::vector<std::uint32_t> remap(mesh.vertices.size(), invalid_index);
+    const auto append_vertex = [&](std::uint32_t source_index) {
+        if (source_index >= mesh.vertices.size()) return invalid_index;
+        auto& mapped = remap[source_index];
+        if (mapped == invalid_index) {
+            mapped = static_cast<std::uint32_t>(dto.positions.size());
+            auto point = to_vec3(mesh.vertices[source_index]);
+            point.z += z_offset;
+            dto.positions.push_back(point);
+        }
+        return mapped;
+    };
+    for (std::size_t triangle_index = 0; triangle_index < triangle_count; ++triangle_index) {
+        if (!selected_triangles[triangle_index]) continue;
+        const auto offset = triangle_index * 3;
+        const auto first = append_vertex(mesh.indices[offset]);
+        const auto second = append_vertex(mesh.indices[offset + 1]);
+        const auto third = append_vertex(mesh.indices[offset + 2]);
+        if (first == invalid_index || second == invalid_index || third == invalid_index) continue;
+        dto.indices.insert(dto.indices.end(), {first, second, third});
+        if (triangle_index < mesh.triangle_material_ids.size()) {
+            dto.triangle_material_ids.push_back(mesh.triangle_material_ids[triangle_index]);
+        }
+    }
     return dto;
+}
+
+std::size_t interactive_triangle_budget(
+    const Element& element,
+    const tbe::core::MeshBuffer& mesh,
+    RenderSceneDetail detail,
+    std::size_t document_element_count
+) {
+    constexpr std::size_t kSingleObjectTriangleBudget = 2048;
+    constexpr std::size_t kDenseSceneTriangleBudget = 128;
+    constexpr std::size_t kDenseSceneElementThreshold = 250;
+    if (detail == RenderSceneDetail::Exact || !has_exact_ifc_geometry(element)) return 0;
+    const auto budget = document_element_count > kDenseSceneElementThreshold
+        ? kDenseSceneTriangleBudget
+        : kSingleObjectTriangleBudget;
+    return mesh.indices.size() / 3 > budget
+        ? budget
+        : 0;
 }
 
 RenderSceneMeshDTO make_flat_polygon_mesh(const std::vector<tbe::core::Point2>& polygon, double z, double thickness = 0.02) {
@@ -1250,7 +1361,8 @@ RenderSceneDTO build_section_scene(const Document& document, Vec2 start, Vec2 en
 
 RenderSceneDTO build_render_scene(
     const Document& document,
-    const std::set<ElementId>* visible_level_ids = nullptr
+    const std::set<ElementId>* visible_level_ids = nullptr,
+    RenderSceneDetail detail = RenderSceneDetail::Exact
 ) {
     RenderSceneDTO scene;
     scene.scene_version = 1;
@@ -1258,6 +1370,13 @@ RenderSceneDTO build_render_scene(
     scene.coordinate_system = "X/Y plan, Z up";
 
     const auto elevations = level_elevation_map(document);
+
+    const auto mesh_for_render = [&](const tbe::core::MeshBuffer& mesh, double z_offset, const Element& owner) {
+        return mesh_dto_from_mesh_buffer(
+            mesh,
+            z_offset,
+            interactive_triangle_budget(owner, mesh, detail, document.elements().size()));
+    };
 
     auto append_object = [&](RenderSceneObjectDTO object) {
         if (visible_level_ids != nullptr && !visible_level_ids->contains(object.level_id.value)) {
@@ -1345,7 +1464,7 @@ RenderSceneDTO build_render_scene(
                 ApiElementKind::Wall,
                 wall->level_id,
                 element.revision(),
-                mesh_dto_from_mesh_buffer(wall->geometry.mesh, base_elevation),
+                mesh_for_render(wall->geometry.mesh, base_elevation, element),
                 material_category_name(ApiElementKind::Wall),
                 {
                     {"start_x", std::to_string(wall->axis.start.x)},
@@ -1390,10 +1509,10 @@ RenderSceneDTO build_render_scene(
                 auto opening_mesh = make_opening_mesh(wall->axis, opening, wall->thickness_meters, base_elevation);
                 if (opening_element != nullptr && opening_element->door() != nullptr &&
                     !opening_element->door()->mesh.vertices.empty() && !opening_element->door()->mesh.indices.empty()) {
-                    opening_mesh = mesh_dto_from_mesh_buffer(opening_element->door()->mesh, base_elevation);
+                    opening_mesh = mesh_for_render(opening_element->door()->mesh, base_elevation, *opening_element);
                 } else if (opening_element != nullptr && opening_element->window() != nullptr &&
                     !opening_element->window()->mesh.vertices.empty() && !opening_element->window()->mesh.indices.empty()) {
-                    opening_mesh = mesh_dto_from_mesh_buffer(opening_element->window()->mesh, base_elevation);
+                    opening_mesh = mesh_for_render(opening_element->window()->mesh, base_elevation, *opening_element);
                 }
                 append_object(make_object_dto(
                     opening.element_id,
@@ -1456,7 +1575,7 @@ RenderSceneDTO build_render_scene(
                 ApiElementKind::Slab,
                 slab->level_id,
                 element.revision(),
-                mesh_dto_from_mesh_buffer(slab->mesh, level_elevation(elevations, slab->level_id, 0.0)),
+                mesh_for_render(slab->mesh, level_elevation(elevations, slab->level_id, 0.0), element),
                 material_category_name(ApiElementKind::Slab),
                 {
                     {"elevation_offset_meters", std::to_string(slab->elevation_offset_meters)},
@@ -1472,7 +1591,7 @@ RenderSceneDTO build_render_scene(
                 ApiElementKind::Roof,
                 roof->level_id,
                 element.revision(),
-                mesh_dto_from_mesh_buffer(roof->mesh, level_elevation(elevations, roof->level_id, 0.0)),
+                mesh_for_render(roof->mesh, level_elevation(elevations, roof->level_id, 0.0), element),
                 material_category_name(ApiElementKind::Roof),
                 {
                     {"assembly_id", std::to_string(roof->assembly_id)},
@@ -1491,7 +1610,7 @@ RenderSceneDTO build_render_scene(
                 ApiElementKind::Column,
                 column->level_id,
                 element.revision(),
-                mesh_dto_from_mesh_buffer(column->mesh, level_elevation(elevations, column->level_id, 0.0)),
+                mesh_for_render(column->mesh, level_elevation(elevations, column->level_id, 0.0), element),
                 material_category_name(ApiElementKind::Column)
             ));
             continue;
@@ -1502,7 +1621,7 @@ RenderSceneDTO build_render_scene(
                 ApiElementKind::Beam,
                 beam->level_id,
                 element.revision(),
-                mesh_dto_from_mesh_buffer(beam->mesh, level_elevation(elevations, beam->level_id, 0.0)),
+                mesh_for_render(beam->mesh, level_elevation(elevations, beam->level_id, 0.0), element),
                 material_category_name(ApiElementKind::Beam)
             ));
             continue;
@@ -1513,7 +1632,7 @@ RenderSceneDTO build_render_scene(
                 ApiElementKind::Stair,
                 stair->base_level_id,
                 element.revision(),
-                mesh_dto_from_mesh_buffer(stair->mesh, level_elevation(elevations, stair->base_level_id, 0.0)),
+                mesh_for_render(stair->mesh, level_elevation(elevations, stair->base_level_id, 0.0), element),
                 material_category_name(ApiElementKind::Stair),
                 {
                     {"base_level_id", std::to_string(stair->base_level_id)},
@@ -1540,7 +1659,7 @@ RenderSceneDTO build_render_scene(
                     elevation,
                     elevation + proxy->height_meters,
                     0)
-                : mesh_dto_from_mesh_buffer(proxy->mesh);
+                : mesh_for_render(proxy->mesh, 0.0, element);
             append_object(make_object_dto(
                 element.id(),
                 ApiElementKind::Proxy,
@@ -3055,7 +3174,8 @@ ApiResult<std::string> EngineSession::get_render_scene_json() const {
         if (!recompute.ok()) {
             return error_result<std::string>(recompute.status, recompute.message);
         }
-        return success_result(render_scene_to_json(build_render_scene(impl_->document())));
+        return success_result(render_scene_to_json(build_render_scene(
+            impl_->document(), nullptr, RenderSceneDetail::Interactive)));
     } catch (const std::exception& error) {
         return error_result<std::string>(status_from_exception(error), error.what());
     }
@@ -3092,7 +3212,8 @@ ApiResult<std::string> EngineSession::get_render_scene_json_near_level(
              ++index) {
             visible_levels.insert(levels[static_cast<std::size_t>(index)].second);
         }
-        return success_result(render_scene_to_json(build_render_scene(document, &visible_levels)));
+        return success_result(render_scene_to_json(build_render_scene(
+            document, &visible_levels, RenderSceneDetail::Interactive)));
     } catch (const std::exception& error) {
         return error_result<std::string>(status_from_exception(error), error.what());
     }
