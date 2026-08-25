@@ -11,7 +11,10 @@ add_executable(tbe_api_tests
 )
 
 target_link_libraries(tbe_api_tests PRIVATE tbe_capi)
-target_include_directories(tbe_api_tests PRIVATE ${CMAKE_SOURCE_DIR}/src/core/include)
+target_include_directories(tbe_api_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/core/include
+    ${CMAKE_SOURCE_DIR}/src/api/src
+)
 
 add_test(NAME tbe_api_tests COMMAND tbe_api_tests)
 

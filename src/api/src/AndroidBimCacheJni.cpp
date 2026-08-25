@@ -212,4 +212,33 @@ Java_com_example_viewer_1flutter_NativeBimCacheBridge_nativePrimitiveBounds(JNIE
     return result;
 }
 
+JNIEXPORT jlong JNICALL
+Java_com_example_viewer_1flutter_NativeBimCacheBridge_nativePick(
+    JNIEnv*,
+    jclass,
+    jlong handle,
+    jdouble origin_x,
+    jdouble origin_y,
+    jdouble origin_z,
+    jdouble direction_x,
+    jdouble direction_y,
+    jdouble direction_z,
+    jlong visible_kind_mask
+) {
+    try {
+        const auto* cache = to_handle(handle);
+        if (cache == nullptr) return 0;
+        const auto result = tbe::api::runtime_cache::pick(
+            cache->scene,
+            {.x = origin_x, .y = origin_y, .z = origin_z},
+            {.x = direction_x, .y = direction_y, .z = direction_z},
+            static_cast<std::uint64_t>(visible_kind_mask)
+        );
+        return result.has_value() ? static_cast<jlong>(result->value) : 0;
+    } catch (const std::exception& error) {
+        last_error = error.what();
+        return 0;
+    }
+}
+
 } // extern "C"

@@ -49,6 +49,7 @@ import com.google.android.filament.filamat.MaterialPackage
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.IntBuffer
+import java.util.ArrayDeque
 import kotlin.math.cos
 import kotlin.math.atan2
 import kotlin.math.max
@@ -58,6 +59,12 @@ import kotlin.math.tan
 
 private const val DEFAULT_RENDERER_STATUS = "Renderer initializing..."
 private const val TAG = "RenderSceneFilament"
+// A cache tile can still contain a substantial piece of facade geometry.  Do
+// not turn a cache hit into one giant UI-thread GPU upload: show a useful
+// first image, then submit the remaining immutable tiles in small pulses.
+private const val NATIVE_CACHE_INITIAL_UPLOAD_CHUNKS = 3
+private const val NATIVE_CACHE_STEADY_UPLOAD_CHUNKS = 1
+private const val NATIVE_CACHE_UPLOAD_DELAY_MS = 8L
 
 private const val FLAT_COLOR_MAT = """
 void material(inout MaterialInputs material) {
@@ -301,6 +308,11 @@ private data class NativeVisualObject(
   val featureEdges: List<NativeVisualEdge>,
 )
 
+private data class NativeCameraRay(
+  val origin: ScenePoint,
+  val direction: ScenePoint,
+)
+
 private data class NativeVisualEdge(
   val first: Int,
   val second: Int,
@@ -472,6 +484,11 @@ internal class RenderSceneFilamentHostView(
   private var currentScene: SceneState? = initialScene
   private var nativeBimCache: NativeBimCacheBridge.NativeBimCache? = null
   private var nativeCacheLoadRevision = 0L
+  private var nativeCacheUploadRevision = 0L
+  private var nativeCacheUploadPosted = false
+  private val nativeCachePendingChunks = ArrayDeque<Int>()
+  private val nativeCacheResidentChunks = linkedSetOf<Int>()
+  private var nativeCacheFullBounds: SceneBounds? = null
   private var currentSceneFingerprint: Long? = null
   private var selectedElementId: Long? = null
   private var selectedElementIds = emptySet<Long>()
@@ -770,9 +787,15 @@ internal class RenderSceneFilamentHostView(
         }
         closeNativeBimCache()
         nativeBimCache = loaded
+        nativeCacheFullBounds = nativeCacheBounds(loaded)
         resetClipVolumeState()
         currentScene = nativeCacheSceneState(loaded)
         currentSceneFingerprint = null
+        // Fit against the complete cached model before submitting its first
+        // GPU tile.  Otherwise a near-first stream would fit to a façade
+        // fragment and make the camera jump as later chunks arrive.
+        updateMetrics()
+        fitCamera()
         rebuildScene()
         selectionOverlay.setVisualScene(
           loaded.primitives.map(::nativeCacheVisualObject),
@@ -782,8 +805,7 @@ internal class RenderSceneFilamentHostView(
         selectionOverlay.setDisplayStyle(displayStyle)
         syncVisibility()
         refreshTintState()
-        fitCamera()
-        statusMessage = "Loaded ${loaded.chunks.size} native BIM chunks."
+        statusMessage = "Streaming ${loaded.chunks.size} native BIM chunks."
         Log.i(TAG, statusMessage)
         updateStatus()
         invalidate()
@@ -796,8 +818,19 @@ internal class RenderSceneFilamentHostView(
   }
 
   private fun closeNativeBimCache() {
+    nativeCacheUploadRevision += 1L
+    nativeCacheUploadPosted = false
+    nativeCachePendingChunks.clear()
+    nativeCacheResidentChunks.clear()
+    nativeCacheFullBounds = null
     nativeBimCache?.close()
     nativeBimCache = null
+  }
+
+  private fun nativeCacheBounds(cache: NativeBimCacheBridge.NativeBimCache): SceneBounds {
+    val bounds = cache.chunks.map { chunk -> transformBounds(chunk.sourceBounds) }
+    return bounds.reduceOrNull(::unionBounds)
+      ?: SceneBounds(ScenePoint(0.0, 0.0, 0.0), ScenePoint(0.0, 0.0, 0.0))
   }
 
   private fun nativeCacheSceneState(cache: NativeBimCacheBridge.NativeBimCache): SceneState {
@@ -844,7 +877,7 @@ internal class RenderSceneFilamentHostView(
     )
     return NativeVisualObject(
       elementId = primitive.elementId,
-      kind = "proxy",
+      kind = primitive.kind,
       selectable = true,
       metadata = mapOf("native_cache" to "true", "level_id" to primitive.levelId.toString()),
       points = points,
@@ -1752,83 +1785,178 @@ internal class RenderSceneFilamentHostView(
     cache: NativeBimCacheBridge.NativeBimCache,
     fallbackMaterial: Material,
   ) {
-    val sceneState = currentScene ?: return
-    for ((index, chunk) in cache.chunks.withIndex()) {
-      val representative = sceneState.objects.getOrNull(index) ?: continue
-      val vertexCount = chunk.positions.capacity() / 12
-      val indexCount = chunk.indices.capacity()
-      if (vertexCount <= 0 || indexCount < 3) continue
-      try {
-        // Cache coordinates stay in the engine's X/Y-plan/Z-up convention.
-        // One entity transform maps that buffer to Filament X/Z/-Y without
-        // ever copying its vertices through Kotlin or Dart.
-        val vertexBuffer = VertexBuffer.Builder()
-          .bufferCount(1)
-          .vertexCount(vertexCount)
-          .attribute(VertexBuffer.VertexAttribute.POSITION, 0, VertexBuffer.AttributeType.FLOAT3, 0, 12)
-          .build(engine)
-          .also { buffer ->
-            buffer.setBufferAt(engine, 0, chunk.positions.duplicate().apply { rewind() })
-          }
-        val indexBuffer = IndexBuffer.Builder()
-          .indexCount(indexCount)
-          .bufferType(IndexBuffer.Builder.IndexType.UINT)
-          .build(engine)
-          .also { buffer ->
-            buffer.setBuffer(engine, chunk.indices.duplicate().apply { rewind() })
-          }
-        val sharedMaterial = materialForObject(representative, fallbackMaterial)
-        val baseColor = displayBaseColor(representative)
-        val materialInstance = sharedMaterial.createInstance().also { instance ->
-          applySectionBoxState(instance)
-          applyDisplayStyle(instance)
-          instance.setParameter(
-            "baseColor",
-            Colors.RgbaType.LINEAR,
-            baseColor[0], baseColor[1], baseColor[2], baseColor[3],
-          )
-        }
-        val entity = EntityManager.get().create()
-        RenderableManager.Builder(1)
-          .boundingBox(filamentBox(chunk.sourceBounds))
-          .culling(true)
-          .castShadows(false)
-          .receiveShadows(false)
-          .geometry(0, PrimitiveType.TRIANGLES, vertexBuffer, indexBuffer, 0, indexCount)
-          .material(0, materialInstance)
-          .build(engine, entity)
-        applyCacheCoordinateTransform(engine, entity)
-        val visible = faceVisible(representative)
-        if (visible) scene.addEntity(entity)
-        faceBatches.add(
-          FaceBatchEntry(
-            key = FaceBatchKey(
-              kind = normalizeKind(representative.kind),
-              materialVariant = representative.materialCategory,
-              levelId = representative.levelId,
-              tileX = 0,
-              tileZ = 0,
-            ),
-            representative = representative,
-            entity = entity,
-            vertexBuffer = vertexBuffer,
-            indexBuffer = indexBuffer,
-            material = sharedMaterial,
-            materialInstance = materialInstance,
-            baseColor = baseColor,
-            bounds = transformBounds(chunk.sourceBounds),
-            objectCount = 1,
-            vertexCount = vertexCount,
-            indexCount = indexCount,
-            attached = visible,
-          ),
-        )
-      } catch (error: Throwable) {
-        Log.e(TAG, "Failed to create native BIM cache chunk $index", error)
+    // Cache chunks are ordered by distance to the fitted camera target.  The
+    // first few render immediately; the rest are posted in tiny GPU upload
+    // slices so panning and gesture dispatch remain responsive on tablets.
+    nativeCacheUploadRevision += 1L
+    nativeCacheUploadPosted = false
+    nativeCachePendingChunks.clear()
+    nativeCacheResidentChunks.clear()
+    val revision = nativeCacheUploadRevision
+    cache.chunks.indices
+      .sortedBy { index -> nativeCacheChunkDistanceSquared(cache, index) }
+      .forEach(nativeCachePendingChunks::addLast)
+    uploadNativeBimCacheChunks(
+      engine = engine,
+      scene = scene,
+      cache = cache,
+      fallbackMaterial = fallbackMaterial,
+      revision = revision,
+      maxChunks = NATIVE_CACHE_INITIAL_UPLOAD_CHUNKS,
+    )
+    updateMetrics()
+    renderDirty = true
+  }
+
+  private fun nativeCacheChunkDistanceSquared(
+    cache: NativeBimCacheBridge.NativeBimCache,
+    index: Int,
+  ): Double {
+    val bounds = transformBounds(cache.chunks[index].sourceBounds)
+    val centerX = (bounds.min.x + bounds.max.x) * 0.5
+    val centerY = (bounds.min.y + bounds.max.y) * 0.5
+    val centerZ = (bounds.min.z + bounds.max.z) * 0.5
+    val dx = centerX - orbitCenter.x
+    val dy = centerY - orbitCenter.y
+    val dz = centerZ - orbitCenter.z
+    return dx * dx + dy * dy + dz * dz
+  }
+
+  private fun uploadNativeBimCacheChunks(
+    engine: Engine,
+    scene: Scene,
+    cache: NativeBimCacheBridge.NativeBimCache,
+    fallbackMaterial: Material,
+    revision: Long,
+    maxChunks: Int,
+  ) {
+    if (disposed || revision != nativeCacheUploadRevision || cache !== nativeBimCache) return
+    repeat(maxChunks) {
+      val index = nativeCachePendingChunks.pollFirst() ?: return@repeat
+      if (createNativeBimCacheChunk(engine, scene, cache, fallbackMaterial, index)) {
+        nativeCacheResidentChunks.add(index)
       }
     }
     updateMetrics()
+    syncVisibility()
     renderDirty = true
+    requestRender(250L)
+
+    if (nativeCachePendingChunks.isEmpty()) {
+      statusMessage = "Loaded ${nativeCacheResidentChunks.size}/${cache.chunks.size} native BIM chunks."
+      Log.i(TAG, statusMessage)
+      updateStatus()
+      return
+    }
+    scheduleNativeBimCacheUpload(engine, scene, cache, fallbackMaterial, revision)
+  }
+
+  private fun scheduleNativeBimCacheUpload(
+    engine: Engine,
+    scene: Scene,
+    cache: NativeBimCacheBridge.NativeBimCache,
+    fallbackMaterial: Material,
+    revision: Long,
+  ) {
+    if (nativeCacheUploadPosted) return
+    nativeCacheUploadPosted = true
+    postDelayed({
+      nativeCacheUploadPosted = false
+      if (disposed || revision != nativeCacheUploadRevision || cache !== nativeBimCache) return@postDelayed
+      uploadNativeBimCacheChunks(
+        engine = engine,
+        scene = scene,
+        cache = cache,
+        fallbackMaterial = fallbackMaterial,
+        revision = revision,
+        maxChunks = NATIVE_CACHE_STEADY_UPLOAD_CHUNKS,
+      )
+    }, NATIVE_CACHE_UPLOAD_DELAY_MS)
+  }
+
+  private fun createNativeBimCacheChunk(
+    engine: Engine,
+    scene: Scene,
+    cache: NativeBimCacheBridge.NativeBimCache,
+    fallbackMaterial: Material,
+    index: Int,
+  ): Boolean {
+    val sceneState = currentScene ?: return false
+    val chunk = cache.chunks.getOrNull(index) ?: return false
+    val representative = sceneState.objects.getOrNull(index) ?: return false
+    val vertexCount = chunk.positions.capacity() / 12
+    val indexCount = chunk.indices.capacity()
+    if (vertexCount <= 0 || indexCount < 3) return false
+    return try {
+      // Cache coordinates stay in the engine's X/Y-plan/Z-up convention.
+      // One entity transform maps that buffer to Filament X/Z/-Y without
+      // ever copying its vertices through Kotlin or Dart.
+      val vertexBuffer = VertexBuffer.Builder()
+        .bufferCount(1)
+        .vertexCount(vertexCount)
+        .attribute(VertexBuffer.VertexAttribute.POSITION, 0, VertexBuffer.AttributeType.FLOAT3, 0, 12)
+        .build(engine)
+        .also { buffer ->
+          buffer.setBufferAt(engine, 0, chunk.positions.duplicate().apply { rewind() })
+        }
+      val indexBuffer = IndexBuffer.Builder()
+        .indexCount(indexCount)
+        .bufferType(IndexBuffer.Builder.IndexType.UINT)
+        .build(engine)
+        .also { buffer ->
+          buffer.setBuffer(engine, chunk.indices.duplicate().apply { rewind() })
+        }
+      val sharedMaterial = materialForObject(representative, fallbackMaterial)
+      val baseColor = displayBaseColor(representative)
+      val materialInstance = sharedMaterial.createInstance().also { instance ->
+        applySectionBoxState(instance)
+        applyDisplayStyle(instance)
+        instance.setParameter(
+          "baseColor",
+          Colors.RgbaType.LINEAR,
+          baseColor[0], baseColor[1], baseColor[2], baseColor[3],
+        )
+      }
+      val entity = EntityManager.get().create()
+      RenderableManager.Builder(1)
+        .boundingBox(filamentBox(chunk.sourceBounds))
+        .culling(true)
+        .castShadows(false)
+        .receiveShadows(false)
+        .geometry(0, PrimitiveType.TRIANGLES, vertexBuffer, indexBuffer, 0, indexCount)
+        .material(0, materialInstance)
+        .build(engine, entity)
+      applyCacheCoordinateTransform(engine, entity)
+      val visible = faceVisible(representative)
+      if (visible) scene.addEntity(entity)
+      faceBatches.add(
+        FaceBatchEntry(
+          key = FaceBatchKey(
+            kind = normalizeKind(representative.kind),
+            materialVariant = representative.materialCategory,
+            levelId = representative.levelId,
+            tileX = 0,
+            tileZ = 0,
+          ),
+          representative = representative,
+          entity = entity,
+          vertexBuffer = vertexBuffer,
+          indexBuffer = indexBuffer,
+          material = sharedMaterial,
+          materialInstance = materialInstance,
+          baseColor = baseColor,
+          bounds = transformBounds(chunk.sourceBounds),
+          objectCount = 1,
+          vertexCount = vertexCount,
+          indexCount = indexCount,
+          attached = visible,
+        ),
+      )
+      true
+    } catch (error: Throwable) {
+      Log.e(TAG, "Failed to create native BIM cache chunk $index", error)
+      false
+    }
   }
 
   private fun applyCacheCoordinateTransform(engine: Engine, entity: Int) {
@@ -3796,18 +3924,29 @@ internal class RenderSceneFilamentHostView(
   private fun updateMetrics() {
     val entries = renderables.values.toList()
     val allBounds = entries.map { it.bounds } + faceBatches.map { it.bounds } + instanceFaceGroups.map { it.bounds }
-    val bounds = if (allBounds.isEmpty()) {
+    val uploadedBounds = if (allBounds.isEmpty()) {
       SceneBounds(ScenePoint(0.0, 0.0, 0.0), ScenePoint(0.0, 0.0, 0.0))
     } else {
       allBounds.reduce(::unionBounds)
     }
+    // A progressive cache renderer may have only its nearest tiles resident.
+    // Camera fitting and section/elevation extents must nevertheless describe
+    // the complete immutable model, otherwise every background upload shifts
+    // the user’s camera target.  The counters below intentionally remain the
+    // full cache totals as well: they describe the opened BIM asset, not a
+    // transient GPU upload slice.
+    val cache = nativeBimCache
+    val bounds = nativeCacheFullBounds ?: uploadedBounds
     sceneMetrics = FilamentSceneMetrics(
       bounds = bounds,
-      objectCount = entries.size + faceBatches.sumOf { it.objectCount } + instanceFaceGroups.sumOf { it.objectCount },
-      vertexCount = entries.sumOf { it.vertexBuffer.vertexCount } + faceBatches.sumOf { it.vertexCount } +
-        instanceFaceGroups.sumOf { it.vertexCount * it.objectCount },
-      indexCount = entries.sumOf { it.indexBuffer.indexCount } + faceBatches.sumOf { it.indexCount } +
-        instanceFaceGroups.sumOf { it.indexCount * it.objectCount },
+      objectCount = cache?.primitives?.size
+        ?: (entries.size + faceBatches.sumOf { it.objectCount } + instanceFaceGroups.sumOf { it.objectCount }),
+      vertexCount = cache?.chunks?.sumOf { it.positions.capacity() / 12 }
+        ?: (entries.sumOf { it.vertexBuffer.vertexCount } + faceBatches.sumOf { it.vertexCount } +
+          instanceFaceGroups.sumOf { it.vertexCount * it.objectCount }),
+      indexCount = cache?.chunks?.sumOf { it.indices.capacity() }
+        ?: (entries.sumOf { it.indexBuffer.indexCount } + faceBatches.sumOf { it.indexCount } +
+          instanceFaceGroups.sumOf { it.indexCount * it.objectCount }),
       edgeBatchCount = edgeBatches.size,
       edgeVertexCount = edgeBatches.sumOf { it.vertexCount },
       edgeIndexCount = edgeBatches.sumOf { it.indexCount },
@@ -3815,10 +3954,14 @@ internal class RenderSceneFilamentHostView(
       instancedObjectCount = instanceFaceGroups.sumOf { it.objectCount },
       sharedFaceVertexCount = instanceFaceGroups.sumOf { it.vertexCount },
     )
-    val centerX = (bounds.min.x + bounds.max.x) * 0.5
-    val centerY = (bounds.min.y + bounds.max.y) * 0.5
-    val centerZ = (bounds.min.z + bounds.max.z) * 0.5
-    orbitCenter = ScenePoint(centerX, centerY, centerZ)
+    // `fitCamera` initializes a cache scene from its full bounds.  Never
+    // overwrite a user pan while later cache chunks become resident.
+    if (cache == null || nativeCacheFullBounds == null) {
+      val centerX = (bounds.min.x + bounds.max.x) * 0.5
+      val centerY = (bounds.min.y + bounds.max.y) * 0.5
+      val centerZ = (bounds.min.z + bounds.max.z) * 0.5
+      orbitCenter = ScenePoint(centerX, centerY, centerZ)
+    }
   }
 
   private fun updateStatus(customMessage: String? = null) {
@@ -3861,6 +4004,9 @@ internal class RenderSceneFilamentHostView(
     "status" to statusMessage,
     "inputObjects" to (currentScene?.objects?.size ?: 0),
     "renderables" to sceneMetrics.objectCount,
+    "nativeCacheChunks" to (nativeBimCache?.chunks?.size ?: 0),
+    "nativeCacheResidentChunks" to nativeCacheResidentChunks.size,
+    "nativeCachePendingChunks" to nativeCachePendingChunks.size,
     "faceBatches" to faceBatches.size,
     "instanceGroups" to sceneMetrics.instanceGroupCount,
     "instancedObjects" to sceneMetrics.instancedObjectCount,
@@ -4180,7 +4326,16 @@ internal class RenderSceneFilamentHostView(
     // therefore it remains correct after a native orbit. On the connected
     // MIUI tablet View.pick occasionally reported an unrelated renderable
     // after rotation; only use it when the ray has no geometric hit.
-    val rayElementId = selectionOverlay.pickByLiveCameraRay(x, y, visibleKinds)
+    val activeCache = nativeBimCache
+    val rayElementId = if (activeCache != null) {
+      // The cache owns exact triangle data and a chunk BVH. Using it here
+      // avoids projecting every primitive AABB in Kotlin for a large IFC.
+      selectionOverlay.liveCameraRay(x, y)?.let { ray ->
+        activeCache.pick(ray.origin, ray.direction, visibleKinds)
+      }
+    } else {
+      selectionOverlay.pickByLiveCameraRay(x, y, visibleKinds)
+    }
     if (rayElementId != null) {
       onObjectTapped(rayElementId)
       return
@@ -4903,7 +5058,7 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
   /// directly from the renderer's live orbit state. Some Android GLES drivers
   /// expose camera matrices with a backend-specific depth transform, making
   /// generic matrix unprojection miss every triangle despite a valid touch.
-  fun pickByLiveCameraRay(x: Float, y: Float, visibleKinds: Set<String>): Long? {
+  fun liveCameraRay(x: Float, y: Float): NativeCameraRay? {
     if (width <= 1 || height <= 1) return null
     val cosPitch = kotlin.math.cos(pitchRadians)
     val eye = ScenePoint(
@@ -4939,7 +5094,12 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
       )
       direction = forward
     }
-    return nearestTriangleHit(origin, direction, visibleKinds)
+    return NativeCameraRay(origin, direction)
+  }
+
+  fun pickByLiveCameraRay(x: Float, y: Float, visibleKinds: Set<String>): Long? {
+    val ray = liveCameraRay(x, y) ?: return null
+    return nearestTriangleHit(ray.origin, ray.direction, visibleKinds)
   }
 
   private fun nearestTriangleHit(

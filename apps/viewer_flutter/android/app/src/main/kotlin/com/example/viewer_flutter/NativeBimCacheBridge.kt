@@ -27,6 +27,16 @@ internal object NativeBimCacheBridge {
   private external fun nativeChunkIndices(handle: Long, index: Int): ByteBuffer?
   private external fun nativePrimitiveData(handle: Long): LongArray?
   private external fun nativePrimitiveBounds(handle: Long): DoubleArray?
+  private external fun nativePick(
+    handle: Long,
+    originX: Double,
+    originY: Double,
+    originZ: Double,
+    directionX: Double,
+    directionY: Double,
+    directionZ: Double,
+    visibleKindMask: Long,
+  ): Long
 
   fun open(cachePath: String, sourceIfcPath: String): NativeBimCache? {
     val handle = nativeOpen(cachePath, sourceIfcPath)
@@ -69,10 +79,51 @@ internal object NativeBimCacheBridge {
     return List(primitiveCount) { index ->
       NativeBimCachePrimitive(
         elementId = data[index * 4],
+        kind = kindFromNativeValue(data[index * 4 + 1]),
         levelId = data[index * 4 + 3],
         sourceBounds = sceneBounds(bounds, index * 6),
       )
     }
+  }
+
+  private fun kindFromNativeValue(value: Long): String = when (value.toInt()) {
+    2 -> "wall"
+    3 -> "door"
+    4 -> "window"
+    5 -> "room"
+    6 -> "slab"
+    7 -> "floor"
+    8 -> "ceiling"
+    9 -> "roof"
+    10 -> "column"
+    11 -> "beam"
+    12 -> "stair"
+    13 -> "proxy"
+    else -> "proxy"
+  }
+
+  private fun visibleKindMask(visibleKinds: Set<String>): Long {
+    if (visibleKinds.isEmpty()) return -1L
+    var mask = 0L
+    for (kind in visibleKinds) {
+      val ordinal = when (kind) {
+        "wall" -> 2
+        "door" -> 3
+        "window" -> 4
+        "room" -> 5
+        "slab" -> 6
+        "floor" -> 7
+        "ceiling" -> 8
+        "roof" -> 9
+        "column" -> 10
+        "beam" -> 11
+        "stair" -> 12
+        "proxy" -> 13
+        else -> continue
+      }
+      mask = mask or (1L shl ordinal)
+    }
+    return mask
   }
 
   private fun sceneBounds(values: DoubleArray, offset: Int = 0): SceneBounds = SceneBounds(
@@ -86,6 +137,22 @@ internal object NativeBimCacheBridge {
     val primitives: List<NativeBimCachePrimitive>,
   ) : AutoCloseable {
     private var closed = false
+
+    fun pick(origin: ScenePoint, direction: ScenePoint, visibleKinds: Set<String>): Long? {
+      if (closed) return null
+      // Filament: X/Y-up/-Z-plan. Cache: X/Y-plan/Z-up.
+      val elementId = nativePick(
+        handle,
+        origin.x,
+        -origin.z,
+        origin.y,
+        direction.x,
+        -direction.z,
+        direction.y,
+        visibleKindMask(visibleKinds),
+      )
+      return elementId.takeIf { it != 0L }
+    }
 
     override fun close() {
       if (!closed) {
@@ -106,6 +173,7 @@ internal data class NativeBimCacheChunk(
 
 internal data class NativeBimCachePrimitive(
   val elementId: Long,
+  val kind: String,
   val levelId: Long,
   val sourceBounds: SceneBounds,
 )

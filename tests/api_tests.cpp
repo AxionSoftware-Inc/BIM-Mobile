@@ -2,9 +2,11 @@
 #include "tbe/api/EngineCApi.h"
 #include "tbe/core/StressModel.hpp"
 #include "tbe/core/Project.hpp"
+#include "RuntimeSceneCache.hpp"
 
 #include <algorithm>
 #include <cassert>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -1569,6 +1571,25 @@ int main() {
         assert(cache_inspection.value->source_valid);
         assert(cache_inspection.value->chunk_count == cache_result.value->chunk_count);
         assert(cache_inspection.value->primitive_count == cache_result.value->primitive_count);
+        const auto cached_scene = tbe::api::runtime_cache::read_file(bim_cache_path.string(), ifc_path.string());
+        assert(!cached_scene.chunks.empty());
+        assert(!cached_scene.chunks.front().primitives.empty());
+        // Runtime selection stays native: this exercises the on-disk chunk
+        // BVH plus exact cached triangles without going through JSON/Flutter.
+        const auto cache_hit = tbe::api::runtime_cache::pick(
+            cached_scene,
+            {.x = 3.0, .y = -5.0, .z = 1.5},
+            {.x = 0.0, .y = 1.0, .z = 0.0}
+        );
+        assert(cache_hit.has_value());
+        assert(cache_hit->value == cached_scene.chunks.front().primitives.front().element_id.value);
+        const auto hidden_cache_hit = tbe::api::runtime_cache::pick(
+            cached_scene,
+            {.x = 3.0, .y = -5.0, .z = 1.5},
+            {.x = 0.0, .y = 1.0, .z = 0.0},
+            std::uint64_t{1} << static_cast<std::uint32_t>(tbe::api::ApiElementKind::Door)
+        );
+        assert(!hidden_cache_hit.has_value());
         const auto original_ifc_timestamp = std::filesystem::last_write_time(ifc_path);
         std::filesystem::last_write_time(
             ifc_path,

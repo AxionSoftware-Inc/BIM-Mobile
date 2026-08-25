@@ -215,6 +215,145 @@ std::int32_t build_bvh(
     return node_index;
 }
 
+Vec3 subtract(const Vec3& first, const Vec3& second) {
+    return Vec3{
+        .x = first.x - second.x,
+        .y = first.y - second.y,
+        .z = first.z - second.z,
+    };
+}
+
+Vec3 cross(const Vec3& first, const Vec3& second) {
+    return Vec3{
+        .x = first.y * second.z - first.z * second.y,
+        .y = first.z * second.x - first.x * second.z,
+        .z = first.x * second.y - first.y * second.x,
+    };
+}
+
+double dot(const Vec3& first, const Vec3& second) {
+    return first.x * second.x + first.y * second.y + first.z * second.z;
+}
+
+bool ray_bounds_distance(
+    const Vec3& origin,
+    const Vec3& direction,
+    const AABB3D& bounds,
+    double maximum_distance,
+    double& out_distance
+) {
+    constexpr double kParallelEpsilon = 1.0e-12;
+    double near_distance = 0.0;
+    double far_distance = maximum_distance;
+    const std::array<double, 3> origins{origin.x, origin.y, origin.z};
+    const std::array<double, 3> directions{direction.x, direction.y, direction.z};
+    const std::array<double, 3> minimums{bounds.min.x, bounds.min.y, bounds.min.z};
+    const std::array<double, 3> maximums{bounds.max.x, bounds.max.y, bounds.max.z};
+    for (std::size_t axis = 0; axis < origins.size(); ++axis) {
+        if (std::abs(directions[axis]) < kParallelEpsilon) {
+            if (origins[axis] < minimums[axis] || origins[axis] > maximums[axis]) return false;
+            continue;
+        }
+        auto first = (minimums[axis] - origins[axis]) / directions[axis];
+        auto second = (maximums[axis] - origins[axis]) / directions[axis];
+        if (first > second) std::swap(first, second);
+        near_distance = std::max(near_distance, first);
+        far_distance = std::min(far_distance, second);
+        if (near_distance > far_distance) return false;
+    }
+    out_distance = near_distance;
+    return true;
+}
+
+std::optional<double> ray_triangle_distance(
+    const Vec3& origin,
+    const Vec3& direction,
+    const Vec3& first,
+    const Vec3& second,
+    const Vec3& third
+) {
+    constexpr double kEpsilon = 1.0e-9;
+    const auto first_edge = subtract(second, first);
+    const auto second_edge = subtract(third, first);
+    const auto cross_direction = cross(direction, second_edge);
+    const auto determinant = dot(first_edge, cross_direction);
+    if (std::abs(determinant) < kEpsilon) return std::nullopt;
+    const auto inverse_determinant = 1.0 / determinant;
+    const auto origin_offset = subtract(origin, first);
+    const auto u = dot(origin_offset, cross_direction) * inverse_determinant;
+    if (u < -kEpsilon || u > 1.0 + kEpsilon) return std::nullopt;
+    const auto cross_origin = cross(origin_offset, first_edge);
+    const auto v = dot(direction, cross_origin) * inverse_determinant;
+    if (v < -kEpsilon || u + v > 1.0 + kEpsilon) return std::nullopt;
+    const auto distance = dot(second_edge, cross_origin) * inverse_determinant;
+    if (distance <= kEpsilon) return std::nullopt;
+    return distance;
+}
+
+bool kind_visible(ApiElementKind kind, std::uint64_t visible_kind_mask) {
+    const auto kind_index = static_cast<std::uint32_t>(kind);
+    return kind_index < 64 && (visible_kind_mask & (std::uint64_t{1} << kind_index)) != 0;
+}
+
+bool opening_kind(ApiElementKind kind) {
+    return kind == ApiElementKind::Door || kind == ApiElementKind::Window;
+}
+
+std::optional<Vec3> point_at(
+    const BimCacheChunkDTO& chunk,
+    std::uint32_t index
+) {
+    const auto vertex_index = static_cast<std::size_t>(index);
+    if (vertex_index >= chunk.positions.size() / 3) return std::nullopt;
+    const auto offset = vertex_index * 3;
+    return Vec3{
+        .x = static_cast<double>(chunk.positions[offset]),
+        .y = static_cast<double>(chunk.positions[offset + 1]),
+        .z = static_cast<double>(chunk.positions[offset + 2]),
+    };
+}
+
+void pick_chunk(
+    const BimCacheChunkDTO& chunk,
+    const Vec3& origin,
+    const Vec3& direction,
+    std::uint64_t visible_kind_mask,
+    double& nearest_surface_distance,
+    std::optional<ElementIdDTO>& nearest_surface,
+    double& nearest_opening_distance,
+    std::optional<ElementIdDTO>& nearest_opening
+) {
+    for (const auto& primitive : chunk.primitives) {
+        if (!kind_visible(primitive.kind, visible_kind_mask) || primitive.index_count < 3) continue;
+        double primitive_entry{};
+        const auto maximum_distance = opening_kind(primitive.kind)
+            ? nearest_opening_distance
+            : nearest_surface_distance;
+        if (!ray_bounds_distance(origin, direction, primitive.bounds, maximum_distance, primitive_entry)) continue;
+        const auto first_index = static_cast<std::size_t>(primitive.first_index);
+        if (first_index >= chunk.indices.size()) continue;
+        const auto available_indices = chunk.indices.size() - first_index;
+        const auto index_count = std::min<std::size_t>(primitive.index_count, available_indices);
+        for (std::size_t offset = 0; offset + 2 < index_count; offset += 3) {
+            const auto first = point_at(chunk, chunk.indices[first_index + offset]);
+            const auto second = point_at(chunk, chunk.indices[first_index + offset + 1]);
+            const auto third = point_at(chunk, chunk.indices[first_index + offset + 2]);
+            if (!first.has_value() || !second.has_value() || !third.has_value()) continue;
+            const auto distance = ray_triangle_distance(origin, direction, *first, *second, *third);
+            if (!distance.has_value()) continue;
+            if (opening_kind(primitive.kind)) {
+                if (*distance < nearest_opening_distance) {
+                    nearest_opening_distance = *distance;
+                    nearest_opening = primitive.element_id;
+                }
+            } else if (*distance < nearest_surface_distance) {
+                nearest_surface_distance = *distance;
+                nearest_surface = primitive.element_id;
+            }
+        }
+    }
+}
+
 struct ChunkKey {
     std::uint64_t level_id{};
     std::string material_category{};
@@ -399,6 +538,94 @@ BimCacheSceneDTO compile(const RenderSceneDTO& scene, BimCacheSourceDTO source) 
         (void)build_bvh(compiled, chunk_indices, 0, chunk_indices.size());
     }
     return compiled;
+}
+
+std::optional<ElementIdDTO> pick(
+    const BimCacheSceneDTO& scene,
+    const Vec3& ray_origin,
+    const Vec3& ray_direction,
+    std::uint64_t visible_kind_mask
+) {
+    if (!std::isfinite(ray_origin.x) || !std::isfinite(ray_origin.y) || !std::isfinite(ray_origin.z) ||
+        !std::isfinite(ray_direction.x) || !std::isfinite(ray_direction.y) || !std::isfinite(ray_direction.z) ||
+        dot(ray_direction, ray_direction) < 1.0e-18) {
+        return std::nullopt;
+    }
+
+    auto nearest_surface_distance = std::numeric_limits<double>::infinity();
+    auto nearest_opening_distance = std::numeric_limits<double>::infinity();
+    std::optional<ElementIdDTO> nearest_surface;
+    std::optional<ElementIdDTO> nearest_opening;
+    const auto visit_chunk = [&](std::uint32_t chunk_index) {
+        if (chunk_index >= scene.chunks.size()) return;
+        const auto& chunk = scene.chunks[chunk_index];
+        double entry_distance{};
+        if (!ray_bounds_distance(
+                ray_origin,
+                ray_direction,
+                chunk.bounds,
+                std::max(nearest_surface_distance, nearest_opening_distance),
+                entry_distance
+            )) {
+            return;
+        }
+        pick_chunk(
+            chunk,
+            ray_origin,
+            ray_direction,
+            visible_kind_mask,
+            nearest_surface_distance,
+            nearest_surface,
+            nearest_opening_distance,
+            nearest_opening
+        );
+    };
+
+    if (scene.bvh_nodes.empty()) {
+        for (std::size_t index = 0; index < scene.chunks.size(); ++index) {
+            visit_chunk(static_cast<std::uint32_t>(index));
+        }
+    } else {
+        std::vector<std::int32_t> pending_nodes{0};
+        while (!pending_nodes.empty()) {
+            const auto node_index = pending_nodes.back();
+            pending_nodes.pop_back();
+            if (node_index < 0 || static_cast<std::size_t>(node_index) >= scene.bvh_nodes.size()) continue;
+            const auto& node = scene.bvh_nodes[static_cast<std::size_t>(node_index)];
+            double entry_distance{};
+            if (!ray_bounds_distance(
+                    ray_origin,
+                    ray_direction,
+                    node.bounds,
+                    std::max(nearest_surface_distance, nearest_opening_distance),
+                    entry_distance
+                )) {
+                continue;
+            }
+            if (node.chunk_count > 0) {
+                const auto first_chunk = static_cast<std::size_t>(node.first_chunk);
+                const auto available_chunks = first_chunk <= scene.bvh_chunk_indices.size()
+                    ? scene.bvh_chunk_indices.size() - first_chunk
+                    : 0;
+                const auto chunk_count = std::min<std::size_t>(node.chunk_count, available_chunks);
+                for (std::size_t offset = 0; offset < chunk_count; ++offset) {
+                    visit_chunk(scene.bvh_chunk_indices[first_chunk + offset]);
+                }
+            } else {
+                if (node.left_child >= 0) pending_nodes.push_back(node.left_child);
+                if (node.right_child >= 0) pending_nodes.push_back(node.right_child);
+            }
+        }
+    }
+
+    // Door/window panels are intentionally slightly inset in their hosts.
+    // Matching the normal renderer's preference keeps a tap on an opening
+    // from always resolving to its wall face.
+    if (nearest_opening.has_value() &&
+        (!nearest_surface.has_value() || nearest_opening_distance <= nearest_surface_distance + 0.35)) {
+        return nearest_opening;
+    }
+    return nearest_surface;
 }
 
 void write_file(const std::string& cache_path, const BimCacheSceneDTO& scene) {
