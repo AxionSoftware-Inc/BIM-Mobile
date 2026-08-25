@@ -1,4 +1,5 @@
 #include "RuntimeSceneCache.hpp"
+#include "tbe/core/Project.hpp"
 
 #include <algorithm>
 #include <array>
@@ -25,12 +26,30 @@ namespace {
 
 namespace fs = std::filesystem;
 
-constexpr std::array<char, 8> kMagic{'T', 'B', 'E', 'B', 'I', 'M', 'C', '1'};
+constexpr std::array<char, 8> kMagic{'T', 'B', 'E', 'B', 'I', 'M', 'C', '2'};
 constexpr std::uint32_t kEndianMarker = 0x01020304u;
 constexpr std::uint64_t kMaxStringBytes = 16ull * 1024ull * 1024ull;
 constexpr std::uint64_t kMaxCollectionEntries = 32ull * 1024ull * 1024ull;
 constexpr std::size_t kLeafChunkCount = 8;
-constexpr double kTileSizeMeters = 24.0;
+
+std::uint64_t source_fingerprint(const fs::path& source) {
+    std::ifstream input(source, std::ios::binary);
+    if (!input) throw std::runtime_error("failed to read IFC source for cache fingerprint");
+    constexpr std::uint64_t offset_basis = 14695981039346656037ull;
+    constexpr std::uint64_t prime = 1099511628211ull;
+    std::uint64_t hash = offset_basis;
+    std::array<char, 64 * 1024> buffer{};
+    while (input) {
+        input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+        const auto count = input.gcount();
+        for (std::streamsize index = 0; index < count; ++index) {
+            hash ^= static_cast<std::uint8_t>(buffer[static_cast<std::size_t>(index)]);
+            hash *= prime;
+        }
+    }
+    if (!input.eof()) throw std::runtime_error("failed while fingerprinting IFC source");
+    return hash;
+}
 
 template <typename T>
 void write_scalar(std::ostream& out, T value) {
@@ -464,12 +483,25 @@ BimCacheSourceDTO source_signature(const std::string& source_ifc_path) {
         .source_path = fs::absolute(source).lexically_normal().string(),
         .source_size_bytes = fs::file_size(source),
         .source_modified_ticks = static_cast<std::int64_t>(modified),
+        .source_fingerprint = source_fingerprint(source),
     };
 }
 
-BimCacheSceneDTO compile(const RenderSceneDTO& scene, BimCacheSourceDTO source) {
+BimCacheSceneDTO compile(
+    const RenderSceneDTO& scene,
+    BimCacheSourceDTO source,
+    const BimCacheChunkingPolicy& policy
+) {
+    if (!std::isfinite(policy.seed_tile_size_meters) || policy.seed_tile_size_meters <= 0.0) {
+        throw std::runtime_error("BIM cache chunk seed size must be finite and positive");
+    }
     BimCacheSceneDTO compiled;
     compiled.format_version = kBimCacheFormatVersion;
+    compiled.scene_compiler_version = kBimCacheSceneCompilerVersion;
+    compiled.object_mapping_version = kBimCacheObjectMappingVersion;
+    compiled.format_flags = kBimCacheFormatFlags;
+    compiled.chunk_seed_tile_size_meters = policy.seed_tile_size_meters;
+    compiled.engine_version = std::string(tbe::core::TBE_ENGINE_VERSION);
     compiled.source = std::move(source);
     compiled.levels = scene.levels;
     compiled.source_object_count = scene.objects.size();
@@ -484,8 +516,8 @@ BimCacheSceneDTO compile(const RenderSceneDTO& scene, BimCacheSourceDTO source) 
         const ChunkKey key{
             .level_id = object.level_id.value,
             .material_category = object.material_category.empty() ? "generic" : object.material_category,
-            .tile_x = static_cast<std::int32_t>(std::floor(center.x / kTileSizeMeters)),
-            .tile_y = static_cast<std::int32_t>(std::floor(center.y / kTileSizeMeters)),
+            .tile_x = static_cast<std::int32_t>(std::floor(center.x / policy.seed_tile_size_meters)),
+            .tile_y = static_cast<std::int32_t>(std::floor(center.y / policy.seed_tile_size_meters)),
         };
         auto [found, inserted] = chunk_by_key.emplace(key, compiled.chunks.size());
         if (inserted) {
@@ -632,6 +664,13 @@ void write_file(const std::string& cache_path, const BimCacheSceneDTO& scene) {
     if (scene.format_version != kBimCacheFormatVersion) {
         throw std::runtime_error("unsupported BIM cache format for writing");
     }
+    if (scene.scene_compiler_version != kBimCacheSceneCompilerVersion ||
+        scene.object_mapping_version != kBimCacheObjectMappingVersion ||
+        scene.format_flags != kBimCacheFormatFlags ||
+        scene.engine_version != tbe::core::TBE_ENGINE_VERSION ||
+        !std::isfinite(scene.chunk_seed_tile_size_meters) || scene.chunk_seed_tile_size_meters <= 0.0) {
+        throw std::runtime_error("BIM cache compiler metadata is invalid for writing");
+    }
     const fs::path target(cache_path);
     if (target.empty()) throw std::runtime_error("BIM cache path is empty");
     if (!target.parent_path().empty()) fs::create_directories(target.parent_path());
@@ -642,9 +681,15 @@ void write_file(const std::string& cache_path, const BimCacheSceneDTO& scene) {
         out.write(kMagic.data(), static_cast<std::streamsize>(kMagic.size()));
         write_scalar<std::uint32_t>(out, scene.format_version);
         write_scalar<std::uint32_t>(out, kEndianMarker);
+        write_scalar<std::uint32_t>(out, scene.scene_compiler_version);
+        write_scalar<std::uint32_t>(out, scene.object_mapping_version);
+        write_scalar<std::uint32_t>(out, scene.format_flags);
+        write_scalar<double>(out, scene.chunk_seed_tile_size_meters);
+        write_string(out, scene.engine_version);
         write_string(out, scene.source.source_path);
         write_scalar<std::uint64_t>(out, scene.source.source_size_bytes);
         write_scalar<std::int64_t>(out, scene.source.source_modified_ticks);
+        write_scalar<std::uint64_t>(out, scene.source.source_fingerprint);
         write_scalar<std::uint64_t>(out, scene.source_object_count);
         write_scalar<std::uint64_t>(out, scene.source_triangle_count);
         write_scalar<std::uint64_t>(out, scene.levels.size());
@@ -695,9 +740,30 @@ BimCacheSceneDTO read_file(const std::string& cache_path, const std::string& exp
     }
     BimCacheSceneDTO scene;
     scene.format_version = version;
+    scene.scene_compiler_version = read_scalar<std::uint32_t>(in);
+    if (scene.scene_compiler_version != kBimCacheSceneCompilerVersion) {
+        throw std::runtime_error("BIM cache scene compiler version is unsupported");
+    }
+    scene.object_mapping_version = read_scalar<std::uint32_t>(in);
+    if (scene.object_mapping_version != kBimCacheObjectMappingVersion) {
+        throw std::runtime_error("BIM cache object mapping version is unsupported");
+    }
+    scene.format_flags = read_scalar<std::uint32_t>(in);
+    if (scene.format_flags != kBimCacheFormatFlags) {
+        throw std::runtime_error("BIM cache format flags are unsupported");
+    }
+    scene.chunk_seed_tile_size_meters = read_scalar<double>(in);
+    if (!std::isfinite(scene.chunk_seed_tile_size_meters) || scene.chunk_seed_tile_size_meters <= 0.0) {
+        throw std::runtime_error("BIM cache chunk seed size is invalid");
+    }
+    scene.engine_version = read_string(in);
+    if (scene.engine_version != tbe::core::TBE_ENGINE_VERSION) {
+        throw std::runtime_error("BIM cache engine version is unsupported");
+    }
     scene.source.source_path = read_string(in);
     scene.source.source_size_bytes = read_scalar<std::uint64_t>(in);
     scene.source.source_modified_ticks = read_scalar<std::int64_t>(in);
+    scene.source.source_fingerprint = read_scalar<std::uint64_t>(in);
     scene.source_object_count = checked_size(read_scalar<std::uint64_t>(in), "source object");
     scene.source_triangle_count = checked_size(read_scalar<std::uint64_t>(in), "source triangle");
     const auto level_count = checked_size(read_scalar<std::uint64_t>(in), "level");
@@ -715,8 +781,10 @@ BimCacheSceneDTO read_file(const std::string& cache_path, const std::string& exp
     }
     if (!expected_source_ifc_path.empty()) {
         const auto current = source_signature(expected_source_ifc_path);
-        if (current.source_size_bytes != scene.source.source_size_bytes ||
-            current.source_modified_ticks != scene.source.source_modified_ticks) {
+        if (current.source_path != scene.source.source_path ||
+            current.source_size_bytes != scene.source.source_size_bytes ||
+            current.source_modified_ticks != scene.source.source_modified_ticks ||
+            current.source_fingerprint != scene.source.source_fingerprint) {
             throw std::runtime_error("BIM cache is stale for the current IFC source");
         }
     }

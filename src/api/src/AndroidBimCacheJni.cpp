@@ -2,6 +2,7 @@
 
 #include <jni.h>
 
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -238,6 +239,58 @@ Java_com_example_viewer_1flutter_NativeBimCacheBridge_nativePick(
     } catch (const std::exception& error) {
         last_error = error.what();
         return 0;
+    }
+}
+
+JNIEXPORT jlongArray JNICALL
+Java_com_example_viewer_1flutter_NativeBimCacheBridge_nativeCompileFromIfc(
+    JNIEnv* environment,
+    jclass,
+    jstring source_ifc_path,
+    jstring cache_path
+) {
+    try {
+        const auto source = to_string(environment, source_ifc_path);
+        const auto cache = to_string(environment, cache_path);
+        if (source.empty() || cache.empty()) {
+            last_error = "IFC source and BIM cache paths are required";
+            return nullptr;
+        }
+        const auto started = std::chrono::steady_clock::now();
+        auto session_result = tbe::api::create_session("Android BIM cache benchmark");
+        if (!session_result.ok() || !session_result.value.has_value()) {
+            last_error = session_result.message.empty() ? "failed to create cache compiler session" : session_result.message;
+            return nullptr;
+        }
+        auto session = std::move(*session_result.value);
+        const auto import_result = session->import_ifc(source);
+        if (!import_result.ok()) {
+            last_error = import_result.message.empty() ? "failed to import IFC for cache compilation" : import_result.message;
+            return nullptr;
+        }
+        const auto compile_result = session->compile_bim_cache(source, cache);
+        if (!compile_result.ok() || !compile_result.value.has_value()) {
+            last_error = compile_result.message.empty() ? "failed to compile BIM cache" : compile_result.message;
+            return nullptr;
+        }
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - started
+        ).count();
+        const auto& stats = *compile_result.value;
+        const std::vector<std::int64_t> values{
+            static_cast<std::int64_t>(elapsed),
+            static_cast<std::int64_t>(stats.byte_size),
+            static_cast<std::int64_t>(stats.source_object_count),
+            static_cast<std::int64_t>(stats.source_triangle_count),
+            static_cast<std::int64_t>(stats.chunk_count),
+            static_cast<std::int64_t>(stats.primitive_count),
+            static_cast<std::int64_t>(stats.bvh_node_count),
+        };
+        last_error.clear();
+        return make_long_array(environment, values);
+    } catch (const std::exception& error) {
+        last_error = error.what();
+        return nullptr;
     }
 }
 

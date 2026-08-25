@@ -305,12 +305,14 @@ internal class RenderScenePlatformView(
 
   init {
     channel.setMethodCallHandler(this)
+    NativeRendererBenchmarkHarness.attach(view)
   }
 
   override fun getView(): View = view
 
   override fun dispose() {
     channel.setMethodCallHandler(null)
+    NativeRendererBenchmarkHarness.detach(view)
     view.disposeResources()
   }
 
@@ -330,6 +332,17 @@ internal class RenderScenePlatformView(
         } else {
           view.loadNativeBimCache(cachePath, sourceIfcPath)
           result.success(null)
+        }
+      }
+
+      "prepareNativeBimCache" -> {
+        val payload = call.arguments as? Map<*, *>
+        val cachePath = payload?.get("cachePath") as? String
+        val sourceIfcPath = payload?.get("sourceIfcPath") as? String
+        if (cachePath.isNullOrBlank() || sourceIfcPath.isNullOrBlank()) {
+          result.error("invalid_cache_request", "cachePath and sourceIfcPath are required", null)
+        } else {
+          prepareNativeBimCache(cachePath, sourceIfcPath, result)
         }
       }
 
@@ -423,6 +436,52 @@ internal class RenderScenePlatformView(
       "getDiagnostics" -> result.success(view.diagnostics())
 
       else -> result.notImplemented()
+    }
+  }
+
+  /**
+   * Native-first IFC viewport hand-off. Cache validation, optional compile and
+   * compact semantic summary all happen off the Android UI thread. This keeps
+   * the large vertex/index payload out of Dart and MethodChannel JSON.
+   */
+  private fun prepareNativeBimCache(
+    cachePath: String,
+    sourceIfcPath: String,
+    result: MethodChannel.Result,
+  ) {
+    Thread {
+      var compileStats: NativeBimCacheCompileStats? = null
+      var summary = NativeBimCacheBridge.describe(cachePath, sourceIfcPath)
+      if (summary == null) {
+        compileStats = NativeBimCacheBridge.compileFromIfc(sourceIfcPath, cachePath)
+        summary = NativeBimCacheBridge.describe(cachePath, sourceIfcPath)
+      }
+      val readySummary = summary
+      view.post {
+        if (readySummary == null) {
+          result.error(
+            "native_cache_unavailable",
+            NativeBimCacheBridge.lastError().ifBlank { "Could not prepare native BIM cache." },
+            null,
+          )
+          return@post
+        }
+        // The host performs its own validated open to retain direct buffers
+        // for the renderer; [readySummary] contains metadata only.
+        view.loadNativeBimCache(cachePath, sourceIfcPath)
+        result.success(
+          linkedMapOf<String, Any?>(
+            "scene" to readySummary,
+            "cacheCompiled" to (compileStats != null),
+            "cacheCompileMs" to (compileStats?.elapsedMs ?: 0L),
+            "cacheBytes" to (compileStats?.byteSize ?: java.io.File(cachePath).length()),
+          ),
+        )
+      }
+    }.apply {
+      name = "tbe-native-bim-cache-prepare"
+      isDaemon = true
+      start()
     }
   }
 }

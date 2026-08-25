@@ -37,6 +37,10 @@ internal object NativeBimCacheBridge {
     directionZ: Double,
     visibleKindMask: Long,
   ): Long
+  private external fun nativeCompileFromIfc(
+    sourceIfcPath: String,
+    cachePath: String,
+  ): LongArray?
 
   fun open(cachePath: String, sourceIfcPath: String): NativeBimCache? {
     val handle = nativeOpen(cachePath, sourceIfcPath)
@@ -73,6 +77,89 @@ internal object NativeBimCacheBridge {
   }
 
   fun lastError(): String = nativeLastError()
+
+  /**
+   * Debug/profiling-only compiler entry point. It owns an isolated C++
+   * session, so cache parsing and compilation can be measured off Android's
+   * UI thread without touching the live authoring session.
+   */
+  fun compileFromIfc(sourceIfcPath: String, cachePath: String): NativeBimCacheCompileStats? {
+    val values = nativeCompileFromIfc(sourceIfcPath, cachePath) ?: return null
+    if (values.size < 7) return null
+    return NativeBimCacheCompileStats(
+      elapsedMs = values[0],
+      byteSize = values[1],
+      objectCount = values[2],
+      triangleCount = values[3],
+      chunkCount = values[4],
+      primitiveCount = values[5],
+      bvhNodeCount = values[6],
+    )
+  }
+
+  /**
+   * Produces the compact semantic envelope that Flutter needs for project
+   * chrome, selection and 2D metadata. Meshes never cross this boundary: the
+   * native cache remains the sole owner of vertex/index buffers.
+   */
+  fun describe(cachePath: String, sourceIfcPath: String): Map<String, Any?>? {
+    val cache = open(cachePath, sourceIfcPath) ?: return null
+    return try {
+      val bounds = cache.chunks
+        .map { it.sourceBounds }
+        .reduceOrNull(::unionSceneBounds)
+        ?: SceneBounds(ScenePoint(0.0, 0.0, 0.0), ScenePoint(0.0, 0.0, 0.0))
+      val levels = cache.chunks
+        .groupBy { it.levelId }
+        .toSortedMap()
+        .map { (levelId, chunks) ->
+          linkedMapOf<String, Any?>(
+            "level_id" to levelId,
+            "name" to "Level $levelId",
+            "elevation_meters" to chunks.minOf { it.sourceBounds.min.z },
+            "default_wall_height_meters" to 3.2,
+          )
+        }
+      val margin = maxOf(
+        2.0,
+        (bounds.max.x - bounds.min.x).coerceAtLeast(bounds.max.y - bounds.min.y) * 0.08,
+      )
+      linkedMapOf<String, Any?>(
+        "scene_version" to 1,
+        "units" to "meters",
+        "coordinate_system" to "X/Y plan, Z up",
+        "object_count" to cache.primitives.size,
+        "vertex_count" to cache.chunks.sumOf { it.positions.capacity() / 12 },
+        "index_count" to cache.chunks.sumOf { it.indices.capacity() },
+        "bounds" to bounds.toMap(),
+        "levels" to levels,
+        "materials" to emptyList<Map<String, Any?>>(),
+        "sections" to listOf(
+          sectionMap("Section A", bounds.min.x - margin, centerY(bounds), bounds.max.x + margin, centerY(bounds)),
+          sectionMap("Section B", centerX(bounds), bounds.min.y - margin, centerX(bounds), bounds.max.y + margin),
+        ),
+        "objects" to cache.primitives.map { primitive ->
+          linkedMapOf<String, Any?>(
+            "element_id" to primitive.elementId,
+            "kind" to primitive.kind,
+            "level_id" to primitive.levelId,
+            "selectable" to true,
+            "visible_by_default" to true,
+            "revision" to 0,
+            "bounds" to primitive.sourceBounds.toMap(),
+            "mesh" to linkedMapOf<String, Any?>(
+              "positions" to emptyList<Map<String, Double>>(),
+              "indices" to emptyList<Int>(),
+            ),
+            "material_category" to "generic",
+            "metadata" to linkedMapOf<String, Any?>("native_cache" to true),
+          )
+        },
+      )
+    } finally {
+      cache.close()
+    }
+  }
 
   private fun buildPrimitives(data: LongArray, bounds: DoubleArray): List<NativeBimCachePrimitive> {
     val primitiveCount = minOf(data.size / 4, bounds.size / 6)
@@ -131,6 +218,34 @@ internal object NativeBimCacheBridge {
     max = ScenePoint(values[offset + 3], values[offset + 4], values[offset + 5]),
   )
 
+  private fun SceneBounds.toMap(): Map<String, Any> = linkedMapOf(
+    "min" to linkedMapOf("x" to min.x, "y" to min.y, "z" to min.z),
+    "max" to linkedMapOf("x" to max.x, "y" to max.y, "z" to max.z),
+  )
+
+  private fun unionSceneBounds(first: SceneBounds, second: SceneBounds): SceneBounds = SceneBounds(
+    min = ScenePoint(
+      minOf(first.min.x, second.min.x),
+      minOf(first.min.y, second.min.y),
+      minOf(first.min.z, second.min.z),
+    ),
+    max = ScenePoint(
+      maxOf(first.max.x, second.max.x),
+      maxOf(first.max.y, second.max.y),
+      maxOf(first.max.z, second.max.z),
+    ),
+  )
+
+  private fun centerX(bounds: SceneBounds): Double = (bounds.min.x + bounds.max.x) * 0.5
+  private fun centerY(bounds: SceneBounds): Double = (bounds.min.y + bounds.max.y) * 0.5
+
+  private fun sectionMap(name: String, startX: Double, startY: Double, endX: Double, endY: Double): Map<String, Any> =
+    linkedMapOf(
+      "name" to name,
+      "start" to linkedMapOf("x" to startX, "y" to startY, "z" to 0.0),
+      "end" to linkedMapOf("x" to endX, "y" to endY, "z" to 0.0),
+    )
+
   class NativeBimCache internal constructor(
     private val handle: Long,
     val chunks: List<NativeBimCacheChunk>,
@@ -176,4 +291,14 @@ internal data class NativeBimCachePrimitive(
   val kind: String,
   val levelId: Long,
   val sourceBounds: SceneBounds,
+)
+
+internal data class NativeBimCacheCompileStats(
+  val elapsedMs: Long,
+  val byteSize: Long,
+  val objectCount: Long,
+  val triangleCount: Long,
+  val chunkCount: Long,
+  val primitiveCount: Long,
+  val bvhNodeCount: Long,
 )

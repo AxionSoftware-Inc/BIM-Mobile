@@ -18,7 +18,7 @@ extension _RenderSceneViewportNative on RenderSceneViewportController {
 
   Future<void> _syncNativeBridge() async {
     final currentScene = _scene;
-    if (currentScene != null) {
+    if (currentScene != null && !_nativeGeometryActive) {
       await _invoke('loadRenderSceneJson', jsonEncode(currentScene.toJson()));
     }
 

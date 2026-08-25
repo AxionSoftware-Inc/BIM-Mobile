@@ -2,16 +2,35 @@
 
 #include "tbe/api/EngineApi.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
 
 namespace tbe::api::runtime_cache {
 
-inline constexpr std::uint32_t kBimCacheFormatVersion = 1;
+inline constexpr std::uint32_t kBimCacheFormatVersion = 2;
+inline constexpr std::uint32_t kBimCacheSceneCompilerVersion = 2;
+inline constexpr std::uint32_t kBimCacheObjectMappingVersion = 1;
+inline constexpr std::uint32_t kBimCacheFormatFlags = 0x00000001u;
+
+// A 24 m seed tile gives the compiler a predictable spatial starting point,
+// but it is deliberately policy rather than a permanent format rule. Later
+// compilers can refine dense tiles using these element/triangle/buffer limits
+// while keeping the cache reader and IFC source contract stable.
+struct BimCacheChunkingPolicy {
+    double seed_tile_size_meters{24.0};
+    std::size_t max_elements_per_chunk{4096};
+    std::size_t max_triangles_per_chunk{250000};
+    std::size_t max_gpu_buffer_bytes{16ull * 1024ull * 1024ull};
+};
 
 BimCacheSourceDTO source_signature(const std::string& source_ifc_path);
-BimCacheSceneDTO compile(const RenderSceneDTO& scene, BimCacheSourceDTO source);
+BimCacheSceneDTO compile(
+    const RenderSceneDTO& scene,
+    BimCacheSourceDTO source,
+    const BimCacheChunkingPolicy& policy = {}
+);
 // Traverses the cache's chunk BVH, then precise cached triangles. Coordinates
 // use the engine's X/Y-plan/Z-up convention. The bit mask uses ApiElementKind
 // ordinals and lets a renderer respect its currently visible categories.

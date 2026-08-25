@@ -1572,6 +1572,10 @@ int main() {
         assert(cache_inspection.value->chunk_count == cache_result.value->chunk_count);
         assert(cache_inspection.value->primitive_count == cache_result.value->primitive_count);
         const auto cached_scene = tbe::api::runtime_cache::read_file(bim_cache_path.string(), ifc_path.string());
+        assert(cached_scene.format_version == tbe::api::runtime_cache::kBimCacheFormatVersion);
+        assert(cached_scene.scene_compiler_version == tbe::api::runtime_cache::kBimCacheSceneCompilerVersion);
+        assert(cached_scene.object_mapping_version == tbe::api::runtime_cache::kBimCacheObjectMappingVersion);
+        assert(cached_scene.source.source_fingerprint != 0);
         assert(!cached_scene.chunks.empty());
         assert(!cached_scene.chunks.front().primitives.empty());
         // Runtime selection stays native: this exercises the on-disk chunk
@@ -1597,6 +1601,26 @@ int main() {
         );
         const auto stale_cache = imported->inspect_bim_cache(ifc_path.string(), bim_cache_path.string());
         assert(!stale_cache.ok());
+        std::filesystem::last_write_time(ifc_path, original_ifc_timestamp);
+        // Validation cannot rely on only size and modified time.  Reuse the
+        // original timestamp after a same-size content change and ensure the
+        // streamed source fingerprint still rejects the cache.
+        auto changed_ifc_text = ifc_text;
+        const auto label_offset = changed_ifc_text.find("Cache Wall");
+        assert(label_offset != std::string::npos);
+        changed_ifc_text.replace(label_offset, std::string("Cache Wall").size(), "Cache Mall");
+        assert(changed_ifc_text.size() == ifc_text.size());
+        {
+            std::ofstream changed_ifc(ifc_path, std::ios::binary | std::ios::trunc);
+            changed_ifc << changed_ifc_text;
+        }
+        std::filesystem::last_write_time(ifc_path, original_ifc_timestamp);
+        const auto fingerprint_stale_cache = imported->inspect_bim_cache(ifc_path.string(), bim_cache_path.string());
+        assert(!fingerprint_stale_cache.ok());
+        {
+            std::ofstream restored_ifc(ifc_path, std::ios::binary | std::ios::trunc);
+            restored_ifc << ifc_text;
+        }
         std::filesystem::last_write_time(ifc_path, original_ifc_timestamp);
         std::filesystem::remove(bim_cache_path);
         std::filesystem::remove(ifc_path);

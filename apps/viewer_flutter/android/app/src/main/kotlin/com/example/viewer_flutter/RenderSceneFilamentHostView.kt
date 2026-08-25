@@ -357,6 +357,27 @@ internal class RenderSceneFilamentHostView(
   initialScene: SceneState? = null,
   private val onObjectTapped: (Long?) -> Unit = {},
 ) : FrameLayout(context), UiHelper.RendererCallback, Choreographer.FrameCallback {
+  private class RendererBenchmarkRun(
+    val mode: String,
+    val startedNanos: Long,
+    val sourceIfcPath: String?,
+    val cachePath: String?,
+    val cacheCompileStats: NativeBimCacheCompileStats?,
+  ) {
+    var cacheAppliedNanos = 0L
+    var firstVisibleNanos = 0L
+    var fullReadyNanos = 0L
+    var phase = "waiting"
+    var phaseStartedNanos = 0L
+    var previousFrameNanos = 0L
+    var gcCountAtStart: Long? = null
+    val frameIntervalsMs = linkedMapOf<String, MutableList<Double>>()
+    val cpuSubmitMs = linkedMapOf<String, MutableList<Double>>()
+
+    fun samples(target: MutableMap<String, MutableList<Double>>, phase: String): MutableList<Double> =
+      target.getOrPut(phase) { mutableListOf() }
+  }
+
   private data class CachedEdgeGeometry(
     val revision: Int,
     val junctionSignature: Int,
@@ -483,6 +504,10 @@ internal class RenderSceneFilamentHostView(
     sharedFaceVertexCount = 0,
   )
   private var currentScene: SceneState? = initialScene
+  // The authoritative compatibility scene remains available while a native
+  // cache is displayed. Edits still return here during the migration, and the
+  // A/B harness can restore the identical JSON renderer without reparsing IFC.
+  private var compatibilityScene: SceneState? = initialScene
   private var nativeBimCache: NativeBimCacheBridge.NativeBimCache? = null
   private var nativeCacheLoadRevision = 0L
   private var nativeCacheUploadRevision = 0L
@@ -504,9 +529,25 @@ internal class RenderSceneFilamentHostView(
   private var telemetryCpuMs = 0L
   private var telemetryFrameCount = 0L
   private var cpuPercent = 0.0
+  // A static viewport intentionally stops requesting VSYNC. Benchmarks use a
+  // small UI-thread heartbeat so their timed phases keep advancing after the
+  // final native chunk upload has made the normal renderer idle.
+  private val benchmarkTick = object : Runnable {
+    override fun run() {
+      val benchmark = rendererBenchmark ?: return
+      if (benchmark.phase == "complete") return
+      driveAutomatedBenchmark(SystemClock.elapsedRealtimeNanos())
+      if (rendererBenchmark != null) {
+        requestRender()
+        renderSurface.postInvalidateOnAnimation()
+        postDelayed(this, 16L)
+      }
+    }
+  }
   private var framesPerSecond = 0.0
   private var residentMemoryMb = 0.0
   private var nativeThreadCount = 0
+  private var rendererBenchmark: RendererBenchmarkRun? = null
   private var surfaceReady = false
   private var materialBuilderReady = false
   private var material: Material? = null
@@ -736,6 +777,7 @@ internal class RenderSceneFilamentHostView(
       // surrounding widgets settle. Reuse native GPU batches when every
       // element revision and geometry cardinality is identical.
       currentScene = newScene
+      compatibilityScene = newScene
       syncVisibility()
       refreshTintState()
       requestRender()
@@ -747,6 +789,7 @@ internal class RenderSceneFilamentHostView(
     // building during the intermediate rebuild.
     resetClipVolumeState()
     currentScene = newScene
+    compatibilityScene = newScene
     currentSceneFingerprint = fingerprint
     val liveElementIds = newScene.objects.mapNotNull { it.elementId }.toSet()
     edgeGeometryCache.keys.retainAll(liveElementIds)
@@ -793,6 +836,9 @@ internal class RenderSceneFilamentHostView(
         resetClipVolumeState()
         currentScene = nativeCacheSceneState(loaded)
         currentSceneFingerprint = null
+        rendererBenchmark?.takeIf { it.mode == "NEW_BIMCACHE" }?.let { benchmark ->
+          benchmark.cacheAppliedNanos = SystemClock.elapsedRealtimeNanos()
+        }
         // Fit against the complete cached model before submitting its first
         // GPU tile.  Otherwise a near-first stream would fit to a façade
         // fragment and make the camera jump as later chunks arrive.
@@ -828,6 +874,90 @@ internal class RenderSceneFilamentHostView(
     nativeCacheFullBounds = null
     nativeBimCache?.close()
     nativeBimCache = null
+  }
+
+  /**
+   * Runs a repeatable renderer-only tablet benchmark. The JSON path uses the
+   * same already-decoded compatibility scene; the cache path opens the same
+   * IFC-derived binary cache. This isolates renderer/open/submission costs
+   * from human gesture variability and never edits the IFC or BIM session.
+   */
+  fun runAutomatedRendererBenchmark(
+    mode: String,
+    sourceIfcPath: String? = null,
+    cachePath: String? = null,
+    cacheCompileStats: NativeBimCacheCompileStats? = null,
+  ) {
+    val benchmark = RendererBenchmarkRun(
+      mode = mode,
+      startedNanos = SystemClock.elapsedRealtimeNanos(),
+      sourceIfcPath = sourceIfcPath,
+      cachePath = cachePath,
+      cacheCompileStats = cacheCompileStats,
+    ).also {
+      it.gcCountAtStart = android.os.Debug.getRuntimeStat("art.gc.gc-count")?.toLongOrNull()
+    }
+    rendererBenchmark = benchmark
+    removeCallbacks(benchmarkTick)
+    post(benchmarkTick)
+    Log.i("TbeBenchmark", "START mode=$mode source=${sourceIfcPath ?: "compatibility_scene"}")
+
+    if (mode == "OLD_JSON") {
+      val fallback = compatibilityScene
+      if (fallback == null) {
+        Log.e("TbeBenchmark", "BENCHMARK_ERROR no compatibility JSON scene is loaded")
+        rendererBenchmark = null
+        return
+      }
+      nativeCacheLoadRevision += 1L
+      closeNativeBimCache()
+      resetClipVolumeState()
+      currentScene = fallback
+      currentSceneFingerprint = sceneFingerprint(fallback)
+      rebuildScene()
+      selectionOverlay.setVisualScene(
+        fallback.objects.map(::toVisualObject),
+        fallback.levels.map { level -> level.name to level.elevationMeters },
+        sceneMetrics.bounds,
+      )
+      syncVisibility()
+      refreshTintState()
+      fitCamera()
+      markBenchmarkFullSceneReady(benchmark)
+    } else if (mode == "NEW_BIMCACHE") {
+      if (sourceIfcPath.isNullOrBlank() || cachePath.isNullOrBlank()) {
+        Log.e("TbeBenchmark", "BENCHMARK_ERROR cache benchmark requires sourceIfcPath and cachePath")
+        rendererBenchmark = null
+        return
+      }
+      loadNativeBimCache(cachePath, sourceIfcPath)
+    } else {
+      Log.e("TbeBenchmark", "BENCHMARK_ERROR unsupported mode=$mode")
+      rendererBenchmark = null
+    }
+  }
+
+  private fun markBenchmarkFullSceneReady(benchmark: RendererBenchmarkRun) {
+    if (rendererBenchmark !== benchmark || benchmark.fullReadyNanos != 0L) return
+    benchmark.fullReadyNanos = SystemClock.elapsedRealtimeNanos()
+    // Start standardized idle/orbit/zoom-pan sampling only after the complete
+    // representation is ready. Native streaming can still record first visible
+    // time earlier, but does not pollute steady-state measurements.
+    benchmark.phase = "idle"
+    benchmark.phaseStartedNanos = benchmark.fullReadyNanos
+    // Streaming may have submitted its final dirty frame before the last
+    // chunk marks the scene complete. Keep the Choreographer alive for the
+    // standardized idle/orbit/zoom-pan samples instead of leaving the
+    // benchmark stranded in an otherwise intentionally idle viewport.
+    requestRender()
+  }
+
+  private fun markBenchmarkFirstSceneVisible(benchmark: RendererBenchmarkRun) {
+    if (rendererBenchmark !== benchmark || benchmark.firstVisibleNanos != 0L) return
+    // GPU buffers for at least one cache chunk now exist. A render is queued
+    // immediately afterwards, so this is the native-path equivalent of the
+    // first scene that can become visible without waiting for far chunks.
+    benchmark.firstVisibleNanos = SystemClock.elapsedRealtimeNanos()
   }
 
   private fun nativeCacheBounds(cache: NativeBimCacheBridge.NativeBimCache): SceneBounds {
@@ -894,6 +1024,8 @@ internal class RenderSceneFilamentHostView(
   }
 
   private fun clearScene(message: String) {
+    removeCallbacks(benchmarkTick)
+    rendererBenchmark = null
     nativeCacheLoadRevision += 1L
     closeNativeBimCache()
     resetClipVolumeState()
@@ -1538,6 +1670,7 @@ internal class RenderSceneFilamentHostView(
   override fun doFrame(frameTimeNanos: Long) {
     framePosted = false
     updateOrbitInertia(frameTimeNanos)
+    driveAutomatedBenchmark(frameTimeNanos)
     val renderer = renderer
     val view = filamentView
     val swapChain = swapChain
@@ -1545,17 +1678,133 @@ internal class RenderSceneFilamentHostView(
     // 30 FPS made every face and border draw call a permanent battery cost.
     // Gestures retain display-cadence feedback; after interaction one final
     // dirty frame is submitted and the Choreographer loop goes completely idle.
-    val interactive = touching || orbitInertiaActive || SystemClock.uptimeMillis() < interactiveUntilMs
+    val benchmarking = rendererBenchmark != null
+    val interactive = touching || orbitInertiaActive || benchmarking || SystemClock.uptimeMillis() < interactiveUntilMs
     val shouldRender = renderDirty || interactive
     if (shouldRender && renderer != null && view != null && swapChain != null && renderer.beginFrame(swapChain, frameTimeNanos)) {
+      val submitStartedNanos = SystemClock.elapsedRealtimeNanos()
       renderer.render(view)
       renderer.endFrame()
+      val submitMs = (SystemClock.elapsedRealtimeNanos() - submitStartedNanos).toDouble() / 1_000_000.0
       renderedFrameCount += 1
       lastRenderedFrameNanos = frameTimeNanos
       renderDirty = false
+      recordAutomatedBenchmarkFrame(frameTimeNanos, submitMs)
       sampleTelemetry()
     }
     if (interactive || (renderDirty && surfaceReady)) scheduleFrame()
+  }
+
+  private fun driveAutomatedBenchmark(frameTimeNanos: Long) {
+    val benchmark = rendererBenchmark ?: return
+    if (benchmark.phase == "waiting" || benchmark.phase == "complete") return
+    val elapsedMs = (frameTimeNanos - benchmark.phaseStartedNanos).toDouble() / 1_000_000.0
+    when (benchmark.phase) {
+      "idle" -> if (elapsedMs >= 1800.0) {
+        benchmark.phase = "orbit"
+        benchmark.phaseStartedNanos = frameTimeNanos
+      }
+      "orbit" -> {
+        orbitYawRadians += 0.010
+        orbitPitchRadians = (orbitPitchRadians + 0.0015).coerceIn(Math.toRadians(8.0), Math.toRadians(72.0))
+        configureCameraProjection()
+        updateOrbitCamera()
+        renderDirty = true
+        if (elapsedMs >= 3200.0) {
+          benchmark.phase = "zoomPan"
+          benchmark.phaseStartedNanos = frameTimeNanos
+        }
+      }
+      "zoomPan" -> {
+        orbitDistance = max(3.0, orbitDistance * 0.997)
+        val scale = max(orbitDistance, 3.0) * 0.0012
+        orbitCenter = orbitCenter.copy(x = orbitCenter.x + scale, z = orbitCenter.z - scale * 0.55)
+        configureCameraProjection()
+        updateOrbitCamera()
+        renderDirty = true
+        if (elapsedMs >= 3200.0) {
+          benchmark.phase = "complete"
+          finishAutomatedBenchmark(benchmark)
+        }
+      }
+    }
+  }
+
+  private fun recordAutomatedBenchmarkFrame(frameTimeNanos: Long, submitMs: Double) {
+    val benchmark = rendererBenchmark ?: return
+    if (benchmark.mode == "NEW_BIMCACHE" && benchmark.cacheAppliedNanos == 0L) return
+    if (benchmark.firstVisibleNanos == 0L) {
+      benchmark.firstVisibleNanos = SystemClock.elapsedRealtimeNanos()
+      if (benchmark.fullReadyNanos != 0L) {
+        benchmark.phase = "idle"
+        benchmark.phaseStartedNanos = frameTimeNanos
+      }
+    }
+    val phase = benchmark.phase
+    if (phase == "waiting" || phase == "complete") return
+    if (benchmark.previousFrameNanos != 0L) {
+      val intervalMs = (frameTimeNanos - benchmark.previousFrameNanos).toDouble() / 1_000_000.0
+      if (intervalMs in 0.1..1000.0) benchmark.samples(benchmark.frameIntervalsMs, phase).add(intervalMs)
+    }
+    benchmark.samples(benchmark.cpuSubmitMs, phase).add(submitMs)
+    benchmark.previousFrameNanos = frameTimeNanos
+  }
+
+  private fun benchmarkAverage(values: List<Double>): Double =
+    if (values.isEmpty()) 0.0 else values.average()
+
+  private fun benchmarkPercentile(values: List<Double>, percentile: Double): Double {
+    if (values.isEmpty()) return 0.0
+    val sorted = values.sorted()
+    val index = ((sorted.size - 1) * percentile).toInt().coerceIn(0, sorted.lastIndex)
+    return sorted[index]
+  }
+
+  private fun benchmarkFps(values: List<Double>): Double {
+    val average = benchmarkAverage(values)
+    return if (average <= 0.0) 0.0 else 1000.0 / average
+  }
+
+  private fun finishAutomatedBenchmark(benchmark: RendererBenchmarkRun) {
+    if (rendererBenchmark !== benchmark) return
+    removeCallbacks(benchmarkTick)
+    val allFrameIntervals = benchmark.frameIntervalsMs.values.flatten()
+    val allCpuSubmit = benchmark.cpuSubmitMs.values.flatten()
+    val processMemory = (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()).toDouble() / (1024.0 * 1024.0)
+    val nativeHeapMb = android.os.Debug.getNativeHeapAllocatedSize().toDouble() / (1024.0 * 1024.0)
+    val gcNow = android.os.Debug.getRuntimeStat("art.gc.gc-count")?.toLongOrNull()
+    val gcDelta = if (benchmark.gcCountAtStart != null && gcNow != null) gcNow - benchmark.gcCountAtStart!! else -1L
+    val materialCount = (
+      renderables.values.map { System.identityHashCode(it.material) } +
+        faceBatches.map { System.identityHashCode(it.material) } +
+        instanceFaceGroups.map { System.identityHashCode(it.material) }
+      ).distinct().size
+    val estimatedGpuBufferBytes =
+      faceBatches.sumOf { it.vertexCount.toLong() * 12L + it.indexCount.toLong() * 4L } +
+        renderables.values.sumOf { it.vertexBuffer.vertexCount.toLong() * 28L + it.indexBuffer.indexCount.toLong() * 4L } +
+        instanceFaceGroups.sumOf { it.vertexCount.toLong() * 28L + it.indexCount.toLong() * 4L }
+    val sourceCacheBytes = benchmark.cachePath?.let { path -> java.io.File(path).takeIf { it.isFile }?.length() } ?: 0L
+    val sourceObjectCount = nativeBimCache?.primitives?.size ?: sceneMetrics.objectCount
+    fun phaseFps(name: String) = benchmarkFps(benchmark.frameIntervalsMs[name] ?: emptyList())
+    val readyMs = if (benchmark.fullReadyNanos == 0L) -1L else (benchmark.fullReadyNanos - benchmark.startedNanos) / 1_000_000L
+    val visibleMs = if (benchmark.firstVisibleNanos == 0L) -1L else (benchmark.firstVisibleNanos - benchmark.startedNanos) / 1_000_000L
+    val applyMs = if (benchmark.cacheAppliedNanos == 0L) -1L else (benchmark.cacheAppliedNanos - benchmark.startedNanos) / 1_000_000L
+    val compileMs = benchmark.cacheCompileStats?.elapsedMs ?: -1L
+    Log.i(
+      "TbeBenchmark",
+      "RESULT mode=${benchmark.mode} firstVisibleMs=$visibleMs fullReadyMs=$readyMs cacheAppliedMs=$applyMs " +
+        "cacheCompileMs=$compileMs cacheBytes=$sourceCacheBytes fpsIdle=${benchmarkFps(benchmark.frameIntervalsMs["idle"] ?: emptyList()).format(2)} " +
+        "fpsOrbit=${phaseFps("orbit").format(2)} fpsZoomPan=${phaseFps("zoomPan").format(2)} " +
+        "frameAvgMs=${benchmarkAverage(allFrameIntervals).format(2)} frameP95Ms=${benchmarkPercentile(allFrameIntervals, 0.95).format(2)} " +
+        "frameP99Ms=${benchmarkPercentile(allFrameIntervals, 0.99).format(2)} cpuSubmitAvgMs=${benchmarkAverage(allCpuSubmit).format(2)} " +
+        "cpuSubmitP95Ms=${benchmarkPercentile(allCpuSubmit, 0.95).format(2)} objects=$sourceObjectCount triangles=${sceneMetrics.indexCount / 3} " +
+        "vertices=${sceneMetrics.vertexCount} renderables=${renderables.size + faceBatches.size + instanceFaceGroups.size} " +
+        "drawCalls=${renderables.size + faceBatches.size + instanceFaceGroups.size + edgeBatches.size} materials=$materialCount " +
+        "loadedChunks=${if (nativeBimCache != null) nativeCacheResidentChunks.size else faceBatches.size} " +
+        "visibleChunks=${faceBatches.count { it.attached }} estimatedGpuBufferBytes=$estimatedGpuBufferBytes " +
+        "javaHeapMb=${processMemory.format(1)} nativeHeapMb=${nativeHeapMb.format(1)} gcDelta=$gcDelta",
+    )
+    rendererBenchmark = null
   }
 
   private fun updateOrbitInertia(frameTimeNanos: Long) {
@@ -1840,6 +2089,9 @@ internal class RenderSceneFilamentHostView(
         nativeCacheResidentChunks.add(index)
       }
     }
+    rendererBenchmark?.takeIf {
+      it.mode == "NEW_BIMCACHE" && nativeCacheResidentChunks.isNotEmpty()
+    }?.let(::markBenchmarkFirstSceneVisible)
     updateMetrics()
     syncVisibility()
     renderDirty = true
@@ -1848,6 +2100,7 @@ internal class RenderSceneFilamentHostView(
     if (nativeCachePendingChunks.isEmpty()) {
       statusMessage = "Loaded ${nativeCacheResidentChunks.size}/${cache.chunks.size} native BIM chunks."
       Log.i(TAG, statusMessage)
+      rendererBenchmark?.takeIf { it.mode == "NEW_BIMCACHE" }?.let(::markBenchmarkFullSceneReady)
       updateStatus()
       return
     }

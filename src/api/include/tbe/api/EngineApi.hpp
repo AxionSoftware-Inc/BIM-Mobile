@@ -302,6 +302,10 @@ struct BimCacheSourceDTO {
     std::string source_path{};
     std::uint64_t source_size_bytes{};
     std::int64_t source_modified_ticks{};
+    // Fast streamed fingerprint of the source bytes. Size and mtime provide a
+    // cheap first-line check; this closes the same-size/same-timestamp hole
+    // without changing the authoritative IFC itself.
+    std::uint64_t source_fingerprint{};
 };
 
 struct BimCachePrimitiveDTO {
@@ -336,6 +340,11 @@ struct BimCacheBvhNodeDTO {
 
 struct BimCacheSceneDTO {
     std::uint32_t format_version{1};
+    std::uint32_t scene_compiler_version{};
+    std::uint32_t object_mapping_version{};
+    std::uint32_t format_flags{};
+    double chunk_seed_tile_size_meters{};
+    std::string engine_version{};
     BimCacheSourceDTO source{};
     std::vector<RenderSceneLevelDTO> levels{};
     std::vector<BimCacheChunkDTO> chunks{};

@@ -25,6 +25,13 @@ class MainActivity : FlutterActivity() {
       nativeEngineError = error.message ?: error.javaClass.simpleName
     }
     super.onCreate(savedInstanceState)
+    NativeRendererBenchmarkHarness.handleIntent(this, intent)
+  }
+
+  override fun onNewIntent(intent: android.content.Intent) {
+    super.onNewIntent(intent)
+    setIntent(intent)
+    NativeRendererBenchmarkHarness.handleIntent(this, intent)
   }
 
   override fun configureFlutterEngine(flutterEngine: FlutterEngine) {

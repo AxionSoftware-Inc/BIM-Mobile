@@ -4,6 +4,11 @@ part of 'viewer_app.dart';
 
 enum _WorkspaceExitChoice { save, discard }
 
+// Above this size, an IFC is opened through the cache's native-first path.
+// The threshold only chooses a transfer strategy: IFC source geometry remains
+// authoritative and is never simplified or rewritten.
+const int _nativeFirstIfcThresholdBytes = 8 * 1024 * 1024;
+
 extension _IfcImportCache on _ViewerHomePageState {
   Future<Directory> _ifcCacheDirectory() async {
     final projectDirectory = await AppProjectStorage.projectDirectory();
@@ -153,7 +158,7 @@ extension _IfcImportCache on _ViewerHomePageState {
       '${stat.modified.millisecondsSinceEpoch}';
 
   String _nativeBimCacheSignature(String path, FileStat stat) =>
-      'tbe-bimcache-v1|${_ifcCacheSignature(path, stat)}';
+      'tbe-bimcache-v2|${_ifcCacheSignature(path, stat)}';
 }
 
 extension _ViewerProjectLifecycle on _ViewerHomePageState {
@@ -477,7 +482,16 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
       });
       _currentProjectName = projectName;
       final repository = _engineRepository;
-      final cached = await _readIfcImportCache(path);
+      final sourceStat = await File(path).stat();
+      final preferNativeFirst = sourceStat.type == FileSystemEntityType.file &&
+          sourceStat.size >= _nativeFirstIfcThresholdBytes &&
+          _viewportController.backend == RenderSceneViewportBackend.native;
+      final nativeFirstReady = preferNativeFirst
+          ? await _primeNativeViewportForIfc(projectName)
+          : false;
+      // A former JSON scene cache can be hundreds of MiB.  Never read or
+      // build it for a large model when the native cache route is available.
+      final cached = nativeFirstReady ? null : await _readIfcImportCache(path);
       if (cached != null) {
         _updateViewportState(() {
           _statusMessage = 'Opening cached IFC model...';
@@ -512,16 +526,33 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
         }
         _projectSession.activate(launch.session);
         _engineLoadDiagnostic = null;
-        final exactProjectJson =
-            await launch.session.snapshotImportedProjectJson();
-        await _writeIfcImportCache(path, exactProjectJson);
+        if (!nativeFirstReady) {
+          final exactProjectJson =
+              await launch.session.snapshotImportedProjectJson();
+          await _writeIfcImportCache(path, exactProjectJson);
+        }
       } else {
         await repository.loadFromIfc(ifcPath: path);
         // Keep the exact semantic/project representation for the next open.
         // The runtime LOD is produced later by the render-scene query and is
         // never written into this cache.
-        final exactProjectJson = await repository.snapshotImportedProjectJson();
-        await _writeIfcImportCache(path, exactProjectJson);
+        if (!nativeFirstReady) {
+          final exactProjectJson =
+              await repository.snapshotImportedProjectJson();
+          await _writeIfcImportCache(path, exactProjectJson);
+        }
+      }
+      if (nativeFirstReady) {
+        final nativeResult = await _prepareNativeBimCacheScene(path);
+        if (nativeResult != null) {
+          await _applyLoadResult(
+            nativeResult,
+            sourceLabel: projectName,
+            resetProjectChanges: true,
+            nativeGeometryAlreadyLoaded: true,
+          );
+          return;
+        }
       }
       final nativeBimCachePath = await _ensureNativeBimCache(path);
       final result = await _sceneViews.refresh();
@@ -543,6 +574,63 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
         _loadError = error.toString();
         _statusMessage = 'IFC import failed.';
       });
+    }
+  }
+
+  /// Mounts a tiny loading scene so Android can create its PlatformView and
+  /// then waits for the per-view MethodChannel.  It deliberately contains no
+  /// IFC mesh payload; the following native call replaces it with direct cache
+  /// buffers on the renderer thread.
+  Future<bool> _primeNativeViewportForIfc(String projectName) async {
+    final placeholder = parseRenderSceneJson(
+      jsonEncode(<String, Object?>{
+        'scene_version': 1,
+        'units': 'meters',
+        'coordinate_system': 'X/Y plan, Z up',
+        'objects': <Object?>[],
+        'levels': <Object?>[],
+        'materials': <Object?>[],
+        'sections': <Object?>[],
+      }),
+      source: 'native cache loading placeholder',
+    ).scene;
+    if (placeholder == null || !mounted) return false;
+    _updateViewportState(() {
+      _scene = placeholder;
+      _statusMessage = 'Preparing native viewport for $projectName...';
+    });
+    await _viewportController.loadRenderScene(placeholder);
+    return _viewportController.waitForNativeBridge();
+  }
+
+  /// Receives only compact element bounds/metadata from Android.  Vertices and
+  /// indices stay in the C++ cache and are streamed to Filament as direct
+  /// buffers, avoiding the old JSON MethodChannel allocation path.
+  Future<RenderSceneLoadResult?> _prepareNativeBimCacheScene(
+    String ifcPath,
+  ) async {
+    try {
+      final paths = await _nativeBimCachePaths(ifcPath);
+      if (mounted) {
+        _updateViewportState(() {
+          _statusMessage = 'Opening native 3D cache...';
+        });
+      }
+      final payload = await _viewportController.prepareNativeBimCache(
+        sourceIfcPath: ifcPath,
+        cachePath: paths.cachePath,
+      );
+      final rawScene = payload?['scene'];
+      if (rawScene is! Map) return null;
+      final result = parseRenderSceneJson(
+        jsonEncode(rawScene),
+        source: 'native BIM cache metadata',
+      );
+      return result.scene == null ? null : result;
+    } catch (_) {
+      // A cache failure is recoverable: the legacy JSON renderer remains the
+      // migration fallback for the same IFC source.
+      return null;
     }
   }
 
@@ -1266,11 +1354,14 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
     RenderSceneLoadResult result, {
     required String sourceLabel,
     bool resetProjectChanges = false,
+    bool nativeGeometryAlreadyLoaded = false,
   }) async {
     final rawScene = result.scene;
     final scene = rawScene == null
         ? null
-        : RenderSceneEditor.normalizeSceneGeometry(rawScene);
+        : nativeGeometryAlreadyLoaded
+            ? rawScene
+            : RenderSceneEditor.normalizeSceneGeometry(rawScene);
     _viewWorkspace.clearSheetCache();
 
     _updateViewportState(() {
@@ -1314,7 +1405,13 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
       return;
     }
 
-    await _viewportController.loadRenderScene(_sceneForViewport(scene));
+    if (nativeGeometryAlreadyLoaded) {
+      await _viewportController.loadNativeSceneSummary(
+        _sceneForViewport(scene),
+      );
+    } else {
+      await _viewportController.loadRenderScene(_sceneForViewport(scene));
+    }
     await _viewportController.setVisibleKinds(_visibleKinds);
     await _viewportController.setProjectionMode(_projectionMode);
     await _viewportController.setOrbitProjectionStyle(_orbitProjectionStyle);

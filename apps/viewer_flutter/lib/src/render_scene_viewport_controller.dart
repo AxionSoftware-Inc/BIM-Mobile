@@ -43,6 +43,9 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
   int _fitRevision = 0;
   int _sceneRevision = 0;
   bool _nativeCameraSyncScheduled = false;
+  // When true, Filament owns all large geometry through a validated
+  // `.bimcache`; Flutter retains only the compact semantic envelope.
+  bool _nativeGeometryActive = false;
 
   RenderSceneProjectionMode _projectionMode = kDefaultPlanProjectionMode;
   RenderSceneOrbitProjectionStyle _orbitProjectionStyle =
@@ -79,6 +82,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
   bool _selectionRectangleCrossing = false;
 
   MethodChannel? _channel;
+  Completer<void>? _nativeBridgeReady;
 
   @override
   RenderScene? get scene => _scene;
@@ -160,6 +164,23 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
 
   bool get hasNativeBridge => _channel != null;
 
+  /// Waits for the PlatformView channel created after a lightweight loading
+  /// scene has mounted.  IFC import starts from the start screen, where the
+  /// native view does not exist yet; this lets the native-first cache path
+  /// begin without ever serializing a full mesh scene to Dart first.
+  Future<bool> waitForNativeBridge({
+    Duration timeout = const Duration(seconds: 5),
+  }) async {
+    if (_channel != null) return true;
+    final ready = _nativeBridgeReady ??= Completer<void>();
+    try {
+      await ready.future.timeout(timeout);
+    } on TimeoutException {
+      return false;
+    }
+    return _channel != null;
+  }
+
   RenderSceneBounds get sceneBounds => _scene?.bounds ?? _sceneBounds;
   RenderSceneBounds? get sectionBox => _sectionBox;
   bool get hasSectionBox => _sectionBox != null;
@@ -189,15 +210,45 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
   Future<void> loadNativeBimCache({
     required String sourceIfcPath,
     required String cachePath,
-  }) =>
-      _invoke('loadNativeBimCache', <String, Object?>{
-        'sourceIfcPath': sourceIfcPath,
-        'cachePath': cachePath,
-      });
+  }) async {
+    _nativeGeometryActive = true;
+    await _invoke('loadNativeBimCache', <String, Object?>{
+      'sourceIfcPath': sourceIfcPath,
+      'cachePath': cachePath,
+    });
+  }
+
+  /// Validates/reopens a cache, or compiles it natively on a background
+  /// Android thread. The returned scene contains element metadata and bounds
+  /// only; all mesh buffers remain native DirectByteBuffers for Filament.
+  Future<Map<Object?, Object?>?> prepareNativeBimCache({
+    required String sourceIfcPath,
+    required String cachePath,
+  }) async {
+    final channel = _channel;
+    if (channel == null) return null;
+    try {
+      final result = await channel.invokeMapMethod<Object?, Object?>(
+        'prepareNativeBimCache',
+        <String, Object?>{
+          'sourceIfcPath': sourceIfcPath,
+          'cachePath': cachePath,
+        },
+      );
+      if (result != null) _nativeGeometryActive = true;
+      return result;
+    } on MissingPluginException {
+      return null;
+    } on PlatformException {
+      return null;
+    }
+  }
 
   Future<void> attachNativeBridge(int viewId) async {
     _channel = MethodChannel('tbe/render_scene_view_$viewId');
     _channel!.setMethodCallHandler(_handleNativeCallback);
+    final ready = _nativeBridgeReady;
+    if (ready != null && !ready.isCompleted) ready.complete();
     await _syncNativeBridge();
 
     unawaited(
@@ -210,6 +261,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
   void detachNativeBridge() {
     _channel?.setMethodCallHandler(null);
     _channel = null;
+    _nativeBridgeReady = null;
   }
 
   @override
@@ -220,7 +272,11 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
   Future<void> updateRenderScene(
     RenderScene scene, {
     bool resetView = false,
+    bool preserveNativeGeometry = false,
   }) async {
+    if (!preserveNativeGeometry) {
+      _nativeGeometryActive = false;
+    }
     _scene = scene;
     _sceneBounds = scene.bounds;
     _sceneRevision += 1;
@@ -235,12 +291,18 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
 
     notifyListeners();
 
-    await _invoke('loadRenderSceneJson', jsonEncode(scene.toJson()));
+    if (!_nativeGeometryActive) {
+      await _invoke('loadRenderSceneJson', jsonEncode(scene.toJson()));
+    }
     await _syncNativeBridge();
   }
 
+  Future<void> loadNativeSceneSummary(RenderScene scene) =>
+      updateRenderScene(scene, resetView: true, preserveNativeGeometry: true);
+
   @override
   Future<void> clearScene() async {
+    _nativeGeometryActive = false;
     _scene = null;
     _selectedElementIds = <String>{};
     _activeElementId = null;
