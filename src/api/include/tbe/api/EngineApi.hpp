@@ -31,7 +31,8 @@ enum class ApiElementKind {
     Roof,
     Column,
     Beam,
-    Stair
+    Stair,
+    Proxy
 };
 
 enum class ApiValidationSeverity {

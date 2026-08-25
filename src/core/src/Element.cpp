@@ -157,6 +157,14 @@ StairData* Element::stair() noexcept {
     return std::get_if<StairData>(&payload_);
 }
 
+const ProxyData* Element::proxy() const noexcept {
+    return std::get_if<ProxyData>(&payload_);
+}
+
+ProxyData* Element::proxy() noexcept {
+    return std::get_if<ProxyData>(&payload_);
+}
+
 void Element::touch() noexcept {
     ++revision_;
 }

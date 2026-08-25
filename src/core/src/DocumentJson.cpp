@@ -336,6 +336,8 @@ std::string kind_to_string(ElementKind kind) {
         return "Stair";
     case ElementKind::Slab:
         return "Slab";
+    case ElementKind::Proxy:
+        return "Proxy";
     }
     return "Unknown";
 }
@@ -466,6 +468,9 @@ ElementKind string_to_kind(const std::string& kind) {
     if (kind == "Slab") {
         return ElementKind::Slab;
     }
+    if (kind == "Proxy") {
+        return ElementKind::Proxy;
+    }
     throw std::invalid_argument("unsupported element kind in JSON");
 }
 
@@ -526,6 +531,28 @@ Point2 parse_point(const JsonValue& value) {
         .x = as_number(field(object, "x")),
         .y = as_number(field(object, "y")),
     };
+}
+
+MeshBuffer parse_mesh(const JsonValue& value) {
+    const auto& object = as_object(value);
+    MeshBuffer mesh;
+    for (const auto& vertex_value : as_array(field(object, "vertices"))) {
+        const auto& vertex = as_object(vertex_value);
+        mesh.vertices.push_back(Point3{
+            .x = as_number(field(vertex, "x")),
+            .y = as_number(field(vertex, "y")),
+            .z = as_number(field(vertex, "z")),
+        });
+    }
+    for (const auto& index_value : as_array(field(object, "indices"))) {
+        mesh.indices.push_back(static_cast<std::uint32_t>(as_number(index_value)));
+    }
+    if (const auto materials = object.find("triangle_material_ids"); materials != object.end()) {
+        for (const auto& material_value : as_array(materials->second)) {
+            mesh.triangle_material_ids.push_back(as_id(material_value));
+        }
+    }
+    return mesh;
 }
 
 Line2 parse_line(const JsonValue& value) {
@@ -616,6 +643,35 @@ void write_points(std::ostream& out, const std::vector<Point2>& points) {
         write_point(out, points[index]);
     }
     out << ']';
+}
+
+void write_mesh(std::ostream& out, const MeshBuffer& mesh) {
+    out << "{\"vertices\":[";
+    for (std::size_t index = 0; index < mesh.vertices.size(); ++index) {
+        if (index != 0) out << ',';
+        const auto& vertex = mesh.vertices[index];
+        out << "{\"x\":" << vertex.x << ",\"y\":" << vertex.y << ",\"z\":" << vertex.z << '}';
+    }
+    out << "],\"indices\":[";
+    for (std::size_t index = 0; index < mesh.indices.size(); ++index) {
+        if (index != 0) out << ',';
+        out << mesh.indices[index];
+    }
+    out << ']';
+    if (!mesh.triangle_material_ids.empty()) {
+        out << ",\"triangle_material_ids\":[";
+        for (std::size_t index = 0; index < mesh.triangle_material_ids.size(); ++index) {
+            if (index != 0) out << ',';
+            out << mesh.triangle_material_ids[index];
+        }
+        out << ']';
+    }
+    out << '}';
+}
+
+bool has_exact_ifc_geometry(const Element& element) {
+    const auto found = element.metadata().find("ifc_exact_geometry");
+    return found != element.metadata().end() && found->second.value == "true";
 }
 
 } // namespace
@@ -977,7 +1033,12 @@ std::string Document::to_json() const {
                 out << ",\"sill_height\":" << opening.sill_height_meters;
                 out << ",\"vertical_offset\":" << opening.vertical_offset_meters << '}';
             }
-            out << "]}";
+            out << ']';
+            if (has_exact_ifc_geometry(element) && !wall->geometry.mesh.vertices.empty()) {
+                out << ",\"mesh\":";
+                write_mesh(out, wall->geometry.mesh);
+            }
+            out << '}';
         } else if (const auto* door = element.door()) {
             out << ",\"door\":{\"level_id\":" << door->level_id;
             out << ",\"host_wall_id\":" << door->host_wall_id;
@@ -986,7 +1047,12 @@ std::string Document::to_json() const {
             out << ",\"height\":" << door->height_meters;
             out << ",\"level_offset\":" << door->level_offset_meters;
             out << ",\"vertical_offset\":" << door->vertical_offset_meters;
-            out << ",\"level_locked\":" << (door->level_locked ? "true" : "false") << '}';
+            out << ",\"level_locked\":" << (door->level_locked ? "true" : "false");
+            if (has_exact_ifc_geometry(element) && !door->mesh.vertices.empty()) {
+                out << ",\"mesh\":";
+                write_mesh(out, door->mesh);
+            }
+            out << '}';
         } else if (const auto* window = element.window()) {
             out << ",\"window\":{\"level_id\":" << window->level_id;
             out << ",\"host_wall_id\":" << window->host_wall_id;
@@ -996,7 +1062,12 @@ std::string Document::to_json() const {
             out << ",\"sill_height\":" << window->sill_height_meters;
             out << ",\"level_offset\":" << window->level_offset_meters;
             out << ",\"vertical_offset\":" << window->vertical_offset_meters;
-            out << ",\"level_locked\":" << (window->level_locked ? "true" : "false") << '}';
+            out << ",\"level_locked\":" << (window->level_locked ? "true" : "false");
+            if (has_exact_ifc_geometry(element) && !window->mesh.vertices.empty()) {
+                out << ",\"mesh\":";
+                write_mesh(out, window->mesh);
+            }
+            out << '}';
         } else if (const auto* room = element.room()) {
             out << ",\"room\":{\"boundary_wall_ids\":";
             write_ids(out, room->boundary_wall_ids);
@@ -1026,6 +1097,10 @@ std::string Document::to_json() const {
                 << ",\"volume\":" << slab->volume_cubic_meters
                 << ",\"boundary_polygon\":";
             write_points(out, slab->boundary_polygon);
+            if (has_exact_ifc_geometry(element) && !slab->mesh.vertices.empty()) {
+                out << ",\"mesh\":";
+                write_mesh(out, slab->mesh);
+            }
             out << '}';
         } else if (const auto* roof = element.roof()) {
             out << ",\"roof\":{\"level_id\":" << roof->level_id
@@ -1046,6 +1121,10 @@ std::string Document::to_json() const {
             write_ids(out, roof->source_wall_ids);
             out << ",\"boundary_polygon\":";
             write_points(out, roof->boundary_polygon);
+            if (has_exact_ifc_geometry(element) && !roof->mesh.vertices.empty()) {
+                out << ",\"mesh\":";
+                write_mesh(out, roof->mesh);
+            }
             out << '}';
         } else if (const auto* column = element.column()) {
             out << ",\"column\":{\"level_id\":" << column->level_id
@@ -1056,7 +1135,12 @@ std::string Document::to_json() const {
                 << ",\"height\":" << column->height_meters
                 << ",\"material_id\":" << column->material_id
                 << ",\"generated_geometry_dirty\":" << (column->generated_geometry_dirty ? "true" : "false")
-                << ",\"volume\":" << column->volume_cubic_meters << '}';
+                << ",\"volume\":" << column->volume_cubic_meters;
+            if (has_exact_ifc_geometry(element) && !column->mesh.vertices.empty()) {
+                out << ",\"mesh\":";
+                write_mesh(out, column->mesh);
+            }
+            out << '}';
         } else if (const auto* beam = element.beam()) {
             out << ",\"beam\":{\"level_id\":" << beam->level_id
                 << ",\"start\":";
@@ -1068,7 +1152,12 @@ std::string Document::to_json() const {
                 << ",\"material_id\":" << beam->material_id
                 << ",\"generated_geometry_dirty\":" << (beam->generated_geometry_dirty ? "true" : "false")
                 << ",\"length\":" << beam->length_meters
-                << ",\"volume\":" << beam->volume_cubic_meters << '}';
+                << ",\"volume\":" << beam->volume_cubic_meters;
+            if (has_exact_ifc_geometry(element) && !beam->mesh.vertices.empty()) {
+                out << ",\"mesh\":";
+                write_mesh(out, beam->mesh);
+            }
+            out << '}';
         } else if (const auto* stair = element.stair()) {
             out << ",\"stair\":{\"base_level_id\":" << stair->base_level_id
                 << ",\"top_level_id\":" << stair->top_level_id
@@ -1085,7 +1174,24 @@ std::string Document::to_json() const {
                 << ",\"assembly_id\":" << stair->assembly_id
                 << ",\"generated_geometry_dirty\":" << (stair->generated_geometry_dirty ? "true" : "false")
                 << ",\"footprint_area\":" << stair->footprint_area_square_meters
-                << ",\"volume\":" << stair->volume_cubic_meters << '}';
+                 << ",\"volume\":" << stair->volume_cubic_meters;
+            if (has_exact_ifc_geometry(element) && !stair->mesh.vertices.empty()) {
+                out << ",\"mesh\":";
+                write_mesh(out, stair->mesh);
+            }
+            out << '}';
+        } else if (const auto* proxy = element.proxy()) {
+            out << ",\"proxy\":{\"level_id\":" << proxy->level_id
+                << ",\"position\":";
+            write_point(out, proxy->position);
+            out << ",\"width\":" << proxy->width_meters
+                << ",\"depth\":" << proxy->depth_meters
+                << ",\"height\":" << proxy->height_meters;
+            if (has_exact_ifc_geometry(element) && !proxy->mesh.vertices.empty()) {
+                out << ",\"mesh\":";
+                write_mesh(out, proxy->mesh);
+            }
+            out << '}';
         }
 
         out << '}';
@@ -1316,6 +1422,10 @@ Document Document::from_json(std::string_view json) {
                     ? WallHeightMode::TopLevel
                     : WallHeightMode::Unconnected,
             };
+            if (const auto mesh = wall.find("mesh"); mesh != wall.end()) {
+                data.geometry.mesh = parse_mesh(mesh->second);
+                data.geometry.dirty = false;
+            }
 
             for (const auto& join_value : as_array(field(wall, "joins"))) {
                 const auto& join = as_object(join_value);
@@ -1338,7 +1448,7 @@ Document Document::from_json(std::string_view json) {
                     .vertical_offset_meters = opening.find("vertical_offset") == opening.end() ? 0.0 : as_number(field(opening, "vertical_offset")),
                 });
             }
-            data.geometry.dirty = true;
+            data.geometry.dirty = data.geometry.mesh.vertices.empty();
             elements.emplace_back(id, kind, std::move(name), data, revision);
         } else if (kind == ElementKind::Door) {
             const auto& door = as_object(field(object, "door"));
@@ -1351,6 +1461,7 @@ Document Document::from_json(std::string_view json) {
                 .level_offset_meters = door.find("level_offset") == door.end() ? 0.0 : as_number(field(door, "level_offset")),
                 .vertical_offset_meters = door.find("vertical_offset") == door.end() ? 0.0 : as_number(field(door, "vertical_offset")),
                 .level_locked = door.find("level_locked") == door.end() ? true : as_bool(field(door, "level_locked")),
+                .mesh = door.find("mesh") != door.end() ? parse_mesh(field(door, "mesh")) : MeshBuffer{},
             }, revision);
         } else if (kind == ElementKind::Window) {
             const auto& window = as_object(field(object, "window"));
@@ -1364,6 +1475,7 @@ Document Document::from_json(std::string_view json) {
                 .level_offset_meters = window.find("level_offset") == window.end() ? 0.0 : as_number(field(window, "level_offset")),
                 .vertical_offset_meters = window.find("vertical_offset") == window.end() ? 0.0 : as_number(field(window, "vertical_offset")),
                 .level_locked = window.find("level_locked") == window.end() ? true : as_bool(field(window, "level_locked")),
+                .mesh = window.find("mesh") != window.end() ? parse_mesh(field(window, "mesh")) : MeshBuffer{},
             }, revision);
         } else if (kind == ElementKind::Room) {
             const auto& room = as_object(field(object, "room"));
@@ -1432,6 +1544,10 @@ Document Document::from_json(std::string_view json) {
                 data.boundary_polygon.push_back(parse_point(point_value));
             }
             data.mesh = {};
+            if (const auto mesh = slab.find("mesh"); mesh != slab.end()) {
+                data.mesh = parse_mesh(mesh->second);
+                data.generated_geometry_dirty = false;
+            }
             elements.emplace_back(id, kind, std::move(name), data, revision);
         } else if (kind == ElementKind::Roof) {
             const auto& roof = as_object(field(object, "roof"));
@@ -1461,6 +1577,10 @@ Document Document::from_json(std::string_view json) {
             for (const auto& point_value : as_array(field(roof, "boundary_polygon"))) {
                 data.boundary_polygon.push_back(parse_point(point_value));
             }
+            if (const auto mesh = roof.find("mesh"); mesh != roof.end()) {
+                data.mesh = parse_mesh(mesh->second);
+                data.generated_geometry_dirty = false;
+            }
             elements.emplace_back(id, kind, std::move(name), data, revision);
         } else if (kind == ElementKind::Column) {
             const auto& column = as_object(field(object, "column"));
@@ -1471,8 +1591,8 @@ Document Document::from_json(std::string_view json) {
                 .depth_meters = as_number(field(column, "depth")),
                 .height_meters = as_number(field(column, "height")),
                 .material_id = column.find("material_id") != column.end() ? as_id(field(column, "material_id")) : 0,
-                .generated_geometry_dirty = true,
-                .mesh = {},
+                .generated_geometry_dirty = column.find("mesh") == column.end(),
+                .mesh = column.find("mesh") != column.end() ? parse_mesh(field(column, "mesh")) : MeshBuffer{},
                 .volume_cubic_meters = column.find("volume") != column.end() ? as_number(field(column, "volume")) : 0.0,
             }, revision);
         } else if (kind == ElementKind::Beam) {
@@ -1484,8 +1604,8 @@ Document Document::from_json(std::string_view json) {
                 .width_meters = as_number(field(beam, "width")),
                 .height_meters = as_number(field(beam, "height")),
                 .material_id = beam.find("material_id") != beam.end() ? as_id(field(beam, "material_id")) : 0,
-                .generated_geometry_dirty = true,
-                .mesh = {},
+                .generated_geometry_dirty = beam.find("mesh") == beam.end(),
+                .mesh = beam.find("mesh") != beam.end() ? parse_mesh(field(beam, "mesh")) : MeshBuffer{},
                 .length_meters = beam.find("length") != beam.end() ? as_number(field(beam, "length")) : 0.0,
                 .volume_cubic_meters = beam.find("volume") != beam.end() ? as_number(field(beam, "volume")) : 0.0,
             }, revision);
@@ -1503,10 +1623,20 @@ Document Document::from_json(std::string_view json) {
                 .tread_count = static_cast<int>(as_number(field(stair, "tread_count"))),
                 .material_id = stair.find("material_id") != stair.end() ? as_id(field(stair, "material_id")) : 0,
                 .assembly_id = stair.find("assembly_id") != stair.end() ? as_id(field(stair, "assembly_id")) : 0,
-                .generated_geometry_dirty = true,
-                .mesh = {},
+                .generated_geometry_dirty = stair.find("mesh") == stair.end(),
+                .mesh = stair.find("mesh") != stair.end() ? parse_mesh(field(stair, "mesh")) : MeshBuffer{},
                 .footprint_area_square_meters = stair.find("footprint_area") != stair.end() ? as_number(field(stair, "footprint_area")) : 0.0,
                 .volume_cubic_meters = stair.find("volume") != stair.end() ? as_number(field(stair, "volume")) : 0.0,
+            }, revision);
+        } else if (kind == ElementKind::Proxy) {
+            const auto& proxy = as_object(field(object, "proxy"));
+            elements.emplace_back(id, kind, std::move(name), ProxyData{
+                .level_id = as_id(field(proxy, "level_id")),
+                .position = parse_point(field(proxy, "position")),
+                .width_meters = as_number(field(proxy, "width")),
+                .depth_meters = as_number(field(proxy, "depth")),
+                .height_meters = as_number(field(proxy, "height")),
+                .mesh = proxy.find("mesh") != proxy.end() ? parse_mesh(field(proxy, "mesh")) : MeshBuffer{},
             }, revision);
         }
         if (auto found = std::find_if(elements.begin(), elements.end(), [id](const Element& element) {

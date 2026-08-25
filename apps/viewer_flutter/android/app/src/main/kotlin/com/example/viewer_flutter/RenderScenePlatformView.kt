@@ -418,7 +418,7 @@ internal class RenderScenePlatformView(
 private class RenderSceneCanvasView(context: Context) : View(context) {
   private var scene: SceneState? = null
   private var visibleKinds: Set<String> = setOf(
-    "wall", "door", "window", "slab", "floor", "ceiling", "roof", "column", "beam", "stair", "room"
+    "wall", "door", "window", "slab", "floor", "ceiling", "roof", "column", "beam", "stair", "room", "proxy"
   )
   private var selectedElementId: Long? = null
   private var highlightedElementId: Long? = null

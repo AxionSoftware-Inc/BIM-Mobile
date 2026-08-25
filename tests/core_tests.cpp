@@ -2574,6 +2574,10 @@ int main() {
             << "#21=IFCLOCALPLACEMENT($,#22);\n"
             << "#22=IFCAXIS2PLACEMENT3D(#23,$,$);\n"
             << "#23=IFCCARTESIANPOINT((2000.,3000.,0.));\n"
+            << "#30=IFCFURNISHINGELEMENT('F1',$,'Chair',$,$,#31,$);\n"
+            << "#31=IFCLOCALPLACEMENT($,#32);\n"
+            << "#32=IFCAXIS2PLACEMENT3D(#33,$,$);\n"
+            << "#33=IFCCARTESIANPOINT((5000.,4000.,0.));\n"
             << "ENDSEC;\nEND-ISO-10303-21;\n";
         external_ifc.close();
         tbe::core::IfcExchangeReport external_report;
@@ -2585,6 +2589,11 @@ int main() {
         assert(imported_external_wall->metadata().at("ifc_guid").value == "W1");
         assert(near(imported_external_wall->wall()->axis.start.x, 2.0));
         assert(near(imported_external_wall->wall()->axis.start.y, 3.0));
+        const auto imported_external_proxy = std::find_if(external.elements().begin(), external.elements().end(),
+            [](const auto& element) { return element.proxy() != nullptr; });
+        assert(imported_external_proxy != external.elements().end());
+        assert(imported_external_proxy->metadata().at("ifc_entity").value == "IFCFURNISHINGELEMENT");
+        assert(imported_external_proxy->metadata().at("ifc_guid").value == "F1");
         assert(!external_report.warnings.empty());
         std::filesystem::remove(external_ifc_path);
     }

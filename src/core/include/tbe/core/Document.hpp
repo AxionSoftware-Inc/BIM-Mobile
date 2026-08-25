@@ -103,6 +103,16 @@ public:
         ElementId material_id,
         ElementId assembly_id = 0
     );
+    /// Adds a lightweight box for a physical IFC product whose exact profile
+    /// is not supported by the analytical importer.
+    ElementId create_proxy(
+        std::string name,
+        ElementId level_id,
+        Point2 position,
+        double width_meters,
+        double depth_meters,
+        double height_meters
+    );
     ElementId create_floor_system_for_room(ElementId room_id, ElementId assembly_id);
     ElementId create_ceiling_system_for_room(ElementId room_id, ElementId assembly_id, double height_offset_meters = 0.0);
     std::vector<ElementId> generate_floor_systems_for_all_rooms(ElementId default_assembly_id);

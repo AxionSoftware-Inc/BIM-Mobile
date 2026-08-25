@@ -102,6 +102,7 @@ std::string svg_element_kind_name(ElementKind kind) {
     case ElementKind::Beam: return "beam";
     case ElementKind::Stair: return "stair";
     case ElementKind::Slab: return "slab";
+    case ElementKind::Proxy: return "proxy";
     }
     return "unknown";
 }
@@ -117,6 +118,7 @@ std::string svg_hit_kind_name(ElementKind kind) {
     case ElementKind::Beam: return "beam";
     case ElementKind::Stair: return "stair";
     case ElementKind::Slab: return "slab";
+    case ElementKind::Proxy: return "proxy";
     case ElementKind::Level: return "level";
     }
     return "unknown";
@@ -2279,6 +2281,33 @@ ElementId Document::create_stair(
     };
     stair.mesh = build_stair_mesh(stair);
     elements_.emplace_back(id, ElementKind::Stair, "Stair", stair);
+    invalidate_dependency_graph_cache();
+    return id;
+}
+
+ElementId Document::create_proxy(
+    std::string name,
+    ElementId level_id,
+    Point2 position,
+    double width_meters,
+    double depth_meters,
+    double height_meters
+) {
+    if (name.empty()) {
+        throw std::invalid_argument("proxy name must not be empty");
+    }
+    (void)require_level(level_id);
+    if (width_meters <= 0.0 || depth_meters <= 0.0 || height_meters <= 0.0) {
+        throw std::invalid_argument("proxy dimensions must be positive");
+    }
+    const auto id = allocate_id();
+    elements_.emplace_back(id, ElementKind::Proxy, std::move(name), ProxyData{
+        .level_id = level_id,
+        .position = position,
+        .width_meters = width_meters,
+        .depth_meters = depth_meters,
+        .height_meters = height_meters,
+    });
     invalidate_dependency_graph_cache();
     return id;
 }

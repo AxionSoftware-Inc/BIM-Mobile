@@ -44,7 +44,11 @@ enum class ElementKind {
     Column,
     Beam,
     Stair,
-    Slab
+    Slab,
+    // Lightweight representation for IFC physical products whose exact
+    // profile/mesh is not understood by the analytical fallback importer.
+    // The source IFC type and GUID remain available through metadata.
+    Proxy
 };
 
 struct Point2 {
@@ -250,6 +254,9 @@ struct DoorData {
     double level_offset_meters{};
     double vertical_offset_meters{};
     bool level_locked{true};
+    // Exact third-party IFC product geometry when the importer can tessellate
+    // the source representation. Empty for authored/legacy doors.
+    MeshBuffer mesh{};
 };
 
 struct WindowData {
@@ -264,6 +271,9 @@ struct WindowData {
     double level_offset_meters{};
     double vertical_offset_meters{};
     bool level_locked{true};
+    // Exact third-party IFC product geometry when the importer can tessellate
+    // the source representation. Empty for authored/legacy windows.
+    MeshBuffer mesh{};
 };
 
 struct LevelData {
@@ -362,6 +372,17 @@ struct StairData {
     MeshBuffer mesh{};
     double footprint_area_square_meters{};
     double volume_cubic_meters{};
+};
+
+struct ProxyData {
+    ElementId level_id{};
+    Point2 position{};
+    double width_meters{};
+    double depth_meters{};
+    double height_meters{};
+    // Exact tessellated IFC geometry. The dimensions above remain a compact
+    // fallback envelope and are also used by plan hit testing.
+    MeshBuffer mesh{};
 };
 
 struct FloorSystemData {
@@ -612,7 +633,7 @@ struct MaterialTakeoffRow {
 
 class Element {
 public:
-    using Payload = std::variant<LevelData, WallData, DoorData, WindowData, RoomData, SlabData, RoofData, ColumnData, BeamData, StairData>;
+    using Payload = std::variant<LevelData, WallData, DoorData, WindowData, RoomData, SlabData, RoofData, ColumnData, BeamData, StairData, ProxyData>;
 
     Element(
         ElementId id,
@@ -649,6 +670,8 @@ public:
     [[nodiscard]] BeamData* beam() noexcept;
     [[nodiscard]] const StairData* stair() const noexcept;
     [[nodiscard]] StairData* stair() noexcept;
+    [[nodiscard]] const ProxyData* proxy() const noexcept;
+    [[nodiscard]] ProxyData* proxy() noexcept;
 
     void touch() noexcept;
 

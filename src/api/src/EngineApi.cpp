@@ -534,6 +534,7 @@ std::string api_kind_name(ApiElementKind kind) {
     case ApiElementKind::Column: return "Column";
     case ApiElementKind::Beam: return "Beam";
     case ApiElementKind::Stair: return "Stair";
+    case ApiElementKind::Proxy: return "Proxy";
     case ApiElementKind::Unknown: return "Unknown";
     }
     return "Unknown";
@@ -551,6 +552,7 @@ std::string material_category_name(ApiElementKind kind) {
     case ApiElementKind::Column:
     case ApiElementKind::Beam:
     case ApiElementKind::Stair:
+    case ApiElementKind::Proxy:
         return "structural";
     case ApiElementKind::Level:
     case ApiElementKind::Room:
@@ -1385,12 +1387,20 @@ RenderSceneDTO build_render_scene(
                     : (opening_element != nullptr && opening_element->window() != nullptr
                            ? opening_element->window()->level_offset_meters
                            : 0.0);
+                auto opening_mesh = make_opening_mesh(wall->axis, opening, wall->thickness_meters, base_elevation);
+                if (opening_element != nullptr && opening_element->door() != nullptr &&
+                    !opening_element->door()->mesh.vertices.empty() && !opening_element->door()->mesh.indices.empty()) {
+                    opening_mesh = mesh_dto_from_mesh_buffer(opening_element->door()->mesh, base_elevation);
+                } else if (opening_element != nullptr && opening_element->window() != nullptr &&
+                    !opening_element->window()->mesh.vertices.empty() && !opening_element->window()->mesh.indices.empty()) {
+                    opening_mesh = mesh_dto_from_mesh_buffer(opening_element->window()->mesh, base_elevation);
+                }
                 append_object(make_object_dto(
                     opening.element_id,
                     opening_kind,
                     opening_level_id,
                     element.revision(),
-                    make_opening_mesh(wall->axis, opening, wall->thickness_meters, base_elevation),
+                    std::move(opening_mesh),
                     material_category_name(opening_kind),
                     {
                         {"host_wall_id", std::to_string(element.id())},
@@ -1515,6 +1525,34 @@ RenderSceneDTO build_render_scene(
                     {"tread_count", std::to_string(stair->tread_count)},
                     {"assembly_id", std::to_string(stair->assembly_id)},
                     {"level_locked", "true"},
+                }
+            ));
+            continue;
+        }
+        if (const auto* proxy = element.proxy(); proxy != nullptr) {
+            const auto elevation = level_elevation(elevations, proxy->level_id, 0.0);
+            auto proxy_mesh = proxy->mesh.vertices.empty() || proxy->mesh.indices.empty()
+                ? make_section_box(
+                    proxy->position.x - proxy->width_meters * 0.5,
+                    proxy->position.x + proxy->width_meters * 0.5,
+                    proxy->position.y - proxy->depth_meters * 0.5,
+                    proxy->position.y + proxy->depth_meters * 0.5,
+                    elevation,
+                    elevation + proxy->height_meters,
+                    0)
+                : mesh_dto_from_mesh_buffer(proxy->mesh);
+            append_object(make_object_dto(
+                element.id(),
+                ApiElementKind::Proxy,
+                proxy->level_id,
+                element.revision(),
+                std::move(proxy_mesh),
+                material_category_name(ApiElementKind::Proxy),
+                {
+                    {"width_meters", std::to_string(proxy->width_meters)},
+                    {"depth_meters", std::to_string(proxy->depth_meters)},
+                    {"height_meters", std::to_string(proxy->height_meters)},
+                    {"ifc_proxy", "true"},
                 }
             ));
         }
@@ -1676,6 +1714,7 @@ ApiElementKind to_api_kind(tbe::core::ElementKind kind) {
     case tbe::core::ElementKind::Column: return ApiElementKind::Column;
     case tbe::core::ElementKind::Beam: return ApiElementKind::Beam;
     case tbe::core::ElementKind::Stair: return ApiElementKind::Stair;
+    case tbe::core::ElementKind::Proxy: return ApiElementKind::Proxy;
     }
     return ApiElementKind::Unknown;
 }
@@ -2320,6 +2359,21 @@ void rebuild_spatial_index_impl(SessionImpl& impl) {
                     .polygon = polygon,
                 });
             }
+        } else if (const auto* proxy = element.proxy()) {
+            const auto polygon = std::vector<Point2>{
+                Point2{.x = proxy->position.x - (proxy->width_meters / 2.0), .y = proxy->position.y - (proxy->depth_meters / 2.0)},
+                Point2{.x = proxy->position.x + (proxy->width_meters / 2.0), .y = proxy->position.y - (proxy->depth_meters / 2.0)},
+                Point2{.x = proxy->position.x + (proxy->width_meters / 2.0), .y = proxy->position.y + (proxy->depth_meters / 2.0)},
+                Point2{.x = proxy->position.x - (proxy->width_meters / 2.0), .y = proxy->position.y + (proxy->depth_meters / 2.0)},
+            };
+            append_entry(proxy->level_id, SpatialEntry{
+                .element_id = element.id(),
+                .level_id = proxy->level_id,
+                .kind = ApiElementKind::Proxy,
+                .preferred_hit_kind = HitKind::None,
+                .bounds = bounds_from_points(polygon),
+                .polygon = polygon,
+            });
         }
     }
 
@@ -4134,6 +4188,11 @@ ApiResult<std::vector<HitTestCandidateDTO>> EngineSession::hit_test_point(HitTes
             case ApiElementKind::Stair:
                 if (!entry.polygon.empty() && point_in_polygon(point, entry.polygon)) {
                     push_candidate(HitKind::Stair, 0.0);
+                }
+                break;
+            case ApiElementKind::Proxy:
+                if (!entry.polygon.empty() && point_in_polygon(point, entry.polygon)) {
+                    push_candidate(HitKind::None, 0.0);
                 }
                 break;
             default:

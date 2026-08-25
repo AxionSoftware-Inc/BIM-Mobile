@@ -442,6 +442,7 @@ internal class RenderSceneFilamentHostView(
         "beam",
         "stair",
         "room",
+        "proxy",
       )
     )
   }
@@ -1795,7 +1796,7 @@ internal class RenderSceneFilamentHostView(
       // modes so the model does not become visually flat.
       "floor" -> floorMaterial ?: fallback
       "roof" -> roofMaterial ?: fallback
-      "slab", "column", "beam", "stair" -> concreteMaterial ?: fallback
+      "slab", "column", "beam", "stair", "proxy" -> concreteMaterial ?: fallback
       "ceiling" -> plasterMaterial ?: fallback
       else -> if (displayStyle == "solid") fallback else fallback
     }
@@ -4073,21 +4074,17 @@ internal class RenderSceneFilamentHostView(
       bounds.max.x - bounds.min.x,
       max(bounds.max.y - bounds.min.y, bounds.max.z - bounds.min.z),
     )
-    // Keep the 3D depth range close to the actual model. The previous range
-    // started at a few millimetres and always ended at 160 m+, which gives
-    // poor depth precision for the small edge prisms at fit-to-model zoom and
-    // makes them flicker against the model faces. A generous scene margin
-    // still leaves room for the camera while materially improving precision.
-    val depthMargin = max(sceneSpan * 1.75, 2.0)
-    val near = if (projectionMode == "isometric") {
-      max(0.01, orbitDistance - depthMargin)
-    } else {
-      (orbitDistance * 0.0015).coerceIn(0.002, 0.025)
-    }
+    // Derive the clip range from the actual camera-facing scene depths. The
+    // old fixed 2 mm..160 m range wasted almost all depth precision on empty
+    // space; edge prisms could then alternate with the coplanar model faces
+    // while orbiting or pinching. A small safety margin keeps the model and
+    // the 50 m navigation grid inside the frustum without reopening that
+    // precision gap in elevation/section orthographic views.
+    val (near, sceneFar) = cameraDepthRange(bounds, sceneSpan)
     val far = if (projectionMode == "isometric") {
-      max(orbitDistance + depthMargin, near + 1.0)
+      max(sceneFar, orbitDistance + max(sceneSpan, 50.0) * 1.15)
     } else {
-      max(orbitDistance * 7.0 + sceneSpan * 2.5, 160.0)
+      sceneFar
     }
     if (projectionMode != "isometric" || orbitProjectionStyle == "orthographic") {
       val halfHeight = if (projectionMode == "topDown") topDownZoom else max(orbitDistance * 0.6, 2.0)
@@ -4105,6 +4102,39 @@ internal class RenderSceneFilamentHostView(
     }
 
     camera.setProjection(45.0, aspect, near, far, Camera.Fov.VERTICAL)
+  }
+
+  private fun cameraDepthRange(bounds: SceneBounds, sceneSpan: Double): Pair<Double, Double> {
+    val center = orbitCenter
+    val eye = if (projectionMode == "topDown") {
+      val eyeY = center.y + max(orbitDistance, topDownZoom * 2.5)
+      ScenePoint(center.x, eyeY, center.z)
+    } else {
+      val cosPitch = cos(orbitPitchRadians)
+      ScenePoint(
+        center.x + orbitDistance * cosPitch * cos(orbitYawRadians),
+        center.y + orbitDistance * sin(orbitPitchRadians),
+        center.z + orbitDistance * cosPitch * sin(orbitYawRadians),
+      )
+    }
+    val forward = normalizeScenePoint(ScenePoint(center.x - eye.x, center.y - eye.y, center.z - eye.z))
+    val depths = boxCorners(bounds).map { point ->
+      dotScenePoints(ScenePoint(point.x - eye.x, point.y - eye.y, point.z - eye.z), forward)
+    }
+    val safetyMargin = max(sceneSpan * 0.025, 0.05)
+    val near = max(0.01, (depths.minOrNull() ?: 0.0) - safetyMargin)
+    val far = max(near + 1.0, (depths.maxOrNull() ?: 1.0) + safetyMargin)
+    return near to far
+  }
+
+  private fun dotScenePoints(first: ScenePoint, second: ScenePoint): Double =
+    first.x * second.x + first.y * second.y + first.z * second.z
+
+  private fun normalizeScenePoint(value: ScenePoint): ScenePoint {
+    val length = kotlin.math.sqrt(dotScenePoints(value, value))
+    return if (length <= 1.0e-9) ScenePoint(0.0, 0.0, 0.0) else {
+      ScenePoint(value.x / length, value.y / length, value.z / length)
+    }
   }
 
   private fun minimumOrbitDistance(): Double {
@@ -4196,6 +4226,7 @@ internal class RenderSceneFilamentHostView(
       "beam" -> floatArrayOf(0.30f, 0.36f, 0.42f, 1f)
       "stair" -> floatArrayOf(0.50f, 0.34f, 0.76f, 1f)
       "room" -> floatArrayOf(0.13f, 0.74f, 0.53f, 1f)
+      "proxy" -> floatArrayOf(0.68f, 0.46f, 0.18f, 1f)
       else -> floatArrayOf(0.42f, 0.47f, 0.56f, 1f)
     }
   }

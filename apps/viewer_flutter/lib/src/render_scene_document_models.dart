@@ -491,6 +491,8 @@ String prettySceneKind(String value) {
       return 'Stair';
     case 'room':
       return 'Room';
+    case 'proxy':
+      return 'Imported element';
     default:
       return value.isEmpty ? 'Unknown' : value;
   }
