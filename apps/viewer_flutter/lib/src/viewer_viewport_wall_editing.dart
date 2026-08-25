@@ -38,7 +38,8 @@ extension _ViewerViewportWallEditing on _ViewerHomePageState {
             : null);
     if (opening == null) {
       _updateViewportState(() {
-        _editStatusMessage = 'Move opening uchun door yoki window tanlang.';
+        _editStatusMessage =
+            'Select a door or window before moving an opening.';
       });
       return;
     }
@@ -69,7 +70,7 @@ extension _ViewerViewportWallEditing on _ViewerHomePageState {
         _draftHostWall = hostWall;
         _moveAnchorPoint = anchor;
         _editStatusMessage =
-            'Opening move preview boshlandi. Kursorni devor bo‘ylab suring va Confirm bosing.';
+            'Opening move preview started. Drag along the wall and tap Confirm.';
       });
       _syncOpeningDraft();
       return;
@@ -199,7 +200,7 @@ extension _ViewerViewportWallEditing on _ViewerHomePageState {
       announce: false,
     );
     _updateViewportState(() {
-      _editStatusMessage = 'Opening move preview tayyor.';
+      _editStatusMessage = 'Opening move preview is ready.';
     });
   }
 
@@ -268,8 +269,7 @@ extension _ViewerViewportWallEditing on _ViewerHomePageState {
   ) async {
     if (tappedObject == null || tappedObject.kindKey != 'wall') {
       _updateViewportState(() {
-        _editStatusMessage =
-            'Trim / Extend uchun wallni, o‘zgartirmoqchi bo‘lgan uchiga yaqin joyidan bosing.';
+        _editStatusMessage = 'Tap a wall near the endpoint to trim or extend.';
       });
       return;
     }
@@ -277,8 +277,7 @@ extension _ViewerViewportWallEditing on _ViewerHomePageState {
     final end = RenderSceneEditor.wallEndPoint(tappedObject);
     if (start == null || end == null || tappedObject.elementId == null) {
       _updateViewportState(() {
-        _editStatusMessage =
-            'Tanlangan wallning tahrir qilinadigan axis geometriyasi yo‘q.';
+        _editStatusMessage = 'The selected wall has no editable axis geometry.';
       });
       return;
     }
@@ -312,7 +311,7 @@ extension _ViewerViewportWallEditing on _ViewerHomePageState {
         secondId == null) {
       _updateViewportState(() {
         _editStatusMessage =
-            'Avval ikkita wallni ularning trim/extend qilinadigan uchidan tanlang.';
+            'First select two walls near the endpoints to trim or extend.';
       });
       return;
     }
@@ -387,7 +386,7 @@ extension _ViewerViewportWallEditing on _ViewerHomePageState {
       if (room == null) {
         _updateViewportState(() {
           _editStatusMessage =
-              'Yopiq devorlar orasidagi xona ichiga bosing. Auto Room shu xonani topadi.';
+              'Tap inside a room enclosed by walls. Auto Room will find it.';
         });
         return;
       }
@@ -454,7 +453,7 @@ extension _ViewerViewportWallEditing on _ViewerHomePageState {
         if (polygon == null || polygon.length < 3) {
           _updateViewportState(() {
             _editStatusMessage =
-                'Xona konturi yopilmagan yoki devor geometriyasi yetarli emas.';
+                'The room contour is open or the wall geometry is insufficient.';
           });
           return;
         }
@@ -521,7 +520,7 @@ extension _ViewerViewportWallEditing on _ViewerHomePageState {
       if (pick == null || pick.kindKey != 'wall') {
         _updateViewportState(() {
           _editStatusMessage =
-              'Wall chizig‘iga yaqinroq bosing. Pick Walls rectangle chizmaydi.';
+              'Tap closer to a wall. Pick Walls does not draw a rectangle.';
         });
         return;
       }

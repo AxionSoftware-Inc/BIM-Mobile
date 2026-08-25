@@ -1,0 +1,86 @@
+name: Android production release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_name:
+        description: Android version name, for example 0.2.0
+        required: true
+        default: 0.2.0
+      version_code:
+        description: Monotonically increasing Android version code
+        required: true
+        default: '2'
+      release_ref:
+        description: Git ref to build
+        required: true
+        default: main
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout release ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_ref }}
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Decode Android upload keystore
+        shell: bash
+        working-directory: apps/viewer_flutter
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          test -n "$ANDROID_KEYSTORE_BASE64"
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > release-upload.jks
+
+      - name: Install dependencies
+        working-directory: apps/viewer_flutter
+        run: flutter pub get
+
+      - name: Build signed APK and AAB
+        working-directory: apps/viewer_flutter
+        env:
+          REQUIRE_RELEASE_SIGNING: 'true'
+          ANDROID_KEYSTORE_PATH: ${{ github.workspace }}/apps/viewer_flutter/release-upload.jks
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+        run: |
+          flutter build apk --release \
+            --build-name "${{ inputs.version_name }}" \
+            --build-number "${{ inputs.version_code }}" \
+            --dart-define=APP_RELEASE="viewer_flutter@${{ inputs.version_name }}+${{ inputs.version_code }}" \
+            --dart-define=APP_ENV=production \
+            --dart-define=SENTRY_DSN="$SENTRY_DSN"
+          flutter build appbundle --release \
+            --build-name "${{ inputs.version_name }}" \
+            --build-number "${{ inputs.version_code }}" \
+            --dart-define=APP_RELEASE="viewer_flutter@${{ inputs.version_name }}+${{ inputs.version_code }}" \
+            --dart-define=APP_ENV=production \
+            --dart-define=SENTRY_DSN="$SENTRY_DSN"
+
+      - name: Publish release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tablet-bim-${{ inputs.version_name }}-${{ inputs.version_code }}
+          path: |
+            apps/viewer_flutter/build/app/outputs/flutter-apk/app-release.apk
+            apps/viewer_flutter/build/app/outputs/bundle/release/app-release.aab

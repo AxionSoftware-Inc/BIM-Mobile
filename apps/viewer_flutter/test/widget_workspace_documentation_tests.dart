@@ -21,7 +21,10 @@ void registerWorkspaceDocumentationTests() {
     expect(find.byTooltip('Floor plan'), findsOneWidget);
     expect(find.byTooltip('3D view'), findsOneWidget);
     expect(find.byTooltip('Wall'), findsOneWidget);
-    expect(find.byTooltip('Documentation and PDF'), findsOneWidget);
+    expect(find.byTooltip('Workspace actions'), findsOneWidget);
+    await tester.tap(find.byTooltip('Workspace actions'));
+    await tester.pumpAndSettle();
+    expect(find.text('Documentation and PDF'), findsOneWidget);
   });
 
   testWidgets('App launch shows the project start screen',
@@ -30,6 +33,14 @@ void registerWorkspaceDocumentationTests() {
     await tester.pumpWidget(const ViewerApp());
     await tester.pumpAndSettle();
 
+    while (find.text('Continue').evaluate().isNotEmpty) {
+      await tester.tap(find.text('Continue'));
+      await tester.pumpAndSettle();
+    }
+    if (find.text('Get started').evaluate().isNotEmpty) {
+      await tester.tap(find.text('Get started'));
+      await tester.pumpAndSettle();
+    }
     expect(find.text('Start a project'), findsOneWidget);
     expect(find.text('Open project'), findsOneWidget);
     expect(find.text('Create new'), findsOneWidget);
@@ -230,8 +241,8 @@ void registerWorkspaceDocumentationTests() {
     await tester.pumpAndSettle();
 
     expect(find.textContaining('A101 · Unnamed Sheet'), findsWidgets);
-    expect(find.text('Sheet hali bo‘sh'), findsOneWidget);
-    expect(find.textContaining('Floor Plan, Elevation'), findsOneWidget);
+    expect(find.text('Sheet is empty'), findsOneWidget);
+    expect(find.textContaining('Long-press a Floor Plan'), findsOneWidget);
   });
 
   testWidgets('documentation service builds a real PDF sheet',

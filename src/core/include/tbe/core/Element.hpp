@@ -8,10 +8,31 @@
 #include <variant>
 #include <vector>
 
+#include "tbe/core/Units.hpp"
+
 namespace tbe::core {
 
 using ElementId = std::uint64_t;
 using Revision = std::uint64_t;
+
+enum class MetadataValueKind {
+    Text,
+    Number,
+    Boolean,
+    Length,
+    Area,
+    Volume,
+    Angle,
+    ElementReference,
+};
+
+struct MetadataValue {
+    MetadataValueKind kind{MetadataValueKind::Text};
+    std::string value{};
+    std::string unit{};
+};
+
+using MetadataMap = std::map<std::string, MetadataValue>;
 
 enum class ElementKind {
     Level,
@@ -593,12 +614,21 @@ class Element {
 public:
     using Payload = std::variant<LevelData, WallData, DoorData, WindowData, RoomData, SlabData, RoofData, ColumnData, BeamData, StairData>;
 
-    Element(ElementId id, ElementKind kind, std::string name, Payload payload, Revision revision = 1);
+    Element(
+        ElementId id,
+        ElementKind kind,
+        std::string name,
+        Payload payload,
+        Revision revision = 1,
+        MetadataMap metadata = {}
+    );
 
     [[nodiscard]] ElementId id() const noexcept;
     [[nodiscard]] ElementKind kind() const noexcept;
     [[nodiscard]] std::string_view name() const noexcept;
     [[nodiscard]] Revision revision() const noexcept;
+    [[nodiscard]] const MetadataMap& metadata() const noexcept;
+    [[nodiscard]] MetadataMap& metadata() noexcept;
 
     [[nodiscard]] const WallData* wall() const noexcept;
     [[nodiscard]] WallData* wall() noexcept;
@@ -628,6 +658,7 @@ private:
     std::string name_;
     Revision revision_{};
     Payload payload_;
+    MetadataMap metadata_{};
 };
 
 struct ElementSnapshot {

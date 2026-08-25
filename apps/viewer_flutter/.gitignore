@@ -6,3 +6,6 @@ build/
 macos/Flutter/ephemeral/
 ios/Flutter/ephemeral/
 android/.gradle/
+android/key.properties
+android/*.jks
+android/*.keystore

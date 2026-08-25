@@ -642,12 +642,79 @@ extension _TbeViewerApiMethods on TbeViewerApi {
     _check(handle, _deleteElement(handle, elementId));
   }
 
+  void undo(ffi.Pointer<ffi.Void> handle) {
+    _check(handle, _undo(handle));
+  }
+
+  void redo(ffi.Pointer<ffi.Void> handle) {
+    _check(handle, _redo(handle));
+  }
+
+  ({int undoCount, int redoCount}) historyCounts(
+    ffi.Pointer<ffi.Void> handle,
+  ) {
+    final undoCount = calloc<ffi.Uint64>();
+    final redoCount = calloc<ffi.Uint64>();
+    try {
+      _check(handle, _getHistoryCounts(handle, undoCount, redoCount));
+      return (undoCount: undoCount.value, redoCount: redoCount.value);
+    } finally {
+      calloc.free(undoCount);
+      calloc.free(redoCount);
+    }
+  }
+
   void importProjectPackage(ffi.Pointer<ffi.Void> handle, String path) {
     final pathPtr = path.toNativeUtf8();
     try {
       _check(handle, _importProjectPackage(handle, pathPtr, 2));
     } finally {
       calloc.free(pathPtr);
+    }
+  }
+
+  void importIfc(ffi.Pointer<ffi.Void> handle, String path) {
+    final pathPtr = path.toNativeUtf8();
+    try {
+      _check(handle, _importIfc(handle, pathPtr, 2));
+    } finally {
+      calloc.free(pathPtr);
+    }
+  }
+
+  void exportIfc(ffi.Pointer<ffi.Void> handle, String path) {
+    final pathPtr = path.toNativeUtf8();
+    try {
+      _check(handle, _exportIfc(handle, pathPtr));
+    } finally {
+      calloc.free(pathPtr);
+    }
+  }
+
+  Map<String, dynamic> getUnitSettings(ffi.Pointer<ffi.Void> handle) {
+    final json = _readOwnedString(handle, _getUnitSettings);
+    final decoded = jsonDecode(json);
+    if (decoded is! Map) {
+      throw TbeApiException('Invalid unit settings response');
+    }
+    return decoded.cast<String, dynamic>();
+  }
+
+  void setUnitSettings(
+    ffi.Pointer<ffi.Void> handle, {
+    required String system,
+    required String length,
+    required String angle,
+  }) {
+    final systemPtr = system.toNativeUtf8();
+    final lengthPtr = length.toNativeUtf8();
+    final anglePtr = angle.toNativeUtf8();
+    try {
+      _check(handle, _setUnitSettings(handle, systemPtr, lengthPtr, anglePtr));
+    } finally {
+      calloc.free(systemPtr);
+      calloc.free(lengthPtr);
+      calloc.free(anglePtr);
     }
   }
 

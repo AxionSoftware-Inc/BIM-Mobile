@@ -94,6 +94,24 @@ class ProjectLifecycleService<T extends ViewerProjectSession> {
     }
   }
 
+  Future<ProjectSessionResult<T>> loadIfc({
+    required String projectName,
+    required String ifcPath,
+  }) async {
+    final session = await _sessionFactory.create();
+    try {
+      final load = await session.loadFromIfc(ifcPath: ifcPath);
+      return ProjectSessionResult<T>(
+        session: session,
+        createdSession: true,
+        load: load,
+      );
+    } catch (_) {
+      session.dispose();
+      rethrow;
+    }
+  }
+
   Future<ProjectSessionResult<T>> loadPackage({
     required String packagePath,
   }) async {

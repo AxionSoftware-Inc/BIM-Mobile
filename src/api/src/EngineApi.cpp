@@ -1,6 +1,7 @@
 #include "tbe/api/EngineApi.hpp"
 
 #include "tbe/core/Project.hpp"
+#include "tbe/core/IfcExchange.hpp"
 #include "tbe/core/JobSystem.hpp"
 
 #include <algorithm>
@@ -36,6 +37,7 @@ using tbe::core::Line2;
 using tbe::core::Point2;
 using tbe::core::Point3;
 using tbe::core::Project;
+using tbe::core::UnitSettings;
 
 ApiMaterialCategory to_api_material_category(tbe::core::MaterialCategory category);
 
@@ -1261,6 +1263,14 @@ RenderSceneDTO build_render_scene(
             if (host_level == object.metadata.end() ||
                 !visible_level_ids->contains(static_cast<ElementId>(std::stoull(host_level->second)))) {
                 return;
+            }
+        }
+        if (const auto* source = document.find_ptr(object.element_id.value); source != nullptr) {
+            for (const auto& [key, value] : source->metadata()) {
+                const auto property_key = "property." + key;
+                object.metadata[property_key] = value.value;
+                object.metadata[property_key + ".type"] = std::to_string(static_cast<int>(value.kind));
+                if (!value.unit.empty()) object.metadata[property_key + ".unit"] = value.unit;
             }
         }
         if (object.mesh.positions.empty() || object.mesh.indices.empty()) {
@@ -3761,6 +3771,73 @@ ApiVoidResult EngineSession::undo() {
     } catch (const std::exception& error) {
         return error_void(status_from_exception(error), error.what());
     }
+}
+
+ApiVoidResult EngineSession::export_ifc(const std::string& path) const {
+    try {
+        auto recompute = recompute_impl(*impl_, ComputeMode::FinalExact);
+        if (!recompute.ok()) return error_void(recompute.status, recompute.message);
+        tbe::core::IfcExchangeReport report;
+        tbe::core::export_ifc(impl_->document(), path, &report);
+        return success_void();
+    } catch (const std::exception& error) {
+        return error_void(status_from_exception(error), error.what());
+    }
+}
+
+ApiVoidResult EngineSession::import_ifc(const std::string& path, LoadMode mode) {
+    try {
+        tbe::core::IfcExchangeReport report;
+        auto imported = tbe::core::import_ifc(path, std::filesystem::path(path).stem().string(), &report);
+        if (report.imported_elements == 0 && !report.warnings.empty()) {
+            return error_void(ApiStatus::InvalidArgument, report.warnings.front());
+        }
+        const auto before = impl_->project.to_json();
+        impl_->project = Project(std::string(imported.name()));
+        impl_->project.active_document() = std::move(imported);
+        impl_->clear_caches();
+        impl_->mark_all_derived_dirty();
+        rebuild_spatial_index_impl(*impl_);
+        if (mode == LoadMode::Repair) {
+            (void)repair_project_impl(*impl_, RepairOptionsDTO{});
+        }
+        impl_->undo_stack.clear();
+        impl_->undo_stack.push_back(SessionTransaction{"Import IFC", before, impl_->project.to_json()});
+        impl_->redo_stack.clear();
+        auto result = success_void();
+        for (const auto& warning : report.warnings) result.message += warning + " ";
+        return result;
+    } catch (const std::exception& error) {
+        return error_void(status_from_exception(error), error.what());
+    }
+}
+
+ApiResult<UnitSettingsDTO> EngineSession::get_unit_settings() const {
+    const auto& settings = impl_->document().unit_settings();
+    return success_result(UnitSettingsDTO{
+        .system = std::string(tbe::core::unit_system_to_string(settings.system)),
+        .length = std::string(tbe::core::length_unit_to_string(settings.length)),
+        .angle = settings.angle,
+    });
+}
+
+ApiVoidResult EngineSession::set_unit_settings(UnitSettingsDTO settings) {
+    return apply_mutation(*impl_, "Set project units", [&](Document& document) {
+        document.set_unit_settings(UnitSettings{
+            .system = tbe::core::string_to_unit_system(settings.system),
+            .length = tbe::core::string_to_length_unit(settings.length),
+            .angle = std::move(settings.angle),
+        });
+    });
+}
+
+ApiResult<HistorySummaryDTO> EngineSession::get_history_summary() const {
+    return query_result<HistorySummaryDTO>([&]() {
+        return HistorySummaryDTO{
+            .undo_count = impl_->undo_stack.size(),
+            .redo_count = impl_->redo_stack.size(),
+        };
+    });
 }
 
 ApiVoidResult EngineSession::redo() {

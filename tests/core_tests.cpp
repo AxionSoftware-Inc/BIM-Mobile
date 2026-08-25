@@ -1,6 +1,7 @@
 #include "tbe/core/Command.hpp"
 #include "tbe/core/Document.hpp"
 #include "tbe/core/GeometryService.hpp"
+#include "tbe/core/IfcExchange.hpp"
 #include "tbe/core/JobSystem.hpp"
 #include "tbe/core/Project.hpp"
 
@@ -2516,6 +2517,76 @@ int main() {
         const auto* unchanged_crossing_wall = trim_document.find_ptr(crossing_wall)->wall();
         assert(near(unchanged_opening_wall->axis.start.x, 6.0));
         assert(near(unchanged_crossing_wall->axis.end.y, -0.5));
+    }
+
+    {
+        // Units are display settings; authored geometry remains canonical
+        // meters and typed IFC metadata survives both JSON and IFC exchange.
+        tbe::core::Document exchange_document{"Exchange Test"};
+        exchange_document.set_unit_settings(tbe::core::UnitSettings{
+            .system = tbe::core::UnitSystem::Imperial,
+            .length = tbe::core::LengthUnit::Foot,
+            .angle = "degrees",
+        });
+        const auto level = exchange_document.create_level("Ground Floor", 0.0, 3.0);
+        const auto wall = exchange_document.create_wall("Exterior Wall", {{0.0, 0.0}, {5.0, 0.0}}, 0.2, 3.0, level);
+        auto* wall_element = exchange_document.find_ptr(wall);
+        assert(wall_element != nullptr);
+        wall_element->metadata()["FireRating"] = tbe::core::MetadataValue{
+            .kind = tbe::core::MetadataValueKind::Text,
+            .value = "EI60",
+        };
+        wall_element->metadata()["Height"] = tbe::core::MetadataValue{
+            .kind = tbe::core::MetadataValueKind::Length,
+            .value = "3.0",
+            .unit = "meter",
+        };
+        const auto json_round_trip = tbe::core::Document::from_json(exchange_document.to_json());
+        assert(json_round_trip.unit_settings().system == tbe::core::UnitSystem::Imperial);
+        assert(json_round_trip.unit_settings().length == tbe::core::LengthUnit::Foot);
+        assert(json_round_trip.find_ptr(wall)->metadata().at("FireRating").value == "EI60");
+        assert(json_round_trip.find_ptr(wall)->metadata().at("Height").kind == tbe::core::MetadataValueKind::Length);
+
+        const auto ifc_path = std::filesystem::temp_directory_path() / "tbe_exchange_roundtrip.ifc";
+        tbe::core::IfcExchangeReport export_report;
+        tbe::core::export_ifc(exchange_document, ifc_path, &export_report);
+        assert(export_report.exported_elements == exchange_document.elements().size());
+        const auto ifc_text = read_text(ifc_path);
+        assert(ifc_text.find("FILE_SCHEMA(('IFC4'))") != std::string::npos);
+        assert(ifc_text.find("IFCWALLSTANDARDCASE") != std::string::npos);
+        tbe::core::IfcExchangeReport import_report;
+        const auto imported = tbe::core::import_ifc(ifc_path, "Imported", &import_report);
+        assert(import_report.imported_elements == exchange_document.elements().size());
+        assert(imported.unit_settings().length == tbe::core::LengthUnit::Foot);
+        assert(imported.find_ptr(wall)->metadata().at("FireRating").value == "EI60");
+        std::filesystem::remove(ifc_path);
+
+        const auto external_ifc_path = std::filesystem::temp_directory_path() / "tbe_external_semantic.ifc";
+        std::ofstream external_ifc(external_ifc_path);
+        external_ifc << "ISO-10303-21;\nDATA;\n"
+            << "#1=IFCSIUNIT(*,.LENGTHUNIT.,.MILLI.,.METRE.);\n"
+            << "#2=IFCPROPERTYSINGLEVALUE('Name',$,IFCLABEL(''),$);\n"
+            << "#10=IFCBUILDINGSTOREY('L1',$,'Ground Floor',$,$,#11,$,'Ground Floor',.ELEMENT.,0.);\n"
+            << "#11=IFCLOCALPLACEMENT($,#12);\n"
+            << "#12=IFCAXIS2PLACEMENT3D(#13,$,$);\n"
+            << "#13=IFCCARTESIANPOINT((2000.,3000.,0.));\n"
+            << "#20=IFCWALLSTANDARDCASE('W1',$,'External Wall',$,$,#21,$,'Wall',$);\n"
+            << "#21=IFCLOCALPLACEMENT($,#22);\n"
+            << "#22=IFCAXIS2PLACEMENT3D(#23,$,$);\n"
+            << "#23=IFCCARTESIANPOINT((2000.,3000.,0.));\n"
+            << "ENDSEC;\nEND-ISO-10303-21;\n";
+        external_ifc.close();
+        tbe::core::IfcExchangeReport external_report;
+        const auto external = tbe::core::import_ifc(external_ifc_path, "External", &external_report);
+        assert(external_report.imported_elements >= 2);
+        const auto imported_external_wall = std::find_if(external.elements().begin(), external.elements().end(),
+            [](const auto& element) { return element.wall() != nullptr; });
+        assert(imported_external_wall != external.elements().end());
+        assert(imported_external_wall->metadata().at("ifc_guid").value == "W1");
+        assert(near(imported_external_wall->wall()->axis.start.x, 2.0));
+        assert(near(imported_external_wall->wall()->axis.start.y, 3.0));
+        assert(!external_report.warnings.empty());
+        std::filesystem::remove(external_ifc_path);
     }
 
     return 0;

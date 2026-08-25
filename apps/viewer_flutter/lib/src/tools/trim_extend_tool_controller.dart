@@ -39,7 +39,7 @@ class TrimExtendToolController extends ChangeNotifier {
   }) {
     final id = wall.elementId;
     if (id == null || wall.kindKey != 'wall') {
-      _message = 'Trim/Extend faqat stable IDli wall uchun ishlaydi.';
+      _message = 'Trim/Extend works only with walls that have a stable ID.';
       notifyListeners();
       return;
     }
@@ -53,7 +53,7 @@ class TrimExtendToolController extends ChangeNotifier {
       _second = null;
       _preview = null;
       _message =
-          'Birinchi wall tanlandi. O‘zgartiriladigan uchi yaqinidan ikkinchi wallni bosing.';
+          'First wall selected. Tap the second wall near the endpoint to edit.';
       notifyListeners();
       return;
     }
@@ -66,8 +66,8 @@ class TrimExtendToolController extends ChangeNotifier {
       secondEndpoint: selection.endpoint,
     );
     _message = _preview == null
-        ? 'Bu wall uchlarini trim/extend qilib bog‘lab bo‘lmadi. Parallel yoki nol uzunlikli natija chiqdi.'
-        : 'Preview tayyor. Confirm bilan ikkala wall bitta transactionda yangilanadi.';
+        ? 'The wall endpoints could not be joined. The result would be parallel or zero length.'
+        : 'Preview ready. Confirm updates both walls in one transaction.';
     notifyListeners();
   }
 

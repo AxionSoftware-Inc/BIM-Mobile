@@ -14,8 +14,10 @@ add_library(tbe_core
     src/Command.cpp
     src/Document.cpp
     src/Element.cpp
+    src/IfcExchange.cpp
     src/JobSystem.cpp
     src/Project.cpp
+    src/Units.cpp
 )
 
 set_target_properties(tbe_core_geometry PROPERTIES POSITION_INDEPENDENT_CODE ON)

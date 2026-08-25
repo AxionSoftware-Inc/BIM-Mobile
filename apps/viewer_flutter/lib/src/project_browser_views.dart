@@ -104,7 +104,7 @@ class ProjectBrowserViews extends StatelessWidget {
               dense: true,
               leading: Icon(icon, size: 18),
               title: Text(dragView.label),
-              subtitle: const Text('Sheetga joylashtirish'),
+              subtitle: const Text('Drag to place on a sheet'),
             ),
           ),
         ),

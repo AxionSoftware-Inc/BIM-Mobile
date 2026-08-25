@@ -244,8 +244,7 @@ extension _ViewerWorkspaceInteractions on _ViewerHomePageState {
             : (point == null ? null : _findWallNearPlanPoint(scene, point));
         if (hostWall == null || point == null) {
           _updateViewportState(() {
-            _editStatusMessage =
-                'Opening uchun wall ustiga bosib ushlab turing.';
+            _editStatusMessage = 'Long-press a wall to place an opening.';
             _draftHostWall = null;
           });
           return;

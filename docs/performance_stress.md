@@ -54,6 +54,24 @@ save and reload, plus object/vertex/triangle counts. `Correctness gate: PASS`
 is required. The device-class geometry budget is an early review signal, not a
 substitute for Android CPU, FPS and thermal telemetry on a real tablet.
 
+## 100k element contract
+
+Run the reproducible large-model gate with:
+
+```sh
+tbe_cli --benchmark-large-model --element-count 100000 --memory-budget-mib 768
+```
+
+It creates at least 100,000 lightweight semantic level elements plus a small
+real mesh set and checks strict load, full project payload sizing, nearby-level
+streaming reduction, worker-thread loading, object-count correctness, and a
+resident-memory budget. This isolates 100k-element session behavior;
+residential geometry stress remains in the template benchmark.
+
+The scheduled/manual `.github/workflows/performance.yml` runs the same contract
+with a 1536 MiB CI-host budget. Android profiling is still required for frame
+time and thermal acceptance on real tablets.
+
 ## Limitations
 
 - The stress model is orthogonal and synthetic.

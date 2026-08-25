@@ -31,6 +31,26 @@ class ProjectPersistenceService {
         json: json,
       );
 
+  Future<ViewerLoadResult> replaceFromIfc({required String ifcPath}) =>
+      _requireRepository().loadFromIfc(ifcPath: ifcPath);
+
+  Future<void> exportIfc({required String path}) =>
+      _requireRepository().exportIfc(path: path);
+
+  Future<Map<String, dynamic>> getUnitSettings() =>
+      _requireRepository().getUnitSettings();
+
+  Future<void> setUnitSettings({
+    required String system,
+    required String length,
+    required String angle,
+  }) =>
+      _requireRepository().setUnitSettings(
+        system: system,
+        length: length,
+        angle: angle,
+      );
+
   Future<ViewerLoadResult> reload() => _requireRepository().reloadCurrent();
 
   ViewerProjectGateway _requireRepository() {

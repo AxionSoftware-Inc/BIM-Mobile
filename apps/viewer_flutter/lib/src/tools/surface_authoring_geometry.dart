@@ -130,18 +130,18 @@ final class SurfaceAuthoringGeometry {
     required bool closed,
   }) {
     if (points.length < 3) {
-      return 'Kamida 3 ta boundary nuqta kerak.';
+      return 'At least three boundary points are required.';
     }
     if (!closed) {
       if (!isValidBoundary(points, closed: true)) {
         return 'Konturda kesishgan yoki juda qisqa segment bor.';
       }
-      return 'Avval Close contour bosing.';
+      return 'Tap Close contour first.';
     }
     if (!isValidBoundary(points, closed: true)) {
       return 'Konturda kesishgan yoki juda qisqa segment bor.';
     }
-    return 'Kontur Finish uchun tayyor.';
+    return 'Contour is ready for Finish.';
   }
 
   static bool isNearFirstPoint(

@@ -149,12 +149,17 @@ TbeApiStatusCode tbe_get_last_repair_report(TbeEngineHandle* handle, TbeRepairSu
 TbeApiStatusCode tbe_repair_current_project(TbeEngineHandle* handle, TbeRepairSummary* out_summary);
 TbeApiStatusCode tbe_export_project_package(TbeEngineHandle* handle, const char* path);
 TbeApiStatusCode tbe_import_project_package(TbeEngineHandle* handle, const char* path, int load_mode);
+TbeApiStatusCode tbe_export_ifc(TbeEngineHandle* handle, const char* path);
+TbeApiStatusCode tbe_import_ifc(TbeEngineHandle* handle, const char* path, int load_mode);
+TbeApiStatusCode tbe_get_unit_settings(TbeEngineHandle* handle, char** out_json);
+TbeApiStatusCode tbe_set_unit_settings(TbeEngineHandle* handle, const char* system, const char* length, const char* angle);
 TbeApiStatusCode tbe_export_render_scene_json(TbeEngineHandle* handle, const char* path);
 TbeApiStatusCode tbe_get_render_scene_json(TbeEngineHandle* handle, char** out_json);
 TbeApiStatusCode tbe_get_render_scene_json_near_level(TbeEngineHandle* handle, uint64_t active_level_id, int adjacent_level_count, char** out_json);
 TbeApiStatusCode tbe_get_section_scene_json(TbeEngineHandle* handle, TbeVec2 start, TbeVec2 end, char** out_json);
 TbeApiStatusCode tbe_set_performance_profile(TbeEngineHandle* handle, int profile);
 TbeApiStatusCode tbe_set_compute_mode(TbeEngineHandle* handle, int mode);
+TbeApiStatusCode tbe_get_history_counts(TbeEngineHandle* handle, uint64_t* out_undo_count, uint64_t* out_redo_count);
 TbeApiStatusCode tbe_create_residential_template(TbeEngineHandle* handle, int building_count, int story_count, uint64_t* out_primary_level_id);
 TbeApiStatusCode tbe_create_level(
     TbeEngineHandle* handle,

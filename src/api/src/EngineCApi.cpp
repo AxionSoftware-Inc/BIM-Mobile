@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <sstream>
 #include <string>
 
 struct TbeEngineHandle {
@@ -941,6 +942,57 @@ TbeApiStatusCode tbe_redo(TbeEngineHandle* handle) {
         return null_handle_error(handle);
     }
     return apply_result(handle, handle->session->redo());
+}
+
+TbeApiStatusCode tbe_export_ifc(TbeEngineHandle* handle, const char* path) {
+    if (handle == nullptr || handle->session == nullptr || path == nullptr) return null_handle_error(handle);
+    return apply_result(handle, handle->session->export_ifc(path));
+}
+
+TbeApiStatusCode tbe_import_ifc(TbeEngineHandle* handle, const char* path, int load_mode) {
+    if (handle == nullptr || handle->session == nullptr || path == nullptr) return null_handle_error(handle);
+    return apply_result(handle, handle->session->import_ifc(path, static_cast<tbe::api::LoadMode>(load_mode)));
+}
+
+TbeApiStatusCode tbe_get_unit_settings(TbeEngineHandle* handle, char** out_json) {
+    if (handle == nullptr || handle->session == nullptr || out_json == nullptr) return null_handle_error(handle);
+    const auto result = handle->session->get_unit_settings();
+    if (!result.ok() || !result.value.has_value()) return apply_result(handle, result);
+    const auto& settings = *result.value;
+    std::ostringstream json;
+    json << "{\"system\":\"" << settings.system << "\",\"length\":\"" << settings.length
+         << "\",\"angle\":\"" << settings.angle << "\"}";
+    const auto value = json.str();
+    auto* buffer = static_cast<char*>(std::malloc(value.size() + 1));
+    if (buffer == nullptr) {
+        handle->last_error = "failed to allocate unit settings buffer";
+        return TBE_API_INTERNAL_ERROR;
+    }
+    std::memcpy(buffer, value.c_str(), value.size() + 1);
+    *out_json = buffer;
+    handle->last_error.clear();
+    return TBE_API_OK;
+}
+
+TbeApiStatusCode tbe_set_unit_settings(TbeEngineHandle* handle, const char* system, const char* length, const char* angle) {
+    if (handle == nullptr || handle->session == nullptr || system == nullptr || length == nullptr || angle == nullptr) return null_handle_error(handle);
+    return apply_result(handle, handle->session->set_unit_settings(tbe::api::UnitSettingsDTO{system, length, angle}));
+}
+
+TbeApiStatusCode tbe_get_history_counts(
+    TbeEngineHandle* handle,
+    uint64_t* out_undo_count,
+    uint64_t* out_redo_count
+) {
+    if (handle == nullptr || handle->session == nullptr || out_undo_count == nullptr || out_redo_count == nullptr) {
+        return null_handle_error(handle);
+    }
+    const auto result = handle->session->get_history_summary();
+    if (result.ok() && result.value.has_value()) {
+        *out_undo_count = static_cast<uint64_t>(result.value->undo_count);
+        *out_redo_count = static_cast<uint64_t>(result.value->redo_count);
+    }
+    return apply_result(handle, result);
 }
 
 TbeApiStatusCode tbe_export_svg(TbeEngineHandle* handle, const char* path) {

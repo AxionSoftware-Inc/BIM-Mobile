@@ -484,6 +484,17 @@ struct DirtySummaryDTO {
     bool has_export_work{};
 };
 
+struct UnitSettingsDTO {
+    std::string system{"metric"};
+    std::string length{"meter"};
+    std::string angle{"degrees"};
+};
+
+struct HistorySummaryDTO {
+    std::size_t undo_count{};
+    std::size_t redo_count{};
+};
+
 struct HitTestCandidateDTO {
     ElementIdDTO element_id{};
     ApiElementKind element_kind{ApiElementKind::Unknown};
@@ -590,6 +601,10 @@ public:
     ApiResult<RepairReportDTO> repair_current_project(RepairOptionsDTO options = {});
     ApiVoidResult export_project_package(const std::string& path, PackageExportOptionsDTO options = {}) const;
     ApiVoidResult import_project_package(const std::string& path, LoadMode mode = LoadMode::Strict);
+    ApiVoidResult export_ifc(const std::string& path) const;
+    ApiVoidResult import_ifc(const std::string& path, LoadMode mode = LoadMode::Strict);
+    ApiResult<UnitSettingsDTO> get_unit_settings() const;
+    ApiVoidResult set_unit_settings(UnitSettingsDTO settings);
     ApiResult<RenderSceneDTO> get_render_scene() const;
     ApiResult<std::string> get_render_scene_json() const;
     ApiResult<std::string> get_render_scene_json_near_level(std::uint64_t active_level_id, int adjacent_level_count = 1) const;
@@ -607,6 +622,7 @@ public:
     // semantic model through local RenderScene mutations.
     ApiResult<ElementIdDTO> create_residential_template(int building_count, int story_count);
     ApiResult<DirtySummaryDTO> get_dirty_summary() const;
+    ApiResult<HistorySummaryDTO> get_history_summary() const;
     ApiResult<FreshnessSummaryDTO> get_freshness_summary() const;
     ApiVoidResult recompute_dirty();
     ApiVoidResult recompute_all_final();

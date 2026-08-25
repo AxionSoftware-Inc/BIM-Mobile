@@ -319,14 +319,14 @@ extension _ViewerViewportInput on _ViewerHomePageState {
     final scene = _scene;
     if (scene == null || modelPoint == null) {
       _updateViewportState(() =>
-          _editStatusMessage = 'Stair uchun 2D plan’da ikki nuqta qo‘ying.');
+          _editStatusMessage = 'Place two points on the 2D plan for a stair.');
       return;
     }
     final active = _activeLevel(scene);
     final top = active == null ? null : _nextHigherLevel(scene, active.levelId);
     if (active == null || top == null) {
       _updateViewportState(() => _editStatusMessage =
-          'Stair uchun Base Level va undan yuqori Top Level kerak.');
+          'A stair needs a Base Level and a higher Top Level.');
       return;
     }
     final point =
@@ -373,8 +373,8 @@ extension _ViewerViewportInput on _ViewerHomePageState {
     if (preview == null) {
       final run = start.distanceTo(end);
       _updateViewportState(() => _editStatusMessage = run < 0.8
-          ? 'Stair run kamida 0.80 m bo‘lishi kerak.'
-          : 'Top Level Base Leveldan yuqorida bo‘lishi kerak.');
+          ? 'A stair run must be at least 0.80 m.'
+          : 'Top Level must be above Base Level.');
       return;
     }
     final result = await _authoringCommands.createStair(
@@ -497,7 +497,7 @@ extension _ViewerViewportInput on _ViewerHomePageState {
     if (activeLevelId == null) {
       if (mounted) {
         _updateViewportState(() {
-          _editStatusMessage = 'Wall chizish uchun Base Level tanlang.';
+          _editStatusMessage = 'Select a Base Level before drawing a wall.';
         });
       }
       return;
@@ -522,7 +522,7 @@ extension _ViewerViewportInput on _ViewerHomePageState {
     if (!outcome.success || outcome.scene == null) {
       if (mounted) {
         _updateViewportState(() {
-          _editStatusMessage = outcome.error ?? 'Wall yaratilmadi.';
+          _editStatusMessage = outcome.error ?? 'Wall could not be created.';
         });
       }
       return;
@@ -624,7 +624,7 @@ extension _ViewerViewportInput on _ViewerHomePageState {
         : (selected?.kindKey == 'wall' ? selected : null);
     if (wall == null) {
       _updateViewportState(() {
-        _editStatusMessage = 'Move wall uchun avval devorni tanlang.';
+        _editStatusMessage = 'Select a wall before moving it.';
       });
       return;
     }
@@ -669,8 +669,8 @@ extension _ViewerViewportInput on _ViewerHomePageState {
         _draftWallStart = start;
         _draftWallEnd = end;
         _editStatusMessage = moveMode == WallMoveMode.translate
-            ? 'Wall move preview boshlandi. Devorni torting.'
-            : 'Wall endpoint preview boshlandi. Uchini torting.';
+            ? 'Wall move preview started. Drag the wall.'
+            : 'Wall endpoint preview started. Drag the endpoint.';
       });
       _viewportController.setWallDraft(start, end);
       return;
@@ -688,7 +688,7 @@ extension _ViewerViewportInput on _ViewerHomePageState {
   }) {
     if (!_projectionMode.isElevation) {
       _updateViewportState(() {
-        _editStatusMessage = 'Move level faqat elevation view’da ishlaydi.';
+        _editStatusMessage = 'Move level works only in an elevation view.';
       });
       return;
     }
@@ -715,7 +715,7 @@ extension _ViewerViewportInput on _ViewerHomePageState {
       _draftWallStart = preview.$1;
       _draftWallEnd = preview.$2;
       _editStatusMessage =
-          '${level.name} move preview boshlandi (${level.elevationMeters.toStringAsFixed(2)} m).';
+          '${level.name} move preview started (${level.elevationMeters.toStringAsFixed(2)} m).';
     });
     _viewportController.setWallDraft(preview.$1, preview.$2);
   }

@@ -1,8 +1,14 @@
 import 'package:flutter/material.dart';
 
+import 'src/telemetry_service.dart';
 import 'src/viewer_app.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(const ViewerApp(preferEngineBackedBundledSample: true));
+  await AppTelemetry.initialize(
+    appRunner: () {
+      AppTelemetry.track('app_started');
+      runApp(const ViewerApp(preferEngineBackedBundledSample: true));
+    },
+  );
 }

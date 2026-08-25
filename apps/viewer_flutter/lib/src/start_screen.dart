@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'ifc_template_catalog.dart';
+import 'project_recovery_store.dart';
 import 'workspace_chrome.dart';
 
 /// Revit-style launch page shown before a project is opened.
@@ -10,6 +12,10 @@ class StartScreen extends StatelessWidget {
     required this.onCreate,
     required this.onSelectTemplate,
     required this.onSettings,
+    this.onSelectIfcTemplate,
+    this.recoveryEntry,
+    this.onRecover,
+    this.onDismissRecovery,
     this.busy = false,
     this.errorMessage,
   });
@@ -18,6 +24,10 @@ class StartScreen extends StatelessWidget {
   final VoidCallback onCreate;
   final ValueChanged<WorkspaceTemplate> onSelectTemplate;
   final VoidCallback onSettings;
+  final ValueChanged<IfcTemplate>? onSelectIfcTemplate;
+  final ProjectRecoveryEntry? recoveryEntry;
+  final VoidCallback? onRecover;
+  final VoidCallback? onDismissRecovery;
   final bool busy;
   final String? errorMessage;
 
@@ -75,6 +85,15 @@ class StartScreen extends StatelessWidget {
                         onOpen: onOpen,
                         onCreate: onCreate,
                       ),
+                      if (recoveryEntry != null) ...<Widget>[
+                        const SizedBox(height: 14),
+                        _RecoveryBanner(
+                          entry: recoveryEntry!,
+                          busy: busy,
+                          onRecover: onRecover,
+                          onDismiss: onDismissRecovery,
+                        ),
+                      ],
                       if (errorMessage != null) ...<Widget>[
                         const SizedBox(height: 18),
                         _StartError(message: errorMessage!),
@@ -132,12 +151,389 @@ class StartScreen extends StatelessWidget {
                           ),
                         ],
                       ),
+                      const SizedBox(height: 30),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: <Widget>[
+                          Expanded(
+                            child: Text(
+                              'IFC sample projects',
+                              style: theme.textTheme.headlineSmall?.copyWith(
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                          Text(
+                            'Download on first open',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 14),
+                      Wrap(
+                        spacing: cardGap,
+                        runSpacing: cardGap,
+                        children: onlineIfcTemplates
+                            .map(
+                              (template) => _IfcTemplateCard(
+                                width: cardWidth,
+                                template: template,
+                                onPressed: busy || onSelectIfcTemplate == null
+                                    ? null
+                                    : () => onSelectIfcTemplate!(template),
+                              ),
+                            )
+                            .toList(),
+                      ),
                     ],
                   ),
                 ),
               ),
             );
           },
+        ),
+      ),
+    );
+  }
+}
+
+class _IfcTemplateCard extends StatelessWidget {
+  const _IfcTemplateCard({
+    required this.width,
+    required this.template,
+    required this.onPressed,
+  });
+
+  final double width;
+  final IfcTemplate template;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final enabled = onPressed != null;
+    return SizedBox(
+      width: width,
+      height: 324,
+      child: Card(
+        clipBehavior: Clip.antiAlias,
+        elevation: enabled ? 1.5 : 0,
+        shadowColor: colors.shadow.withValues(alpha: 0.18),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+          side: BorderSide(color: colors.outlineVariant.withValues(alpha: 0.7)),
+        ),
+        child: InkWell(
+          onTap: onPressed,
+          child: Column(
+            children: <Widget>[
+              SizedBox(
+                width: double.infinity,
+                height: 188,
+                child: RepaintBoundary(
+                  child: _IfcTemplatePreview(
+                    kind: template.kind,
+                    primary: colors.primary,
+                    secondary: colors.tertiary,
+                    surface: colors.surfaceContainerHighest,
+                  ),
+                ),
+              ),
+              Divider(
+                height: 1,
+                color: colors.outlineVariant.withValues(alpha: 0.68),
+              ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(17, 14, 15, 14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Row(
+                        children: <Widget>[
+                          Icon(Icons.cloud_download_outlined,
+                              size: 18, color: colors.primary),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              template.title,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.w700,
+                                height: 1.08,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Icon(
+                            Icons.arrow_forward_rounded,
+                            size: 20,
+                            color: colors.onSurfaceVariant,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 5),
+                      Text(
+                        template.subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: colors.onSurfaceVariant,
+                          height: 1.25,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        template.meta.toUpperCase(),
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: colors.primary,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.45,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _IfcTemplatePreview extends StatelessWidget {
+  const _IfcTemplatePreview({
+    required this.kind,
+    required this.primary,
+    required this.secondary,
+    required this.surface,
+  });
+
+  final IfcTemplateKind kind;
+  final Color primary;
+  final Color secondary;
+  final Color surface;
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomPaint(
+      painter: _IfcTemplatePreviewPainter(
+        kind: kind,
+        primary: primary,
+        secondary: secondary,
+        surface: surface,
+      ),
+      child: const SizedBox.expand(),
+    );
+  }
+}
+
+class _IfcTemplatePreviewPainter extends CustomPainter {
+  const _IfcTemplatePreviewPainter({
+    required this.kind,
+    required this.primary,
+    required this.secondary,
+    required this.surface,
+  });
+
+  final IfcTemplateKind kind;
+  final Color primary;
+  final Color secondary;
+  final Color surface;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()..color = surface.withValues(alpha: 0.72),
+    );
+    final gridPaint = Paint()
+      ..color = primary.withValues(alpha: 0.07)
+      ..strokeWidth = 1;
+    for (var x = -size.height; x < size.width + size.height; x += 24) {
+      canvas.drawLine(
+        Offset(x, size.height),
+        Offset(x + size.height, 0),
+        gridPaint,
+      );
+    }
+
+    switch (kind) {
+      case IfcTemplateKind.building:
+        _drawBuilding(canvas, size, floors: 5, widthFactor: 0.34);
+      case IfcTemplateKind.structure:
+        _drawBuilding(canvas, size, floors: 4, widthFactor: 0.41);
+        _drawStructuralFrame(canvas, size);
+      case IfcTemplateKind.infrastructure:
+        _drawRoad(canvas, size);
+    }
+  }
+
+  void _drawBuilding(
+    Canvas canvas,
+    Size size, {
+    required int floors,
+    required double widthFactor,
+  }) {
+    final center = Offset(size.width * 0.5, size.height * 0.73);
+    final width = size.width * widthFactor;
+    final depth = size.width * 0.18;
+    final floorHeight = size.height * 0.075;
+    final height = floorHeight * floors;
+    final footprint = <Offset>[
+      Offset(center.dx - width, center.dy),
+      Offset(center.dx, center.dy + depth * 0.5),
+      Offset(center.dx + width, center.dy),
+      Offset(center.dx, center.dy - depth * 0.5),
+    ];
+    final top =
+        footprint.map((point) => Offset(point.dx, point.dy - height)).toList();
+    final outline = Paint()
+      ..color = primary.withValues(alpha: 0.62)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.3;
+    for (final edge in <int>[0, 1]) {
+      final next = edge + 1;
+      final face = Path()
+        ..moveTo(footprint[edge].dx, footprint[edge].dy)
+        ..lineTo(footprint[next].dx, footprint[next].dy)
+        ..lineTo(top[next].dx, top[next].dy)
+        ..lineTo(top[edge].dx, top[edge].dy)
+        ..close();
+      canvas.drawPath(
+        face,
+        Paint()..color = primary.withValues(alpha: edge == 0 ? 0.17 : 0.11),
+      );
+      canvas.drawPath(face, outline);
+    }
+    final roof = Path()..moveTo(top.first.dx, top.first.dy);
+    for (final point in top.skip(1)) {
+      roof.lineTo(point.dx, point.dy);
+    }
+    roof.close();
+    canvas.drawPath(roof, Paint()..color = secondary.withValues(alpha: 0.22));
+    canvas.drawPath(roof, outline);
+
+    final detail = Paint()
+      ..color = secondary.withValues(alpha: 0.5)
+      ..strokeWidth = 1.2;
+    for (var floor = 1; floor < floors; floor++) {
+      final y = center.dy - floorHeight * floor;
+      canvas.drawLine(
+        Offset(center.dx - width * 0.96, y),
+        Offset(center.dx, y + depth * 0.47),
+        detail,
+      );
+      canvas.drawLine(
+        Offset(center.dx, y + depth * 0.47),
+        Offset(center.dx + width * 0.96, y),
+        detail,
+      );
+    }
+  }
+
+  void _drawStructuralFrame(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = secondary.withValues(alpha: 0.55)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.1;
+    final left = size.width * 0.30;
+    final right = size.width * 0.70;
+    final top = size.height * 0.20;
+    final bottom = size.height * 0.72;
+    for (final x in <double>[left, (left + right) / 2, right]) {
+      canvas.drawLine(Offset(x, top), Offset(x, bottom), paint);
+    }
+    for (var index = 0; index < 4; index++) {
+      final y = top + (bottom - top) * index / 4;
+      canvas.drawLine(Offset(left, y), Offset(right, y), paint);
+    }
+  }
+
+  void _drawRoad(Canvas canvas, Size size) {
+    final road = Path()
+      ..moveTo(size.width * 0.12, size.height * 0.74)
+      ..lineTo(size.width * 0.40, size.height * 0.20)
+      ..lineTo(size.width * 0.60, size.height * 0.20)
+      ..lineTo(size.width * 0.88, size.height * 0.74)
+      ..close();
+    canvas.drawPath(
+      road,
+      Paint()..color = primary.withValues(alpha: 0.15),
+    );
+    canvas.drawPath(
+      road,
+      Paint()
+        ..color = primary.withValues(alpha: 0.58)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.4,
+    );
+    final centerLine = Paint()
+      ..color = secondary.withValues(alpha: 0.65)
+      ..strokeWidth = 1.5;
+    canvas.drawLine(
+      Offset(size.width * 0.5, size.height * 0.22),
+      Offset(size.width * 0.5, size.height * 0.73),
+      centerLine,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _IfcTemplatePreviewPainter oldDelegate) =>
+      oldDelegate.kind != kind ||
+      oldDelegate.primary != primary ||
+      oldDelegate.secondary != secondary ||
+      oldDelegate.surface != surface;
+}
+
+class _RecoveryBanner extends StatelessWidget {
+  const _RecoveryBanner({
+    required this.entry,
+    required this.busy,
+    required this.onRecover,
+    required this.onDismiss,
+  });
+
+  final ProjectRecoveryEntry entry;
+  final bool busy;
+  final VoidCallback? onRecover;
+  final VoidCallback? onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      margin: EdgeInsets.zero,
+      color: theme.colorScheme.tertiaryContainer.withValues(alpha: 0.6),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 10, 12),
+        child: Row(
+          children: <Widget>[
+            Icon(Icons.restore_outlined, color: theme.colorScheme.tertiary),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Unsaved recovery available · ${entry.projectName}',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.titleSmall,
+              ),
+            ),
+            TextButton(
+              onPressed: busy ? null : onDismiss,
+              child: const Text('Dismiss'),
+            ),
+            FilledButton.tonal(
+              onPressed: busy ? null : onRecover,
+              child: const Text('Recover'),
+            ),
+          ],
         ),
       ),
     );

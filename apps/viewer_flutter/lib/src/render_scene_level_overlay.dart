@@ -163,10 +163,10 @@ List<RenderSceneLevelOverlayEntry> buildLevelOverlayEntries({
   if (descriptor == null || !descriptor.isElevation) {
     return const <RenderSceneLevelOverlayEntry>[];
   }
-  final horizontalMin =
-      descriptor.minAxis(bounds, descriptor.horizontalAxis) - 1.0;
-  final horizontalMax =
-      descriptor.maxAxis(bounds, descriptor.horizontalAxis) + 1.0;
+  final horizontalMin = descriptor.minAxis(bounds, descriptor.horizontalAxis) -
+      _levelAnnotationMargin(bounds, descriptor);
+  final horizontalMax = descriptor.maxAxis(bounds, descriptor.horizontalAxis) +
+      _levelAnnotationMargin(bounds, descriptor);
 
   return scene.levels.map((level) {
     final z = level.elevationMeters;
@@ -184,18 +184,35 @@ List<RenderSceneLevelOverlayEntry> buildLevelOverlayEntries({
         verticalValue: z,
       ),
     );
-    final minX = a.screen.dx < b.screen.dx ? a.screen.dx : b.screen.dx;
-    final maxX = a.screen.dx > b.screen.dx ? a.screen.dx : b.screen.dx;
-    final minY = a.screen.dy < b.screen.dy ? a.screen.dy : b.screen.dy;
-    final maxY = a.screen.dy > b.screen.dy ? a.screen.dy : b.screen.dy;
+    // Prefer the screen-left side, but keep the label visible when the datum
+    // endpoint is already close to the viewport edge. The opposite side can
+    // be covered by the Project Browser in wide section/elevation layouts.
+    final labelEndpoint = a.screen.dx <= b.screen.dx ? a.screen : b.screen;
+    final labelOrigin = labelEndpoint.dx >= 180
+        ? labelEndpoint + const Offset(-170, -18)
+        : labelEndpoint + const Offset(12, -18);
     return RenderSceneLevelOverlayEntry(
       level: level,
       lineStart: a.screen,
       lineEnd: b.screen,
-      labelOrigin: a.screen + const Offset(6, -18),
-      hitBounds: Rect.fromLTRB(minX, minY - 10, maxX, maxY + 10),
+      // Keep the datum text outside the model envelope using the extended
+      // endpoint rather than anchoring it to the building geometry.
+      labelOrigin: labelOrigin,
+      // The datum line is an annotation, not a pan handle. Only the label
+      // area should start level dragging; otherwise a normal section pan
+      // crossing any level line is mistaken for an elevation edit.
+      hitBounds: Rect.fromLTWH(labelOrigin.dx, labelOrigin.dy - 6, 220, 34),
     );
   }).toList(growable: false);
+}
+
+double _levelAnnotationMargin(
+  RenderSceneBounds bounds,
+  RenderScenePlanarDescriptor descriptor,
+) {
+  final horizontalSpan = descriptor.maxAxis(bounds, descriptor.horizontalAxis) -
+      descriptor.minAxis(bounds, descriptor.horizontalAxis);
+  return (horizontalSpan * 0.12).clamp(2.0, 6.0);
 }
 
 RenderSceneLevel? pickLevelOverlayAt({
@@ -215,6 +232,13 @@ RenderSceneLevel? pickLevelOverlayAt({
   for (final overlay in overlays) {
     if (!overlay.hitBounds.inflate(tolerancePixels).contains(localPosition)) {
       continue;
+    }
+    if (projectionMode.isElevation) {
+      // In elevations and sections the datum line is a visual annotation.
+      // Only its label/handle area is interactive so the rest of the line
+      // remains available for two-finger camera navigation.
+      bestLevel = overlay.level;
+      break;
     }
     final distance =
         _distanceToSegment(localPosition, overlay.lineStart, overlay.lineEnd);

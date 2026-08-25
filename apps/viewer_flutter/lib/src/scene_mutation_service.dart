@@ -80,7 +80,7 @@ class SceneMutationService {
         createdElementId: created,
         success: success,
         trace: trace,
-        error: success ? null : 'Fallback wall yaratilmadi.',
+        error: success ? null : 'Fallback wall could not be created.',
       );
     }
 
@@ -136,7 +136,7 @@ class SceneMutationService {
           success: false,
           trace: trace,
           error: finalResult.errors.isEmpty
-              ? 'Wall snapshotda yo‘q.'
+              ? 'Wall is missing from the snapshot.'
               : finalResult.errors.join(' '),
         );
       }

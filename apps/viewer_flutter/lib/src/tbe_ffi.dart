@@ -134,9 +134,26 @@ class TbeViewerApi {
         _deleteElement =
             library.lookupFunction<_DeleteElementNative, _DeleteElementDart>(
                 'tbe_delete_element'),
+        _undo = library
+            .lookupFunction<_VoidMutationNative, _VoidMutationDart>('tbe_undo'),
+        _redo = library
+            .lookupFunction<_VoidMutationNative, _VoidMutationDart>('tbe_redo'),
+        _getHistoryCounts =
+            library.lookupFunction<_HistoryCountsNative, _HistoryCountsDart>(
+                'tbe_get_history_counts'),
         _importProjectPackage = library.lookupFunction<
             _ProjectImportPackageNative,
             _ProjectImportPackageDart>('tbe_import_project_package'),
+        _exportIfc = library.lookupFunction<_ProjectExportPathNative,
+            _ProjectExportPathDart>('tbe_export_ifc'),
+        _importIfc = library.lookupFunction<_ProjectImportPackageNative,
+            _ProjectImportPackageDart>('tbe_import_ifc'),
+        _getUnitSettings =
+            library.lookupFunction<_StringGetterNative, _StringGetterDart>(
+                'tbe_get_unit_settings'),
+        _setUnitSettings = library.lookupFunction<
+            _ProjectUnitSettingsSetterNative,
+            _ProjectUnitSettingsSetterDart>('tbe_set_unit_settings'),
         _validate = library
             .lookupFunction<_ValidateNative, _ValidateDart>('tbe_validate'),
         _generateSchedules =
@@ -206,7 +223,14 @@ class TbeViewerApi {
   final _CreateCeilingSystemForRoomDart _createCeilingSystemForRoom;
   final _DetectRoomsDart _detectRooms;
   final _DeleteElementDart _deleteElement;
+  final _VoidMutationDart _undo;
+  final _VoidMutationDart _redo;
+  final _HistoryCountsDart _getHistoryCounts;
   final _ProjectImportPackageDart _importProjectPackage;
+  final _ProjectExportPathDart _exportIfc;
+  final _ProjectImportPackageDart _importIfc;
+  final _StringGetterDart _getUnitSettings;
+  final _ProjectUnitSettingsSetterDart _setUnitSettings;
   final _ValidateDart _validate;
   final _ScheduleDart _generateSchedules;
   final _ProjectExportPathDart _exportSvg;

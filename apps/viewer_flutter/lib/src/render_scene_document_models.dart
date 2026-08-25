@@ -206,12 +206,29 @@ class RenderSceneLoadResult {
   bool get hasErrors => errors.isNotEmpty || scene == null;
 }
 
+/// Defensive limits for untrusted or accidentally unscoped native payloads.
+/// Nearby-level streaming should be used before a scene approaches these
+/// limits; rejecting a pathological payload is safer than allocating until
+/// Android kills the process.
+const int kMaxRenderScenePayloadBytes = 32 * 1024 * 1024;
+const int kMaxRenderSceneObjects = 150000;
+const int kMaxRenderSceneIndices = 15 * 1000 * 1000;
+
 RenderSceneLoadResult parseRenderSceneJson(
   String text, {
   String source = 'render_scene.json',
 }) {
   final warnings = <String>[];
   final errors = <String>[];
+  if (text.length > kMaxRenderScenePayloadBytes) {
+    return RenderSceneLoadResult(
+      scene: null,
+      warnings: const <String>[],
+      errors: <String>[
+        'RenderScene payload from $source exceeds the ${kMaxRenderScenePayloadBytes ~/ (1024 * 1024)} MiB memory guard. Use nearby-level streaming.',
+      ],
+    );
+  }
   dynamic decoded;
   try {
     decoded = jsonDecode(text);
@@ -233,6 +250,27 @@ RenderSceneLoadResult parseRenderSceneJson(
   }
 
   final rawObjects = decoded['objects'];
+  if (rawObjects is List && rawObjects.length > kMaxRenderSceneObjects) {
+    return RenderSceneLoadResult(
+      scene: null,
+      warnings: const <String>[],
+      errors: <String>[
+        'RenderScene payload from $source contains ${rawObjects.length} objects, above the $kMaxRenderSceneObjects object memory guard. Use a narrower render scope.',
+      ],
+    );
+  }
+  final declaredIndexCount = _toNullableInt(
+    decoded['index_count'] ?? decoded['indexCount'],
+  );
+  if (declaredIndexCount != null && declaredIndexCount > kMaxRenderSceneIndices) {
+    return RenderSceneLoadResult(
+      scene: null,
+      warnings: const <String>[],
+      errors: <String>[
+        'RenderScene payload from $source declares ${declaredIndexCount ~/ 3} triangles, above the ${kMaxRenderSceneIndices ~/ 3} triangle memory guard.',
+      ],
+    );
+  }
   final objects = <RenderSceneObject>[];
   if (rawObjects is List) {
     for (final entry in rawObjects) {

@@ -1845,7 +1845,9 @@ internal class RenderSceneFilamentHostView(
     // edges below; those are readable without reintroducing the horizontal
     // edges that overlap beams and slabs. Sections still get their section
     // edges from the clipped wall geometry.
-    if (projectionMode == "isometric" && kind in setOf("floor", "ceiling", "slab")) {
+    if ((projectionMode == "isometric" || projectionMode == "section") &&
+      kind in setOf("floor", "ceiling", "slab")
+    ) {
       return null
     }
     val wallEdges = kind == "wall"
@@ -1871,8 +1873,16 @@ internal class RenderSceneFilamentHostView(
     val points = if (clipVolume.active) geometry.points else visual.points
     val triangles = if (clipVolume.active) geometry.triangles else visual.triangles
     val edges = if (clipVolume.active) clippedFeatureEdges(points, triangles) else visual.featureEdges
+    // A clipped triangle soup contains many one-triangle seams. They are
+    // valid topology boundaries, but not architectural linework; at section
+    // zoom they sit almost coplanar with the faces and shimmer during motion.
+    val stableSectionEdges = if (projectionMode == "section" && clipVolume.active) {
+      edges.filter { it.sharp }
+    } else {
+      edges
+    }
     val stableColumnEdges = if (projectionMode == "isometric" && kind == "column") {
-      edges.filter { edge ->
+      stableSectionEdges.filter { edge ->
         val first = points.getOrNull(edge.first) ?: return@filter false
         val second = points.getOrNull(edge.second) ?: return@filter false
         val dx = kotlin.math.abs(second.x - first.x)
@@ -1883,7 +1893,7 @@ internal class RenderSceneFilamentHostView(
         dy > 0.05 && dy > max(dx, dz) * 3.0
       }
     } else {
-      edges
+      stableSectionEdges
     }
     val generated = edgeGeometry(
       points,
@@ -2943,7 +2953,7 @@ internal class RenderSceneFilamentHostView(
     // between covered and visible fragments as the camera moves.
     val normalRadius = when {
       isFloorPlan -> 0.004
-      projectionMode != "isometric" -> 0.006
+      projectionMode != "isometric" -> 0.009
       else -> 0.010
     }
     // Junction borders deliberately get a stronger visual treatment than

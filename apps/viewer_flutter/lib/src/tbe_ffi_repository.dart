@@ -180,6 +180,90 @@ class ViewerRepository
     );
   }
 
+  @override
+  Future<ViewerLoadResult> loadFromIfc({required String ifcPath}) async {
+    _projectName = File(ifcPath).uri.pathSegments.last;
+    _currentJson = null;
+    _currentJsonPath = null;
+    _currentPackagePath = null;
+    _handle ??= _api.createSession();
+    final handle = _handle!;
+    _api.configureInteractiveSession(handle);
+    _api.importIfc(handle, ifcPath);
+    _currentJson = _api.saveProjectJson(handle);
+    _activeLevelId = _persistence.primaryLevelIdFromProjectJson(_currentJson!);
+    final snapshot = await _buildSnapshot(handle, _projectName!);
+    return ViewerLoadResult(
+      snapshot: snapshot,
+      hitCandidates: const <HitCandidateView>[],
+    );
+  }
+
+  @override
+  Future<void> exportIfc({required String path}) async {
+    final handle = _handle;
+    if (handle == null) throw TbeApiException('No loaded project');
+    _api.exportIfc(handle, path);
+  }
+
+  @override
+  Future<Map<String, dynamic>> getUnitSettings() async {
+    final handle = _handle;
+    if (handle == null) throw TbeApiException('No loaded project');
+    return _api.getUnitSettings(handle);
+  }
+
+  @override
+  Future<void> setUnitSettings({
+    required String system,
+    required String length,
+    required String angle,
+  }) async {
+    final handle = _handle;
+    if (handle == null) throw TbeApiException('No loaded project');
+    _api.setUnitSettings(
+      handle,
+      system: system,
+      length: length,
+      angle: angle,
+    );
+  }
+
+  @override
+  Future<RenderSceneLoadResult> undo() async {
+    final handle = _handle;
+    if (handle == null) throw TbeApiException('No loaded project');
+    _api.undo(handle);
+    return currentRenderScene();
+  }
+
+  @override
+  Future<RenderSceneLoadResult> redo() async {
+    final handle = _handle;
+    if (handle == null) throw TbeApiException('No loaded project');
+    _api.redo(handle);
+    return currentRenderScene();
+  }
+
+  @override
+  Future<({int undoCount, int redoCount})> historyCounts() async {
+    final handle = _handle;
+    if (handle == null) {
+      return (undoCount: 0, redoCount: 0);
+    }
+    return _api.historyCounts(handle);
+  }
+
+  @override
+  Future<String> snapshotProjectJson() async {
+    final handle = _handle;
+    if (handle == null) throw TbeApiException('No loaded project');
+    final json = _api.saveProjectJson(handle);
+    _currentJson = json;
+    _activeLevelId = _persistence.primaryLevelIdFromProjectJson(json);
+    return json;
+  }
+
   Future<ViewerSnapshot> _buildSnapshot(
     ffi.Pointer<ffi.Void> handle,
     String projectName,

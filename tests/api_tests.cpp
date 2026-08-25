@@ -607,7 +607,12 @@ int main() {
         assert(!old_right_hit.value->empty());
         assert(old_right_hit.value->front().element_id.value == wall_b.value->value);
 
+        const auto history_before_axis = session->get_history_summary();
+        assert(history_before_axis.ok() && history_before_axis.value.has_value());
         assert(session->set_wall_axis(wall_b.value->value, {.x = 5.0, .y = 0.0}, {.x = 5.0, .y = 3.0}).ok());
+        const auto history_after_axis = session->get_history_summary();
+        assert(history_after_axis.ok() && history_after_axis.value.has_value());
+        assert(history_after_axis.value->undo_count == history_before_axis.value->undo_count + 1);
 
         const auto moved_stats = session->spatial_index_stats();
         assert(moved_stats.ok());
@@ -621,6 +626,9 @@ int main() {
         assert(new_right_hit.value->front().element_id.value == wall_b.value->value);
 
         assert(session->undo().ok());
+        const auto history_after_undo = session->get_history_summary();
+        assert(history_after_undo.ok() && history_after_undo.value.has_value());
+        assert(history_after_undo.value->redo_count > 0);
         const auto undo_hit = session->hit_test_point({.level_id = {.value = level_id}, .point = {.x = 4.0, .y = 2.6}, .tolerance_meters = 0.2});
         assert(undo_hit.ok());
         assert(undo_hit.value.has_value());
@@ -628,6 +636,9 @@ int main() {
         assert(undo_hit.value->front().element_id.value == wall_b.value->value);
 
         assert(session->redo().ok());
+        const auto history_after_redo = session->get_history_summary();
+        assert(history_after_redo.ok() && history_after_redo.value.has_value());
+        assert(history_after_redo.value->redo_count == 0);
         const auto redo_hit = session->hit_test_point({.level_id = {.value = level_id}, .point = {.x = 5.0, .y = 2.6}, .tolerance_meters = 0.2});
         assert(redo_hit.ok());
         assert(redo_hit.value.has_value());
@@ -1507,6 +1518,45 @@ int main() {
         assert(large_template_reload_status == TBE_API_OK);
         tbe_free_string(template_json);
         tbe_engine_destroy(template_handle);
+    }
+
+    {
+        auto exchange_result = tbe::api::create_session("IFC API Exchange");
+        assert(exchange_result.ok() && exchange_result.value.has_value());
+        auto exchange = std::move(*exchange_result.value);
+        assert(exchange->create_level("Level 1", 0.0, 3.0).ok());
+        assert(exchange->set_unit_settings(tbe::api::UnitSettingsDTO{
+            .system = "imperial",
+            .length = "foot",
+            .angle = "degrees",
+        }).ok());
+        const auto settings = exchange->get_unit_settings();
+        assert(settings.ok() && settings.value.has_value());
+        assert(settings.value->system == "imperial");
+        assert(settings.value->length == "foot");
+
+        const auto ifc_path = std::filesystem::temp_directory_path() / "tbe_api_exchange.ifc";
+        assert(exchange->export_ifc(ifc_path.string()).ok());
+        const auto ifc_text = read_text(ifc_path);
+        assert(ifc_text.find("FILE_SCHEMA(('IFC4'))") != std::string::npos);
+        auto imported_result = tbe::api::create_session("Imported IFC");
+        assert(imported_result.ok() && imported_result.value.has_value());
+        auto imported = std::move(*imported_result.value);
+        assert(imported->import_ifc(ifc_path.string()).ok());
+        const auto imported_settings = imported->get_unit_settings();
+        assert(imported_settings.ok() && imported_settings.value.has_value());
+        assert(imported_settings.value->length == "foot");
+        std::filesystem::remove(ifc_path);
+
+        auto* handle = tbe_engine_create();
+        assert(handle != nullptr);
+        char* settings_json = nullptr;
+        assert(tbe_get_unit_settings(handle, &settings_json) == TBE_API_OK);
+        assert(settings_json != nullptr);
+        assert(std::string(settings_json).find("\"system\":\"metric\"") != std::string::npos);
+        tbe_free_string(settings_json);
+        assert(tbe_set_unit_settings(handle, "imperial", "inch", "degrees") == TBE_API_OK);
+        tbe_engine_destroy(handle);
     }
     return 0;
 }

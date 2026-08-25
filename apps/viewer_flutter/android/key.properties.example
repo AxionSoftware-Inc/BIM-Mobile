@@ -1,0 +1,6 @@
+# Copy this file to android/key.properties and fill it with a real release key.
+# Never commit android/key.properties or the keystore itself.
+storeFile=release-key.jks
+storePassword=replace-me
+keyAlias=tablet-bim
+keyPassword=replace-me

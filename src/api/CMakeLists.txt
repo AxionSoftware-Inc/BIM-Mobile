@@ -35,6 +35,15 @@ set_target_properties(tbe_capi_shared PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
 
+if(WIN32)
+    # The Flutter desktop/integration test loader opens the shared C ABI
+    # directly. Export the C entry points from the MSVC DLL just as ELF and
+    # Mach-O toolchains do by default for this target.
+    set_target_properties(tbe_capi_shared PROPERTIES
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+    )
+endif()
+
 target_include_directories(tbe_capi_shared
     PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/include"

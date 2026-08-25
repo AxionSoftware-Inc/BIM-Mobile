@@ -225,6 +225,15 @@ void registerSceneGeometryTests() {
     expect(result.errors, isNotEmpty);
   });
 
+  test('RenderScene parser rejects payloads above the memory geometry guard', () {
+    final result = parseRenderSceneJson(
+      '{"objects": [], "index_count": ${kMaxRenderSceneIndices + 1}}',
+      source: 'oversized.json',
+    );
+    expect(result.scene, isNull);
+    expect(result.errors.single, contains('memory guard'));
+  });
+
   test('Scene view service owns engine-backed navigation queries', () async {
     final gateway = _RecordingSceneGateway();
     final service = SceneViewService(

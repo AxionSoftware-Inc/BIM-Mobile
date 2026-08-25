@@ -48,7 +48,7 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
     _updateViewportState(() {
       _statusMessage = 'Selected ${level.name}';
       _editStatusMessage =
-          '${level.name}: ${level.elevationMeters.toStringAsFixed(2)} m. Inspector orqali tahrir qiling yoki level line’ni torting.';
+          '${level.name}: ${level.elevationMeters.toStringAsFixed(2)} m. Edit it in Inspector or drag the level line.';
     });
     await _selectionController.selectLevel(level.levelId);
   }
@@ -148,7 +148,7 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
     if (roofLevelId == null) {
       _updateViewportState(() {
         _editStatusMessage =
-            'Automatic roof uchun wall top level yoki undan yuqori level kerak.';
+            'Automatic roof requires a wall top level or a higher level.';
       });
       return;
     }
@@ -160,7 +160,7 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
     if (polygon == null || polygon.length < 3) {
       _updateViewportState(() {
         _editStatusMessage =
-            'Automatic roof faqat bitta yopiq outer wall loop topilganda yaratiladi. Murakkab plan uchun wall loop tanlang yoki footprint chizing.';
+            'Automatic roof needs one closed outer wall loop. Select a wall loop or draw a footprint for a complex plan.';
       });
       return;
     }
@@ -170,7 +170,7 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
     if (existingRoof) {
       _updateViewportState(() {
         _editStatusMessage =
-            'Bu roof levelda roof bor. Duplicate yaratilmadi; avval mavjud roofni tahrir qiling.';
+            'This level already has a roof. No duplicate was created; edit the existing roof instead.';
       });
       return;
     }
@@ -183,7 +183,7 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
     _updateViewportState(() {
       _activeLevelId = roofLevelId;
       _editStatusMessage =
-          'Automatic roof footprint ready: ${boundWalls.length} wall, ${scene.levelById(roofLevelId)?.name ?? 'Level'}. Confirm bosing.';
+          'Automatic roof footprint ready: ${boundWalls.length} walls on ${scene.levelById(roofLevelId)?.name ?? 'Level'}. Tap Confirm.';
     });
     _viewportController.setSurfaceDraft(
       RenderSceneSurfaceDraft(kind: 'roof', points: polygon, closed: true),
@@ -303,7 +303,7 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
     final scene = _scene;
     if (scene == null) {
       _updateViewportState(() {
-        _editStatusMessage = 'Delete uchun avval obyektni tanlang.';
+        _editStatusMessage = 'Select an object before deleting.';
       });
       return;
     }
@@ -318,7 +318,7 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
     }
     if (selectedIds.isEmpty) {
       _updateViewportState(() {
-        _editStatusMessage = 'Delete uchun avval obyektni tanlang.';
+        _editStatusMessage = 'Select an object before deleting.';
       });
       return;
     }
@@ -341,7 +341,7 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
       if (result == null) return;
       await _applyEngineSceneResult(
         result,
-        message: '${selectedIds.length} ta obyekt o‘chirildi.',
+        message: '${selectedIds.length} object(s) deleted.',
       );
       return;
     }
@@ -356,7 +356,7 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
     }
     await _applySceneChange(
       nextScene,
-      message: '${selectedIds.length} ta obyekt o‘chirildi.',
+      message: '${selectedIds.length} object(s) deleted.',
     );
   }
 
@@ -368,7 +368,7 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
     if (!authoritative) {
       _updateViewportState(() {
         _editStatusMessage =
-            'Engine ulanmagan: preview ko‘rsatilyapti, lekin model o‘zgartirilmaydi.';
+            'The engine is not connected: preview is available, but the model is read-only.';
       });
       return;
     }
@@ -421,6 +421,7 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
     if (previousSelectedLevelId != null &&
         nextScene.levelById(previousSelectedLevelId) != null) {
       await _viewportController.selectLevel(previousSelectedLevelId);
+      _scheduleRecoveryAutosave();
       return;
     }
 
@@ -440,6 +441,7 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
     } else {
       await _viewportController.highlightElement(previousHighlightedId);
     }
+    _scheduleRecoveryAutosave();
   }
 
   Future<void> _applyEngineSceneResult(

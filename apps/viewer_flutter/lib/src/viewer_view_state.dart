@@ -183,7 +183,7 @@ extension _ViewerViewState on _ViewerHomePageState {
         object.kindKey != 'wall') {
       _updateViewportState(() {
         _editStatusMessage =
-            'Wallni levelga biriktirish uchun engine mode va active level kerak.';
+            'Wall attachment requires engine mode and an active level.';
       });
       return;
     }
@@ -193,7 +193,7 @@ extension _ViewerViewState on _ViewerHomePageState {
     if (constrainToNextLevel && nextLevel == null) {
       _updateViewportState(() {
         _editStatusMessage =
-            'Top constraint uchun active leveldan yuqori level topilmadi.';
+            'No level above the active level was found for the top constraint.';
       });
       return;
     }

@@ -7,6 +7,7 @@ enum _WorkspaceExitChoice { save, discard }
 extension _ViewerProjectLifecycle on _ViewerHomePageState {
   Future<void> _createBlankProject() async {
     if (_isBusy) return;
+    _currentProjectName = 'New Project';
     _updateViewportState(() {
       _isBusy = true;
       _loadError = null;
@@ -33,7 +34,7 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
       if (!mounted) return;
       _updateViewportState(() {
         _loadError = error.toString();
-        _statusMessage = 'New project yaratilmadi.';
+        _statusMessage = 'New project could not be created.';
         _isBusy = false;
       });
     }
@@ -135,6 +136,7 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
     String? sourcePath,
   }) async {
     if (_isBusy) return;
+    _currentProjectName = projectName;
     _updateViewportState(() {
       _isBusy = true;
       _loadError = null;
@@ -164,7 +166,7 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
       if (!mounted) return;
       _updateViewportState(() {
         _loadError = error.toString();
-        _statusMessage = 'Projectni ochib bo‘lmadi.';
+        _statusMessage = 'Could not open the project.';
         _isBusy = false;
       });
     }
@@ -178,16 +180,17 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
         template == _ResidentialTemplateKind.campus6x9 ? 6 : 1;
     final storyCount = template == _ResidentialTemplateKind.default3 ? 3 : 9;
     final label = switch (template) {
-      _ResidentialTemplateKind.default3 => '3-qavatli oddiy bino',
-      _ResidentialTemplateKind.tower9 => '9-qavatli turar-joy binosi',
+      _ResidentialTemplateKind.default3 => '3-storey starter building',
+      _ResidentialTemplateKind.tower9 => '9-storey residential building',
       _ResidentialTemplateKind.campus6x9 =>
-        '6 ta 9-qavatli turar-joy shaharchasi',
+        'Residential campus with six 9-storey buildings',
     };
+    _currentProjectName = label;
     _updateViewportState(() {
       _isBusy = true;
       _loadError = null;
       _activeSectionView = null;
-      _statusMessage = '$label engine’da yaratilmoqda...';
+      _statusMessage = 'Creating $label in the engine...';
     });
 
     try {
@@ -217,7 +220,7 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
       if (!mounted) return;
       _updateViewportState(() {
         _loadError = error.toString();
-        _statusMessage = '$label yaratilmadi.';
+        _statusMessage = '$label could not be created.';
         _isBusy = false;
       });
     }
@@ -286,11 +289,191 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
     await _saveProjectForExit();
   }
 
+  Future<void> _importIfc() async {
+    if (_isBusy || !_engineBackedMode || _engineRepository == null) return;
+    try {
+      const typeGroup = XTypeGroup(
+        label: 'IFC models',
+        extensions: <String>['ifc'],
+      );
+      final file = await openFile(
+        acceptedTypeGroups: <XTypeGroup>[typeGroup],
+      );
+      if (file == null || !mounted) return;
+      await _loadIfcPath(file.path, projectName: file.name);
+    } catch (error) {
+      if (!mounted) return;
+      _updateViewportState(() {
+        _isBusy = false;
+        _loadError = error.toString();
+        _statusMessage = 'IFC import failed.';
+      });
+    }
+  }
+
+  Future<void> _loadIfcPath(
+    String path, {
+    required String projectName,
+  }) async {
+    if (_isBusy) return;
+    try {
+      _updateViewportState(() {
+        _isBusy = true;
+        _loadError = null;
+        _activeSectionView = null;
+        _statusMessage = 'Importing $projectName...';
+      });
+      _currentProjectName = projectName;
+      final repository = _engineRepository;
+      if (!_engineBackedMode || repository == null) {
+        final launch = await _projectLifecycle.loadIfc(
+          projectName: projectName,
+          ifcPath: path,
+        );
+        if (!mounted) {
+          launch.session.dispose();
+          return;
+        }
+        _projectSession.activate(launch.session);
+        _engineLoadDiagnostic = null;
+      } else {
+        await repository.loadFromIfc(ifcPath: path);
+      }
+      final result = await _sceneViews.refresh();
+      await _applyLoadResult(
+        result,
+        sourceLabel: projectName,
+        resetProjectChanges: true,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      _updateViewportState(() {
+        _isBusy = false;
+        _loadError = error.toString();
+        _statusMessage = 'IFC import failed.';
+      });
+    }
+  }
+
+  Future<void> _exportIfc() async {
+    if (_isBusy || !_engineBackedMode || _engineRepository == null) return;
+    try {
+      const typeGroup = XTypeGroup(
+        label: 'IFC model',
+        extensions: <String>['ifc'],
+      );
+      final location = await getSaveLocation(
+        acceptedTypeGroups: <XTypeGroup>[typeGroup],
+        suggestedName: 'project.ifc',
+      );
+      if (location == null || !mounted) return;
+      _updateViewportState(() {
+        _isBusy = true;
+        _loadError = null;
+        _statusMessage = 'Exporting IFC...';
+      });
+      await _projectPersistence.exportIfc(path: location.path);
+      if (!mounted) return;
+      _updateViewportState(() {
+        _isBusy = false;
+        _statusMessage = 'IFC exported: ${location.path}';
+      });
+    } catch (error) {
+      if (!mounted) return;
+      _updateViewportState(() {
+        _isBusy = false;
+        _loadError = error.toString();
+        _statusMessage = 'IFC export failed.';
+      });
+    }
+  }
+
+  Future<void> _showProjectUnitsDialog() async {
+    if (_isBusy || !_engineBackedMode || _engineRepository == null) return;
+    try {
+      final current = await _projectPersistence.getUnitSettings();
+      if (!mounted) return;
+      var system = (current['system'] as String?) ?? 'metric';
+      var length = (current['length'] as String?) ?? 'meter';
+      final saved = await showDialog<bool>(
+        context: context,
+        builder: (context) => StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            title: const Text('Project units'),
+            content: SizedBox(
+              width: 360,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  DropdownButtonFormField<String>(
+                    initialValue: system,
+                    decoration: const InputDecoration(labelText: 'System'),
+                    items: const <DropdownMenuItem<String>>[
+                      DropdownMenuItem(value: 'metric', child: Text('Metric')),
+                      DropdownMenuItem(
+                          value: 'imperial', child: Text('Imperial')),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) setDialogState(() => system = value);
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                  DropdownButtonFormField<String>(
+                    initialValue: length,
+                    decoration: const InputDecoration(labelText: 'Length'),
+                    items: const <DropdownMenuItem<String>>[
+                      DropdownMenuItem(
+                          value: 'millimeter', child: Text('Millimeter')),
+                      DropdownMenuItem(
+                          value: 'centimeter', child: Text('Centimeter')),
+                      DropdownMenuItem(value: 'meter', child: Text('Meter')),
+                      DropdownMenuItem(value: 'inch', child: Text('Inch')),
+                      DropdownMenuItem(value: 'foot', child: Text('Foot')),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) setDialogState(() => length = value);
+                    },
+                  ),
+                ],
+              ),
+            ),
+            actions: <Widget>[
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Apply'),
+              ),
+            ],
+          ),
+        ),
+      );
+      if (saved != true || !mounted) return;
+      await _projectPersistence.setUnitSettings(
+        system: system,
+        length: length,
+        angle: 'degrees',
+      );
+      _updateViewportState(() {
+        _projectHasChanges = true;
+        _statusMessage = 'Project units: $length';
+      });
+    } catch (error) {
+      if (!mounted) return;
+      _updateViewportState(() {
+        _loadError = error.toString();
+        _statusMessage = 'Project units could not be updated.';
+      });
+    }
+  }
+
   Future<bool> _saveProjectForExit() async {
     final repository = _engineRepository;
     if (!_engineBackedMode || repository == null || _isBusy) {
       _updateViewportState(() {
-        _statusMessage = 'Save uchun native engine session kerak.';
+        _statusMessage = 'Saving requires a native engine session.';
       });
       return false;
     }
@@ -301,6 +484,11 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
     });
     try {
       final file = await _projectPersistence.saveToDefaultLocation();
+      try {
+        await _recoveryStore.deleteForProject(_currentProjectName);
+      } catch (_) {
+        // Explicit save is already durable; recovery cleanup is best-effort.
+      }
       if (!mounted) return false;
       _updateViewportState(() {
         _isBusy = false;
@@ -326,6 +514,9 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
     }
 
     if (!_projectHasChanges) {
+      try {
+        await _recoveryStore.deleteForProject(_currentProjectName);
+      } catch (_) {}
       await returnToStart();
       return;
     }
@@ -366,7 +557,128 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
       final saved = await _saveProjectForExit();
       if (!saved || !mounted) return;
     }
+    if (choice == _WorkspaceExitChoice.discard) {
+      try {
+        await _recoveryStore.deleteForProject(_currentProjectName);
+      } catch (_) {}
+    }
     await returnToStart();
+  }
+
+  void _scheduleRecoveryAutosave() {
+    _recoveryAutosaveTimer?.cancel();
+    if (!_projectHasChanges || !_engineBackedMode) return;
+    _recoveryAutosaveTimer = Timer(const Duration(seconds: 2), () {
+      unawaited(_writeRecoveryAutosave());
+    });
+  }
+
+  Future<void> _writeRecoveryAutosave() async {
+    if (!_projectHasChanges || !_engineBackedMode || _recoveryWriteInFlight) {
+      return;
+    }
+    if (_isBusy) {
+      _scheduleRecoveryAutosave();
+      return;
+    }
+    final repository = _engineRepository;
+    if (repository == null) return;
+    _recoveryWriteInFlight = true;
+    try {
+      final json = await repository.snapshotProjectJson();
+      await _recoveryStore.write(
+        projectName: _currentProjectName,
+        json: json,
+      );
+    } catch (_) {
+      // Recovery must never interrupt authoring or explicit saving.
+    } finally {
+      _recoveryWriteInFlight = false;
+    }
+  }
+
+  Future<void> _refreshHistoryState() async {
+    final repository = _engineRepository;
+    if (!_engineBackedMode || repository == null) {
+      _updateViewportState(() {
+        _canUndo = false;
+        _canRedo = false;
+      });
+      return;
+    }
+    try {
+      final counts = await repository.historyCounts();
+      if (!mounted) return;
+      _updateViewportState(() {
+        _canUndo = counts.undoCount > 0;
+        _canRedo = counts.redoCount > 0;
+      });
+    } catch (_) {
+      if (mounted) {
+        _updateViewportState(() {
+          _canUndo = false;
+          _canRedo = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _undoProject() async {
+    final repository = _engineRepository;
+    if (!_engineBackedMode || repository == null || _isBusy || !_canUndo) {
+      return;
+    }
+    _updateViewportState(() {
+      _isBusy = true;
+      _statusMessage = 'Undoing...';
+      _loadError = null;
+    });
+    try {
+      final result = await repository.undo();
+      await _applyLoadResult(result, sourceLabel: 'Undo');
+      _updateViewportState(() {
+        _projectHasChanges = true;
+        _statusMessage = 'Undo applied.';
+      });
+      _scheduleRecoveryAutosave();
+    } catch (error) {
+      if (!mounted) return;
+      _updateViewportState(() {
+        _isBusy = false;
+        _loadError = error.toString();
+        _statusMessage = 'Undo failed.';
+      });
+      await _refreshHistoryState();
+    }
+  }
+
+  Future<void> _redoProject() async {
+    final repository = _engineRepository;
+    if (!_engineBackedMode || repository == null || _isBusy || !_canRedo) {
+      return;
+    }
+    _updateViewportState(() {
+      _isBusy = true;
+      _statusMessage = 'Redoing...';
+      _loadError = null;
+    });
+    try {
+      final result = await repository.redo();
+      await _applyLoadResult(result, sourceLabel: 'Redo');
+      _updateViewportState(() {
+        _projectHasChanges = true;
+        _statusMessage = 'Redo applied.';
+      });
+      _scheduleRecoveryAutosave();
+    } catch (error) {
+      if (!mounted) return;
+      _updateViewportState(() {
+        _isBusy = false;
+        _loadError = error.toString();
+        _statusMessage = 'Redo failed.';
+      });
+      await _refreshHistoryState();
+    }
   }
 
   Future<void> _openDocumentationWorkspace() async {
@@ -499,7 +811,7 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
         }
         _activeViewTabId = previousTabId;
         _loadError = error.toString();
-        _statusMessage = '${target.label} ochilmadi.';
+        _statusMessage = '${target.label} could not be opened.';
       });
       if (previousTab != null) {
         try {
@@ -618,7 +930,7 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
       _updateViewportState(() {
         _activeViewTabId = previousTabId;
         _loadError = error.toString();
-        _statusMessage = '${tab.label} ochilmadi.';
+        _statusMessage = '${tab.label} could not be opened.';
       });
       final previousTab =
           previousTabId == null ? null : _openedViewTabById(previousTabId);
@@ -671,7 +983,7 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
       _activeViewTabId = tab.id;
       _showObjectList = true;
       _showInspector = false;
-      _statusMessage = '${sheet.number} sheet ochildi.';
+      _statusMessage = '${sheet.number} sheet opened.';
     });
   }
 
@@ -706,7 +1018,7 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
     }
 
     _updateViewportState(() {
-      _statusMessage = '${view.label} sheet uchun tayyorlanmoqda...';
+      _statusMessage = 'Preparing ${view.label} for the sheet...';
     });
     try {
       RenderScene resolvedScene;
@@ -743,7 +1055,7 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
       if (mounted) {
         _updateViewportState(() {
           _statusMessage = placed
-              ? '${view.label} sheetga joylashtirildi.'
+              ? '${view.label} placed on the sheet.'
               : '${view.label} bu sheetda allaqachon bor.';
         });
       }
@@ -751,7 +1063,7 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
     } catch (error) {
       if (mounted) {
         _updateViewportState(() {
-          _statusMessage = '${view.label} sheetga qo‘yilmadi.';
+          _statusMessage = '${view.label} could not be placed on the sheet.';
           _loadError = error.toString();
         });
       }
@@ -807,6 +1119,7 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
 
     if (scene == null) {
       await _viewportController.clearScene();
+      await _refreshHistoryState();
       return;
     }
 
@@ -842,5 +1155,6 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
         });
       }
     }
+    await _refreshHistoryState();
   }
 }

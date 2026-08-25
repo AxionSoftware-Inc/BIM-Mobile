@@ -15,7 +15,14 @@ class WorkspaceAppBar extends StatelessWidget implements PreferredSizeWidget {
     required this.browserVisible,
     required this.inspectorVisible,
     required this.onSave,
+    required this.canUndo,
+    required this.canRedo,
+    required this.onUndo,
+    required this.onRedo,
     required this.onDocumentation,
+    required this.onImportIfc,
+    required this.onExportIfc,
+    required this.onProjectUnits,
     required this.onCreateSection,
     required this.onReload,
     required this.onClearSelection,
@@ -34,7 +41,14 @@ class WorkspaceAppBar extends StatelessWidget implements PreferredSizeWidget {
   final bool browserVisible;
   final bool inspectorVisible;
   final VoidCallback onSave;
+  final bool canUndo;
+  final bool canRedo;
+  final VoidCallback onUndo;
+  final VoidCallback onRedo;
   final VoidCallback onDocumentation;
+  final Future<void> Function() onImportIfc;
+  final Future<void> Function() onExportIfc;
+  final Future<void> Function() onProjectUnits;
   final VoidCallback onCreateSection;
   final VoidCallback onReload;
   final VoidCallback onClearSelection;
@@ -89,29 +103,27 @@ class WorkspaceAppBar extends StatelessWidget implements PreferredSizeWidget {
           onPressed: busy || !engineBacked ? null : onSave,
           icon: const Icon(Icons.save_outlined),
         ),
-        IconButton(
-          tooltip: 'Documentation and PDF',
-          onPressed: busy || !hasScene ? null : onDocumentation,
-          icon: const Icon(Icons.description_outlined),
-        ),
-        IconButton(
-          tooltip: 'Create section',
-          onPressed:
-              busy || !engineBacked || !hasScene ? null : onCreateSection,
-          icon: const Icon(Icons.content_cut_outlined),
-        ),
-        IconButton(
-          tooltip: inspectorVisible ? 'Hide Inspector' : 'Show Inspector',
-          onPressed: busy ? null : onToggleInspector,
-          icon: Icon(
-            inspectorVisible ? Icons.tune : Icons.tune_outlined,
-          ),
-        ),
         PopupMenuButton<_WorkspaceMoreAction>(
           tooltip: 'Workspace actions',
           icon: const Icon(Icons.more_vert),
           onSelected: (value) {
             switch (value) {
+              case _WorkspaceMoreAction.undo:
+                onUndo();
+              case _WorkspaceMoreAction.redo:
+                onRedo();
+              case _WorkspaceMoreAction.documentation:
+                onDocumentation();
+              case _WorkspaceMoreAction.importIfc:
+                onImportIfc();
+              case _WorkspaceMoreAction.exportIfc:
+                onExportIfc();
+              case _WorkspaceMoreAction.projectUnits:
+                onProjectUnits();
+              case _WorkspaceMoreAction.createSection:
+                onCreateSection();
+              case _WorkspaceMoreAction.toggleInspector:
+                onToggleInspector();
               case _WorkspaceMoreAction.reload:
                 onReload();
               case _WorkspaceMoreAction.clearSelection:
@@ -121,6 +133,76 @@ class WorkspaceAppBar extends StatelessWidget implements PreferredSizeWidget {
             }
           },
           itemBuilder: (context) => <PopupMenuEntry<_WorkspaceMoreAction>>[
+            PopupMenuItem(
+              value: _WorkspaceMoreAction.undo,
+              enabled: !busy && engineBacked && canUndo,
+              child: const ListTile(
+                leading: Icon(Icons.undo),
+                title: Text('Undo'),
+              ),
+            ),
+            PopupMenuItem(
+              value: _WorkspaceMoreAction.redo,
+              enabled: !busy && engineBacked && canRedo,
+              child: const ListTile(
+                leading: Icon(Icons.redo),
+                title: Text('Redo'),
+              ),
+            ),
+            const PopupMenuDivider(),
+            PopupMenuItem(
+              value: _WorkspaceMoreAction.documentation,
+              enabled: !busy && hasScene,
+              child: const ListTile(
+                leading: Icon(Icons.description_outlined),
+                title: Text('Documentation and PDF'),
+              ),
+            ),
+            PopupMenuItem(
+              value: _WorkspaceMoreAction.importIfc,
+              enabled: !busy && engineBacked,
+              child: const ListTile(
+                leading: Icon(Icons.file_open_outlined),
+                title: Text('Import IFC'),
+              ),
+            ),
+            PopupMenuItem(
+              value: _WorkspaceMoreAction.exportIfc,
+              enabled: !busy && engineBacked && hasScene,
+              child: const ListTile(
+                leading: Icon(Icons.ios_share_outlined),
+                title: Text('Export IFC'),
+              ),
+            ),
+            PopupMenuItem(
+              value: _WorkspaceMoreAction.projectUnits,
+              enabled: !busy && engineBacked && hasScene,
+              child: const ListTile(
+                leading: Icon(Icons.straighten_outlined),
+                title: Text('Project units'),
+              ),
+            ),
+            PopupMenuItem(
+              value: _WorkspaceMoreAction.createSection,
+              enabled: !busy && engineBacked && hasScene,
+              child: const ListTile(
+                leading: Icon(Icons.content_cut_outlined),
+                title: Text('Create section'),
+              ),
+            ),
+            PopupMenuItem(
+              value: _WorkspaceMoreAction.toggleInspector,
+              enabled: !busy,
+              child: ListTile(
+                leading: Icon(
+                  inspectorVisible ? Icons.tune : Icons.tune_outlined,
+                ),
+                title: Text(
+                  inspectorVisible ? 'Hide Inspector' : 'Show Inspector',
+                ),
+              ),
+            ),
+            const PopupMenuDivider(),
             const PopupMenuItem(
               value: _WorkspaceMoreAction.reload,
               child: ListTile(
@@ -158,6 +240,14 @@ class WorkspaceAppBar extends StatelessWidget implements PreferredSizeWidget {
 enum WorkspaceTemplate { default3, tower9, campus6x9 }
 
 enum _WorkspaceMoreAction {
+  undo,
+  redo,
+  documentation,
+  importIfc,
+  exportIfc,
+  projectUnits,
+  createSection,
+  toggleInspector,
   reload,
   clearSelection,
   toggleBrowser,
@@ -405,8 +495,7 @@ class SurfaceDrawingContextBar extends StatelessWidget {
               ),
             ),
             Tooltip(
-              message:
-                  'Small wall gapsni auto-join/Trim bilan xavfsiz tuzatish',
+              message: 'Safely repair small wall gaps with auto-join/Trim',
               child: OutlinedButton.icon(
                 onPressed: enabled ? onRepairJoins : null,
                 icon: const Icon(Icons.auto_fix_high_outlined, size: 18),

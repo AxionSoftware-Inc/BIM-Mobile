@@ -430,10 +430,10 @@ class _MultiSelectionInspectorCard extends StatelessWidget {
       title: 'Multiple selection',
       icon: Icons.select_all,
       children: <Widget>[
-        Text('$count ta obyekt tanlangan.'),
+        Text('$count object(s) selected.'),
         const SizedBox(height: 6),
         const Text(
-          'Faqat barcha tanlangan obyektlarga umumiy bo‘lgan xavfsiz propertylar keyinroq batch edit qilinadi. Hozir noto‘g‘ri qiymat o‘zgarmasligi uchun individual Inspector oching.',
+          'Batch edit will be added for safe properties shared by all selected objects. Open an individual Inspector to avoid changing an incorrect value.',
         ),
         Align(
           alignment: Alignment.centerLeft,

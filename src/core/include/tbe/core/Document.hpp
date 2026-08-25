@@ -25,6 +25,8 @@ public:
 
     [[nodiscard]] std::string_view name() const noexcept;
     void rename(std::string name);
+    [[nodiscard]] const UnitSettings& unit_settings() const noexcept;
+    void set_unit_settings(UnitSettings settings);
 
     ElementId create_material(
         std::string name,
@@ -250,6 +252,7 @@ private:
     void replace_state(std::string name, std::vector<Element> elements, ElementId next_id);
 
     std::string name_;
+    UnitSettings unit_settings_{};
     std::vector<Element> elements_;
     ElementId next_id_{1};
     std::map<ElementId, MaterialDefinition> materials_{};

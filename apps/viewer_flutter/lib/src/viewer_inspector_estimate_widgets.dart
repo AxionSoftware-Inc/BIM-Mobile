@@ -224,7 +224,7 @@ class _EstimateCatalogEditorState extends State<_EstimateCatalogEditor> {
         'Unit prices',
         style: Theme.of(context).textTheme.labelLarge,
       ),
-      subtitle: const Text('Live estimate shu qiymatlar bilan yangilanadi'),
+      subtitle: const Text('Live estimate updates from these values'),
       children: <Widget>[
         _buildField(
           label: 'Bricks per m³',

@@ -1237,6 +1237,14 @@ std::string_view Document::name() const noexcept {
     return name_;
 }
 
+const UnitSettings& Document::unit_settings() const noexcept {
+    return unit_settings_;
+}
+
+void Document::set_unit_settings(UnitSettings settings) {
+    unit_settings_ = std::move(settings);
+}
+
 void Document::rename(std::string name) {
     if (name.empty()) {
         throw std::invalid_argument("document name must not be empty");

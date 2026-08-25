@@ -98,6 +98,17 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
 
   @override
   Widget build(BuildContext context) {
+    return Semantics(
+      container: true,
+      label: widget.controller.projectionMode.is3D
+          ? '3D model viewport'
+          : '2D drawing viewport',
+      hint: 'One finger selects or draws. Two fingers pan and zoom.',
+      child: _buildViewport(context),
+    );
+  }
+
+  Widget _buildViewport(BuildContext context) {
     final scene = widget.controller.scene;
     if (scene == null) {
       return const Center(

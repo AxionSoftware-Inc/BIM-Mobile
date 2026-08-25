@@ -334,10 +334,7 @@ void registerEditorProjectionTests() {
     expect(overlays, isNotEmpty);
 
     final first = overlays.first;
-    final probe = Offset(
-      (first.lineStart.dx + first.lineEnd.dx) * 0.5,
-      first.lineStart.dy + 2,
-    );
+    final probe = first.labelOrigin + const Offset(20, 10);
     final picked = pickLevelOverlayAt(
       scene: scene,
       projectionMode: RenderSceneProjectionMode.northElevation,
@@ -515,6 +512,4 @@ void registerEditorProjectionTests() {
     expect(controller.camera.yawRadians,
         isNot(closeTo(restored.yawRadians, 1e-9)));
   });
-
-
 }

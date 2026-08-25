@@ -43,17 +43,17 @@ class PropertyEditor extends StatelessWidget {
           icon: Icons.tune,
           children: <Widget>[
             Text(
-                'Obyektni tanlang. Properties faqat active selection uchun chiqadi.'),
+                'Select an object. Properties are shown for the active selection.'),
           ],
         ),
       InspectorTargetKind.multiple => _InspectorCard(
           title: 'Multiple selection',
           icon: Icons.select_all,
           children: <Widget>[
-            Text('${target.objects.length} ta obyekt tanlangan.'),
+            Text('${target.objects.length} object(s) selected.'),
             const SizedBox(height: 8),
             const Text(
-                'Batch edit faqat umumiy va xavfsiz propertylar uchun keyingi qatlamda ochiladi.'),
+                'Batch edit will be added for shared, safe properties in a later layer.'),
             TextButton.icon(
               onPressed: onClearSelection,
               icon: const Icon(Icons.clear),
@@ -669,7 +669,7 @@ class _ReadOnlyObjectSection extends StatelessWidget {
             for (final entry in rows.entries) _row(entry.key, entry.value),
             const SizedBox(height: 4),
             const Text(
-                'Bu propertylar engine snapshotidan keladi. Tahrirlash commandi hali ochilmagan, shuning uchun noto‘g‘ri local edit yo‘q.'),
+                'These properties come from the engine snapshot. Editing is not enabled here, so local changes cannot drift from the model.'),
           ]);
 }
 

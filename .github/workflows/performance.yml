@@ -1,0 +1,36 @@
+name: Large model performance
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 2 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  large-model:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure native performance build
+        run: >-
+          cmake -S . -B build/performance -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DTBE_BUILD_TESTS=OFF
+          -DTBE_BUILD_CLI=ON
+          -DTBE_BUILD_EXAMPLES=OFF
+          -DTBE_ENABLE_OCCT=OFF
+
+      - name: Build benchmark CLI
+        run: cmake --build build/performance --parallel --target tbe_cli
+
+      - name: Run 100k element contract
+        run: >-
+          ./build/performance/apps/tbe_cli/tbe_cli
+          --benchmark-large-model
+          --element-count 100000
+          --memory-budget-mib 1536

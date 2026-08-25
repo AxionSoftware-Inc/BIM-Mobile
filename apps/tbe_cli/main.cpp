@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <future>
 #include <iostream>
 #include <numeric>
 #include <string>
@@ -15,6 +16,17 @@
 #include <thread>
 #include <utility>
 #include <vector>
+
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <psapi.h>
+#pragma comment(lib, "psapi.lib")
+#elif defined(__unix__) || defined(__APPLE__)
+#include <sys/resource.h>
+#endif
 
 namespace {
 
@@ -72,6 +84,128 @@ double measure_ms(Fn&& fn) {
     std::forward<Fn>(fn)();
     const auto end = std::chrono::steady_clock::now();
     return std::chrono::duration<double, std::milli>(end - start).count();
+}
+
+std::uint64_t resident_memory_bytes() {
+#if defined(_WIN32)
+    PROCESS_MEMORY_COUNTERS counters{};
+    counters.cb = sizeof(counters);
+    if (GetProcessMemoryInfo(GetCurrentProcess(), &counters, sizeof(counters)) != 0) {
+        return static_cast<std::uint64_t>(counters.WorkingSetSize);
+    }
+    return 0;
+#elif defined(__APPLE__)
+    struct rusage usage{};
+    if (getrusage(RUSAGE_SELF, &usage) == 0) return static_cast<std::uint64_t>(usage.ru_maxrss);
+    return 0;
+#elif defined(__unix__)
+    struct rusage usage{};
+    if (getrusage(RUSAGE_SELF, &usage) == 0) return static_cast<std::uint64_t>(usage.ru_maxrss) * 1024ULL;
+    return 0;
+#else
+    return 0;
+#endif
+}
+
+int run_large_model_benchmark(int element_count, std::uint64_t memory_budget_mib) {
+    using namespace tbe::core;
+    const auto element_target = std::max(100'000, element_count);
+    const auto memory_budget_bytes = memory_budget_mib * 1024ULL * 1024ULL;
+    const auto rss_before = resident_memory_bytes();
+
+    Project project{"100k Element Performance Fixture"};
+    auto& document = project.active_document();
+    document.set_automatic_wall_join_enabled(false);
+    std::vector<ElementId> levels;
+    levels.reserve(static_cast<std::size_t>(element_target));
+    for (int index = 0; index < element_target; ++index) {
+        levels.push_back(document.create_level(
+            "Benchmark level",
+            static_cast<double>(index) * 0.01,
+            3.2
+        ));
+    }
+
+    const auto create_ms = measure_ms([&]() {
+        // Keep a small amount of real geometry on the active level. The
+        // remaining elements are intentionally lightweight level metadata so
+        // the contract isolates streaming, async loading and memory policy
+        // from a 100k-wall geometry allocation.
+        const auto active_level = levels[static_cast<std::size_t>(element_target / 2)];
+        for (int index = 0; index < 20; ++index) {
+            const auto x = static_cast<double>(index) * 1.2;
+            document.create_wall(
+                "Performance wall",
+                Line2{.start = {.x = x, .y = 0.0}, .end = {.x = x + 1.0, .y = 0.0}},
+                0.18,
+                3.2,
+                active_level
+            );
+        }
+    });
+    const auto json = project.to_json();
+
+    auto session_result = tbe::api::create_session("100k Element Performance");
+    if (!session_result.ok() || !session_result.value.has_value()) {
+        std::cerr << "Unable to create large-model benchmark session\n";
+        return 1;
+    }
+    auto session = std::move(*session_result.value);
+    (void)session->set_performance_profile(tbe::api::PerformanceProfile::Performance);
+    (void)session->set_compute_mode(tbe::api::ComputeMode::InteractivePreview);
+
+    bool loaded = false;
+    const auto load_ms = measure_ms([&]() {
+        loaded = session->load_project_json_with_mode(json, tbe::api::LoadMode::Strict).ok();
+    });
+    tbe::api::ApiResult<std::string> nearby_json;
+    const auto nearby_ms = measure_ms([&]() {
+        nearby_json = session->get_render_scene_json_near_level(levels[element_target / 2], 0);
+    });
+
+    auto async_result = std::async(std::launch::async, [json, active_level = levels[element_target / 2]]() {
+        auto worker_result = tbe::api::create_session("100k Async Load");
+        if (!worker_result.ok() || !worker_result.value.has_value()) return std::pair<bool, std::size_t>{false, 0};
+        auto worker = std::move(*worker_result.value);
+        (void)worker->set_performance_profile(tbe::api::PerformanceProfile::Performance);
+        (void)worker->set_compute_mode(tbe::api::ComputeMode::InteractivePreview);
+        const auto load = worker->load_project_json_with_mode(json, tbe::api::LoadMode::Strict);
+        if (!load.ok()) return std::pair<bool, std::size_t>{false, 0};
+        const auto nearby = worker->get_render_scene_json_near_level(active_level, 0);
+        return std::pair<bool, std::size_t>{nearby.ok() && nearby.value.has_value(), nearby.value.has_value() ? nearby.value->size() : 0};
+    });
+    const auto async_start = std::chrono::steady_clock::now();
+    const auto async_load_result = async_result.get();
+    const auto async_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - async_start).count();
+
+    const auto rss_after = resident_memory_bytes();
+    const auto rss_delta = rss_after > rss_before ? rss_after - rss_before : 0;
+    const auto full_bytes = json.size();
+    const auto nearby_bytes = nearby_json.ok() && nearby_json.value.has_value() ? nearby_json.value->size() : 0ULL;
+    const auto nearby_reduction = full_bytes > 0 ? 100.0 * (1.0 - static_cast<double>(nearby_bytes) / static_cast<double>(full_bytes)) : 0.0;
+    std::size_t object_count = 0;
+    for (std::size_t offset = json.find("\"kind\""); offset != std::string::npos; offset = json.find("\"kind\"", offset + 6)) {
+        ++object_count;
+    }
+    const bool lod_ok = nearby_bytes > 0 && nearby_bytes < full_bytes;
+    const bool memory_ok = rss_delta == 0 || rss_delta <= memory_budget_bytes;
+    const bool contract_ok = loaded && nearby_json.ok() &&
+        object_count >= static_cast<std::size_t>(element_target) && async_load_result.first && lod_ok && memory_ok;
+
+    std::cout << "Large model performance benchmark\n";
+    std::cout << "Target semantic elements: " << element_target << "\n";
+    std::cout << "Create ms: " << create_ms << "\n";
+    std::cout << "Project JSON KiB: " << json.size() / 1024ULL << "\n";
+    std::cout << "Load ms: " << load_ms << "\n";
+    std::cout << "Nearby snapshot ms: " << nearby_ms << "\n";
+    std::cout << "Async load + nearby ms: " << async_ms << "\n";
+    std::cout << "Objects: " << object_count << "\n";
+    std::cout << "Full project payload KiB: " << full_bytes / 1024ULL << "\n";
+    std::cout << "Nearby snapshot KiB: " << nearby_bytes / 1024ULL << "\n";
+    std::cout << "LOD/streaming reduction: " << nearby_reduction << "%\n";
+    std::cout << "Resident memory delta MiB: " << rss_delta / (1024.0 * 1024.0) << " (budget " << memory_budget_mib << ")\n";
+    std::cout << "Contract gate: " << (contract_ok ? "PASS" : "FAIL") << "\n";
+    return contract_ok ? 0 : 1;
 }
 
 int run_torture_wall_room() {
@@ -854,10 +988,13 @@ int main(int argc, char** argv) {
     int performance_grid_size = 10;
     int residential_stories = 3;
     int template_buildings = 1;
+    int large_model_elements = 100'000;
+    std::uint64_t large_model_memory_budget_mib = 768;
     std::string_view device_class = "mid";
     bool run_performance_mode = false;
     bool run_residential_benchmark_mode = false;
     bool run_residential_template_benchmark_mode = false;
+    bool run_large_model_benchmark_mode = false;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument = argv[index];
         if (argument == "--torture-performance") {
@@ -866,6 +1003,8 @@ int main(int argc, char** argv) {
             run_residential_benchmark_mode = true;
         } else if (argument == "--benchmark-template") {
             run_residential_template_benchmark_mode = true;
+        } else if (argument == "--benchmark-large-model") {
+            run_large_model_benchmark_mode = true;
         } else if (argument == "--grid-size" && index + 1 < argc) {
             performance_grid_size = std::max(1, std::stoi(argv[++index]));
         } else if (argument == "--buildings" && index + 1 < argc) {
@@ -874,6 +1013,10 @@ int main(int argc, char** argv) {
             residential_stories = std::max(1, std::stoi(argv[++index]));
         } else if (argument == "--device-class" && index + 1 < argc) {
             device_class = argv[++index];
+        } else if ((argument == "--element-count" || argument == "--wall-count") && index + 1 < argc) {
+            large_model_elements = std::max(100'000, std::stoi(argv[++index]));
+        } else if (argument == "--memory-budget-mib" && index + 1 < argc) {
+            large_model_memory_budget_mib = std::max<std::uint64_t>(1, std::stoull(argv[++index]));
         }
     }
 
@@ -907,6 +1050,14 @@ int main(int argc, char** argv) {
             return run_residential_template_benchmark(template_buildings, residential_stories, device_class);
         } catch (const std::exception& error) {
             std::cerr << "Residential template benchmark failed: " << error.what() << '\n';
+            return 1;
+        }
+    }
+    if (run_large_model_benchmark_mode) {
+        try {
+            return run_large_model_benchmark(large_model_elements, large_model_memory_budget_mib);
+        } catch (const std::exception& error) {
+            std::cerr << "Large model benchmark failed: " << error.what() << '\n';
             return 1;
         }
     }

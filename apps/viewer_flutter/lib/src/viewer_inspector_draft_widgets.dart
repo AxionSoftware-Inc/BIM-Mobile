@@ -362,7 +362,7 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
               const Text(
-                  'Ikki nuqta bilan straight stair run chizing. Rise Base/Top Leveldan olinadi.'),
+                  'Draw a straight stair run with two points. Rise comes from Base/Top Level.'),
               const SizedBox(height: 8),
               _WallDraftSummary(
                 start: widget.draftWallStart,
@@ -589,7 +589,7 @@ class _TrimExtendDraftSummary extends StatelessWidget {
   Widget build(BuildContext context) {
     if (first == null) {
       return const Text(
-        'Birinchi wallni o‘zgartirmoqchi bo‘lgan uchiga yaqin joyidan bosing.',
+        'Tap the first wall near the endpoint you want to edit.',
       );
     }
     return Column(
@@ -604,7 +604,7 @@ class _TrimExtendDraftSummary extends StatelessWidget {
           const Padding(
             padding: EdgeInsets.only(top: 6),
             child: Text(
-              'Endi ikkinchi wallni uning trim/extend qilinadigan uchiga yaqin joyidan bosing.',
+              'Now tap the second wall near the endpoint to trim or extend.',
             ),
           )
         else ...<Widget>[
@@ -623,7 +623,7 @@ class _TrimExtendDraftSummary extends StatelessWidget {
             const Padding(
               padding: EdgeInsets.only(top: 6),
               child: Text(
-                'Bu uchlar parallel yoki juda qisqa natija beradi. Boshqa uchni tanlang.',
+                'These endpoints would create a parallel or very short result. Choose another endpoint.',
               ),
             ),
         ],
@@ -645,7 +645,7 @@ class _LevelDraftSummary extends StatelessWidget {
   Widget build(BuildContext context) {
     if (start == null || end == null) {
       return const Text(
-        'Elevation view’da 2 marta bosing: birinchi bosish balandlikni, ikkinchisi level line uzunligini beradi.',
+        'In elevation view, tap twice: the first tap sets height and the second sets the level line length.',
       );
     }
 
@@ -696,7 +696,7 @@ class _SurfaceDraftSummary extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
           Text(
-            '$wallCount ta devor tanlangan. Confirm bossangiz $label devorlar chegarasidan hosil qilinadi.',
+            '$wallCount wall(s) selected. Confirm to create $label from the wall boundary.',
           ),
           if (start != null && end != null) ...<Widget>[
             const SizedBox(height: 8),
@@ -713,29 +713,29 @@ class _SurfaceDraftSummary extends StatelessWidget {
     if (drawMode == RenderSceneSurfaceDrawMode.polyline) {
       return Text(
         pointCount < 3
-            ? '$pointCount nuqta qo‘yildi. Yana nuqta qo‘shing.'
-            : 'Polyline boundary tayyor. Confirm bossangiz $label yaratiladi.',
+            ? '$pointCount point(s) added. Add another point.'
+            : 'Polyline boundary ready. Confirm to create $label.',
       );
     }
 
     if (drawMode == RenderSceneSurfaceDrawMode.autoRoom) {
       return Text(
         mode == RenderSceneInteractionMode.addRoof
-            ? 'Roof uchun AutoRoom hozircha yo‘q. Rectangle, Polyline yoki Pick Walls ishlating.'
-            : 'Room ustiga bossangiz $label yaratiladi.',
+            ? 'Auto Room is not available for roofs yet. Use Rectangle, Polyline, or Pick Walls.'
+            : 'Tap inside a room to create $label.',
       );
     }
 
     if (start == null || end == null) {
       return Text(
-        'Bo‘sh joyga chizing yoki devorlarni tanlang. Shu kernel $label uchun ishlaydi.',
+        'Draw in an empty area or select walls. This kernel creates $label.',
       );
     }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
-        Text('Rectangle draft tayyor. Confirm bossangiz $label yaratiladi.'),
+        Text('Rectangle draft ready. Confirm to create $label.'),
         const SizedBox(height: 8),
         _InfoRow(
           label: 'Start',

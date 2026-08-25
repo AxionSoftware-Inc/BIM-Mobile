@@ -49,12 +49,13 @@ int ValidationReport::error_count() const noexcept {
     }));
 }
 
-Element::Element(ElementId id, ElementKind kind, std::string name, Payload payload, Revision revision)
+Element::Element(ElementId id, ElementKind kind, std::string name, Payload payload, Revision revision, MetadataMap metadata)
     : id_(id),
       kind_(kind),
       name_(std::move(name)),
       revision_(revision),
-      payload_(std::move(payload)) {}
+      payload_(std::move(payload)),
+      metadata_(std::move(metadata)) {}
 
 ElementId Element::id() const noexcept {
     return id_;
@@ -70,6 +71,14 @@ std::string_view Element::name() const noexcept {
 
 Revision Element::revision() const noexcept {
     return revision_;
+}
+
+const MetadataMap& Element::metadata() const noexcept {
+    return metadata_;
+}
+
+MetadataMap& Element::metadata() noexcept {
+    return metadata_;
 }
 
 const WallData* Element::wall() const noexcept {

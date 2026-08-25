@@ -11,7 +11,7 @@ extension _ViewerViewportSurfaceEditing on _ViewerHomePageState {
     final repository = _engineRepository;
     if (!_engineBackedMode || repository == null || _activeLevelId == null) {
       _updateViewportState(() {
-        _editStatusMessage = 'Wall repair uchun Android native engine kerak.';
+        _editStatusMessage = 'Wall repair requires the Android native engine.';
       });
       return;
     }
@@ -31,7 +31,7 @@ extension _ViewerViewportSurfaceEditing on _ViewerHomePageState {
       var result = await _authoringCommands.autoJoinWalls();
       await _applyEngineSceneResult(
         result,
-        message: 'Wall joins tekshirildi.',
+        message: 'Wall joins checked.',
       );
       scene = result.scene;
 
@@ -79,10 +79,10 @@ extension _ViewerViewportSurfaceEditing on _ViewerHomePageState {
         result,
         message: repairs == 0
             ? skipped == 0
-                ? 'Wall joins tayyor. Safe gap topilmadi.'
-                : 'Safe bo‘lmagan $skipped ta juftlik tashlab o‘tildi; room boundaries yangilandi.'
+                ? 'Wall joins are ready. No unsafe gap was found.'
+                : '$skipped unsafe pair(s) skipped; room boundaries updated.'
             : '$repairs ta wall gap tuzatildi'
-                '${skipped == 0 ? '' : ', $skipped ta juftlik tashlab o‘tildi'}; room boundaries yangilandi.',
+                '${skipped == 0 ? '' : ', $skipped pair(s) skipped'}; room boundaries updated.',
       );
       scene = result.scene;
       if (_surfaceDrawMode == RenderSceneSurfaceDrawMode.pickWalls &&
@@ -92,10 +92,10 @@ extension _ViewerViewportSurfaceEditing on _ViewerHomePageState {
       if (!mounted) return;
       _updateViewportState(() {
         _editStatusMessage = _draftCanConfirm
-            ? 'Kontur yopildi. Finish yoki Auto Room’dan foydalaning.'
+            ? 'Contour closed. Use Finish or Auto Room.'
             : repairs == 0
-                ? 'Kontur hali ochiq. Ikki eng yaqin wall uchini bosing yoki Trim / Extend ishlating.'
-                : 'Kontur hali ochiq. Qolgan gap uchun Trim / Extend ishlating.';
+                ? 'Contour is open. Tap the two closest wall endpoints or use Trim / Extend.'
+                : 'Contour is open. Use Trim / Extend to close the remaining gap.';
       });
     } catch (error) {
       if (!mounted) return;
@@ -383,7 +383,7 @@ extension _ViewerViewportSurfaceEditing on _ViewerHomePageState {
         await _clearDraft();
         await _setInteractionMode(RenderSceneInteractionMode.select);
         _updateViewportState(() {
-          _editStatusMessage = 'Wall chizish tugatildi.';
+          _editStatusMessage = 'Wall drawing finished.';
         });
         return;
       case RenderSceneInteractionMode.addLevel:
@@ -398,7 +398,7 @@ extension _ViewerViewportSurfaceEditing on _ViewerHomePageState {
         final end = _draftWallEnd;
         if (sceneLevel == null || levelId == null || end == null) {
           _updateViewportState(() {
-            _editStatusMessage = 'Move level preview tayyor emas.';
+            _editStatusMessage = 'Move level preview is not ready.';
           });
           return;
         }
@@ -447,7 +447,7 @@ extension _ViewerViewportSurfaceEditing on _ViewerHomePageState {
             start == null ||
             end == null) {
           _updateViewportState(() {
-            _editStatusMessage = 'Move wall preview tayyor emas.';
+            _editStatusMessage = 'Move wall preview is not ready.';
           });
           return;
         }
@@ -475,7 +475,7 @@ extension _ViewerViewportSurfaceEditing on _ViewerHomePageState {
         if (opening == null ||
             (opening.kindKey != 'door' && opening.kindKey != 'window')) {
           _updateViewportState(() {
-            _editStatusMessage = 'Move opening preview tayyor emas.';
+            _editStatusMessage = 'Move opening preview is not ready.';
           });
           return;
         }
@@ -551,7 +551,7 @@ extension _ViewerViewportSurfaceEditing on _ViewerHomePageState {
               resolvedPickPolygon.length < 3) {
             _updateViewportState(() {
               _editStatusMessage =
-                  'Picked wall loop yopilmagan. Barcha devorlar uzluksiz ko‘k kontur hosil qilishi kerak.';
+                  'The picked wall loop is not closed. All walls must form one continuous blue contour.';
             });
             return;
           }
@@ -598,7 +598,8 @@ extension _ViewerViewportSurfaceEditing on _ViewerHomePageState {
           } catch (error) {
             if (!mounted) return;
             _updateViewportState(() {
-              _editStatusMessage = '${_surfaceKindLabel()} yaratilmadi: $error';
+              _editStatusMessage =
+                  '${_surfaceKindLabel()} could not be created: $error';
               _statusMessage = _editStatusMessage;
             });
           }
@@ -678,7 +679,7 @@ extension _ViewerViewportSurfaceEditing on _ViewerHomePageState {
           if (identical(nextScene, scene)) {
             _updateViewportState(() {
               _editStatusMessage =
-                  '${_surfaceKindLabel()} boundary yaratilmadi.';
+                  '${_surfaceKindLabel()} boundary could not be created.';
             });
             return;
           }

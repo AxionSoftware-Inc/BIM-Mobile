@@ -19,6 +19,7 @@ import 'package:viewer_flutter/src/scene_view_service.dart';
 import 'package:viewer_flutter/src/project_persistence_service.dart';
 import 'package:viewer_flutter/src/project_lifecycle_service.dart';
 import 'package:viewer_flutter/src/project_session_controller.dart';
+import 'package:viewer_flutter/src/project_recovery_store.dart';
 import 'package:viewer_flutter/src/render_scene_viewport_controller.dart';
 import 'package:viewer_flutter/src/render_scene_viewport_planar.dart';
 import 'package:viewer_flutter/src/render_scene_viewport_projection.dart';
@@ -113,6 +114,27 @@ class _RecordingProjectGateway implements ViewerProjectGateway {
       _emptyLoadResult();
 
   @override
+  Future<ViewerLoadResult> loadFromIfc({required String ifcPath}) async =>
+      _emptyLoadResult();
+
+  @override
+  Future<void> exportIfc({required String path}) async {}
+
+  @override
+  Future<Map<String, dynamic>> getUnitSettings() async => <String, dynamic>{
+        'system': 'metric',
+        'length': 'meter',
+        'angle': 'degrees',
+      };
+
+  @override
+  Future<void> setUnitSettings({
+    required String system,
+    required String length,
+    required String angle,
+  }) async {}
+
+  @override
   Future<ViewerLoadResult> reloadCurrent() async => _emptyLoadResult();
 
   @override
@@ -121,6 +143,27 @@ class _RecordingProjectGateway implements ViewerProjectGateway {
   @override
   Future<File> saveProjectToDefaultLocation() async =>
       File('/tmp/example.tbe.json');
+
+  @override
+  Future<RenderSceneLoadResult> undo() async => const RenderSceneLoadResult(
+        scene: null,
+        warnings: <String>[],
+        errors: <String>[],
+      );
+
+  @override
+  Future<RenderSceneLoadResult> redo() async => const RenderSceneLoadResult(
+        scene: null,
+        warnings: <String>[],
+        errors: <String>[],
+      );
+
+  @override
+  Future<({int undoCount, int redoCount})> historyCounts() async =>
+      (undoCount: 0, redoCount: 0);
+
+  @override
+  Future<String> snapshotProjectJson() async => '{"schema_version": 1}';
 
   ViewerLoadResult _emptyLoadResult() => ViewerLoadResult(
         snapshot: ViewerSnapshot(
@@ -213,4 +256,24 @@ void main() {
   registerArchitectureModuleTests();
   registerAuthoringToolModuleTests();
   registerViewNavigationPolicyTests();
+
+  test('project recovery store writes and removes a durable checkpoint', () async {
+    final store = ProjectRecoveryStore();
+    const projectName = 'viewer-recovery-test';
+    await store.deleteForProject(projectName);
+    final entry = await store.write(
+      projectName: projectName,
+      json: '{"schema_version": 1, "recovery": true}',
+    );
+    expect(await entry.readJson(), contains('recovery'));
+    expect(
+      (await store.list()).any((candidate) => candidate.jsonPath == entry.jsonPath),
+      isTrue,
+    );
+    await store.deleteEntry(entry);
+    expect(
+      (await store.list()).any((candidate) => candidate.jsonPath == entry.jsonPath),
+      isFalse,
+    );
+  });
 }

@@ -69,6 +69,10 @@ extension _ViewerViewCommands on _ViewerHomePageState {
       _activeSectionView = null;
       _projectionMode = mode;
       _statusMessage = mode.statusLabel;
+      AppTelemetry.track(
+        'view_changed',
+        properties: <String, Object?>{'view': mode.name},
+      );
       if (scene != null && _usesProjectionDefaultVisibility) {
         _visibleKinds = _defaultVisibleKindsForProjection(scene);
       } else if (scene != null) {
@@ -748,7 +752,7 @@ extension _ViewerViewCommands on _ViewerHomePageState {
     final elevation = double.tryParse(value.trim());
     if (elevation == null) {
       _updateViewportState(() {
-        _editStatusMessage = 'Balandlik raqamini to‘g‘ri kiriting.';
+        _editStatusMessage = 'Enter a valid elevation.';
       });
       return;
     }
@@ -766,7 +770,7 @@ extension _ViewerViewCommands on _ViewerHomePageState {
           (updated.elevationMeters - elevation).abs() > 0.0001) {
         _updateViewportState(() {
           _editStatusMessage =
-              'Engine level elevation qaytarmadi: ${result.errors.join(' ')}';
+              'The engine did not return the level elevation: ${result.errors.join(' ')}';
         });
         return;
       }
@@ -824,7 +828,7 @@ extension _ViewerViewCommands on _ViewerHomePageState {
     if (_engineBackedMode && repository != null && object.kindKey == 'wall') {
       _updateViewportState(() {
         _editStatusMessage =
-            'Wall level lock engine mode uchun constraint inspector keyingi bosqichda ulanadi.';
+            'Wall level locking will be connected to the constraint Inspector in a later engine mode.';
       });
       return;
     }

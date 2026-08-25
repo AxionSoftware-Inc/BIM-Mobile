@@ -12,14 +12,18 @@ import 'package:flutter/services.dart';
 
 import 'authoring_command_service.dart';
 import 'app_settings.dart';
+import 'onboarding_page.dart';
+import 'telemetry_service.dart';
 import 'documentation/document_models.dart';
 import 'documentation/documentation_workspace.dart';
 import 'documentation/sheet_canvas.dart';
 import 'documentation/sheet_workspace_controller.dart';
 import 'inspector_controller.dart';
+import 'ifc_template_catalog.dart';
 import 'property_editor.dart';
 import 'project_lifecycle_service.dart';
 import 'project_persistence_service.dart';
+import 'project_recovery_store.dart';
 import 'project_session_controller.dart';
 import 'project_browser_panel.dart';
 import 'render_scene_editor.dart';
@@ -67,7 +71,8 @@ part 'viewer_view_state.dart';
 part 'viewer_view_commands.dart';
 part 'viewer_authoring_state.dart';
 
-class _ViewerHomePageState extends State<ViewerHomePage> {
+class _ViewerHomePageState extends State<ViewerHomePage>
+    with WidgetsBindingObserver {
   static const double _defaultWallThicknessMeters =
       RenderSceneEditor.defaultWallThicknessMeters;
   static const double _defaultWallHeightMeters =
@@ -113,6 +118,12 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   bool _isBusy = false;
   bool _isViewNavigationBusy = false;
   bool _projectHasChanges = false;
+  bool _canUndo = false;
+  bool _canRedo = false;
+  String _currentProjectName = 'Tablet BIM Project';
+  final ProjectRecoveryStore _recoveryStore = ProjectRecoveryStore();
+  Timer? _recoveryAutosaveTimer;
+  bool _recoveryWriteInFlight = false;
   bool _showInspector = false;
   bool _showObjectList = true;
   bool _showDiagnostics = false;
@@ -310,6 +321,8 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _currentProjectName = widget.initialProjectName ?? _currentProjectName;
     unawaited(_viewportController.setViewportTheme(widget.viewportTheme));
     _selectionController = SelectionController(_viewportController);
     _inspectorController = InspectorController(_selectionController);
@@ -337,11 +350,22 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
         return;
       }
       final initialTemplate = widget.initialTemplate;
+      final initialIfcPath = widget.initialIfcPath;
       final initialProjectJson = widget.initialProjectJson;
       if (widget.initialBlankProject) {
         _createBlankProject();
       } else if (initialTemplate != null) {
         _createResidentialTemplate(_residentialTemplateKind(initialTemplate));
+      } else if (initialIfcPath != null) {
+        unawaited(() async {
+          await _loadIfcPath(
+            initialIfcPath,
+            projectName: widget.initialProjectName ?? 'IFC sample project',
+          );
+          if (mounted && _scene != null) {
+            await _setProjectionMode(RenderSceneProjectionMode.isometric);
+          }
+        }());
       } else if (initialProjectJson != null) {
         _loadProjectJson(
           initialProjectJson,
@@ -369,6 +393,8 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _recoveryAutosaveTimer?.cancel();
     _sheetWorkspace.removeListener(_onSheetWorkspaceChanged);
     _sheetWorkspace.dispose();
     _viewportController.removeListener(_onViewportChanged);
@@ -392,6 +418,15 @@ class _ViewerHomePageState extends State<ViewerHomePage> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.viewportTheme != widget.viewportTheme) {
       unawaited(_viewportController.setViewportTheme(widget.viewportTheme));
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.detached) {
+      unawaited(_writeRecoveryAutosave());
     }
   }
 

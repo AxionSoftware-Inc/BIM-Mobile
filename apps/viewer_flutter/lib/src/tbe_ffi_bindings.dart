@@ -483,6 +483,18 @@ typedef _DeleteElementDart = int Function(
   ffi.Pointer<ffi.Void>,
   int,
 );
+typedef _VoidMutationNative = ffi.Int32 Function(ffi.Pointer<ffi.Void>);
+typedef _VoidMutationDart = int Function(ffi.Pointer<ffi.Void>);
+typedef _HistoryCountsNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Pointer<ffi.Uint64>,
+  ffi.Pointer<ffi.Uint64>,
+);
+typedef _HistoryCountsDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Pointer<ffi.Uint64>,
+  ffi.Pointer<ffi.Uint64>,
+);
 typedef _CreateProfileDart = int Function(
   ffi.Pointer<ffi.Void>,
   int,
@@ -519,6 +531,18 @@ typedef _ProjectImportPackageDart = int Function(
   ffi.Pointer<ffi.Void>,
   ffi.Pointer<Utf8>,
   int,
+);
+typedef _ProjectUnitSettingsSetterNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<Utf8>,
+);
+typedef _ProjectUnitSettingsSetterDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<Utf8>,
 );
 typedef _ValidateNative = ffi.Int32 Function(
   ffi.Pointer<ffi.Void>,

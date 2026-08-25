@@ -16,6 +16,31 @@ void registerEngineIntegrationTests() {
     expect(result.scene!.objects, isNotEmpty);
   });
 
+  test('global engine history is exposed through the project session', () async {
+    final repository = ViewerRepository(TbeViewerApi.load());
+    addTearDown(repository.dispose);
+    final blank = await repository.createBlankProject(projectName: 'History test');
+    final levelId = blank.scene!.levels.first.levelId;
+    final before = await repository.historyCounts();
+    final created = await repository.createWall(
+      name: 'Undo wall',
+      levelId: levelId,
+      start: const RenderScenePoint(x: 0, y: 0, z: 0),
+      end: const RenderScenePoint(x: 4, y: 0, z: 0),
+      thicknessMeters: 0.2,
+      heightMeters: 3.2,
+    );
+    expect((await repository.historyCounts()).undoCount, greaterThan(before.undoCount));
+    expect(created.scene!.kindCounts['wall'], greaterThanOrEqualTo(1));
+
+    final undone = await repository.undo();
+    expect(undone.scene!.kindCounts['wall'] ?? 0, 0);
+    expect((await repository.historyCounts()).redoCount, greaterThan(0));
+
+    final redone = await repository.redo();
+    expect(redone.scene!.kindCounts['wall'], greaterThanOrEqualTo(1));
+  });
+
   test('engine residential tower template is level-bound and reload-safe',
       () async {
     final repository = ViewerRepository(TbeViewerApi.load());

@@ -1,5 +1,6 @@
 #include "tbe/core/Document.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cctype>
 #include <cerrno>
@@ -270,6 +271,31 @@ std::string escape_json(std::string_view value) {
         }
     }
     return escaped;
+}
+
+std::string metadata_kind_to_string(MetadataValueKind kind) {
+    switch (kind) {
+    case MetadataValueKind::Text: return "text";
+    case MetadataValueKind::Number: return "number";
+    case MetadataValueKind::Boolean: return "boolean";
+    case MetadataValueKind::Length: return "length";
+    case MetadataValueKind::Area: return "area";
+    case MetadataValueKind::Volume: return "volume";
+    case MetadataValueKind::Angle: return "angle";
+    case MetadataValueKind::ElementReference: return "element_reference";
+    }
+    return "text";
+}
+
+MetadataValueKind string_to_metadata_kind(std::string_view value) {
+    if (value == "number") return MetadataValueKind::Number;
+    if (value == "boolean") return MetadataValueKind::Boolean;
+    if (value == "length") return MetadataValueKind::Length;
+    if (value == "area") return MetadataValueKind::Area;
+    if (value == "volume") return MetadataValueKind::Volume;
+    if (value == "angle") return MetadataValueKind::Angle;
+    if (value == "element_reference") return MetadataValueKind::ElementReference;
+    return MetadataValueKind::Text;
 }
 
 void ensure_finite(double value, std::string_view field_name) {
@@ -721,6 +747,9 @@ std::string Document::to_json() const {
     std::ostringstream out;
     out << "{\"schema\":\"tbe.document.v1\",";
     out << "\"name\":\"" << escape_json(name_) << "\",";
+    out << "\"units\":{\"system\":\"" << unit_system_to_string(unit_settings_.system)
+        << "\",\"length\":\"" << length_unit_to_string(unit_settings_.length)
+        << "\",\"angle\":\"" << escape_json(unit_settings_.angle) << "\"},";
     out << "\"next_id\":" << next_id_ << ',';
     out << "\"materials\":[";
     {
@@ -889,6 +918,22 @@ std::string Document::to_json() const {
         out << ",\"kind\":\"" << kind_to_string(element.kind()) << '"';
         out << ",\"name\":\"" << escape_json(element.name()) << '"';
         out << ",\"revision\":" << element.revision();
+        if (!element.metadata().empty()) {
+            out << ",\"metadata\":{";
+            auto first_metadata = true;
+            for (const auto& [key, value] : element.metadata()) {
+                if (!first_metadata) out << ',';
+                first_metadata = false;
+                out << "\"" << escape_json(key) << "\":{\"kind\":\""
+                    << metadata_kind_to_string(value.kind)
+                    << "\",\"value\":\"" << escape_json(value.value) << "\"";
+                if (!value.unit.empty()) {
+                    out << ",\"unit\":\"" << escape_json(value.unit) << "\"";
+                }
+                out << '}';
+            }
+            out << '}';
+        }
 
         if (const auto* level = element.level()) {
             out << ",\"level\":{\"name\":\"" << escape_json(level->name) << "\",";
@@ -1055,6 +1100,20 @@ Document Document::from_json(std::string_view json) {
     const auto& root_object = as_object(root);
 
     auto document = Document(as_string(field(root_object, "name")));
+    if (const auto units = root_object.find("units"); units != root_object.end()) {
+        const auto& units_object = as_object(units->second);
+        UnitSettings settings{};
+        if (const auto system = units_object.find("system"); system != units_object.end()) {
+            settings.system = string_to_unit_system(as_string(system->second));
+        }
+        if (const auto length = units_object.find("length"); length != units_object.end()) {
+            settings.length = string_to_length_unit(as_string(length->second));
+        }
+        if (const auto angle = units_object.find("angle"); angle != units_object.end()) {
+            settings.angle = as_string(angle->second);
+        }
+        document.set_unit_settings(std::move(settings));
+    }
     std::vector<Element> elements;
 
     if (const auto materials_it = root_object.find("materials"); materials_it != root_object.end()) {
@@ -1206,6 +1265,31 @@ Document Document::from_json(std::string_view json) {
         const auto kind = string_to_kind(as_string(field(object, "kind")));
         auto name = as_string(field(object, "name"));
         const auto revision = static_cast<Revision>(as_id(field(object, "revision")));
+        MetadataMap element_metadata;
+        if (const auto metadata = object.find("metadata"); metadata != object.end()) {
+            for (const auto& [key, value] : as_object(metadata->second)) {
+                if (value.type == JsonValue::Type::String) {
+                    element_metadata[key] = MetadataValue{
+                        .kind = MetadataValueKind::Text,
+                        .value = as_string(value),
+                    };
+                    continue;
+                }
+                const auto& value_object = as_object(value);
+                MetadataValue parsed{
+                    .kind = value_object.find("kind") == value_object.end()
+                        ? MetadataValueKind::Text
+                        : string_to_metadata_kind(as_string(field(value_object, "kind"))),
+                    .value = value_object.find("value") == value_object.end()
+                        ? std::string{}
+                        : as_string(field(value_object, "value")),
+                    .unit = value_object.find("unit") == value_object.end()
+                        ? std::string{}
+                        : as_string(field(value_object, "unit")),
+                };
+                element_metadata[key] = std::move(parsed);
+            }
+        }
 
         if (kind == ElementKind::Level) {
             const auto& level = as_object(field(object, "level"));
@@ -1424,6 +1508,11 @@ Document Document::from_json(std::string_view json) {
                 .footprint_area_square_meters = stair.find("footprint_area") != stair.end() ? as_number(field(stair, "footprint_area")) : 0.0,
                 .volume_cubic_meters = stair.find("volume") != stair.end() ? as_number(field(stair, "volume")) : 0.0,
             }, revision);
+        }
+        if (auto found = std::find_if(elements.begin(), elements.end(), [id](const Element& element) {
+            return element.id() == id;
+        }); found != elements.end()) {
+            found->metadata() = std::move(element_metadata);
         }
     }
 

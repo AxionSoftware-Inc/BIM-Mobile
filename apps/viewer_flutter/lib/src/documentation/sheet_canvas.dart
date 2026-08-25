@@ -131,7 +131,7 @@ class _SheetContextBar extends StatelessWidget {
                     style: theme.textTheme.titleSmall,
                   ),
                   Text(
-                    'Project Browser view’larini uzoq bosib sheetga sudrang',
+                    'Long-press Project Browser views and drag them onto the sheet',
                     style: theme.textTheme.labelSmall,
                   ),
                 ],
@@ -297,12 +297,12 @@ class _EmptySheetHint extends StatelessWidget {
           Icon(Icons.drag_indicator, color: color, size: 30),
           const SizedBox(height: 8),
           Text(
-            active ? 'Shu yerga qo‘yib yuboring' : 'Sheet hali bo‘sh',
+            active ? 'Release here' : 'Sheet is empty',
             style: TextStyle(color: color, fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 4),
           Text(
-            'Floor Plan, Elevation, Section yoki 3D View’ni\nProject Browser’dan uzoq bosib sudrang.',
+            'Long-press a Floor Plan, Elevation, Section, or 3D View\nin the Project Browser and drag it here.',
             textAlign: TextAlign.center,
             style: TextStyle(color: color, fontSize: 11),
           ),
