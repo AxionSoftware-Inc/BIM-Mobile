@@ -42,6 +42,13 @@ extension _ViewerViewCommands on _ViewerHomePageState {
       // A nearby-level plan snapshot can still be active even though the
       // selected tab is already 3D/elevation. Re-fetch the intended scope so
       // the roof is not lost when the user returns to the same view tab.
+      if (_viewportController.hasNativeGeometry) {
+        await _viewportController.setVisibleKinds(_visibleKinds);
+        await _viewportController.setProjectionMode(mode);
+        await _viewportController.setDisplayStyle(_displayStyle);
+        await _viewportController.fitCamera();
+        return;
+      }
       final repository = _engineRepository;
       if (_engineBackedMode &&
           repository != null &&
@@ -90,6 +97,19 @@ extension _ViewerViewCommands on _ViewerHomePageState {
     });
 
     final repository = _engineRepository;
+    if (_viewportController.hasNativeGeometry) {
+      // Native IFC geometry is already resident in Filament. Keep the
+      // compact semantic scene in Flutter for levels/metadata, but never
+      // reload a full JSON mesh when switching the initial or subsequent
+      // viewport projection.
+      if (scene != null) {
+        await _viewportController.setVisibleKinds(_visibleKinds);
+      }
+      await _viewportController.setProjectionMode(mode);
+      await _viewportController.setDisplayStyle(_displayStyle);
+      await _viewportController.fitCamera();
+      return;
+    }
     if (_engineBackedMode && repository != null) {
       final scope = ViewNavigationPolicy.scopeFor(
         mode: mode,

@@ -164,6 +164,11 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
 
   bool get hasNativeBridge => _channel != null;
 
+  /// True while the live Android viewport owns the IFC mesh through the
+  /// engine-backed `.bimcache`. Navigation must not replace that geometry
+  /// with the legacy JSON scene just to change projection or scope.
+  bool get hasNativeGeometry => _nativeGeometryActive;
+
   /// Waits for the PlatformView channel created after a lightweight loading
   /// scene has mounted.  IFC import starts from the start screen, where the
   /// native view does not exist yet; this lets the native-first cache path
