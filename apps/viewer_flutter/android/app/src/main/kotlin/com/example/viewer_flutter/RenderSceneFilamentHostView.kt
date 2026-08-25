@@ -1009,6 +1009,22 @@ internal class RenderSceneFilamentHostView(
       intArrayOf(2, 6, 7), intArrayOf(2, 7, 4),
       intArrayOf(3, 7, 4), intArrayOf(3, 4, 0),
     )
+    // Cache meshes stay in native DirectByteBuffers, so the overlay never
+    // receives their full edges.  Keep just the twelve bounds edges as a
+    // selection-only affordance: it makes a picked IFC element visibly blue
+    // without reintroducing per-triangle Dart/Kotlin work for large models.
+    val selectionBoundsEdges = listOf(
+      0 to 1, 1 to 2, 2 to 3, 3 to 0,
+      4 to 5, 5 to 6, 6 to 7, 7 to 4,
+      0 to 4, 1 to 5, 2 to 6, 3 to 7,
+    ).map { (first, second) ->
+      NativeVisualEdge(
+        first = first,
+        second = second,
+        triangleIndices = intArrayOf(),
+        sharp = true,
+      )
+    }
     return NativeVisualObject(
       elementId = primitive.elementId,
       kind = primitive.kind,
@@ -1016,7 +1032,7 @@ internal class RenderSceneFilamentHostView(
       metadata = mapOf("native_cache" to "true", "level_id" to primitive.levelId.toString()),
       points = points,
       triangles = triangles,
-      featureEdges = emptyList(),
+      featureEdges = selectionBoundsEdges,
     )
   }
 
