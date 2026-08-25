@@ -16,6 +16,7 @@
 #include <string_view>
 #include <unordered_set>
 #include <unordered_map>
+#include <utility>
 
 namespace tbe::core {
 
@@ -735,14 +736,36 @@ MeshBuffer product_mesh(
     const auto shape = shape_id.has_value() ? entities.find(*shape_id) : entities.end();
     if (shape != entities.end() && shape->second.arguments.size() > 2) {
         const auto representation_ids = references_in(shape->second.arguments[2]);
-        std::vector<int> recursion_guard;
+        std::vector<int> candidates;
+        const auto add_candidate = [&candidates](int representation_id) {
+            if (std::find(candidates.begin(), candidates.end(), representation_id) == candidates.end()) {
+                candidates.push_back(representation_id);
+            }
+        };
+
+        // Prefer the authored Body representation. Brep/mapped geometry is a
+        // fallback; appending both creates coplanar duplicate faces and z-fighting.
         for (const auto representation_id : representation_ids) {
             const auto representation = entities.find(representation_id);
             if (representation == entities.end() || representation->second.arguments.size() <= 3) continue;
             const auto identifier = representation->second.arguments.size() > 1 ? step_string(representation->second.arguments[1]) : std::string{};
+            if (identifier == "Body") add_candidate(representation_id);
+        }
+        for (const auto representation_id : representation_ids) {
+            const auto representation = entities.find(representation_id);
+            if (representation == entities.end() || representation->second.arguments.size() <= 3) continue;
             const auto type = representation->second.arguments.size() > 2 ? step_string(representation->second.arguments[2]) : std::string{};
-            if (identifier == "Body" || type == "Brep" || type == "MappedRepresentation" || mesh.vertices.empty()) {
-                append_ifc_mesh_representation(representation_id, entities, placement, length_scale, mesh, recursion_guard);
+            if (type == "Brep" || type == "MappedRepresentation") add_candidate(representation_id);
+        }
+        for (const auto representation_id : representation_ids) add_candidate(representation_id);
+
+        for (const auto representation_id : candidates) {
+            MeshBuffer candidate;
+            std::vector<int> recursion_guard;
+            append_ifc_mesh_representation(representation_id, entities, placement, length_scale, candidate, recursion_guard);
+            if (!candidate.vertices.empty() && !candidate.indices.empty()) {
+                mesh = std::move(candidate);
+                break;
             }
         }
     }
