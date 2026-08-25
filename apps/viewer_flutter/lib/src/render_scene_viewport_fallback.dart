@@ -292,10 +292,11 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
             },
             onPointerDown: (PointerDownEvent event) {
               if (nativeOwnedInteraction) {
-                // The 3D Section Box stays native, but keep enough pointer
-                // state to route a stationary one-finger tap through the
-                // shared Flutter picker. Planar section views never enter
-                // this branch: Flutter owns their camera gestures.
+                // The native Filament host owns the live 3D camera and its
+                // exact ray picker. Do not also send the same pointer to the
+                // fallback scene tap callback: that callback has no native
+                // mesh and would interpret the tap as an empty-space miss,
+                // clearing the selection immediately after Filament found it.
                 _activePointerCount += 1;
                 _activePointer = event.pointer;
                 _pointerDownPosition = event.localPosition;
@@ -539,13 +540,7 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                     _activePointerCount <= 1 &&
                     !_isSecondaryDrag &&
                     moved < _tapDistanceThreshold(event)) {
-                  widget.onSceneTap?.call(_sceneDetails(
-                    scene,
-                    size,
-                    event.localPosition,
-                    event.position,
-                    touchFriendly: _usesTouchNavigation(event),
-                  ));
+                  await controller.pickNativeAt(event.localPosition, size);
                 }
                 _clearPointerState();
                 return;

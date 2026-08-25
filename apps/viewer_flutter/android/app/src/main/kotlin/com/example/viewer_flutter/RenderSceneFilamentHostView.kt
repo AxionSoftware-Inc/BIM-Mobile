@@ -2183,7 +2183,14 @@ internal class RenderSceneFilamentHostView(
         .also { buffer ->
           buffer.setBuffer(engine, chunk.indices.duplicate().apply { rewind() })
         }
-      val sharedMaterial = materialForObject(representative, fallbackMaterial)
+      // A native cache chunk contains several IFC elements and can therefore
+      // carry more than one material category.  Applying the first element's
+      // procedural wall/wood/floor shader to the whole chunk made its
+      // high-frequency pattern alias while orbiting on the tablet, which was
+      // perceived as white/black flicker.  Keep the complete cached geometry
+      // and use the low-frequency neutral material for the streamed path;
+      // material detail remains available in the compatibility renderer.
+      val sharedMaterial = fallbackMaterial
       val baseColor = displayBaseColor(representative)
       val materialInstance = sharedMaterial.createInstance().also { instance ->
         applySectionBoxState(instance)
@@ -4534,9 +4541,10 @@ internal class RenderSceneFilamentHostView(
         return true
       }
       MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-        if (event.actionMasked == MotionEvent.ACTION_UP && !touchMoved && activeSectionHandle == null) {
-          pickVisibleObject(event.x, event.y)
-        }
+        // Flutter's viewport wrapper forwards a stationary 3D tap through
+        // pickNormalized. Keeping selection on that one path prevents the
+        // native TextureView and Flutter overlay from racing with different
+        // results for the same pointer-up event.
         if (event.actionMasked == MotionEvent.ACTION_UP && touchMoved && activeSectionHandle == null) {
           startOrbitInertia()
         } else {
@@ -4623,7 +4631,8 @@ internal class RenderSceneFilamentHostView(
   private fun pickVisibleObject(x: Float, y: Float) {
     val view = filamentView
     if (view == null) {
-      onObjectTapped(selectionOverlay.pickElementAt(x, y, visibleKinds))
+      val result = selectionOverlay.pickElementAt(x, y, visibleKinds)
+      onObjectTapped(result)
       return
     }
     // The ray is evaluated against Filament's live view/projection matrices,
@@ -4642,6 +4651,14 @@ internal class RenderSceneFilamentHostView(
     }
     if (rayElementId != null) {
       onObjectTapped(rayElementId)
+      return
+    }
+    // Native cache picking is exact, but older cache files and a few Android
+    // GLES drivers can still reject a valid ray at a chunk boundary.  The
+    // overlay keeps lightweight bounds for every primitive, so use it as a
+    // deterministic screen-space fallback instead of silently clearing a tap.
+    selectionOverlay.pickElementAt(x, y, visibleKinds)?.let {
+      onObjectTapped(it)
       return
     }
     // Do not fall back to Filament's asynchronous GPU pick here. On this
@@ -4869,9 +4886,14 @@ internal class RenderSceneFilamentHostView(
     val depths = boxCorners(bounds).map { point ->
       dotScenePoints(ScenePoint(point.x - eye.x, point.y - eye.y, point.z - eye.z), forward)
     }
-    val safetyMargin = max(sceneSpan * 0.025, 0.05)
-    val near = max(0.01, (depths.minOrNull() ?: 0.0) - safetyMargin)
-    val far = max(near + 1.0, (depths.maxOrNull() ?: 1.0) + safetyMargin)
+    // Keep the near plane out of the millimetre range for building-scale
+    // scenes.  A near plane of 0.01 m combined with a distant orbit consumes
+    // almost all mobile depth precision and makes coplanar IFC triangles
+    // sparkle during a pinch.  The margin is still proportional, so small
+    // architectural details remain selectable and visible.
+    val safetyMargin = max(sceneSpan * 0.04, 0.10)
+    val near = max(0.05, (depths.minOrNull() ?: 0.0) - safetyMargin)
+    val far = max(near + max(sceneSpan * 1.25, 4.0), (depths.maxOrNull() ?: 1.0) + safetyMargin)
     return near to far
   }
 
@@ -4894,7 +4916,7 @@ internal class RenderSceneFilamentHostView(
     // Keep an orbit camera outside dense multi-storey geometry. This avoids
     // near-plane crossings and depth flicker while direct selection remains
     // available for close inspection.
-    return max(span * 0.30, 1.75)
+    return max(span * 0.50, 1.75)
   }
 
   private fun minimumPlanarOrbitDistance(): Double = 0.5
