@@ -65,6 +65,7 @@ private const val TAG = "RenderSceneFilament"
 private const val NATIVE_CACHE_INITIAL_UPLOAD_CHUNKS = 3
 private const val NATIVE_CACHE_STEADY_UPLOAD_CHUNKS = 1
 private const val NATIVE_CACHE_UPLOAD_DELAY_MS = 8L
+private const val NATIVE_CACHE_REPRIORITIZE_DELAY_MS = 56L
 
 private const val FLAT_COLOR_MAT = """
 void material(inout MaterialInputs material) {
@@ -486,6 +487,7 @@ internal class RenderSceneFilamentHostView(
   private var nativeCacheLoadRevision = 0L
   private var nativeCacheUploadRevision = 0L
   private var nativeCacheUploadPosted = false
+  private var nativeCacheReprioritizePosted = false
   private val nativeCachePendingChunks = ArrayDeque<Int>()
   private val nativeCacheResidentChunks = linkedSetOf<Int>()
   private var nativeCacheFullBounds: SceneBounds? = null
@@ -820,6 +822,7 @@ internal class RenderSceneFilamentHostView(
   private fun closeNativeBimCache() {
     nativeCacheUploadRevision += 1L
     nativeCacheUploadPosted = false
+    nativeCacheReprioritizePosted = false
     nativeCachePendingChunks.clear()
     nativeCacheResidentChunks.clear()
     nativeCacheFullBounds = null
@@ -1872,6 +1875,26 @@ internal class RenderSceneFilamentHostView(
         maxChunks = NATIVE_CACHE_STEADY_UPLOAD_CHUNKS,
       )
     }, NATIVE_CACHE_UPLOAD_DELAY_MS)
+  }
+
+  private fun scheduleNativeBimCacheReprioritization() {
+    val cache = nativeBimCache ?: return
+    if (nativeCachePendingChunks.size < 2 || nativeCacheReprioritizePosted) return
+    val revision = nativeCacheUploadRevision
+    nativeCacheReprioritizePosted = true
+    // Sorting on every MotionEvent can itself make a large model feel heavy.
+    // Coalesce a gesture into one short delayed reorder instead; uploads that
+    // already reached Filament remain valid LOD0 geometry and are never
+    // touched.
+    postDelayed({
+      nativeCacheReprioritizePosted = false
+      if (disposed || revision != nativeCacheUploadRevision || cache !== nativeBimCache) return@postDelayed
+      val nearestFirst = nativeCachePendingChunks
+        .toList()
+        .sortedBy { index -> nativeCacheChunkDistanceSquared(cache, index) }
+      nativeCachePendingChunks.clear()
+      nearestFirst.forEach(nativeCachePendingChunks::addLast)
+    }, NATIVE_CACHE_REPRIORITIZE_DELAY_MS)
   }
 
   private fun createNativeBimCacheChunk(
@@ -4374,6 +4397,7 @@ internal class RenderSceneFilamentHostView(
         -1.0,
       )
       syncVisualOverlay()
+      scheduleNativeBimCacheReprioritization()
       return
     }
     val cosPitch = cos(orbitPitchRadians)
@@ -4392,6 +4416,7 @@ internal class RenderSceneFilamentHostView(
       0.0,
     )
     syncVisualOverlay()
+    scheduleNativeBimCacheReprioritization()
   }
 
   /// Every non-isometric view is an architectural planar view. A Fit must
