@@ -22,6 +22,7 @@ internal object NativeBimCacheBridge {
   private external fun nativeChunkCount(handle: Long): Int
   private external fun nativeChunkLevelId(handle: Long, index: Int): Long
   private external fun nativeChunkMaterial(handle: Long, index: Int): String
+  private external fun nativeChunkKindMask(handle: Long, index: Int): Long
   private external fun nativeChunkBounds(handle: Long, index: Int): DoubleArray?
   private external fun nativeChunkPositions(handle: Long, index: Int): ByteBuffer?
   private external fun nativeChunkIndices(handle: Long, index: Int): ByteBuffer?
@@ -51,11 +52,14 @@ internal object NativeBimCacheBridge {
           val bounds = nativeChunkBounds(handle, index) ?: return@repeat
           val positions = nativeChunkPositions(handle, index) ?: return@repeat
           val indices = nativeChunkIndices(handle, index) ?: return@repeat
+          val kindMask = nativeChunkKindMask(handle, index)
           if (bounds.size != 6 || positions.capacity() < 12 || indices.capacity() < Int.SIZE_BYTES) return@repeat
           add(
             NativeBimCacheChunk(
               levelId = nativeChunkLevelId(handle, index),
               materialCategory = nativeChunkMaterial(handle, index),
+              kindMask = kindMask,
+              kind = primaryKindFromMask(kindMask),
               sourceBounds = sceneBounds(bounds),
               positions = positions.duplicate().order(ByteOrder.nativeOrder()).apply { rewind() },
               indices = indices.duplicate().order(ByteOrder.nativeOrder()).asIntBuffer().apply { rewind() },
@@ -189,6 +193,27 @@ internal object NativeBimCacheBridge {
     else -> "proxy"
   }
 
+  private fun primaryKindFromMask(mask: Long): String {
+    for (kind in listOf("wall", "door", "window", "room", "slab", "floor", "ceiling", "roof", "column", "beam", "stair", "proxy")) {
+      val ordinal = when (kind) {
+        "wall" -> 2
+        "door" -> 3
+        "window" -> 4
+        "room" -> 5
+        "slab" -> 6
+        "floor" -> 7
+        "ceiling" -> 8
+        "roof" -> 9
+        "column" -> 10
+        "beam" -> 11
+        "stair" -> 12
+        else -> 13
+      }
+      if ((mask and (1L shl ordinal)) != 0L) return kind
+    }
+    return "proxy"
+  }
+
   private fun visibleKindMask(visibleKinds: Set<String>): Long {
     if (visibleKinds.isEmpty()) return -1L
     var mask = 0L
@@ -281,6 +306,8 @@ internal object NativeBimCacheBridge {
 internal data class NativeBimCacheChunk(
   val levelId: Long,
   val materialCategory: String,
+  val kindMask: Long,
+  val kind: String,
   val sourceBounds: SceneBounds,
   val positions: ByteBuffer,
   val indices: IntBuffer,

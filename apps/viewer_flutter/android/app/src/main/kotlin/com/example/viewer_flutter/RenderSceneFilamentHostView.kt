@@ -207,6 +207,7 @@ private data class FaceBatchEntry(
   val objectCount: Int,
   val vertexCount: Int,
   val indexCount: Int,
+  val nativeKindMask: Long? = null,
   var attached: Boolean = false,
 )
 
@@ -970,7 +971,7 @@ internal class RenderSceneFilamentHostView(
     val objects = cache.chunks.mapIndexed { index, chunk ->
       SceneObject(
         elementId = -(index.toLong() + 1L),
-        kind = chunk.materialCategory,
+        kind = chunk.kind,
         levelId = chunk.levelId,
         selectable = false,
         visibleByDefault = true,
@@ -2203,7 +2204,7 @@ internal class RenderSceneFilamentHostView(
         .material(0, materialInstance)
         .build(engine, entity)
       applyCacheCoordinateTransform(engine, entity)
-      val visible = faceVisible(representative)
+      val visible = nativeCacheChunkVisible(chunk)
       if (visible) scene.addEntity(entity)
       faceBatches.add(
         FaceBatchEntry(
@@ -2225,6 +2226,7 @@ internal class RenderSceneFilamentHostView(
           objectCount = 1,
           vertexCount = vertexCount,
           indexCount = indexCount,
+          nativeKindMask = chunk.kindMask,
           attached = visible,
         ),
       )
@@ -2232,6 +2234,31 @@ internal class RenderSceneFilamentHostView(
     } catch (error: Throwable) {
       Log.e(TAG, "Failed to create native BIM cache chunk $index", error)
       false
+    }
+  }
+
+  private fun nativeCacheChunkVisible(chunk: NativeBimCacheChunk): Boolean =
+    nativeCacheKindMaskVisible(chunk.kindMask)
+
+  private fun nativeCacheKindMaskVisible(mask: Long): Boolean {
+    if (visibleKinds.isEmpty() || mask == 0L) return true
+    return visibleKinds.any { kind ->
+      val ordinal = when (normalizeKind(kind)) {
+        "wall" -> 2
+        "door" -> 3
+        "window" -> 4
+        "room" -> 5
+        "slab" -> 6
+        "floor" -> 7
+        "ceiling" -> 8
+        "roof" -> 9
+        "column" -> 10
+        "beam" -> 11
+        "stair" -> 12
+        "proxy" -> 13
+        else -> -1
+      }
+      ordinal >= 0 && (mask and (1L shl ordinal)) != 0L
     }
   }
 
@@ -3971,7 +3998,8 @@ internal class RenderSceneFilamentHostView(
       }
     }
     for (batch in faceBatches) {
-      val visible = faceVisible(batch.representative)
+      val visible = batch.nativeKindMask?.let(::nativeCacheKindMaskVisible)
+        ?: faceVisible(batch.representative)
       if (visible && !batch.attached) {
         scene.addEntity(batch.entity)
         batch.attached = true

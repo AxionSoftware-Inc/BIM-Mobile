@@ -1,8 +1,11 @@
 package com.example.viewer_flutter
 
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import android.view.ViewGroup
+import android.widget.FrameLayout
 import java.io.File
 import java.lang.ref.WeakReference
 
@@ -55,7 +58,33 @@ internal object NativeRendererBenchmarkHarness {
       pendingRequest = null
       return
     }
-    dispatchPending()
+    if (mode == "cache") {
+      mountBenchmarkHost(context)
+    } else {
+      dispatchPending()
+    }
+  }
+
+  /** Mounts the renderer directly for ADB runs; no human touch is required. */
+  private fun mountBenchmarkHost(context: Context) {
+    val activity = context as? Activity
+    if (activity == null) {
+      Log.e(tag, "BENCHMARK_ERROR cache benchmark requires an Activity")
+      pendingRequest = null
+      return
+    }
+    activity.runOnUiThread {
+      val root = activity.findViewById<ViewGroup>(android.R.id.content)
+      val host = RenderSceneFilamentHostView(activity, null)
+      root.addView(
+        host,
+        FrameLayout.LayoutParams(
+          ViewGroup.LayoutParams.MATCH_PARENT,
+          ViewGroup.LayoutParams.MATCH_PARENT,
+        ),
+      )
+      attach(host)
+    }
   }
 
   /**

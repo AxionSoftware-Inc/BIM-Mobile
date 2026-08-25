@@ -11,36 +11,37 @@ and index buffers native and sends only cache metadata to the application UI.
 | Metric | OLD JSON | NEW BIMCACHE, warm cache | Change |
 | --- | ---: | ---: | ---: |
 | Result | Failed: Java heap OOM before a stable first frame | Passed | Removes the blocker |
-| First visible frame | N/A | 114 ms | N/A (old run did not render) |
-| Full scene ready | N/A | 347 ms | N/A |
-| Cache apply | N/A | 110 ms | N/A |
-| Idle FPS | N/A | 105.06 | N/A |
-| Orbit FPS | N/A | 79.68 | N/A |
-| Zoom/pan FPS | N/A | 75.11 | N/A |
-| Average / p95 / p99 frame | N/A | 11.98 / 16.67 / 25.00 ms | N/A |
-| CPU scene-submit average / p95 | N/A | 0.42 / 0.96 ms | N/A |
+| First visible frame | N/A | 163 ms | N/A (old run did not render) |
+| Full scene ready | N/A | 339 ms | N/A |
+| Cache apply | N/A | 160 ms | N/A |
+| Idle FPS | N/A | 116.12 | N/A |
+| Orbit FPS | N/A | 116.57 | N/A |
+| Zoom/pan FPS | N/A | 116.56 | N/A |
+| Average / p95 / p99 frame | N/A | 8.59 / 8.33 / 16.67 ms | N/A |
+| CPU scene-submit average / p95 | N/A | 0.48 / 0.92 ms | N/A |
 | Filament renderables / draw calls | N/A | 14 / 14 | 8,420 IFC elements are batched |
 | Loaded / visible chunks | N/A | 14 / 14 | Native spatial streaming |
-| Native cache bytes | 121,793,275 B JSON cache | 9,363,201 B BIM cache | **92.3% smaller (13.0x)** |
-| Java / native heap at measured render point | Old run OOM at a 256 MB Java heap limit | 18.7 / 94.7 MB | Old run is not a stable A/B sample |
-| GC events during measurement | Repeated blocking GC then OOM | 33 | Not directly comparable after an OOM |
+| Native cache bytes | 121,793,275 B JSON cache | 9,363,248 B BIM cache | **92.3% smaller (13.0x)** |
+| Java / native heap at measured render point | Old run OOM at a 256 MB Java heap limit | 40.4 / 115.1 MB | Old run is not a stable A/B sample |
+| GC events during measurement | Repeated blocking GC then OOM | 4 | Not directly comparable after an OOM |
 
 The legacy JSON trial started processing at about 16:01:16 and terminated at
 about 16:02:14.  It recorded 3.0--6.7 s main-thread `DartMessenger` stalls,
 multiple 141--275 ms GCs, then allocation failures even for small objects.
 Therefore it would be misleading to invent old-path FPS or readiness values.
 
-The new cache cold renderer run compiled in 15,897 ms and produced 9,363,201 B.
-The format-v2 device smoke test compiled and reopened the new header in 17,096
-ms, produced 9,363,248 B, and validated the source fingerprint plus 8,420
-object mappings (413,582 vertices, 939,588 indices).  Its first 16 bytes were:
+The latest cold renderer run compiled in 16,025 ms and produced 9,363,248 B;
+its first visible frame was 163 ms and full scene ready was 407 ms.  The warm
+reopen above completed without recompilation.  A separate format-v2 device
+smoke test also compiled and reopened the header, validating the source
+fingerprint plus 8,420 object mappings (413,582 vertices, 939,588 indices).
+Its first 16 bytes were:
 
 ```
 54 42 45 42 49 4d 43 32 02 00 00 00 04 03 02 01
 ```
 
-That is `TBEBIMC2`, format version 2, and the endian marker.  A warm v2 reopen
-completed without recompilation in the same tablet process.
+That is `TBEBIMC2`, format version 2, and the endian marker.
 
 ## Decision
 
