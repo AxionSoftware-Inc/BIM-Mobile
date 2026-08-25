@@ -96,6 +96,17 @@ typedef struct TbeSpatialIndexStats {
     int dirty;
 } TbeSpatialIndexStats;
 
+typedef struct TbeBimCacheStats {
+    uint32_t format_version;
+    int source_valid;
+    uint64_t source_object_count;
+    uint64_t source_triangle_count;
+    uint64_t chunk_count;
+    uint64_t primitive_count;
+    uint64_t bvh_node_count;
+    uint64_t byte_size;
+} TbeBimCacheStats;
+
 typedef struct TbeRect2 {
     double min_x;
     double min_y;
@@ -151,6 +162,18 @@ TbeApiStatusCode tbe_export_project_package(TbeEngineHandle* handle, const char*
 TbeApiStatusCode tbe_import_project_package(TbeEngineHandle* handle, const char* path, int load_mode);
 TbeApiStatusCode tbe_export_ifc(TbeEngineHandle* handle, const char* path);
 TbeApiStatusCode tbe_import_ifc(TbeEngineHandle* handle, const char* path, int load_mode);
+TbeApiStatusCode tbe_compile_bim_cache(
+    TbeEngineHandle* handle,
+    const char* source_ifc_path,
+    const char* cache_path,
+    TbeBimCacheStats* out_stats
+);
+TbeApiStatusCode tbe_inspect_bim_cache(
+    TbeEngineHandle* handle,
+    const char* source_ifc_path,
+    const char* cache_path,
+    TbeBimCacheStats* out_stats
+);
 TbeApiStatusCode tbe_get_unit_settings(TbeEngineHandle* handle, char** out_json);
 TbeApiStatusCode tbe_set_unit_settings(TbeEngineHandle* handle, const char* system, const char* length, const char* angle);
 TbeApiStatusCode tbe_export_render_scene_json(TbeEngineHandle* handle, const char* path);

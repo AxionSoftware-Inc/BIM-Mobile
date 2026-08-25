@@ -1524,7 +1524,17 @@ int main() {
         auto exchange_result = tbe::api::create_session("IFC API Exchange");
         assert(exchange_result.ok() && exchange_result.value.has_value());
         auto exchange = std::move(*exchange_result.value);
-        assert(exchange->create_level("Level 1", 0.0, 3.0).ok());
+        const auto cache_level = exchange->create_level("Level 1", 0.0, 3.0);
+        assert(cache_level.ok() && cache_level.value.has_value());
+        const auto cache_wall = exchange->create_wall(
+            "Cache Wall",
+            {.x = 0.0, .y = 0.0},
+            {.x = 6.0, .y = 0.0},
+            0.20,
+            3.0,
+            cache_level.value->value
+        );
+        assert(cache_wall.ok() && cache_wall.value.has_value());
         assert(exchange->set_unit_settings(tbe::api::UnitSettingsDTO{
             .system = "imperial",
             .length = "foot",
@@ -1546,6 +1556,28 @@ int main() {
         const auto imported_settings = imported->get_unit_settings();
         assert(imported_settings.ok() && imported_settings.value.has_value());
         assert(imported_settings.value->length == "foot");
+        const auto bim_cache_path = std::filesystem::temp_directory_path() / "tbe_api_exchange.bimcache";
+        const auto cache_result = imported->compile_bim_cache(ifc_path.string(), bim_cache_path.string());
+        assert(cache_result.ok() && cache_result.value.has_value());
+        assert(cache_result.value->source_valid);
+        assert(cache_result.value->chunk_count >= 1);
+        assert(cache_result.value->primitive_count >= 1);
+        assert(cache_result.value->bvh_node_count >= 1);
+        assert(cache_result.value->byte_size > 0);
+        const auto cache_inspection = imported->inspect_bim_cache(ifc_path.string(), bim_cache_path.string());
+        assert(cache_inspection.ok() && cache_inspection.value.has_value());
+        assert(cache_inspection.value->source_valid);
+        assert(cache_inspection.value->chunk_count == cache_result.value->chunk_count);
+        assert(cache_inspection.value->primitive_count == cache_result.value->primitive_count);
+        const auto original_ifc_timestamp = std::filesystem::last_write_time(ifc_path);
+        std::filesystem::last_write_time(
+            ifc_path,
+            original_ifc_timestamp + std::chrono::seconds(1)
+        );
+        const auto stale_cache = imported->inspect_bim_cache(ifc_path.string(), bim_cache_path.string());
+        assert(!stale_cache.ok());
+        std::filesystem::last_write_time(ifc_path, original_ifc_timestamp);
+        std::filesystem::remove(bim_cache_path);
         std::filesystem::remove(ifc_path);
 
         auto* handle = tbe_engine_create();

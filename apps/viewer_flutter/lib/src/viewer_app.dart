@@ -54,6 +54,7 @@ import 'view_navigation_coordinator.dart';
 import 'view_navigation_policy.dart';
 import 'view_workspace_store.dart';
 import 'viewer_app_dependencies.dart';
+import 'viewer_bim_cache_gateway.dart';
 import 'viewer_project_session.dart';
 import 'workspace_chrome.dart';
 import 'render_scene_viewport.dart';

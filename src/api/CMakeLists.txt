@@ -1,5 +1,6 @@
 add_library(tbe_api
     src/EngineApi.cpp
+    src/RuntimeSceneCache.cpp
 )
 
 set_target_properties(tbe_api PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -26,9 +27,17 @@ target_include_directories(tbe_capi
 target_compile_features(tbe_capi PUBLIC cxx_std_20)
 target_link_libraries(tbe_capi PUBLIC tbe_api)
 
-add_library(tbe_capi_shared SHARED
+set(TBE_CAPI_SHARED_SOURCES
     src/EngineCApi.cpp
 )
+
+# Android's Filament view consumes the compiled runtime cache through JNI
+# direct buffers. Keep the desktop C ABI free of JNI dependencies.
+if(ANDROID)
+    list(APPEND TBE_CAPI_SHARED_SOURCES src/AndroidBimCacheJni.cpp)
+endif()
+
+add_library(tbe_capi_shared SHARED ${TBE_CAPI_SHARED_SOURCES})
 
 set_target_properties(tbe_capi_shared PROPERTIES
     OUTPUT_NAME tbe_capi

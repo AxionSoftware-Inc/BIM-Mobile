@@ -470,6 +470,8 @@ internal class RenderSceneFilamentHostView(
     sharedFaceVertexCount = 0,
   )
   private var currentScene: SceneState? = initialScene
+  private var nativeBimCache: NativeBimCacheBridge.NativeBimCache? = null
+  private var nativeCacheLoadRevision = 0L
   private var currentSceneFingerprint: Long? = null
   private var selectedElementId: Long? = null
   private var selectedElementIds = emptySet<Long>()
@@ -703,6 +705,8 @@ internal class RenderSceneFilamentHostView(
   }
 
   fun loadScene(newScene: SceneState?) {
+    nativeCacheLoadRevision += 1L
+    closeNativeBimCache()
     if (newScene == null) {
       clearScene("RenderScene load failed or scene cleared.")
       return
@@ -743,11 +747,119 @@ internal class RenderSceneFilamentHostView(
     invalidate()
   }
 
+  /**
+   * Opens a validated engine cache away from the Android UI thread, then uses
+   * its direct native vertex/index buffers for Filament. This follows the
+   * compatibility scene load so a stale or unavailable cache never prevents a
+   * model from opening.
+   */
+  fun loadNativeBimCache(cachePath: String, sourceIfcPath: String) {
+    val requestRevision = nativeCacheLoadRevision + 1L
+    nativeCacheLoadRevision = requestRevision
+    Thread {
+      val loaded = NativeBimCacheBridge.open(cachePath, sourceIfcPath)
+      post {
+        if (disposed || requestRevision != nativeCacheLoadRevision) {
+          loaded?.close()
+          return@post
+        }
+        if (loaded == null || loaded.chunks.isEmpty()) {
+          statusMessage = "Native BIM cache unavailable; using compatibility scene."
+          updateStatus()
+          return@post
+        }
+        closeNativeBimCache()
+        nativeBimCache = loaded
+        resetClipVolumeState()
+        currentScene = nativeCacheSceneState(loaded)
+        currentSceneFingerprint = null
+        rebuildScene()
+        selectionOverlay.setVisualScene(
+          loaded.primitives.map(::nativeCacheVisualObject),
+          currentScene?.levels?.map { level -> level.name to level.elevationMeters } ?: emptyList(),
+          sceneMetrics.bounds,
+        )
+        selectionOverlay.setDisplayStyle(displayStyle)
+        syncVisibility()
+        refreshTintState()
+        fitCamera()
+        statusMessage = "Loaded ${loaded.chunks.size} native BIM chunks."
+        Log.i(TAG, statusMessage)
+        updateStatus()
+        invalidate()
+      }
+    }.apply {
+      name = "tbe-bim-cache-open"
+      isDaemon = true
+      start()
+    }
+  }
+
+  private fun closeNativeBimCache() {
+    nativeBimCache?.close()
+    nativeBimCache = null
+  }
+
+  private fun nativeCacheSceneState(cache: NativeBimCacheBridge.NativeBimCache): SceneState {
+    val objects = cache.chunks.mapIndexed { index, chunk ->
+      SceneObject(
+        elementId = -(index.toLong() + 1L),
+        kind = chunk.materialCategory,
+        levelId = chunk.levelId,
+        selectable = false,
+        visibleByDefault = true,
+        revision = 1,
+        bounds = chunk.sourceBounds,
+        mesh = SceneMesh(emptyList(), emptyList()),
+        materialCategory = chunk.materialCategory,
+        metadata = emptyMap(),
+      )
+    }
+    val levels = objects
+      .mapNotNull { entry -> entry.levelId }
+      .distinct()
+      .sorted()
+      .map { levelId -> SceneLevel(levelId, "Level $levelId", 0.0) }
+    return SceneState(
+      sceneVersion = 1,
+      units = "meters",
+      coordinateSystem = "X/Y plan, Z up",
+      objectCount = cache.primitives.size,
+      vertexCount = cache.chunks.sumOf { it.positions.capacity() / 12 },
+      indexCount = cache.chunks.sumOf { it.indices.capacity() },
+      levels = levels,
+      objects = objects,
+    )
+  }
+
+  private fun nativeCacheVisualObject(primitive: NativeBimCachePrimitive): NativeVisualObject {
+    val points = boxCorners(primitive.sourceBounds).map(::toFilamentPoint)
+    val triangles = listOf(
+      intArrayOf(0, 1, 2), intArrayOf(0, 2, 3),
+      intArrayOf(4, 6, 5), intArrayOf(4, 7, 6),
+      intArrayOf(0, 4, 5), intArrayOf(0, 5, 1),
+      intArrayOf(1, 5, 6), intArrayOf(1, 6, 2),
+      intArrayOf(2, 6, 7), intArrayOf(2, 7, 4),
+      intArrayOf(3, 7, 4), intArrayOf(3, 4, 0),
+    )
+    return NativeVisualObject(
+      elementId = primitive.elementId,
+      kind = "proxy",
+      selectable = true,
+      metadata = mapOf("native_cache" to "true", "level_id" to primitive.levelId.toString()),
+      points = points,
+      triangles = triangles,
+      featureEdges = emptyList(),
+    )
+  }
+
   fun clearScene() {
     clearScene("Scene cleared.")
   }
 
   private fun clearScene(message: String) {
+    nativeCacheLoadRevision += 1L
+    closeNativeBimCache()
     resetClipVolumeState()
     currentScene = null
     currentSceneFingerprint = null
@@ -1634,6 +1746,106 @@ internal class RenderSceneFilamentHostView(
         .build(engine)
   }
 
+  private fun rebuildNativeBimCacheScene(
+    engine: Engine,
+    scene: Scene,
+    cache: NativeBimCacheBridge.NativeBimCache,
+    fallbackMaterial: Material,
+  ) {
+    val sceneState = currentScene ?: return
+    for ((index, chunk) in cache.chunks.withIndex()) {
+      val representative = sceneState.objects.getOrNull(index) ?: continue
+      val vertexCount = chunk.positions.capacity() / 12
+      val indexCount = chunk.indices.capacity()
+      if (vertexCount <= 0 || indexCount < 3) continue
+      try {
+        // Cache coordinates stay in the engine's X/Y-plan/Z-up convention.
+        // One entity transform maps that buffer to Filament X/Z/-Y without
+        // ever copying its vertices through Kotlin or Dart.
+        val vertexBuffer = VertexBuffer.Builder()
+          .bufferCount(1)
+          .vertexCount(vertexCount)
+          .attribute(VertexBuffer.VertexAttribute.POSITION, 0, VertexBuffer.AttributeType.FLOAT3, 0, 12)
+          .build(engine)
+          .also { buffer ->
+            buffer.setBufferAt(engine, 0, chunk.positions.duplicate().apply { rewind() })
+          }
+        val indexBuffer = IndexBuffer.Builder()
+          .indexCount(indexCount)
+          .bufferType(IndexBuffer.Builder.IndexType.UINT)
+          .build(engine)
+          .also { buffer ->
+            buffer.setBuffer(engine, chunk.indices.duplicate().apply { rewind() })
+          }
+        val sharedMaterial = materialForObject(representative, fallbackMaterial)
+        val baseColor = displayBaseColor(representative)
+        val materialInstance = sharedMaterial.createInstance().also { instance ->
+          applySectionBoxState(instance)
+          applyDisplayStyle(instance)
+          instance.setParameter(
+            "baseColor",
+            Colors.RgbaType.LINEAR,
+            baseColor[0], baseColor[1], baseColor[2], baseColor[3],
+          )
+        }
+        val entity = EntityManager.get().create()
+        RenderableManager.Builder(1)
+          .boundingBox(filamentBox(chunk.sourceBounds))
+          .culling(true)
+          .castShadows(false)
+          .receiveShadows(false)
+          .geometry(0, PrimitiveType.TRIANGLES, vertexBuffer, indexBuffer, 0, indexCount)
+          .material(0, materialInstance)
+          .build(engine, entity)
+        applyCacheCoordinateTransform(engine, entity)
+        val visible = faceVisible(representative)
+        if (visible) scene.addEntity(entity)
+        faceBatches.add(
+          FaceBatchEntry(
+            key = FaceBatchKey(
+              kind = normalizeKind(representative.kind),
+              materialVariant = representative.materialCategory,
+              levelId = representative.levelId,
+              tileX = 0,
+              tileZ = 0,
+            ),
+            representative = representative,
+            entity = entity,
+            vertexBuffer = vertexBuffer,
+            indexBuffer = indexBuffer,
+            material = sharedMaterial,
+            materialInstance = materialInstance,
+            baseColor = baseColor,
+            bounds = transformBounds(chunk.sourceBounds),
+            objectCount = 1,
+            vertexCount = vertexCount,
+            indexCount = indexCount,
+            attached = visible,
+          ),
+        )
+      } catch (error: Throwable) {
+        Log.e(TAG, "Failed to create native BIM cache chunk $index", error)
+      }
+    }
+    updateMetrics()
+    renderDirty = true
+  }
+
+  private fun applyCacheCoordinateTransform(engine: Engine, entity: Int) {
+    var transformInstance = engine.transformManager.getInstance(entity)
+    if (transformInstance == 0) transformInstance = engine.transformManager.create(entity)
+    // Engine: (X, Y plan, Z up). Filament: (X, Y up, -Z plan).
+    engine.transformManager.setTransform(
+      transformInstance,
+      floatArrayOf(
+        1f, 0f, 0f, 0f,
+        0f, 0f, -1f, 0f,
+        0f, 1f, 0f, 0f,
+        0f, 0f, 0f, 1f,
+      ),
+    )
+  }
+
   private fun rebuildScene() {
     destroyRenderables()
     val scene = scene ?: return
@@ -1651,6 +1863,10 @@ internal class RenderSceneFilamentHostView(
       statusMessage = "Filament material unavailable."
       Log.w(TAG, statusMessage)
       updateStatus()
+      return
+    }
+    nativeBimCache?.let { cache ->
+      rebuildNativeBimCacheScene(engine, scene, cache, material)
       return
     }
     val objects = sceneState.objects

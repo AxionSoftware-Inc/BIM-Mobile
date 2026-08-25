@@ -34,6 +34,25 @@ final class TbeValidationSummary extends ffi.Struct {
   external int errorCount;
 }
 
+final class TbeBimCacheStats extends ffi.Struct {
+  @ffi.Uint32()
+  external int formatVersion;
+  @ffi.Int32()
+  external int sourceValid;
+  @ffi.Uint64()
+  external int sourceObjectCount;
+  @ffi.Uint64()
+  external int sourceTriangleCount;
+  @ffi.Uint64()
+  external int chunkCount;
+  @ffi.Uint64()
+  external int primitiveCount;
+  @ffi.Uint64()
+  external int bvhNodeCount;
+  @ffi.Uint64()
+  external int byteSize;
+}
+
 final class TbeVec2 extends ffi.Struct {
   @ffi.Double()
   external double x;
@@ -531,6 +550,18 @@ typedef _ProjectImportPackageDart = int Function(
   ffi.Pointer<ffi.Void>,
   ffi.Pointer<Utf8>,
   int,
+);
+typedef _BimCacheNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<TbeBimCacheStats>,
+);
+typedef _BimCacheDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<TbeBimCacheStats>,
 );
 typedef _ProjectUnitSettingsSetterNative = ffi.Int32 Function(
   ffi.Pointer<ffi.Void>,

@@ -183,6 +183,18 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     }
   }
 
+  /// Replaces the Android renderer's JSON mesh payload with a validated
+  /// engine-owned IFC cache. Flutter keeps the semantic/2D scene authority;
+  /// only the large 3D vertex and index buffers bypass Dart.
+  Future<void> loadNativeBimCache({
+    required String sourceIfcPath,
+    required String cachePath,
+  }) =>
+      _invoke('loadNativeBimCache', <String, Object?>{
+        'sourceIfcPath': sourceIfcPath,
+        'cachePath': cachePath,
+      });
+
   Future<void> attachNativeBridge(int viewId) async {
     _channel = MethodChannel('tbe/render_scene_view_$viewId');
     _channel!.setMethodCallHandler(_handleNativeCallback);

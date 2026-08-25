@@ -6,7 +6,11 @@ part of 'tbe_ffi.dart';
 /// persistence metadata and authoring mutations live in their own services;
 /// this class maps those services to the application gateway contracts.
 class ViewerRepository
-    implements ViewerAuthoringGateway, ViewerEngineSession, ViewerSceneGateway {
+    implements
+        ViewerAuthoringGateway,
+        ViewerBimRuntimeCacheGateway,
+        ViewerEngineSession,
+        ViewerSceneGateway {
   ViewerRepository(this._api);
 
   final TbeViewerApi _api;
@@ -262,6 +266,34 @@ class ViewerRepository
     _currentJson = json;
     _activeLevelId = _persistence.primaryLevelIdFromProjectJson(json);
     return json;
+  }
+
+  @override
+  Future<BimRuntimeCacheStats> compileBimRuntimeCache({
+    required String sourceIfcPath,
+    required String cachePath,
+  }) async {
+    final handle = _handle;
+    if (handle == null) throw TbeApiException('No loaded project');
+    return _api.compileBimCache(
+      handle,
+      sourceIfcPath: sourceIfcPath,
+      cachePath: cachePath,
+    );
+  }
+
+  @override
+  Future<BimRuntimeCacheStats> inspectBimRuntimeCache({
+    required String sourceIfcPath,
+    required String cachePath,
+  }) async {
+    final handle = _handle;
+    if (handle == null) throw TbeApiException('No loaded project');
+    return _api.inspectBimCache(
+      handle,
+      sourceIfcPath: sourceIfcPath,
+      cachePath: cachePath,
+    );
   }
 
   @override

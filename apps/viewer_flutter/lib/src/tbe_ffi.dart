@@ -7,6 +7,7 @@ import 'app_project_storage.dart';
 import 'native_engine_library_loader.dart';
 import 'render_scene_models.dart';
 import 'viewer_authoring_gateway.dart';
+import 'viewer_bim_cache_gateway.dart';
 import 'viewer_engine_contracts.dart';
 import 'viewer_project_session.dart';
 import 'viewer_scene_gateway.dart';
@@ -148,6 +149,12 @@ class TbeViewerApi {
             _ProjectExportPathDart>('tbe_export_ifc'),
         _importIfc = library.lookupFunction<_ProjectImportPackageNative,
             _ProjectImportPackageDart>('tbe_import_ifc'),
+        _compileBimCache =
+            library.lookupFunction<_BimCacheNative, _BimCacheDart>(
+                'tbe_compile_bim_cache'),
+        _inspectBimCache =
+            library.lookupFunction<_BimCacheNative, _BimCacheDart>(
+                'tbe_inspect_bim_cache'),
         _getUnitSettings =
             library.lookupFunction<_StringGetterNative, _StringGetterDart>(
                 'tbe_get_unit_settings'),
@@ -229,6 +236,8 @@ class TbeViewerApi {
   final _ProjectImportPackageDart _importProjectPackage;
   final _ProjectExportPathDart _exportIfc;
   final _ProjectImportPackageDart _importIfc;
+  final _BimCacheDart _compileBimCache;
+  final _BimCacheDart _inspectBimCache;
   final _StringGetterDart _getUnitSettings;
   final _ProjectUnitSettingsSetterDart _setUnitSettings;
   final _ValidateDart _validate;

@@ -682,6 +682,58 @@ extension _TbeViewerApiMethods on TbeViewerApi {
     }
   }
 
+  BimRuntimeCacheStats compileBimCache(
+    ffi.Pointer<ffi.Void> handle, {
+    required String sourceIfcPath,
+    required String cachePath,
+  }) =>
+      _runBimCacheOperation(
+        handle,
+        sourceIfcPath: sourceIfcPath,
+        cachePath: cachePath,
+        operation: _compileBimCache,
+      );
+
+  BimRuntimeCacheStats inspectBimCache(
+    ffi.Pointer<ffi.Void> handle, {
+    required String sourceIfcPath,
+    required String cachePath,
+  }) =>
+      _runBimCacheOperation(
+        handle,
+        sourceIfcPath: sourceIfcPath,
+        cachePath: cachePath,
+        operation: _inspectBimCache,
+      );
+
+  BimRuntimeCacheStats _runBimCacheOperation(
+    ffi.Pointer<ffi.Void> handle, {
+    required String sourceIfcPath,
+    required String cachePath,
+    required _BimCacheDart operation,
+  }) {
+    final sourcePtr = sourceIfcPath.toNativeUtf8();
+    final cachePtr = cachePath.toNativeUtf8();
+    final stats = calloc<TbeBimCacheStats>();
+    try {
+      _check(handle, operation(handle, sourcePtr, cachePtr, stats));
+      return BimRuntimeCacheStats(
+        formatVersion: stats.ref.formatVersion,
+        sourceValid: stats.ref.sourceValid != 0,
+        sourceObjectCount: stats.ref.sourceObjectCount,
+        sourceTriangleCount: stats.ref.sourceTriangleCount,
+        chunkCount: stats.ref.chunkCount,
+        primitiveCount: stats.ref.primitiveCount,
+        bvhNodeCount: stats.ref.bvhNodeCount,
+        byteSize: stats.ref.byteSize,
+      );
+    } finally {
+      calloc.free(sourcePtr);
+      calloc.free(cachePtr);
+      calloc.free(stats);
+    }
+  }
+
   void exportIfc(ffi.Pointer<ffi.Void> handle, String path) {
     final pathPtr = path.toNativeUtf8();
     try {

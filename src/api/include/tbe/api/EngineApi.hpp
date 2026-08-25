@@ -294,6 +294,68 @@ struct RenderSceneDTO {
     std::size_t index_count{};
 };
 
+// A BIM cache is an engine-owned runtime artefact. It never changes the IFC
+// source: the compiler turns the interactive scene into spatial/material
+// chunks which a native renderer can consume without sending meshes through
+// Flutter or JSON. Element records remain separate for selection and editing.
+struct BimCacheSourceDTO {
+    std::string source_path{};
+    std::uint64_t source_size_bytes{};
+    std::int64_t source_modified_ticks{};
+};
+
+struct BimCachePrimitiveDTO {
+    ElementIdDTO element_id{};
+    ApiElementKind kind{ApiElementKind::Unknown};
+    std::uint64_t revision{};
+    std::uint32_t first_index{};
+    std::uint32_t index_count{};
+    AABB3D bounds{};
+};
+
+struct BimCacheChunkDTO {
+    ElementIdDTO level_id{};
+    std::string material_category{};
+    std::int32_t tile_x{};
+    std::int32_t tile_y{};
+    AABB3D bounds{};
+    // Packed X/Y/Z float values. The source Document keeps its exact authoring
+    // geometry; the cache is a GPU-oriented runtime representation.
+    std::vector<float> positions{};
+    std::vector<std::uint32_t> indices{};
+    std::vector<BimCachePrimitiveDTO> primitives{};
+};
+
+struct BimCacheBvhNodeDTO {
+    AABB3D bounds{};
+    std::int32_t left_child{-1};
+    std::int32_t right_child{-1};
+    std::uint32_t first_chunk{};
+    std::uint32_t chunk_count{};
+};
+
+struct BimCacheSceneDTO {
+    std::uint32_t format_version{1};
+    BimCacheSourceDTO source{};
+    std::vector<RenderSceneLevelDTO> levels{};
+    std::vector<BimCacheChunkDTO> chunks{};
+    std::vector<BimCacheBvhNodeDTO> bvh_nodes{};
+    std::vector<std::uint32_t> bvh_chunk_indices{};
+    std::size_t source_object_count{};
+    std::size_t source_triangle_count{};
+};
+
+struct BimCacheStatsDTO {
+    std::uint32_t format_version{1};
+    bool source_valid{};
+    std::size_t source_object_count{};
+    std::size_t source_triangle_count{};
+    std::size_t chunk_count{};
+    std::size_t primitive_count{};
+    std::size_t bvh_node_count{};
+    std::size_t byte_size{};
+};
+
 struct RoomDTO {
     ElementIdDTO id{};
     ElementIdDTO level_id{};
@@ -604,6 +666,17 @@ public:
     ApiVoidResult import_project_package(const std::string& path, LoadMode mode = LoadMode::Strict);
     ApiVoidResult export_ifc(const std::string& path) const;
     ApiVoidResult import_ifc(const std::string& path, LoadMode mode = LoadMode::Strict);
+    // Compile an IFC-derived interactive scene into an engine-owned binary
+    // runtime cache. The cache contains batched chunks and selection mapping;
+    // it is invalidated when the source IFC size or modification stamp changes.
+    ApiResult<BimCacheStatsDTO> compile_bim_cache(
+        const std::string& source_ifc_path,
+        const std::string& cache_path
+    ) const;
+    ApiResult<BimCacheStatsDTO> inspect_bim_cache(
+        const std::string& source_ifc_path,
+        const std::string& cache_path
+    ) const;
     ApiResult<UnitSettingsDTO> get_unit_settings() const;
     ApiVoidResult set_unit_settings(UnitSettingsDTO settings);
     ApiResult<RenderSceneDTO> get_render_scene() const;

@@ -68,6 +68,20 @@ TbeApiStatusCode copy_string_result(TbeEngineHandle* handle, const tbe::api::Api
     return TBE_API_OK;
 }
 
+void copy_bim_cache_stats(
+    const tbe::api::BimCacheStatsDTO& source,
+    TbeBimCacheStats* target
+) {
+    target->format_version = source.format_version;
+    target->source_valid = source.source_valid ? 1 : 0;
+    target->source_object_count = static_cast<uint64_t>(source.source_object_count);
+    target->source_triangle_count = static_cast<uint64_t>(source.source_triangle_count);
+    target->chunk_count = static_cast<uint64_t>(source.chunk_count);
+    target->primitive_count = static_cast<uint64_t>(source.primitive_count);
+    target->bvh_node_count = static_cast<uint64_t>(source.bvh_node_count);
+    target->byte_size = static_cast<uint64_t>(source.byte_size);
+}
+
 } // namespace
 
 extern "C" {
@@ -952,6 +966,40 @@ TbeApiStatusCode tbe_export_ifc(TbeEngineHandle* handle, const char* path) {
 TbeApiStatusCode tbe_import_ifc(TbeEngineHandle* handle, const char* path, int load_mode) {
     if (handle == nullptr || handle->session == nullptr || path == nullptr) return null_handle_error(handle);
     return apply_result(handle, handle->session->import_ifc(path, static_cast<tbe::api::LoadMode>(load_mode)));
+}
+
+TbeApiStatusCode tbe_compile_bim_cache(
+    TbeEngineHandle* handle,
+    const char* source_ifc_path,
+    const char* cache_path,
+    TbeBimCacheStats* out_stats
+) {
+    if (handle == nullptr || handle->session == nullptr || source_ifc_path == nullptr ||
+        cache_path == nullptr || out_stats == nullptr) {
+        return null_handle_error(handle);
+    }
+    const auto result = handle->session->compile_bim_cache(source_ifc_path, cache_path);
+    if (result.ok() && result.value.has_value()) {
+        copy_bim_cache_stats(*result.value, out_stats);
+    }
+    return apply_result(handle, result);
+}
+
+TbeApiStatusCode tbe_inspect_bim_cache(
+    TbeEngineHandle* handle,
+    const char* source_ifc_path,
+    const char* cache_path,
+    TbeBimCacheStats* out_stats
+) {
+    if (handle == nullptr || handle->session == nullptr || source_ifc_path == nullptr ||
+        cache_path == nullptr || out_stats == nullptr) {
+        return null_handle_error(handle);
+    }
+    const auto result = handle->session->inspect_bim_cache(source_ifc_path, cache_path);
+    if (result.ok() && result.value.has_value()) {
+        copy_bim_cache_stats(*result.value, out_stats);
+    }
+    return apply_result(handle, result);
 }
 
 TbeApiStatusCode tbe_get_unit_settings(TbeEngineHandle* handle, char** out_json) {

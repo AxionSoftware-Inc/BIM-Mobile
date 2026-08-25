@@ -26,7 +26,8 @@ extension _IfcImportCache on _ViewerHomePageState {
     return '${baseName}_$hash';
   }
 
-  Future<({String json, String path})?> _readIfcImportCache(String ifcPath) async {
+  Future<({String json, String path})?> _readIfcImportCache(
+      String ifcPath) async {
     try {
       final source = File(ifcPath);
       final stat = await source.stat();
@@ -41,14 +42,16 @@ extension _IfcImportCache on _ViewerHomePageState {
       );
       if (!await cached.exists() || await cached.length() <= 0) return null;
       if (!await signatureFile.exists() ||
-          await signatureFile.readAsString() != _ifcCacheSignature(ifcPath, stat)) {
+          await signatureFile.readAsString() !=
+              _ifcCacheSignature(ifcPath, stat)) {
         return null;
       }
       final json = await cached.readAsString();
       // Validate the cache before handing it to the native loader. A partial
       // file from a killed tablet session must never hide the original IFC.
       final decoded = jsonDecode(json);
-      if (decoded is! Map<String, dynamic> || decoded['schema_version'] == null) {
+      if (decoded is! Map<String, dynamic> ||
+          decoded['schema_version'] == null) {
         return null;
       }
       return (json: json, path: cached.path);
@@ -61,7 +64,11 @@ extension _IfcImportCache on _ViewerHomePageState {
     try {
       final source = File(ifcPath);
       final stat = await source.stat();
-      if (stat.type != FileSystemEntityType.file || stat.size <= 0 || json.isEmpty) return;
+      if (stat.type != FileSystemEntityType.file ||
+          stat.size <= 0 ||
+          json.isEmpty) {
+        return;
+      }
       final directory = await _ifcCacheDirectory();
       final key = _ifcCacheKey(ifcPath);
       final cached = File(
@@ -70,25 +77,83 @@ extension _IfcImportCache on _ViewerHomePageState {
       final signatureFile = File(
         '${directory.path}${Platform.pathSeparator}$key.sig',
       );
-      if (await cached.exists() && await cached.length() > 0 &&
+      if (await cached.exists() &&
+          await cached.length() > 0 &&
           await signatureFile.exists() &&
-          await signatureFile.readAsString() == _ifcCacheSignature(ifcPath, stat)) {
+          await signatureFile.readAsString() ==
+              _ifcCacheSignature(ifcPath, stat)) {
         return;
       }
       final partial = File('${cached.path}.download');
       await partial.writeAsString(json, flush: true);
       if (await cached.exists()) await cached.delete();
       await partial.rename(cached.path);
-      await signatureFile.writeAsString(_ifcCacheSignature(ifcPath, stat), flush: true);
+      await signatureFile.writeAsString(_ifcCacheSignature(ifcPath, stat),
+          flush: true);
     } catch (_) {
       // The IFC itself remains the source of truth. Cache storage is best
       // effort because external/document-provider paths can be read-only.
     }
   }
 
+  Future<({String cachePath, String signaturePath})> _nativeBimCachePaths(
+    String ifcPath,
+  ) async {
+    final directory = await _ifcCacheDirectory();
+    final key = _ifcCacheKey(ifcPath);
+    final basePath = '${directory.path}${Platform.pathSeparator}$key.bimcache';
+    return (
+      cachePath: basePath,
+      signaturePath: '$basePath.sig',
+    );
+  }
+
+  /// Cache generation stays at the optional native-renderer boundary. Mock,
+  /// cloud and fallback project sessions remain valid, while the real IFC is
+  /// always retained as source of truth if this acceleration step fails.
+  Future<String?> _ensureNativeBimCache(String ifcPath) async {
+    final session = _engineRepository;
+    if (session is! ViewerBimRuntimeCacheGateway) return null;
+    final cacheSession = session as ViewerBimRuntimeCacheGateway;
+    try {
+      final source = File(ifcPath);
+      final stat = await source.stat();
+      if (stat.type != FileSystemEntityType.file || stat.size <= 0) return null;
+      final paths = await _nativeBimCachePaths(ifcPath);
+      final cacheFile = File(paths.cachePath);
+      final signatureFile = File(paths.signaturePath);
+      final signature = _nativeBimCacheSignature(ifcPath, stat);
+      if (await cacheFile.exists() &&
+          await cacheFile.length() > 0 &&
+          await signatureFile.exists() &&
+          await signatureFile.readAsString() == signature) {
+        return paths.cachePath;
+      }
+
+      if (mounted) {
+        _updateViewportState(() {
+          _statusMessage = 'Preparing native 3D cache...';
+        });
+      }
+      final result = await cacheSession.compileBimRuntimeCache(
+        sourceIfcPath: ifcPath,
+        cachePath: paths.cachePath,
+      );
+      if (!result.sourceValid || result.chunkCount == 0) return null;
+      await signatureFile.writeAsString(signature, flush: true);
+      return paths.cachePath;
+    } catch (_) {
+      // Cache failures must not hide a valid IFC/project JSON import.
+      return null;
+    }
+  }
+
   String _ifcCacheSignature(String path, FileStat stat) =>
       'tbe-ifc-cache-v2|$path|${stat.size}|'
       '${stat.modified.millisecondsSinceEpoch}';
+
+  String _nativeBimCacheSignature(String path, FileStat stat) =>
+      'tbe-bimcache-v1|${_ifcCacheSignature(path, stat)}';
 }
 
 extension _ViewerProjectLifecycle on _ViewerHomePageState {
@@ -455,16 +520,22 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
         // Keep the exact semantic/project representation for the next open.
         // The runtime LOD is produced later by the render-scene query and is
         // never written into this cache.
-        final exactProjectJson =
-            await repository.snapshotImportedProjectJson();
+        final exactProjectJson = await repository.snapshotImportedProjectJson();
         await _writeIfcImportCache(path, exactProjectJson);
       }
+      final nativeBimCachePath = await _ensureNativeBimCache(path);
       final result = await _sceneViews.refresh();
       await _applyLoadResult(
         result,
         sourceLabel: projectName,
         resetProjectChanges: true,
       );
+      if (nativeBimCachePath != null && mounted) {
+        await _viewportController.loadNativeBimCache(
+          sourceIfcPath: path,
+          cachePath: nativeBimCachePath,
+        );
+      }
     } catch (error) {
       if (!mounted) return;
       _updateViewportState(() {

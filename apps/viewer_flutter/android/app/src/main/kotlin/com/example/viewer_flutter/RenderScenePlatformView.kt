@@ -321,6 +321,18 @@ internal class RenderScenePlatformView(
         result.success(null)
       }
 
+      "loadNativeBimCache" -> {
+        val payload = call.arguments as? Map<*, *>
+        val cachePath = payload?.get("cachePath") as? String
+        val sourceIfcPath = payload?.get("sourceIfcPath") as? String
+        if (cachePath.isNullOrBlank() || sourceIfcPath.isNullOrBlank()) {
+          result.error("invalid_cache_request", "cachePath and sourceIfcPath are required", null)
+        } else {
+          view.loadNativeBimCache(cachePath, sourceIfcPath)
+          result.success(null)
+        }
+      }
+
       "clearScene" -> {
         view.clearScene()
         result.success(null)

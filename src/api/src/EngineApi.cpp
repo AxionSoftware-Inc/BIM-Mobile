@@ -1,5 +1,7 @@
 #include "tbe/api/EngineApi.hpp"
 
+#include "RuntimeSceneCache.hpp"
+
 #include "tbe/core/Project.hpp"
 #include "tbe/core/IfcExchange.hpp"
 #include "tbe/core/JobSystem.hpp"
@@ -4031,6 +4033,51 @@ ApiVoidResult EngineSession::import_ifc(const std::string& path, LoadMode mode) 
         return result;
     } catch (const std::exception& error) {
         return error_void(status_from_exception(error), error.what());
+    }
+}
+
+ApiResult<BimCacheStatsDTO> EngineSession::compile_bim_cache(
+    const std::string& source_ifc_path,
+    const std::string& cache_path
+) const {
+    namespace fs = std::filesystem;
+    try {
+        auto recompute = recompute_impl(*impl_, ComputeMode::InteractivePreview);
+        if (!recompute.ok()) {
+            return error_result<BimCacheStatsDTO>(recompute.status, recompute.message);
+        }
+        // The cache deliberately compiles the interactive runtime scene. Exact
+        // authoring geometry remains in the Document/source IFC; this artifact
+        // is only the chunked representation used to draw and pick quickly.
+        auto compiled = runtime_cache::compile(
+            build_render_scene(impl_->document(), nullptr, RenderSceneDetail::Interactive),
+            runtime_cache::source_signature(source_ifc_path)
+        );
+        runtime_cache::write_file(cache_path, compiled);
+        return success_result(runtime_cache::stats_for(
+            compiled,
+            static_cast<std::size_t>(fs::file_size(cache_path)),
+            true
+        ));
+    } catch (const std::exception& error) {
+        return error_result<BimCacheStatsDTO>(status_from_exception(error), error.what());
+    }
+}
+
+ApiResult<BimCacheStatsDTO> EngineSession::inspect_bim_cache(
+    const std::string& source_ifc_path,
+    const std::string& cache_path
+) const {
+    namespace fs = std::filesystem;
+    try {
+        const auto cached = runtime_cache::read_file(cache_path, source_ifc_path);
+        return success_result(runtime_cache::stats_for(
+            cached,
+            static_cast<std::size_t>(fs::file_size(cache_path)),
+            true
+        ));
+    } catch (const std::exception& error) {
+        return error_result<BimCacheStatsDTO>(status_from_exception(error), error.what());
     }
 }
 
