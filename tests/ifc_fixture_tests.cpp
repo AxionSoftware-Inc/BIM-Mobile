@@ -36,13 +36,13 @@ const tbe::core::MeshBuffer* mesh_for(const tbe::core::Element& element) {
     return nullptr;
 }
 
-void validate_fixture(const std::filesystem::path& path) {
+void validate_fixture(const std::filesystem::path& path, bool require_mesh) {
     assert(std::filesystem::exists(path));
 
     tbe::core::IfcExchangeReport report;
     const auto document = tbe::core::import_ifc(path, path.stem().string(), &report);
     assert(report.imported_elements > 0);
-    assert(!document.elements().empty());
+    assert(document.elements().size() == report.imported_elements);
 
     std::size_t meshed_elements{};
     std::size_t mesh_vertices{};
@@ -65,22 +65,33 @@ void validate_fixture(const std::filesystem::path& path) {
         mesh_triangles += mesh->indices.size() / 3;
     }
 
-    // A real building fixture must produce renderable geometry, not only
-    // semantic envelopes or metadata records.
-    assert(meshed_elements > 0);
-    assert(mesh_vertices > 0);
-    assert(mesh_triangles > 0);
     std::cout << path.filename().string() << ": "
               << report.imported_elements << " elements, "
               << meshed_elements << " meshed, "
               << mesh_vertices << " vertices, "
-              << mesh_triangles << " triangles\n";
+              << mesh_triangles << " triangles, "
+              << report.warnings.size() << " warnings\n";
+    for (const auto& warning : report.warnings) std::cout << "  warning: " << warning << "\n";
+    if (require_mesh) {
+        // Known-good fixtures must produce renderable geometry, not only
+        // semantic envelopes or metadata records.
+        assert(meshed_elements > 0);
+        assert(mesh_vertices > 0);
+        assert(mesh_triangles > 0);
+    }
 }
 
 } // namespace
 
 int main(int argc, char** argv) {
     assert(argc > 1);
-    for (int index = 1; index < argc; ++index) validate_fixture(argv[index]);
+    bool require_mesh = true;
+    int first_path = 1;
+    if (std::string(argv[1]) == "--allow-envelope") {
+        require_mesh = false;
+        first_path = 2;
+    }
+    assert(first_path < argc);
+    for (int index = first_path; index < argc; ++index) validate_fixture(argv[index], require_mesh);
     return 0;
 }

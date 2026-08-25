@@ -35,45 +35,6 @@ enum IfcTemplateKind { building, structure, infrastructure }
 
 const List<IfcTemplate> onlineIfcTemplates = <IfcTemplate>[
   IfcTemplate(
-    id: 'buildingsmart-architecture',
-    title: 'IFC building architecture',
-    subtitle: 'Open building sample with architectural elements',
-    meta: 'IFC 4 · 226 KB · online sample',
-    fileName: 'buildingsmart-building-architecture.ifc',
-    downloadUrl:
-        'https://raw.githubusercontent.com/buildingSMART/Certification-datasets/main/IFC%204.0.2.1%20%28IFC%204%29/PCERT-Sample-Scene/Building-Architecture.ifc',
-    sourceUrl:
-        'https://github.com/buildingSMART/Certification-datasets/tree/main/IFC%204.0.2.1%20%28IFC%204%29/PCERT-Sample-Scene',
-    kind: IfcTemplateKind.building,
-    sizeLabel: '226 KB',
-  ),
-  IfcTemplate(
-    id: 'buildingsmart-structural',
-    title: 'IFC structural sample',
-    subtitle: 'Columns, beams and structural coordination sample',
-    meta: 'IFC 4 · 297 KB · online sample',
-    fileName: 'buildingsmart-building-structural.ifc',
-    downloadUrl:
-        'https://raw.githubusercontent.com/buildingSMART/Certification-datasets/main/IFC%204.0.2.1%20%28IFC%204%29/PCERT-Sample-Scene/Building-Structural.ifc',
-    sourceUrl:
-        'https://github.com/buildingSMART/Certification-datasets/tree/main/IFC%204.0.2.1%20%28IFC%204%29/PCERT-Sample-Scene',
-    kind: IfcTemplateKind.structure,
-    sizeLabel: '297 KB',
-  ),
-  IfcTemplate(
-    id: 'buildingsmart-road',
-    title: 'IFC infrastructure sample',
-    subtitle: 'Lightweight road model for infrastructure viewing',
-    meta: 'IFC 4 · 439 KB · online sample',
-    fileName: 'buildingsmart-infrastructure-road.ifc',
-    downloadUrl:
-        'https://raw.githubusercontent.com/buildingSMART/Certification-datasets/main/IFC%204.0.2.1%20%28IFC%204%29/PCERT-Sample-Scene/Infra-Road.ifc',
-    sourceUrl:
-        'https://github.com/buildingSMART/Certification-datasets/tree/main/IFC%204.0.2.1%20%28IFC%204%29/PCERT-Sample-Scene',
-    kind: IfcTemplateKind.infrastructure,
-    sizeLabel: '439 KB',
-  ),
-  IfcTemplate(
     id: 'kit-office-building',
     title: 'KIT office building',
     subtitle: 'Large multi-storey office model from ArchiCAD',
