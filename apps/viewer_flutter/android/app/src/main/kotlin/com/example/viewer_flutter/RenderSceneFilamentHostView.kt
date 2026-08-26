@@ -5180,7 +5180,12 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
   private var showNativeLevels = true
   private var wireframe = false
   private var viewportTheme = "light"
-  private var showObjectEdges = true
+  // Filament owns the normal architectural edge batches. Painting the same
+  // sampled edges again in the Android overlay made every 2D pan/zoom walk
+  // hundreds of projected vertices (and, in elevation/section, recompute
+  // face-facing tests) on the UI thread. Keep this overlay path reserved for
+  // wireframe and explicit selection feedback.
+  private var showObjectEdges = false
   private var sectionBoxEnabled = false
   private var sectionBoxMin = ScenePoint(0.0, 0.0, 0.0)
   private var sectionBoxMax = ScenePoint(0.0, 0.0, 0.0)
@@ -5667,9 +5672,12 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
   private fun drawAuthoringEdges(canvas: Canvas) {
     if (width <= 1 || height <= 1) return
     for (objectData in objects) {
-      val projected = objectData.points.map(::project)
       val selected = objectData.elementId != null && selectedIds.contains(objectData.elementId)
       if (!showObjectEdges && !selected) continue
+      // Do not project sampled geometry for the normal path. Filament already
+      // owns the batched architectural edges; this Android overlay is only
+      // needed for wireframe or selected-object feedback.
+      val projected = objectData.points.map(::project)
       val edgePaint = if (selected) selectedOutline else outline
       for (edge in objectData.featureEdges) {
         if (!wireframe && !selected && !isVisibleSolidEdge(objectData, edge)) continue
