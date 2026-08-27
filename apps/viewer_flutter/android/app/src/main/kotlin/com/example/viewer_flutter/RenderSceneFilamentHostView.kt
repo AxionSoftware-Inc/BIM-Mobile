@@ -5931,9 +5931,11 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
     // Keep coverage across every building at city scale. Sampling avoids line
     // soup but never makes a campus fall back to an unannotated old view.
     val stride = max(1, (value.size + 649) / 650)
-    hasExternalMeshEdges = value.any {
-      it.metadata["external_mesh"] == "true" && it.metadata["native_cache"] != "true"
-    }
+    // Native IFC/CAD cache parts use the same lightweight bounds overlay as
+    // external meshes.  The cache keeps the real faces in native buffers, so
+    // this does not duplicate the model; it only restores the readable object
+    // edges that were visible in the earlier tablet renderer.
+    hasExternalMeshEdges = value.any { it.metadata["external_mesh"] == "true" }
     allObjects = value
     val sampledObjects = value.filterIndexed { index, _ -> index % stride == 0 }
     val externalObjects = value.filter { it.metadata["external_mesh"] == "true" }
