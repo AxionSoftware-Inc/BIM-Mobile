@@ -162,6 +162,28 @@ Java_com_example_viewer_1flutter_NativeBimCacheBridge_nativeChunkKindMask(
     return static_cast<jlong>(mask);
 }
 
+JNIEXPORT jlongArray JNICALL
+Java_com_example_viewer_1flutter_NativeBimCacheBridge_nativeChunkPrimitiveRanges(
+    JNIEnv* environment,
+    jclass,
+    jlong handle,
+    jint chunk_index
+) {
+    const auto* cache = to_handle(handle);
+    if (cache == nullptr || chunk_index < 0 || static_cast<std::size_t>(chunk_index) >= cache->scene.chunks.size()) {
+        return nullptr;
+    }
+    std::vector<std::int64_t> ranges;
+    const auto& primitives = cache->scene.chunks[static_cast<std::size_t>(chunk_index)].primitives;
+    ranges.reserve(primitives.size() * 3);
+    for (const auto& primitive : primitives) {
+        ranges.push_back(static_cast<std::int64_t>(primitive.first_index));
+        ranges.push_back(static_cast<std::int64_t>(primitive.index_count));
+        ranges.push_back(static_cast<std::int64_t>(primitive.kind));
+    }
+    return make_long_array(environment, ranges);
+}
+
 JNIEXPORT jdoubleArray JNICALL
 Java_com_example_viewer_1flutter_NativeBimCacheBridge_nativeChunkBounds(
     JNIEnv* environment,

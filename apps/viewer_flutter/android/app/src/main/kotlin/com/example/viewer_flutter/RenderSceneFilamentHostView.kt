@@ -3135,12 +3135,63 @@ internal class RenderSceneFilamentHostView(
     return capped
   }
 
+  /**
+   * Removes tessellation seams from an external mesh before either renderer
+   * consumes its edges. FBX/OBJ/GLB exports commonly contain thousands of
+   * one-use triangle edges (or split vertices) that are not useful model
+   * linework. Keeping this policy here means the Filament prism pass and the
+   * Android interaction overlay cannot disagree about which edges exist.
+   *
+   * The source faces are never changed. This only controls the lightweight
+   * edge representation used for Solid/Shaded display and selection feedback.
+   */
+  private fun cleanImportedMeshEdges(
+    points: List<ScenePoint>,
+    edges: List<NativeVisualEdge>,
+  ): List<NativeVisualEdge> {
+    if (points.isEmpty() || edges.isEmpty()) return edges
+    val bounds = boundsForPoints(points)
+    val span = max(
+      max(bounds.max.x - bounds.min.x, bounds.max.y - bounds.min.y),
+      bounds.max.z - bounds.min.z,
+    ).coerceAtLeast(0.1)
+    // Keep small architectural details on normal-sized objects, while
+    // removing millimetre-scale decorative/tessellation fragments from a
+    // building-sized imported mesh.
+    val minimumLength = max(0.01, min(0.10, span * 0.001))
+    val minimumBoundaryLength = max(
+      minimumLength * 2.5,
+      min(0.75, span * 0.015),
+    )
+    return edges.filter { edge ->
+      // Envelope fallback edges have no source triangle association. They are
+      // deliberately retained when a smooth imported mesh has no topology
+      // edge that can be rendered reliably.
+      if (edge.triangleIndices.isEmpty()) return@filter edge.sharp
+      val first = points.getOrNull(edge.first) ?: return@filter false
+      val second = points.getOrNull(edge.second) ?: return@filter false
+      val dx = second.x - first.x
+      val dy = second.y - first.y
+      val dz = second.z - first.z
+      val length = kotlin.math.sqrt(dx * dx + dy * dy + dz * dz)
+      if (!length.isFinite() || length < minimumLength) return@filter false
+      val boundary = edge.triangleIndices.size == 1
+      if (boundary) {
+        // A one-use edge is often just a tessellation boundary. Only retain
+        // long silhouette/opening boundaries; real creases are handled below.
+        length >= minimumBoundaryLength
+      } else {
+        edge.sharp
+      }
+    }
+  }
+
   private fun capNativeCacheEdges(edges: List<NativeVisualEdge>): List<NativeVisualEdge> {
-    // A cache chunk can contain hundreds of imported detail triangles. Keep a
-    // bounded contour subset per chunk so the filled model stays readable at
-    // fit-to-view scale; close-up detail remains available through selection
-    // and the source mesh itself.
-    val allowed = min(192, nativeCacheEdgeBudgetRemaining)
+    // A cache primitive can contain many imported detail triangles. Keep a
+    // bounded contour subset per semantic object so the filled model stays
+    // readable at fit-to-view scale; close-up detail remains available
+    // through selection and the source mesh itself.
+    val allowed = min(96, nativeCacheEdgeBudgetRemaining)
     if (allowed <= 0) return emptyList()
     val capped = if (edges.size <= allowed) {
       edges
@@ -3167,14 +3218,8 @@ internal class RenderSceneFilamentHostView(
       .order(ByteOrder.nativeOrder())
       .apply { rewind() }
     val indexBuffer = chunk.indices.duplicate().apply { rewind() }
-    val sourceTriangleCount = indexCount / 3
-    val points = mutableListOf<ScenePoint>()
-    val localBySourceIndex = hashMapOf<Int, Int>()
-
     fun readPoint(sourceIndex: Int): ScenePoint? {
       if (sourceIndex !in 0 until vertexCount) return null
-      val existing = localBySourceIndex[sourceIndex]
-      if (existing != null) return points[existing]
       val byteOffset = sourceIndex * 12
       val point = ScenePoint(
         positionBuffer.getFloat(byteOffset).toDouble(),
@@ -3182,65 +3227,74 @@ internal class RenderSceneFilamentHostView(
         positionBuffer.getFloat(byteOffset + 8).toDouble(),
       )
       if (!point.x.isFinite() || !point.y.isFinite() || !point.z.isFinite()) return null
-      val transformed = toFilamentPoint(point)
-      val localIndex = points.size
-      points.add(transformed)
-      localBySourceIndex[sourceIndex] = localIndex
-      return transformed
+      return toFilamentPoint(point)
     }
 
-    val triangles = mutableListOf<IntArray>()
-    for (triangleIndex in 0 until sourceTriangleCount) {
-      val offset = triangleIndex * 3
-      val firstSource = indexBuffer.get(offset)
-      val secondSource = indexBuffer.get(offset + 1)
-      val thirdSource = indexBuffer.get(offset + 2)
-      val first = readPoint(firstSource) ?: continue
-      val second = readPoint(secondSource) ?: continue
-      val third = readPoint(thirdSource) ?: continue
-      val abX = second.x - first.x
-      val abY = second.y - first.y
-      val abZ = second.z - first.z
-      val acX = third.x - first.x
-      val acY = third.y - first.y
-      val acZ = third.z - first.z
-      val crossX = abY * acZ - abZ * acY
-      val crossY = abZ * acX - abX * acZ
-      val crossZ = abX * acY - abY * acX
-      if (crossX * crossX + crossY * crossY + crossZ * crossZ <= 1.0e-16) continue
-      triangles.add(
-        intArrayOf(
-          localBySourceIndex[firstSource] ?: continue,
-          localBySourceIndex[secondSource] ?: continue,
-          localBySourceIndex[thirdSource] ?: continue,
-        ),
-      )
+    val edgePoints = mutableListOf<ScenePoint>()
+    val edgeTriangles = mutableListOf<IntArray>()
+    val edges = mutableListOf<NativeVisualEdge>()
+    val ranges = chunk.primitiveRanges.ifEmpty {
+      listOf(NativeBimCachePrimitiveRange(0, indexCount, chunk.kind))
     }
-    if (points.isEmpty() || triangles.isEmpty()) return null
 
-    val edgePoints: List<ScenePoint> = points
-    val edgeTriangles: List<IntArray> = triangles
-    // Build adjacency from the complete chunk before applying the line budget.
-    // Sampling triangles first breaks shared-edge continuity and was the cause
-    // of the dotted/tessellated look seen in the historical builds.
-    val minimumLength = when (normalizeKind(chunk.kind)) {
-      "wall" -> 0.18
-      "window", "door" -> 0.06
-      "column" -> 0.10
-      "stair" -> 0.08
-      else -> 0.12
-    }
-    // A one-use edge can be either a triangulation seam or a real outer
-    // contour. Keep creases at any useful scale, and keep only *long* one-use
-    // boundaries. This restores the silhouette of a flat facade without
-    // promoting every tiny imported tessellation fragment into a line.
-    val edges = meshFeatureEdges(
-      points,
-      triangles,
-      creaseDotThreshold = 0.55,
-      includeBoundaryEdges = true,
-    )
-      .filter { edge ->
+    fun appendPrimitiveRange(range: NativeBimCachePrimitiveRange) {
+      if (nativeCacheEdgeBudgetRemaining <= 0) return
+      val firstIndex = range.firstIndex.coerceAtLeast(0)
+      if (firstIndex >= indexCount) return
+      val requestedEnd = range.firstIndex.toLong() + range.indexCount.toLong()
+      val endIndex = min(indexCount.toLong(), requestedEnd).toInt()
+      val triangleEnd = endIndex - ((endIndex - firstIndex) % 3)
+      if (triangleEnd - firstIndex < 3) return
+
+      // Build a private local topology for this semantic primitive. The cache
+      // intentionally batches many objects into one GPU chunk, but adjacency
+      // must never join the last triangle of one object to the first triangle
+      // of another object. Local points also keep this pass linear instead of
+      // re-welding the entire large chunk once per primitive.
+      val points = mutableListOf<ScenePoint>()
+      val localBySourceIndex = hashMapOf<Int, Int>()
+      fun readLocalPoint(sourceIndex: Int): Int? {
+        if (sourceIndex !in 0 until vertexCount) return null
+        val existing = localBySourceIndex[sourceIndex]
+        if (existing != null) return existing
+        val point = readPoint(sourceIndex) ?: return null
+        val localIndex = points.size
+        points.add(point)
+        localBySourceIndex[sourceIndex] = localIndex
+        return localIndex
+      }
+      val triangles = mutableListOf<IntArray>()
+      var offset = firstIndex
+      while (offset + 2 < triangleEnd) {
+        val first = readLocalPoint(indexBuffer.get(offset))
+        val second = readLocalPoint(indexBuffer.get(offset + 1))
+        val third = readLocalPoint(indexBuffer.get(offset + 2))
+        if (first != null && second != null && third != null) {
+          val a = points[first]
+          val b = points[second]
+          val c = points[third]
+          val normal = triangleNormal(a, b, c)
+          if (normal.any { kotlin.math.abs(it) > 1.0e-9 }) {
+            triangles.add(intArrayOf(first, second, third))
+          }
+        }
+        offset += 3
+      }
+      if (points.isEmpty() || triangles.isEmpty()) return
+
+      val minimumLength = when (normalizeKind(range.kind)) {
+        "wall" -> 0.18
+        "window", "door" -> 0.06
+        "column" -> 0.10
+        "stair" -> 0.08
+        else -> 0.12
+      }
+      val localEdges = meshFeatureEdges(
+        points,
+        triangles,
+        creaseDotThreshold = 0.55,
+        includeBoundaryEdges = true,
+      ).filter { edge ->
         val first = points.getOrNull(edge.first) ?: return@filter false
         val second = points.getOrNull(edge.second) ?: return@filter false
         val dx = second.x - first.x
@@ -3253,9 +3307,41 @@ internal class RenderSceneFilamentHostView(
           max(minimumLength * minimumLength * 6.25, 0.45 * 0.45)
         (!boundary && edge.sharp) || longBoundary
       }
-    if (edges.isEmpty()) return null
-    val boundedEdges = capNativeCacheEdges(edges)
-    return edgeGeometry(edgePoints, boundedEdges, edgeTriangles, radiusScale = 2.2)
+      val boundedEdges = capNativeCacheEdges(localEdges)
+      if (boundedEdges.isEmpty()) return
+      val pointBase = edgePoints.size
+      val triangleBase = edgeTriangles.size
+      edgePoints.addAll(points)
+      triangles.forEach { triangle ->
+        edgeTriangles.add(intArrayOf(
+          triangle[0] + pointBase,
+          triangle[1] + pointBase,
+          triangle[2] + pointBase,
+        ))
+      }
+      boundedEdges.forEach { edge ->
+        edges.add(
+          NativeVisualEdge(
+            first = edge.first + pointBase,
+            second = edge.second + pointBase,
+            triangleIndices = edge.triangleIndices.map { it + triangleBase }.toIntArray(),
+            sharp = edge.sharp,
+          ),
+        )
+      }
+    }
+
+    for (range in ranges) {
+      if (nativeCacheEdgeBudgetRemaining <= 0) break
+      appendPrimitiveRange(range)
+    }
+    if (edgePoints.isEmpty() || edgeTriangles.isEmpty() || edges.isEmpty()) return null
+    Log.i(
+      TAG,
+      "Native cache edge topology: kind=${chunk.kind} primitives=${ranges.size} " +
+        "edges=${edges.size} vertices=${edgePoints.size} triangles=${edgeTriangles.size}",
+    )
+    return edgeGeometry(edgePoints, edges, edgeTriangles, radiusScale = 2.2)
   }
 
   private fun edgeSurfaceOffset(
@@ -3360,7 +3446,12 @@ internal class RenderSceneFilamentHostView(
     } else {
       stableSectionEdges
     }
-    val boundedEdges = capGenericMeshEdges(objectData, stableColumnEdges)
+    val importedEdges = if (isImportedMeshObject(objectData)) {
+      cleanImportedMeshEdges(points, stableColumnEdges)
+    } else {
+      stableColumnEdges
+    }
+    val boundedEdges = capGenericMeshEdges(objectData, importedEdges)
     val generated = edgeGeometry(
       points,
       boundedEdges,
@@ -6086,6 +6177,9 @@ internal class RenderSceneFilamentHostView(
       sourceTriangles,
       creaseDotThreshold = if (normalizeKind(objectData.kind) == "roof") 0.995 else 0.90,
     )
+    if (isImportedMeshObject(objectData)) {
+      featureEdges = cleanImportedMeshEdges(sourcePoints, featureEdges)
+    }
     // Some FBX exporters mark every surface smooth, leaving no boundary or
     // crease in the geometric topology even though the model is valid. Keep
     // a lightweight envelope outline as a readable fallback instead of

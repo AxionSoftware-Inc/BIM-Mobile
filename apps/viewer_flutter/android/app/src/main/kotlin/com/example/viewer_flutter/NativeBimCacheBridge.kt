@@ -29,6 +29,7 @@ internal object NativeBimCacheBridge {
   private external fun nativeChunkLevelId(handle: Long, index: Int): Long
   private external fun nativeChunkMaterial(handle: Long, index: Int): String
   private external fun nativeChunkKindMask(handle: Long, index: Int): Long
+  private external fun nativeChunkPrimitiveRanges(handle: Long, index: Int): LongArray?
   private external fun nativeChunkBounds(handle: Long, index: Int): DoubleArray?
   private external fun nativeChunkPositions(handle: Long, index: Int): ByteBuffer?
   private external fun nativeChunkIndices(handle: Long, index: Int): ByteBuffer?
@@ -58,6 +59,18 @@ internal object NativeBimCacheBridge {
           val bounds = nativeChunkBounds(handle, index) ?: return@repeat
           val positions = nativeChunkPositions(handle, index) ?: return@repeat
           val indices = nativeChunkIndices(handle, index) ?: return@repeat
+          val primitiveRanges = nativeChunkPrimitiveRanges(handle, index)
+            ?.asList()
+            ?.chunked(3)
+            ?.mapNotNull { values ->
+              if (values.size != 3) return@mapNotNull null
+              NativeBimCachePrimitiveRange(
+                firstIndex = values[0].toInt(),
+                indexCount = values[1].toInt(),
+                kind = kindFromNativeValue(values[2]),
+              )
+            }
+            ?: emptyList()
           val kindMask = nativeChunkKindMask(handle, index)
           if (bounds.size != 6 || positions.capacity() < 12 || indices.capacity() < Int.SIZE_BYTES) return@repeat
           add(
@@ -69,6 +82,7 @@ internal object NativeBimCacheBridge {
               sourceBounds = sceneBounds(bounds),
               positions = positions.duplicate().order(ByteOrder.nativeOrder()).apply { rewind() },
               indices = indices.duplicate().order(ByteOrder.nativeOrder()).asIntBuffer().apply { rewind() },
+              primitiveRanges = primitiveRanges,
             ),
           )
         }
@@ -333,6 +347,13 @@ internal data class NativeBimCacheChunk(
   val sourceBounds: SceneBounds,
   val positions: ByteBuffer,
   val indices: IntBuffer,
+  val primitiveRanges: List<NativeBimCachePrimitiveRange> = emptyList(),
+)
+
+internal data class NativeBimCachePrimitiveRange(
+  val firstIndex: Int,
+  val indexCount: Int,
+  val kind: String,
 )
 
 internal data class NativeBimCachePrimitive(
