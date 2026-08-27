@@ -70,7 +70,6 @@ private const val NATIVE_CACHE_INITIAL_UPLOAD_CHUNKS = 3
 private const val NATIVE_CACHE_STEADY_UPLOAD_CHUNKS = 1
 private const val NATIVE_CACHE_UPLOAD_DELAY_MS = 8L
 private const val NATIVE_CACHE_REPRIORITIZE_DELAY_MS = 56L
-private const val NATIVE_CACHE_EDGE_TRIANGLE_BUDGET = 1_024
 private const val NATIVE_CACHE_EDGE_SEGMENT_BUDGET = 60_000
 
 // External mesh formats (FBX and equivalent payloads) do not carry BIM
@@ -1407,10 +1406,9 @@ internal class RenderSceneFilamentHostView(
     val scene = scene ?: return
     val cache = nativeBimCache ?: return
     destroyEdgeBatches(engine, scene)
-    if (displayStyle != "wireframe") {
-      updateMetrics()
-      return
-    }
+    // Native cache edges are also needed in Solid/Shaded.  They are generated
+    // from the complete chunk topology below, so this is an architectural
+    // contour pass rather than a second wireframe representation.
     val edgeChunks = linkedMapOf<EdgeBatchKey, MutableList<GeometryData>>()
     nativeCacheResidentChunks.forEach { index ->
       val chunk = cache.chunks.getOrNull(index) ?: return@forEach
@@ -2365,11 +2363,9 @@ internal class RenderSceneFilamentHostView(
       if (createNativeBimCacheChunk(engine, scene, cache, fallbackMaterial, index)) {
         nativeCacheResidentChunks.add(index)
         val chunk = cache.chunks.getOrNull(index)
-        // Native cache edges are an explicit Wireframe aid. Never create or
-        // attach this second triangle-prism pass in Solid/Shaded: on some
-        // mobile OpenGL drivers it survives a style transition and reads as
-        // dotted wireframe over an otherwise filled model.
-        if (chunk != null && displayStyle == "wireframe") {
+        // Keep the architectural contour batch beside each streamed face
+        // chunk so Solid/Shaded is correct even before the stream completes.
+        if (chunk != null) {
           nativeCacheEdgeGeometry(chunk)?.let { geometry ->
             val key = EdgeBatchKey(
               kind = normalizeKind(chunk.kind),
@@ -2880,12 +2876,7 @@ internal class RenderSceneFilamentHostView(
       kindVisible(kind) && openingVisibleInPlan(kind)
 
   private fun edgeVisible(key: EdgeBatchKey): Boolean =
-    (displayStyle == "solid" || displayStyle == "shaded") &&
-      // Native cache chunks are already a complete filled mesh. Their
-      // sampled edge batch is useful for the explicit Wireframe diagnostic
-      // view only; keeping it in Solid makes sampled tile boundaries read as
-      // a second wireframe over the surfaces.
-      (key.nativeKindMask == null) &&
+    (displayStyle == "wireframe" || displayStyle == "solid" || displayStyle == "shaded") &&
       (key.nativeKindMask?.let(::nativeCacheKindMaskVisible)
         ?: kindVisible(key.kind)) &&
       openingVisibleInPlan(key.kind)
@@ -2978,7 +2969,11 @@ internal class RenderSceneFilamentHostView(
   }
 
   private fun capNativeCacheEdges(edges: List<NativeVisualEdge>): List<NativeVisualEdge> {
-    val allowed = min(512, nativeCacheEdgeBudgetRemaining)
+    // A cache chunk can contain hundreds of imported detail triangles. Keep a
+    // bounded contour subset per chunk so the filled model stays readable at
+    // fit-to-view scale; close-up detail remains available through selection
+    // and the source mesh itself.
+    val allowed = min(192, nativeCacheEdgeBudgetRemaining)
     if (allowed <= 0) return emptyList()
     val capped = if (edges.size <= allowed) {
       edges
@@ -3006,11 +3001,6 @@ internal class RenderSceneFilamentHostView(
       .apply { rewind() }
     val indexBuffer = chunk.indices.duplicate().apply { rewind() }
     val sourceTriangleCount = indexCount / 3
-    val stride = max(
-      1,
-      (sourceTriangleCount + NATIVE_CACHE_EDGE_TRIANGLE_BUDGET - 1) /
-        NATIVE_CACHE_EDGE_TRIANGLE_BUDGET,
-    )
     val points = mutableListOf<ScenePoint>()
     val localBySourceIndex = hashMapOf<Int, Int>()
 
@@ -3034,9 +3024,6 @@ internal class RenderSceneFilamentHostView(
 
     val triangles = mutableListOf<IntArray>()
     for (triangleIndex in 0 until sourceTriangleCount) {
-      if (stride > 1 && triangleIndex % stride != 0 && triangleIndex != sourceTriangleCount - 1) {
-        continue
-      }
       val offset = triangleIndex * 3
       val firstSource = indexBuffer.get(offset)
       val secondSource = indexBuffer.get(offset + 1)
@@ -3066,22 +3053,82 @@ internal class RenderSceneFilamentHostView(
 
     val edgePoints: List<ScenePoint> = points
     val edgeTriangles: List<IntArray> = triangles
-    // The sampled cache pass is intentionally not allowed to promote an
-    // unpaired triangle edge into a visible border.  Sampling breaks the
-    // adjacency table, so treating every one-use edge as a boundary creates
-    // a dotted box around the whole streamed tile and makes Solid look like
-    // a wireframe.  Real BIM boundaries remain available through the semantic
-    // selection overlay; this GPU pass is only for meaningful creases.
-    val edges = meshFeatureEdges(points, triangles, includeBoundaryEdges = false)
-      // A sampled triangle soup can only prove a real crease when the same
-      // welded edge is shared by at least two sampled faces.  One-use edges
-      // are sampling artefacts here, not reliable architectural boundaries.
-      .filter { it.triangleIndices.size >= 2 }
-    // A smooth chunk without a crease edge is still valid geometry. Never
-    // substitute its full bounds with a misleading giant wireframe.
+    // Build adjacency from the complete chunk before applying the line budget.
+    // Sampling triangles first breaks shared-edge continuity and was the cause
+    // of the dotted/tessellated look seen in the historical builds.
+    val minimumLength = when (normalizeKind(chunk.kind)) {
+      "wall" -> 0.18
+      "window", "door" -> 0.06
+      "column" -> 0.10
+      "stair" -> 0.08
+      else -> 0.12
+    }
+    // A one-use edge can be either a triangulation seam or a real outer
+    // contour. Keep creases at any useful scale, and keep only *long* one-use
+    // boundaries. This restores the silhouette of a flat facade without
+    // promoting every tiny imported tessellation fragment into a line.
+    val edges = meshFeatureEdges(
+      points,
+      triangles,
+      creaseDotThreshold = 0.55,
+      includeBoundaryEdges = true,
+    )
+      .filter { edge ->
+        val first = points.getOrNull(edge.first) ?: return@filter false
+        val second = points.getOrNull(edge.second) ?: return@filter false
+        val dx = second.x - first.x
+        val dy = second.y - first.y
+        val dz = second.z - first.z
+        val lengthSquared = dx * dx + dy * dy + dz * dz
+        if (lengthSquared < minimumLength * minimumLength) return@filter false
+        val boundary = edge.triangleIndices.size == 1
+        val longBoundary = boundary && lengthSquared >=
+          max(minimumLength * minimumLength * 6.25, 0.45 * 0.45)
+        (!boundary && edge.sharp) || longBoundary
+      }
     if (edges.isEmpty()) return null
     val boundedEdges = capNativeCacheEdges(edges)
-    return edgeGeometry(edgePoints, boundedEdges, edgeTriangles)
+    return edgeGeometry(edgePoints, boundedEdges, edgeTriangles, radiusScale = 2.2)
+  }
+
+  private fun edgeSurfaceOffset(
+    triangleIndices: IntArray,
+    points: List<ScenePoint>,
+    triangles: List<IntArray>,
+  ): ScenePoint {
+    if (triangleIndices.isEmpty()) return ScenePoint(0.0, 0.0, 0.0)
+    var reference: DoubleArray? = null
+    var normalX = 0.0
+    var normalY = 0.0
+    var normalZ = 0.0
+    var count = 0
+    for (triangleIndex in triangleIndices) {
+      val triangle = triangles.getOrNull(triangleIndex) ?: continue
+      if (triangle.size != 3 || triangle.any { it !in points.indices }) continue
+      val normal = triangleNormal(points[triangle[0]], points[triangle[1]], points[triangle[2]])
+      if (normal.all { kotlin.math.abs(it) <= 1.0e-9 }) continue
+      if (reference == null) reference = normal
+      val currentReference: DoubleArray? = reference
+      val direction = currentReference ?: continue
+      val sign = if (normalDot(normal, direction) < 0.0) -1.0 else 1.0
+      normalX += normal[0] * sign
+      normalY += normal[1] * sign
+      normalZ += normal[2] * sign
+      count += 1
+    }
+    if (count == 0) return ScenePoint(0.0, 0.0, 0.0)
+    val length = kotlin.math.sqrt(normalX * normalX + normalY * normalY + normalZ * normalZ)
+    if (length <= 1.0e-9) return ScenePoint(0.0, 0.0, 0.0)
+    val offset = when {
+      projectionMode == "topDown" -> 0.006
+      projectionMode == "isometric" -> 0.025
+      else -> 0.012
+    }
+    return ScenePoint(
+      normalX / length * offset,
+      normalY / length * offset,
+      normalZ / length * offset,
+    )
   }
 
   private fun edgeGeometryFor(
@@ -4263,6 +4310,7 @@ internal class RenderSceneFilamentHostView(
     triangles: List<IntArray>,
     wallJunctionEdges: Boolean = false,
     wallJunctionElevations: List<Double> = emptyList(),
+    radiusScale: Double = 1.0,
   ): GeometryData? {
     val validEdges = edges.filter { it.first in points.indices && it.second in points.indices }
     val isFloorPlan = projectionMode == "topDown"
@@ -4278,7 +4326,7 @@ internal class RenderSceneFilamentHostView(
       isFloorPlan -> 0.004
       projectionMode != "isometric" -> 0.009
       else -> 0.010
-    }
+    } * radiusScale
     // Junction borders deliberately get a stronger visual treatment than
     // ordinary silhouette edges. They are the only reliable room boundary
     // after an exterior wall has been removed and an adjacent floor/ceiling
@@ -4287,7 +4335,7 @@ internal class RenderSceneFilamentHostView(
       isFloorPlan -> 0.008
       projectionMode == "isometric" -> 0.012
       else -> 0.006
-    }
+    } * radiusScale
     val sourceBounds = boundsForPoints(points)
     data class EdgeKey(val first: Int, val second: Int)
     fun edgeKey(first: Int, second: Int) = if (first < second) {
@@ -4352,6 +4400,11 @@ internal class RenderSceneFilamentHostView(
       val first: ScenePoint,
       val second: ScenePoint,
       val junction: Boolean = false,
+      val triangleIndices: IntArray = IntArray(0),
+    )
+    val edgeTriangleIndices = validEdges.associateBy(
+      keySelector = { edgeKey(it.first, it.second) },
+      valueTransform = { it.triangleIndices },
     )
     val allEdges = validEdges.map { it.first to it.second }.toMutableList()
     for (key in junctionKeys) {
@@ -4364,6 +4417,7 @@ internal class RenderSceneFilamentHostView(
         points[edge.first],
         points[edge.second],
         wallJunctionEdges && junctionKeys.contains(edgeKey(edge.first, edge.second)),
+        edgeTriangleIndices[edgeKey(edge.first, edge.second)] ?: IntArray(0),
       )
     }.toMutableList()
     if (wallJunctionEdges && !isFloorPlan) {
@@ -4456,15 +4510,21 @@ internal class RenderSceneFilamentHostView(
       } else {
         ScenePoint(0.0, 0.0, 0.0)
       }
+      // The edge prism otherwise sits exactly on the imported face.  That is
+      // enough to trigger depth-buffer fighting on tablet GPUs, which appears
+      // as disappearing/dotted lines while orbiting.  Move it a tiny amount
+      // along the average adjacent face normal; it remains depth-tested and
+      // is still hidden by genuinely occluding geometry.
+      val surfaceOffset = edgeSurfaceOffset(edge.triangleIndices, points, triangles)
       val first = sourceFirst.copy(
-        x = sourceFirst.x + faceOffset.x,
-        y = sourceFirst.y + junctionOffset,
-        z = sourceFirst.z + faceOffset.z,
+        x = sourceFirst.x + faceOffset.x + surfaceOffset.x,
+        y = sourceFirst.y + junctionOffset + surfaceOffset.y,
+        z = sourceFirst.z + faceOffset.z + surfaceOffset.z,
       )
       val second = sourceSecond.copy(
-        x = sourceSecond.x + faceOffset.x,
-        y = sourceSecond.y + junctionOffset,
-        z = sourceSecond.z + faceOffset.z,
+        x = sourceSecond.x + faceOffset.x + surfaceOffset.x,
+        y = sourceSecond.y + junctionOffset + surfaceOffset.y,
+        z = sourceSecond.z + faceOffset.z + surfaceOffset.z,
       )
       val dx = second.x - first.x; val dy = second.y - first.y; val dz = second.z - first.z
       val length = kotlin.math.sqrt(dx * dx + dy * dy + dz * dz)
@@ -4591,13 +4651,6 @@ internal class RenderSceneFilamentHostView(
 
   private fun syncVisibility() {
     val scene = scene ?: return
-    // Cache edge prisms are an opt-in Wireframe diagnostic. A streamed chunk
-    // can finish after a style change, so enforce this invariant here as well
-    // as in the upload path; otherwise a late chunk could leave dotted edges
-    // over Solid until the next full scene rebuild.
-    if (nativeBimCache != null && displayStyle != "wireframe" && edgeBatches.isNotEmpty()) {
-      engine?.let { destroyEdgeBatches(it, scene) }
-    }
     for (entry in renderables.values) {
       val visible = faceVisible(entry.objectData)
       if (visible && !entry.attached) {
