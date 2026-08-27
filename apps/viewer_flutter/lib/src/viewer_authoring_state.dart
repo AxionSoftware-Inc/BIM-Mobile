@@ -18,6 +18,8 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
     final id = object.elementId?.toString();
 
     _updateViewportState(() {
+      _showSidePanel = true;
+      _sidePanelTab = WorkspaceSidePanelTab.inspector;
       _statusMessage = id == null
           ? 'Selected ${prettySceneKind(object.kind)}'
           : 'Selected ${prettySceneKind(object.kind)} #$id';
@@ -46,6 +48,8 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
       return;
     }
     _updateViewportState(() {
+      _showSidePanel = true;
+      _sidePanelTab = WorkspaceSidePanelTab.inspector;
       _statusMessage = 'Selected ${level.name}';
       _editStatusMessage =
           '${level.name}: ${level.elevationMeters.toStringAsFixed(2)} m. Edit it in Inspector or drag the level line.';

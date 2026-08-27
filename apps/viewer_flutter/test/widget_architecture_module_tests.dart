@@ -1,6 +1,101 @@
 part of 'widget_test.dart';
 
 void registerArchitectureModuleTests() {
+  testWidgets('shared side panel switches between browser and Inspector',
+      (WidgetTester tester) async {
+    var activeTab = WorkspaceSidePanelTab.projectBrowser;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: StatefulBuilder(
+          builder: (context, setState) => Scaffold(
+            body: SizedBox(
+              width: 340,
+              child: WorkspaceSidePanelTabs(
+                activeTab: activeTab,
+                onChanged: (tab) => setState(() => activeTab = tab),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(activeTab, WorkspaceSidePanelTab.projectBrowser);
+    expect(find.text('Project Browser'), findsOneWidget);
+    expect(find.text('Inspector'), findsOneWidget);
+
+    await tester.tap(find.text('Inspector'));
+    await tester.pump();
+    expect(activeTab, WorkspaceSidePanelTab.inspector);
+  });
+
+  testWidgets('Inspector renders Level and Wall property surfaces',
+      (WidgetTester tester) async {
+    final parsed = parseRenderSceneJson(
+      File('test/fixtures/render_scene_sample.json').readAsStringSync(),
+      source: 'Inspector property surface test',
+    ).scene!;
+    const level = RenderSceneLevel(
+      levelId: 1,
+      name: 'Level 1',
+      elevationMeters: 0,
+      defaultWallHeightMeters: 3,
+    );
+    final scene = RenderScene(
+      sceneVersion: parsed.sceneVersion,
+      units: parsed.units,
+      coordinateSystem: parsed.coordinateSystem,
+      objectCount: parsed.objectCount,
+      vertexCount: parsed.vertexCount,
+      indexCount: parsed.indexCount,
+      bounds: parsed.bounds,
+      objects: parsed.objects,
+      levels: const <RenderSceneLevel>[level],
+      materials: parsed.materials,
+      sections: parsed.sections,
+      source: parsed.source,
+      diagnostics: parsed.diagnostics,
+    );
+    final wall = scene.objects.firstWhere((object) => object.kindKey == 'wall');
+    final commands = AuthoringCommandService(
+      repository: () => null,
+      creationGateway: () => null,
+      engineEnabled: () => false,
+    );
+
+    Widget editor(InspectorTarget target) => MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              child: PropertyEditor(
+                scene: scene,
+                target: target,
+                commands: commands,
+                onApplied: (result, message) async {},
+                onClearSelection: () {},
+                viewRangeMeters: 2,
+                onViewRangeChanged: (value) async {},
+                showPlanViewRange: false,
+                activePlanLevel: level,
+              ),
+            ),
+          ),
+    );
+
+    await tester.pumpWidget(editor(const InspectorTarget.level(level)));
+    expect(find.text('Name'), findsOneWidget);
+    expect(find.text('Elevation (m)'), findsOneWidget);
+    expect(find.text('Default wall height (m)'), findsOneWidget);
+
+    await tester.pumpWidget(editor(InspectorTarget.object(wall)));
+    expect(find.text('Wall properties'), findsOneWidget);
+    expect(find.text('Wall type'), findsOneWidget);
+    expect(find.text('Layer count'), findsOneWidget);
+    expect(find.text('Base level'), findsOneWidget);
+    expect(find.text('Top level constraint'), findsOneWidget);
+  });
+
   test('scene commit queue preserves mutation result order', () async {
     final queue = AsyncSerialQueue();
     final events = <String>[];

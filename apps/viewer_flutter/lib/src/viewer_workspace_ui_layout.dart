@@ -53,7 +53,7 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
                       Expanded(
                         child: _buildViewportPanel(context),
                       ),
-                      if (_showObjectList || _showInspector)
+                      if (_showSidePanel)
                         _buildWorkspaceSidePanel(
                           context: context,
                           scene: fullScene,
@@ -82,8 +82,10 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
       engineBacked: _engineBackedMode,
       hasScene: fullScene != null,
       hasSelection: _viewportController.selectedElementId != null,
-      browserVisible: _showObjectList,
-      inspectorVisible: _showInspector,
+      browserVisible: _showSidePanel &&
+          _sidePanelTab == WorkspaceSidePanelTab.projectBrowser,
+      inspectorVisible:
+          _showSidePanel && _sidePanelTab == WorkspaceSidePanelTab.inspector,
       activeSectionName: _activeSectionView?.name,
       onExitSection: _activeSectionView == null
           ? null
@@ -100,15 +102,41 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
       onCreateSection: _showSectionDialog,
       onReload: _reloadCurrentScene,
       onClearSelection: _clearSelection,
-      onToggleBrowser: () => _updateViewportState(() {
-        _showObjectList = !_showObjectList;
-      }),
-      onToggleInspector: () => _updateViewportState(() {
-        _showInspector = !_showInspector;
-      }),
+      onToggleBrowser: _toggleProjectBrowserPanel,
+      onToggleInspector: _toggleInspectorPanel,
       onReturnToStart:
           widget.onReturnToStart == null ? null : _requestReturnToStart,
     );
+  }
+
+  void _toggleProjectBrowserPanel() {
+    _updateViewportState(() {
+      if (!_showSidePanel ||
+          _sidePanelTab != WorkspaceSidePanelTab.projectBrowser) {
+        _showSidePanel = true;
+        _sidePanelTab = WorkspaceSidePanelTab.projectBrowser;
+      } else {
+        _showSidePanel = false;
+      }
+    });
+  }
+
+  void _toggleInspectorPanel() {
+    _updateViewportState(() {
+      if (!_showSidePanel || _sidePanelTab != WorkspaceSidePanelTab.inspector) {
+        _showSidePanel = true;
+        _sidePanelTab = WorkspaceSidePanelTab.inspector;
+      } else {
+        _showSidePanel = false;
+      }
+    });
+  }
+
+  void _selectSidePanelTab(WorkspaceSidePanelTab tab) {
+    _updateViewportState(() {
+      _showSidePanel = true;
+      _sidePanelTab = tab;
+    });
   }
 
   Widget _buildToolbar(BuildContext context, RenderScene? scene) {
@@ -446,7 +474,7 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
       sheets: _sheetWorkspace.sheets,
       activeSheetId: _sheetWorkspace.activeSheetId,
       onCreateSheet: _createSheet,
-      onClose: () => _updateViewportState(() => _showObjectList = false),
+      onClose: () => _updateViewportState(() => _showSidePanel = false),
       onVisibleKindsChanged: _setVisibleKinds,
       onOpen3d: _open3dViewTab,
       onOpenFloorPlan: _openFloorPlanViewTab,
@@ -620,8 +648,6 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
     required InspectorTarget inspectorTarget,
   }) {
     final theme = Theme.of(context);
-    final showBrowser = _showObjectList;
-    final showInspector = _showInspector;
 
     return SizedBox(
       width: 340,
@@ -635,21 +661,22 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
-            if (showBrowser)
-              Expanded(
-                flex: showInspector ? 3 : 1,
-                child: _buildProjectBrowserPanel(context, scene),
-              ),
-            if (showBrowser && showInspector) const Divider(height: 1),
-            if (showInspector)
-              Expanded(
-                flex: showBrowser ? 2 : 1,
-                child: _buildInspectorPanel(
-                  context: context,
-                  scene: scene,
-                  inspectorTarget: inspectorTarget,
-                ),
-              ),
+            WorkspaceSidePanelTabs(
+              activeTab: _sidePanelTab,
+              onChanged: _selectSidePanelTab,
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: switch (_sidePanelTab) {
+                WorkspaceSidePanelTab.projectBrowser =>
+                  _buildProjectBrowserPanel(context, scene),
+                WorkspaceSidePanelTab.inspector => _buildInspectorPanel(
+                    context: context,
+                    scene: scene,
+                    inspectorTarget: inspectorTarget,
+                  ),
+              },
+            ),
           ],
         ),
       ),

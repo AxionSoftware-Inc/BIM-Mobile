@@ -1328,8 +1328,8 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
     _updateViewportState(() {
       _viewWorkspace.addTab(tab);
       _activeViewTabId = tab.id;
-      _showObjectList = true;
-      _showInspector = false;
+      _showSidePanel = true;
+      _sidePanelTab = WorkspaceSidePanelTab.projectBrowser;
       _statusMessage = '${sheet.number} sheet opened.';
     });
   }
@@ -1338,8 +1338,8 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
     _sheetWorkspace.openSheet(sheetId);
     final sheet = _sheetWorkspace.activeSheet;
     _updateViewportState(() {
-      _showObjectList = true;
-      _showInspector = false;
+      _showSidePanel = true;
+      _sidePanelTab = WorkspaceSidePanelTab.projectBrowser;
       _statusMessage =
           sheet == null ? _statusMessage : '${sheet.number} · ${sheet.title}';
     });

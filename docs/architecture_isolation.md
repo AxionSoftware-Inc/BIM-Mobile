@@ -15,6 +15,10 @@ model and viewport presentation.
   serializes each FFI command together with its snapshot refresh.
 - Projection filtering, default visible categories, plan-core visibility, and
   the default solid display style live in `ViewerViewportScenePolicy`.
+- Selection is a central `SelectionController` concern. The shared workspace
+  slot renders either `ProjectBrowserPanel` or `PropertyEditor` through the
+  explicit `WorkspaceSidePanelTab` state; selecting a Level or model object
+  opens the Inspector without creating a second selection or scene cache.
 - Viewport code may render and select a snapshot; it must not regenerate BIM
   geometry or mutate authoring data.
 - The native Filament renderer remains a frozen presentation boundary. Changes
@@ -39,6 +43,7 @@ the authoring or presentation path permanently blocked.
 | Material assembly/layers | Element assembly gateway | Scene data changes; viewport policy unchanged |
 | Plan range/category defaults | `ViewerViewportScenePolicy` | Presentation only |
 | Camera/gesture behavior | Viewport camera/gesture modules | Camera only |
+| Inspector property display | `InspectorController` + `PropertyEditor` | Selection/UI only |
 | Filament material/edge rendering | Native viewport host | Renderer only; keep freeze comment |
 
 When a change crosses more than one row, add a focused module test for the

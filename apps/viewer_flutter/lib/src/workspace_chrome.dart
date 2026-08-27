@@ -239,6 +239,95 @@ class WorkspaceAppBar extends StatelessWidget implements PreferredSizeWidget {
 
 enum WorkspaceTemplate { default3, tower9, campus6x9 }
 
+/// The right-hand workspace slot hosts one contextual surface at a time.
+/// Keeping the tab state explicit prevents Browser and Inspector from
+/// accidentally becoming two competing layout trees.
+enum WorkspaceSidePanelTab { projectBrowser, inspector }
+
+/// Revit-style tab switcher for the shared Project Browser / Inspector slot.
+class WorkspaceSidePanelTabs extends StatelessWidget {
+  const WorkspaceSidePanelTabs({
+    super.key,
+    required this.activeTab,
+    required this.onChanged,
+  });
+
+  final WorkspaceSidePanelTab activeTab;
+  final ValueChanged<WorkspaceSidePanelTab> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: _buildTab(
+              context,
+              tab: WorkspaceSidePanelTab.projectBrowser,
+              icon: Icons.account_tree_outlined,
+              label: 'Project Browser',
+              colors: colors,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: _buildTab(
+              context,
+              tab: WorkspaceSidePanelTab.inspector,
+              icon: Icons.tune_outlined,
+              label: 'Inspector',
+              colors: colors,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTab(
+    BuildContext context, {
+    required WorkspaceSidePanelTab tab,
+    required IconData icon,
+    required String label,
+    required ColorScheme colors,
+  }) {
+    final selected = activeTab == tab;
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: label,
+      child: Material(
+        color: selected ? colors.secondaryContainer : colors.surfaceContainer,
+        borderRadius: BorderRadius.circular(10),
+        child: InkWell(
+          onTap: selected ? null : () => onChanged(tab),
+          borderRadius: BorderRadius.circular(10),
+          child: SizedBox(
+            height: 42,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: <Widget>[
+                Icon(icon, size: 18),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.labelMedium,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 enum _WorkspaceMoreAction {
   undo,
   redo,
@@ -686,9 +775,7 @@ class ViewportControlDeck extends StatelessWidget {
                     : 'Show HDRI background',
                 selected: hdriVisible,
                 enabled: hasScene,
-                icon: hdriVisible
-                    ? Icons.landscape
-                    : Icons.landscape_outlined,
+                icon: hdriVisible ? Icons.landscape : Icons.landscape_outlined,
                 onPressed: () => onHdriChanged(!hdriVisible),
               ),
             if (is3D)

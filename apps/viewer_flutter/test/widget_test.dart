@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/gestures.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -26,6 +26,7 @@ import 'package:viewer_flutter/src/render_scene_viewport_projection.dart';
 import 'package:viewer_flutter/src/render_scene_viewport_types.dart';
 import 'package:viewer_flutter/src/selection_controller.dart';
 import 'package:viewer_flutter/src/inspector_controller.dart';
+import 'package:viewer_flutter/src/property_editor.dart';
 import 'package:viewer_flutter/src/authoring_command_service.dart';
 import 'package:viewer_flutter/src/tbe_ffi.dart';
 import 'package:viewer_flutter/src/viewer_engine_contracts.dart';
@@ -51,6 +52,7 @@ import 'package:viewer_flutter/src/view_tabs.dart';
 import 'package:viewer_flutter/src/view_navigation_policy.dart';
 import 'package:viewer_flutter/src/async_serial_queue.dart';
 import 'package:viewer_flutter/src/viewer_viewport_scene_policy.dart';
+import 'package:viewer_flutter/src/workspace_chrome.dart';
 
 part 'widget_scene_geometry_tests.dart';
 part 'widget_engine_integration_tests.dart';

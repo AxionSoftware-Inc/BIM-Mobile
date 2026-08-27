@@ -131,8 +131,8 @@ class _ViewerHomePageState extends State<ViewerHomePage>
   final ProjectRecoveryStore _recoveryStore = ProjectRecoveryStore();
   Timer? _recoveryAutosaveTimer;
   bool _recoveryWriteInFlight = false;
-  bool _showInspector = false;
-  bool _showObjectList = true;
+  bool _showSidePanel = true;
+  WorkspaceSidePanelTab _sidePanelTab = WorkspaceSidePanelTab.projectBrowser;
   bool _showDiagnostics = false;
   String? _engineLoadDiagnostic;
   // Camera deltas are emitted for every gesture sample. Keep the workspace
