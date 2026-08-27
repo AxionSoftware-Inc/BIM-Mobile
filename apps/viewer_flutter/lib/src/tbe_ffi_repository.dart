@@ -490,6 +490,30 @@ class ViewerRepository
       );
 
   @override
+  Future<RenderSceneLoadResult> createWallTransaction({
+    required String name,
+    required int levelId,
+    required RenderScenePoint start,
+    required RenderScenePoint end,
+    required double thicknessMeters,
+    required double heightMeters,
+    int topLevelId = 0,
+    bool autoJoin = false,
+  }) =>
+      _authoringQueue.run(
+        () => _mutations.createWallTransaction(
+          name: name,
+          levelId: levelId,
+          start: start,
+          end: end,
+          thicknessMeters: thicknessMeters,
+          heightMeters: heightMeters,
+          topLevelId: topLevelId,
+          autoJoin: autoJoin,
+        ),
+      );
+
+  @override
   Future<RenderSceneLoadResult> createStair({
     required int baseLevelId,
     required int topLevelId,

@@ -7,6 +7,8 @@ model and viewport presentation.
 
 - Wall, door, window, level, surface, and assembly changes produce an
   authoritative `RenderScene` through the engine/repository layer.
+- Wall creation, its level constraint, and an eligible endpoint auto-join are
+  one native-session transaction; no intermediate wall snapshot is exposed.
 - The viewport receives that snapshot through `_applySceneChange`, the single
   presentation commit lane owned by `_sceneCommitQueue`.
 - Native authoring calls use `_authoringQueue` in `ViewerRepository`, which

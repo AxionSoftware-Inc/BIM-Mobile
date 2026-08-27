@@ -87,13 +87,16 @@ class SceneMutationService {
     }
 
     try {
-      final created = await engine.createWall(
+      final nearbyEndpoint = _hasNearbyWallEndpoint(request);
+      final created = await engine.createWallTransaction(
         name: 'Wall',
         levelId: request.baseLevelId,
         start: request.start,
         end: request.end,
         thicknessMeters: request.thicknessMeters,
         heightMeters: request.heightMeters,
+        topLevelId: request.topLevelId,
+        autoJoin: nearbyEndpoint,
       );
       final wallId = engine.lastCreatedElementId;
       trace.add(
@@ -114,46 +117,34 @@ class SceneMutationService {
         );
       }
 
-      RenderSceneLoadResult finalResult = created;
       if (request.topLevelId != 0) {
-        finalResult = await engine.setWallLevelConstraints(
-          wallId: wallId,
-          baseLevelId: request.baseLevelId,
-          topLevelId: request.topLevelId,
-          heightMode: 1,
-        );
         trace.add(
-          'engine constraints walls=${finalResult.scene?.kindCounts['wall']} '
-          'exists=${finalResult.scene?.objectById(wallId) != null} '
-          'errors=${finalResult.errors.join('|')}',
+          'engine constraints committed atomically '
+          'top=${request.topLevelId}',
         );
       } else {
         trace.add('single-level wall: keeping explicit wall height');
       }
-      var finalScene = finalResult.scene;
       // IFC and large template imports deliberately disable the engine's
       // automatic join pass while bulk-loading. Re-enable the useful
       // interactive behavior only when this new wall actually lands near an
       // existing endpoint; ordinary isolated walls stay O(1) after creation.
-      if (_hasNearbyWallEndpoint(request)) {
-        final joined = await engine.autoJoinWalls();
+      if (nearbyEndpoint) {
         trace.add(
-          'endpoint auto-join walls=${joined.scene?.kindCounts['wall']} '
-          'errors=${joined.errors.join('|')}',
+          'endpoint auto-join committed atomically '
+          'walls=${created.scene?.kindCounts['wall']}',
         );
-        if (joined.scene != null) {
-          finalScene = joined.scene;
-        }
       }
+      final finalScene = created.scene;
       if (finalScene == null || finalScene.objectById(wallId) == null) {
         return SceneMutationOutcome(
           scene: finalScene,
           createdElementId: wallId,
           success: false,
           trace: trace,
-          error: finalResult.errors.isEmpty
+          error: created.errors.isEmpty
               ? 'Wall is missing from the snapshot.'
-              : finalResult.errors.join(' '),
+              : created.errors.join(' '),
         );
       }
       return SceneMutationOutcome(
@@ -191,7 +182,8 @@ class SceneMutationService {
                   _planDistance(start, request.end) <=
                       endpointJoinToleranceMeters)) ||
           (end != null &&
-              (_planDistance(end, request.start) <= endpointJoinToleranceMeters ||
+              (_planDistance(end, request.start) <=
+                      endpointJoinToleranceMeters ||
                   _planDistance(end, request.end) <=
                       endpointJoinToleranceMeters))) {
         return true;

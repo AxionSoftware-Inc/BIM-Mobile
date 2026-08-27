@@ -29,6 +29,20 @@ abstract interface class ViewerAuthoringGateway {
     required double heightMeters,
   });
 
+  /// Creates a wall and applies its level constraint/interactive join as one
+  /// native-session transaction. The resulting snapshot is refreshed only
+  /// after the complete wall state is valid.
+  Future<RenderSceneLoadResult> createWallTransaction({
+    required String name,
+    required int levelId,
+    required RenderScenePoint start,
+    required RenderScenePoint end,
+    required double thicknessMeters,
+    required double heightMeters,
+    int topLevelId = 0,
+    bool autoJoin = false,
+  });
+
   Future<RenderSceneLoadResult> setWallLevelConstraints({
     required int wallId,
     required int baseLevelId,

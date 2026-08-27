@@ -89,6 +89,46 @@ final class TbeAuthoringMutationRepository {
     return _afterMutation();
   }
 
+  Future<RenderSceneLoadResult> createWallTransaction({
+    required String name,
+    required int levelId,
+    required RenderScenePoint start,
+    required RenderScenePoint end,
+    required double thicknessMeters,
+    required double heightMeters,
+    int topLevelId = 0,
+    bool autoJoin = false,
+  }) async {
+    final handle = _requireHandle();
+    final id = _api.createWall(
+      handle,
+      name,
+      levelId,
+      start.x,
+      start.y,
+      end.x,
+      end.y,
+      thicknessMeters,
+      heightMeters,
+    );
+    _setLastCreatedElementId(id);
+    if (topLevelId != 0) {
+      _api.setWallLevelConstraints(
+        handle,
+        wallId: id,
+        baseLevelId: levelId,
+        topLevelId: topLevelId,
+        baseOffsetMeters: 0.0,
+        topOffsetMeters: 0.0,
+        heightMode: 1,
+      );
+    }
+    if (autoJoin) {
+      _api.autoJoinWalls(handle);
+    }
+    return _afterMutation();
+  }
+
   Future<RenderSceneLoadResult> createStair({
     required int baseLevelId,
     required int topLevelId,
