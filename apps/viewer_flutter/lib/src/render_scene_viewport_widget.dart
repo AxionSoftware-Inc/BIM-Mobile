@@ -41,6 +41,7 @@ class RenderSceneViewport extends StatefulWidget {
     this.draftWallThicknessMeters =
         RenderSceneEditor.defaultWallThicknessMeters,
     this.draftWallHeightMeters = RenderSceneEditor.defaultWallHeightMeters,
+    this.showDiagnostics = false,
   });
 
   final RenderSceneViewportController controller;
@@ -60,6 +61,7 @@ class RenderSceneViewport extends StatefulWidget {
   final Set<int> draftSurfaceWallIds;
   final double draftWallThicknessMeters;
   final double draftWallHeightMeters;
+  final bool showDiagnostics;
 
   @override
   State<RenderSceneViewport> createState() => _RenderSceneViewportState();
@@ -138,6 +140,7 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
         draftSurfaceWallIds: widget.draftSurfaceWallIds,
         draftWallThicknessMeters: widget.draftWallThicknessMeters,
         draftWallHeightMeters: widget.draftWallHeightMeters,
+        showDiagnostics: widget.showDiagnostics,
         nativeRenderer: true,
         rendererChild: IgnorePointer(
           // Native Filament owns gestures only for the 3D Section Box. Planar
@@ -167,6 +170,7 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
       draftSurfaceWallIds: widget.draftSurfaceWallIds,
       draftWallThicknessMeters: widget.draftWallThicknessMeters,
       draftWallHeightMeters: widget.draftWallHeightMeters,
+      showDiagnostics: widget.showDiagnostics,
     );
   }
 }

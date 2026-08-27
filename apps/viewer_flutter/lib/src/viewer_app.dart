@@ -345,6 +345,7 @@ class _ViewerHomePageState extends State<ViewerHomePage>
     _currentProjectName = widget.initialProjectName ?? _currentProjectName;
     unawaited(_viewportController.setViewportTheme(widget.viewportTheme));
     _selectionController = SelectionController(_viewportController);
+    _selectionController.addListener(_onSelectionChangedForWorkspace);
     _inspectorController = InspectorController(_selectionController);
     _authoringCommands = AuthoringCommandService(
       repository: () => _engineRepository,
@@ -418,6 +419,7 @@ class _ViewerHomePageState extends State<ViewerHomePage>
     _sheetWorkspace.removeListener(_onSheetWorkspaceChanged);
     _sheetWorkspace.dispose();
     _viewportController.removeListener(_onViewportChanged);
+    _selectionController.removeListener(_onSelectionChangedForWorkspace);
     _viewportController.dispose();
     _wallTool.dispose();
     _levelTool.dispose();

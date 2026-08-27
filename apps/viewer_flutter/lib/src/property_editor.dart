@@ -39,11 +39,11 @@ class PropertyEditor extends StatelessWidget {
   Widget build(BuildContext context) {
     final properties = switch (target.kind) {
       InspectorTargetKind.empty => const _InspectorCard(
-          title: 'Properties',
-          icon: Icons.tune,
+          title: 'Select an element',
+          icon: Icons.touch_app_outlined,
           children: <Widget>[
             Text(
-                'Select an object. Properties are shown for the active selection.'),
+                'Tap a wall, door, level, or another model element to inspect it.'),
           ],
         ),
       InspectorTargetKind.multiple => _InspectorCard(
@@ -668,8 +668,7 @@ class _ReadOnlyObjectSection extends StatelessWidget {
           children: <Widget>[
             for (final entry in rows.entries) _row(entry.key, entry.value),
             const SizedBox(height: 4),
-            const Text(
-                'These properties come from the engine snapshot. Editing is not enabled here, so local changes cannot drift from the model.'),
+            const Text('Read-only engine data.'),
           ]);
 }
 

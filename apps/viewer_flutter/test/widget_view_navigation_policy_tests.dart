@@ -25,8 +25,7 @@ void registerViewNavigationPolicyTests() {
     expect(scope.sourceLabel, 'Full building elevation');
   });
 
-  test('small orbit views use the full scene while large scenes stay streamed',
-      () {
+  test('orbit views always restore the complete model', () {
     final small = ViewNavigationPolicy.scopeFor(
       mode: RenderSceneProjectionMode.isometric,
       objectCount: 120,
@@ -40,8 +39,8 @@ void registerViewNavigationPolicyTests() {
 
     expect(small.useFullScene, isTrue);
     expect(small.sourceLabel, 'Full tower 3D');
-    expect(large.useFullScene, isFalse);
-    expect(large.sourceLabel, 'Nearby levels');
+    expect(large.useFullScene, isTrue);
+    expect(large.sourceLabel, 'Full tower 3D');
   });
 
   test('generated sections never switch to the full orbit scope', () {

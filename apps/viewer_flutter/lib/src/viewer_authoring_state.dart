@@ -79,6 +79,10 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
 
     _updateViewportState(() {
       _interactionMode = mode;
+      if (mode != RenderSceneInteractionMode.select) {
+        _showSidePanel = true;
+        _sidePanelTab = WorkspaceSidePanelTab.inspector;
+      }
       _editStatusMessage = mode == RenderSceneInteractionMode.select
           ? 'Selection mode'
           : 'Editing mode: ${mode.authoringLabel}';

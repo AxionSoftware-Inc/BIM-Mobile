@@ -22,8 +22,6 @@ class ViewNavigationScope {
 final class ViewNavigationPolicy {
   const ViewNavigationPolicy._();
 
-  static const int _largeSceneObjectThreshold = 120;
-
   static ViewNavigationScope scopeFor({
     required RenderSceneProjectionMode mode,
     required int objectCount,
@@ -38,9 +36,12 @@ final class ViewNavigationPolicy {
       );
     }
 
-    final isLargeScene = objectCount > _largeSceneObjectThreshold;
-    final useFullScene =
-        mode.isElevation || (mode.is3D && !isLargeScene && !generatedSection);
+    // 3D is an overview view, not a nearby-level view. Returning to it after
+    // a plan must restore every storey; otherwise level overlays remain while
+    // the geometry snapshot silently contains only the active neighbourhood.
+    // Large IFC models use the native cache path for memory safety, so scope
+    // streaming is not allowed to change the meaning of the 3D view.
+    final useFullScene = mode.isElevation || (mode.is3D && !generatedSection);
     return ViewNavigationScope(
       refreshSceneScope: true,
       useFullScene: useFullScene,

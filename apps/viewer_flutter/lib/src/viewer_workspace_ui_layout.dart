@@ -547,6 +547,7 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
                 _ViewerHomePageState._defaultWallThicknessMeters,
             draftWallHeightMeters:
                 _ViewerHomePageState._defaultWallHeightMeters,
+            showDiagnostics: _showDiagnostics,
           ),
         ),
         if (_isSurfaceAuthoring)
@@ -689,6 +690,16 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
     required InspectorTarget inspectorTarget,
   }) {
     final theme = Theme.of(context);
+    final selectionLabel = switch (inspectorTarget.kind) {
+      InspectorTargetKind.empty => 'No active selection',
+      InspectorTargetKind.level => '${inspectorTarget.level!.name} · Level',
+      InspectorTargetKind.object =>
+        '${prettySceneKind(inspectorTarget.object!.kind)} · '
+            '#${inspectorTarget.object!.elementId ?? '-'}',
+      InspectorTargetKind.multiple =>
+        '${inspectorTarget.objects.length} elements selected',
+    };
+    final hasSelection = inspectorTarget.kind != InspectorTargetKind.empty;
 
     return Container(
       width: 340,
@@ -702,17 +713,40 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 14, 8, 8),
+            padding: const EdgeInsets.fromLTRB(14, 12, 8, 10),
             child: Row(
               children: <Widget>[
+                Icon(Icons.tune_outlined,
+                    size: 20, color: theme.colorScheme.primary),
+                const SizedBox(width: 10),
                 Expanded(
-                  child: Text(
-                    'Inspector',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.titleMedium,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(
+                        'Properties',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.titleMedium,
+                      ),
+                      Text(
+                        selectionLabel,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
+                if (hasSelection)
+                  IconButton(
+                    tooltip: 'Clear selection',
+                    onPressed: _clearSelection,
+                    icon: const Icon(Icons.close),
+                    visualDensity: VisualDensity.compact,
+                  ),
               ],
             ),
           ),
@@ -725,117 +759,135 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
                     message: 'Load a scene to inspect diagnostics.',
                   )
                 : ListView(
-                    padding: const EdgeInsets.all(16),
+                    padding: const EdgeInsets.all(12),
                     children: <Widget>[
                       if (_interactionMode != RenderSceneInteractionMode.select)
-                        _DraftEditorCard(
-                          interactionMode: _interactionMode,
-                          draftWallStart: _interactionMode ==
-                                  RenderSceneInteractionMode.addWall
-                              ? _wallTool.start
-                              : _interactionMode ==
-                                      RenderSceneInteractionMode.addLevel
-                                  ? _levelTool.start
-                                  : _draftWallStart,
-                          draftWallEnd: _interactionMode ==
-                                  RenderSceneInteractionMode.addWall
-                              ? _wallTool.end
-                              : _interactionMode ==
-                                      RenderSceneInteractionMode.addLevel
-                                  ? _levelTool.end
-                                  : _draftWallEnd,
-                          draftSurfaceStart: _draftSurfaceStart,
-                          draftSurfaceEnd: _draftSurfaceEnd,
-                          draftSurfacePointCount: _draftSurfacePoints.length,
-                          draftSurfaceWallCount: _draftSurfaceWallIds.length,
-                          draftSurfaceThicknessMeters:
-                              _draftSurfaceThicknessMeters,
-                          draftSurfaceHeightMeters: _interactionMode ==
-                                  RenderSceneInteractionMode.addCeiling
-                              ? _draftCeilingHeightOffsetMeters
-                              : _draftSurfaceHeightMeters,
-                          draftStairWidthMeters: _stairTool.widthMeters,
-                          draftFloorTopElevationMeters:
-                              _draftFloorTopElevationMeters,
-                          surfaceDrawMode: _surfaceDrawMode,
-                          draftHostWall: _draftHostWall,
-                          openingOffsetMeters: _draftOpeningOffsetMeters,
-                          openingWidthMeters: _draftOpeningWidthMeters,
-                          openingHeightMeters: _draftOpeningHeightMeters,
-                          openingSillHeightMeters:
-                              _draftOpeningSillHeightMeters,
-                          trimFirstWall: _trimTool.first,
-                          trimSecondWall: _trimTool.second,
-                          trimPreview: _trimTool.preview,
-                          editStatusMessage: _editStatusMessage,
-                          snapEnabled: _snapDraftToGrid,
-                          canConfirm: _draftCanConfirm,
-                          onSnapToggled: (value) {
-                            _updateViewportState(() {
-                              _snapDraftToGrid = value;
-                            });
-                            if (_interactionMode ==
-                                    RenderSceneInteractionMode.addDoor ||
-                                _interactionMode ==
-                                    RenderSceneInteractionMode.addWindow ||
-                                _interactionMode ==
-                                    RenderSceneInteractionMode.moveOpening) {
-                              _syncOpeningDraft();
-                            } else {
-                              _syncSurfaceDraftPreview();
-                            }
-                          },
-                          onOpeningOffsetChanged: (value) {
-                            _updateViewportState(() {
-                              _draftOpeningOffsetMeters = value;
-                            });
-                            _syncOpeningDraft();
-                          },
-                          onOpeningWidthChanged: (value) {
-                            _updateViewportState(() {
-                              _draftOpeningWidthMeters = value;
-                            });
-                            _syncOpeningDraft();
-                          },
-                          onOpeningHeightChanged: (value) {
-                            _updateViewportState(() {
-                              _draftOpeningHeightMeters = value;
-                            });
-                            _syncOpeningDraft();
-                          },
-                          onOpeningSillHeightChanged: (value) {
-                            _updateViewportState(() {
-                              _draftOpeningSillHeightMeters = value;
-                            });
-                            _syncOpeningDraft();
-                          },
-                          onSurfaceThicknessChanged: (value) {
-                            _updateViewportState(() {
-                              _draftSurfaceThicknessMeters = value;
-                            });
-                          },
-                          onSurfaceHeightChanged: (value) {
-                            _updateViewportState(() {
-                              if (_interactionMode ==
-                                  RenderSceneInteractionMode.addCeiling) {
-                                _draftCeilingHeightOffsetMeters = value;
-                              } else {
-                                _draftSurfaceHeightMeters = value;
-                              }
-                            });
-                          },
-                          onFloorTopElevationChanged: (value) {
-                            _updateViewportState(() {
-                              _draftFloorTopElevationMeters = value;
-                            });
-                          },
-                          onStairWidthChanged: _stairTool.setWidth,
-                          onConfirm: _confirmDraft,
-                          onCancel: _cancelDraft,
-                          onClearSelection: _clearSelection,
-                          onResetMode: () => _setInteractionMode(
-                            RenderSceneInteractionMode.select,
+                        ExpansionTile(
+                          key: PageStorageKey<String>(
+                            'inspector-active-tool-${_interactionMode.name}',
                           ),
+                          initiallyExpanded: false,
+                          tilePadding:
+                              const EdgeInsets.symmetric(horizontal: 12),
+                          childrenPadding:
+                              const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                          leading: const Icon(Icons.build_outlined),
+                          title: const Text('Active tool'),
+                          subtitle: Text(_interactionMode.authoringLabel),
+                          children: <Widget>[
+                            _DraftEditorCard(
+                              interactionMode: _interactionMode,
+                              draftWallStart: _interactionMode ==
+                                      RenderSceneInteractionMode.addWall
+                                  ? _wallTool.start
+                                  : _interactionMode ==
+                                          RenderSceneInteractionMode.addLevel
+                                      ? _levelTool.start
+                                      : _draftWallStart,
+                              draftWallEnd: _interactionMode ==
+                                      RenderSceneInteractionMode.addWall
+                                  ? _wallTool.end
+                                  : _interactionMode ==
+                                          RenderSceneInteractionMode.addLevel
+                                      ? _levelTool.end
+                                      : _draftWallEnd,
+                              draftSurfaceStart: _draftSurfaceStart,
+                              draftSurfaceEnd: _draftSurfaceEnd,
+                              draftSurfacePointCount:
+                                  _draftSurfacePoints.length,
+                              draftSurfaceWallCount:
+                                  _draftSurfaceWallIds.length,
+                              draftSurfaceThicknessMeters:
+                                  _draftSurfaceThicknessMeters,
+                              draftSurfaceHeightMeters: _interactionMode ==
+                                      RenderSceneInteractionMode.addCeiling
+                                  ? _draftCeilingHeightOffsetMeters
+                                  : _draftSurfaceHeightMeters,
+                              draftStairWidthMeters: _stairTool.widthMeters,
+                              draftFloorTopElevationMeters:
+                                  _draftFloorTopElevationMeters,
+                              surfaceDrawMode: _surfaceDrawMode,
+                              draftHostWall: _draftHostWall,
+                              openingOffsetMeters: _draftOpeningOffsetMeters,
+                              openingWidthMeters: _draftOpeningWidthMeters,
+                              openingHeightMeters: _draftOpeningHeightMeters,
+                              openingSillHeightMeters:
+                                  _draftOpeningSillHeightMeters,
+                              trimFirstWall: _trimTool.first,
+                              trimSecondWall: _trimTool.second,
+                              trimPreview: _trimTool.preview,
+                              editStatusMessage: _editStatusMessage,
+                              snapEnabled: _snapDraftToGrid,
+                              canConfirm: _draftCanConfirm,
+                              onSnapToggled: (value) {
+                                _updateViewportState(() {
+                                  _snapDraftToGrid = value;
+                                });
+                                if (_interactionMode ==
+                                        RenderSceneInteractionMode.addDoor ||
+                                    _interactionMode ==
+                                        RenderSceneInteractionMode.addWindow ||
+                                    _interactionMode ==
+                                        RenderSceneInteractionMode
+                                            .moveOpening) {
+                                  _syncOpeningDraft();
+                                } else {
+                                  _syncSurfaceDraftPreview();
+                                }
+                              },
+                              onOpeningOffsetChanged: (value) {
+                                _updateViewportState(() {
+                                  _draftOpeningOffsetMeters = value;
+                                });
+                                _syncOpeningDraft();
+                              },
+                              onOpeningWidthChanged: (value) {
+                                _updateViewportState(() {
+                                  _draftOpeningWidthMeters = value;
+                                });
+                                _syncOpeningDraft();
+                              },
+                              onOpeningHeightChanged: (value) {
+                                _updateViewportState(() {
+                                  _draftOpeningHeightMeters = value;
+                                });
+                                _syncOpeningDraft();
+                              },
+                              onOpeningSillHeightChanged: (value) {
+                                _updateViewportState(() {
+                                  _draftOpeningSillHeightMeters = value;
+                                });
+                                _syncOpeningDraft();
+                              },
+                              onSurfaceThicknessChanged: (value) {
+                                _updateViewportState(() {
+                                  _draftSurfaceThicknessMeters = value;
+                                });
+                              },
+                              onSurfaceHeightChanged: (value) {
+                                _updateViewportState(() {
+                                  if (_interactionMode ==
+                                      RenderSceneInteractionMode.addCeiling) {
+                                    _draftCeilingHeightOffsetMeters = value;
+                                  } else {
+                                    _draftSurfaceHeightMeters = value;
+                                  }
+                                });
+                              },
+                              onFloorTopElevationChanged: (value) {
+                                _updateViewportState(() {
+                                  _draftFloorTopElevationMeters = value;
+                                });
+                              },
+                              onStairWidthChanged: _stairTool.setWidth,
+                              onConfirm: _confirmDraft,
+                              onCancel: _cancelDraft,
+                              onClearSelection: _clearSelection,
+                              onResetMode: () => _setInteractionMode(
+                                RenderSceneInteractionMode.select,
+                              ),
+                            ),
+                          ],
                         ),
                       if (_interactionMode != RenderSceneInteractionMode.select)
                         const SizedBox(height: 16),

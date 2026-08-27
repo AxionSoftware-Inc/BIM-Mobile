@@ -211,6 +211,22 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
     if (mounted) _updateViewportState(() {});
   }
 
+  void _onSelectionChangedForWorkspace() {
+    if (!mounted || _selectionController.isEmpty) return;
+    if (_showSidePanel && _sidePanelTab == WorkspaceSidePanelTab.inspector) {
+      return;
+    }
+
+    // Native object taps update the shared SelectionController directly. Keep
+    // the Revit-style workflow consistent with Flutter-side level/object taps:
+    // a new selection opens Properties, while the user can still switch back
+    // to Project Browser afterward without being pulled away on rebuilds.
+    _updateViewportState(() {
+      _showSidePanel = true;
+      _sidePanelTab = WorkspaceSidePanelTab.inspector;
+    });
+  }
+
   void _onSheetWorkspaceChanged() {
     if (mounted) _updateViewportState(() {});
   }
@@ -1512,7 +1528,7 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
     if (kDebugMode &&
         _viewportController.backend == RenderSceneViewportBackend.native) {
       final diagnostics = await _viewportController.nativeDiagnostics();
-      if (diagnostics != null && mounted) {
+      if (diagnostics != null && mounted && _showDiagnostics) {
         final input = diagnostics['inputObjects'] ?? 0;
         final renderables = diagnostics['renderables'] ?? 0;
         final faceBatches = diagnostics['faceBatches'] ?? renderables;

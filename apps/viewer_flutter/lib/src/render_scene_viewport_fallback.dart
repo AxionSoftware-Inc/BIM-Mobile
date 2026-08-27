@@ -50,6 +50,7 @@ class _FallbackRenderSceneView extends StatefulWidget {
     required this.draftSurfaceWallIds,
     required this.draftWallThicknessMeters,
     required this.draftWallHeightMeters,
+    required this.showDiagnostics,
     this.rendererChild,
     this.nativeRenderer = false,
   });
@@ -71,6 +72,7 @@ class _FallbackRenderSceneView extends StatefulWidget {
   final Set<int> draftSurfaceWallIds;
   final double draftWallThicknessMeters;
   final double draftWallHeightMeters;
+  final bool showDiagnostics;
   final Widget? rendererChild;
   final bool nativeRenderer;
 
@@ -786,7 +788,7 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                       size: Size.infinite,
                     ),
                   ),
-                if (kDebugMode)
+                if (kDebugMode && widget.showDiagnostics)
                   Positioned(
                     right: 12,
                     top: 12,
