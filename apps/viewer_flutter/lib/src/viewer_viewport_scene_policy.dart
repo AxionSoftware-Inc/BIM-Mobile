@@ -1,3 +1,4 @@
+import 'elements/bim_element_registry.dart';
 import 'render_scene_models.dart';
 import 'render_scene_viewport_types.dart';
 
@@ -24,8 +25,7 @@ final class ViewerViewportScenePolicy {
       return scene;
     }
 
-    final activeLevel =
-        scene.levelById(activeLevelId) ??
+    final activeLevel = scene.levelById(activeLevelId) ??
         (scene.levels.isNotEmpty ? scene.levels.first : null);
     if (activeLevel == null) {
       return scene;
@@ -41,18 +41,8 @@ final class ViewerViewportScenePolicy {
   Set<String> defaultVisibleKinds(RenderScene scene) {
     final available = scene.kindCounts.keys.toSet();
     if (projectionMode == RenderSceneProjectionMode.topDown) {
-      const preferred = <String>{
-        'wall',
-        'door',
-        'window',
-        'room',
-        'floor',
-        'ceiling',
-        'column',
-        'beam',
-        'stair',
-      };
-      final visible = preferred.intersection(available);
+      final visible =
+          BimElementRegistry.standard.planCoreKinds.intersection(available);
       if (visible.isNotEmpty) {
         return visible;
       }
@@ -60,20 +50,8 @@ final class ViewerViewportScenePolicy {
 
     // Keep the initial 3D view architectural and solid. Imported/detail
     // proxies remain available through category controls.
-    const architecturalKinds = <String>{
-      'wall',
-      'door',
-      'window',
-      'room',
-      'floor',
-      'ceiling',
-      'column',
-      'beam',
-      'stair',
-      'slab',
-      'roof',
-    };
-    final architectural = architecturalKinds.intersection(available);
+    final architectural =
+        BimElementRegistry.standard.architecturalKinds.intersection(available);
     if (architectural.isNotEmpty) {
       return architectural;
     }
@@ -87,7 +65,7 @@ final class ViewerViewportScenePolicy {
     final available = scene.kindCounts.keys.toSet();
     return <String>{
       ...kinds,
-      for (final kind in <String>{'wall', 'door', 'window'})
+      for (final kind in BimElementRegistry.standard.planCoreKinds)
         if (available.contains(kind)) kind,
     };
   }

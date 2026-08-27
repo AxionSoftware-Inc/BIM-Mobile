@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:math' as math;
 
+import 'elements/bim_element_registry.dart';
 import 'render_scene_level_binding.dart';
 import 'render_scene_models.dart';
 
@@ -30,18 +31,10 @@ class RenderSceneEditor {
     if (value is bool) {
       return value;
     }
-    return object.kindKey == 'wall' ||
-        object.kindKey == 'door' ||
-        object.kindKey == 'window' ||
-        object.kindKey == 'floor' ||
-        object.kindKey == 'floorsystem' ||
-        object.kindKey == 'ceiling' ||
-        object.kindKey == 'ceilingsystem' ||
-        object.kindKey == 'roof' ||
-        object.kindKey == 'slab' ||
-        object.kindKey == 'column' ||
-        object.kindKey == 'beam' ||
-        object.kindKey == 'stair';
+    final module = BimElementRegistry.standard.forKind(object.kindKey);
+    return module != null &&
+        module.isLevelHosted &&
+        module.levelLockedByDefault;
   }
 
   static RenderScene setElementLevelLock({
@@ -108,12 +101,16 @@ class RenderSceneEditor {
       final metadata = RenderSceneLevelBinding.metadataOf(object);
       if (RenderSceneLevelBinding.kindKey(object) == 'wall' &&
           (metadata['height_mode']?.toString().toLowerCase() == 'toplevel' ||
-              RenderSceneLevelBinding.toInt(metadata['top_level_id']) != null)) {
-        final baseId = RenderSceneLevelBinding.toInt(metadata['base_level_id']) ??
-            RenderSceneLevelBinding.levelId(object);
+              RenderSceneLevelBinding.toInt(metadata['top_level_id']) !=
+                  null)) {
+        final baseId =
+            RenderSceneLevelBinding.toInt(metadata['base_level_id']) ??
+                RenderSceneLevelBinding.levelId(object);
         final topId = RenderSceneLevelBinding.toInt(metadata['top_level_id']);
-        if (baseId != null && topId != null &&
-            elevations.containsKey(baseId) && elevations.containsKey(topId)) {
+        if (baseId != null &&
+            topId != null &&
+            elevations.containsKey(baseId) &&
+            elevations.containsKey(topId)) {
           final baseOffset = RenderSceneLevelBinding.toDouble(
                 metadata['base_offset_meters'],
               ) ??
@@ -129,11 +126,15 @@ class RenderSceneEditor {
         }
       }
       if (RenderSceneLevelBinding.kindKey(object) == 'stair') {
-        final baseId = RenderSceneLevelBinding.toInt(metadata['base_level_id']) ??
-            RenderSceneLevelBinding.levelId(object);
+        final baseId =
+            RenderSceneLevelBinding.toInt(metadata['base_level_id']) ??
+                RenderSceneLevelBinding.levelId(object);
         final topId = RenderSceneLevelBinding.toInt(metadata['top_level_id']);
-        if (baseId != null && topId != null && topId != baseId &&
-            elevations.containsKey(baseId) && elevations.containsKey(topId) &&
+        if (baseId != null &&
+            topId != null &&
+            topId != baseId &&
+            elevations.containsKey(baseId) &&
+            elevations.containsKey(topId) &&
             elevations[topId]! <= elevations[baseId]! + 1e-6) {
           return scene;
         }

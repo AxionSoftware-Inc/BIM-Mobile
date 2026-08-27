@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'authoring_command_service.dart';
+import 'elements/bim_element_registry.dart';
 import 'inspector_controller.dart';
 import 'render_scene_models.dart';
 
@@ -777,9 +778,8 @@ int? _metaInt(RenderSceneObject object, String key) =>
     int.tryParse(_meta(object, key));
 double? _metaDouble(RenderSceneObject object, String key) =>
     double.tryParse(_meta(object, key));
-String _label(RenderSceneObject object) => object.kindKey.isEmpty
-    ? 'Object'
-    : '${object.kindKey[0].toUpperCase()}${object.kindKey.substring(1)}';
+String _label(RenderSceneObject object) =>
+    BimElementRegistry.standard.displayName(object.kind);
 IconData _icon(String kind) => switch (kind) {
       'stair' => Icons.stairs_outlined,
       'roof' => Icons.roofing_outlined,

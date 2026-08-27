@@ -25,6 +25,26 @@ model and viewport presentation.
   to wall or door authoring must not require edits in the native viewport
   host.
 
+## Element module boundary
+
+The Flutter application resolves element identity and cross-cutting
+capabilities through `elements/bim_element_registry.dart`. Wall, door, window,
+floor, ceiling, roof, slab, level, room, column, beam, stair, and imported
+proxy elements each have a small module with its own aliases, display name,
+level-hosting behavior, plan participation, and type family. This replaces
+shared policy lists as the place where a new element is introduced.
+
+Type records use `BimElementTypeDefinition` and `BimElementTypeCatalog`. The
+native document remains the source of truth for persisted wall assemblies and
+opening types; the Dart catalog is the presentation-neutral contract used by
+future Inspector/type pickers. A new type can therefore be added to its
+element module or loaded through a gateway without changing viewport policy.
+
+Element-specific geometry and commands remain behind the authoring/repository
+boundary. The module registry owns semantics, not generated meshes, camera
+state, or FFI calls. This prevents a wall type or opening type change from
+coupling to the frozen Filament renderer.
+
 ## Why the commit lane matters
 
 Native mutations are asynchronous and the native session is mutable. The
@@ -45,6 +65,17 @@ the authoring or presentation path permanently blocked.
 | Camera/gesture behavior | Viewport camera/gesture modules | Camera only |
 | Inspector property display | `InspectorController` + `PropertyEditor` | Selection/UI only |
 | Filament material/edge rendering | Native viewport host | Renderer only; keep freeze comment |
+| Element identity/capabilities/types | `elements/*_element_module.dart` + registry | Shared semantic policy only |
 
 When a change crosses more than one row, add a focused module test for the
 boundary instead of wiring the new behavior into a widget callback.
+
+### Adding a new element or type
+
+1. Add one element module with aliases, capabilities, and a type family.
+2. Register it in `BimElementRegistry.standardModules`.
+3. Add native payload/commands and a gateway only if the element is
+   authorable; keep that code out of viewport widgets.
+4. Add an Inspector adapter and focused module test.
+5. Add a renderer branch only for genuinely new visual semantics; do not edit
+   the frozen Filament host for ordinary type/catalog changes.

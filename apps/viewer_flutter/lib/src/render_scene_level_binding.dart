@@ -1,3 +1,5 @@
+import 'elements/bim_element_registry.dart';
+
 /// The single source of truth for fallback RenderScene level relationships.
 ///
 /// The native engine is authoritative when it is available. This policy keeps
@@ -5,21 +7,6 @@
 /// that predate explicit base/top level metadata.
 class RenderSceneLevelBinding {
   const RenderSceneLevelBinding._();
-
-  static const _lockedKinds = <String>{
-    'wall',
-    'door',
-    'window',
-    'floor',
-    'floorsystem',
-    'ceiling',
-    'ceilingsystem',
-    'roof',
-    'slab',
-    'column',
-    'beam',
-    'stair',
-  };
 
   /// Makes level ownership explicit without overwriting a deliberate unlock.
   static void normalizeObjects(
@@ -41,16 +28,15 @@ class RenderSceneLevelBinding {
       }
       final metadata = metadataOf(object);
       final metadataBaseId = toInt(metadata['base_level_id']);
-      final normalizedBaseId = metadataBaseId != null &&
-              elevations.containsKey(metadataBaseId)
-          ? metadataBaseId
-          : baseId;
+      final normalizedBaseId =
+          metadataBaseId != null && elevations.containsKey(metadataBaseId)
+              ? metadataBaseId
+              : baseId;
       final explicitTopId = toInt(metadata['top_level_id']);
       final normalizedTopId = explicitTopId != null &&
               explicitTopId > 0 &&
               elevations.containsKey(explicitTopId) &&
-              elevations[explicitTopId]! >
-                  elevations[normalizedBaseId]! + 1e-6
+              elevations[explicitTopId]! > elevations[normalizedBaseId]! + 1e-6
           ? explicitTopId
           : nearestHigherLevelId(
               levels: levels,
@@ -72,7 +58,9 @@ class RenderSceneLevelBinding {
 
     for (final object in objects) {
       final kind = kindKey(object);
-      if (!_lockedKinds.contains(kind)) continue;
+      if (!BimElementRegistry.standard.isLevelLockedByDefault(kind)) {
+        continue;
+      }
       final metadata = metadataOf(object);
       if (kind == 'door' || kind == 'window') {
         final host = wallsById[toInt(metadata['host_wall_id'])];
@@ -110,11 +98,14 @@ class RenderSceneLevelBinding {
 
   static bool isLevelLocked(Map<String, Object?> object) {
     final value = metadataOf(object)['level_locked'];
-    return value is bool ? value : _lockedKinds.contains(kindKey(object));
+    return value is bool
+        ? value
+        : BimElementRegistry.standard.isLevelLockedByDefault(kindKey(object));
   }
 
   static String kindKey(Map<String, Object?> object) =>
-      (object['kind']?.toString() ?? '').toLowerCase().replaceAll('_', '');
+      BimElementRegistry.standard
+          .normalizeKind(object['kind']?.toString() ?? '');
 
   static int? elementId(Map<String, Object?> object) =>
       toInt(object['element_id']) ?? toInt(object['elementId']);

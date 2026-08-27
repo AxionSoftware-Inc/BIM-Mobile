@@ -9,6 +9,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:viewer_flutter/src/documentation/document_models.dart';
 import 'package:viewer_flutter/src/documentation/document_pdf_service.dart';
 import 'package:viewer_flutter/src/documentation/sheet_workspace_controller.dart';
+import 'package:viewer_flutter/src/elements/bim_element_module.dart';
+import 'package:viewer_flutter/src/elements/bim_element_registry.dart';
 import 'package:viewer_flutter/src/render_scene_editor.dart';
 import 'package:viewer_flutter/src/render_scene_estimator.dart';
 import 'package:viewer_flutter/src/render_scene_level_overlay.dart';
@@ -62,6 +64,7 @@ part 'widget_workspace_documentation_tests.dart';
 part 'widget_architecture_module_tests.dart';
 part 'widget_authoring_tool_module_tests.dart';
 part 'widget_view_navigation_policy_tests.dart';
+part 'element_module_registry_tests.dart';
 
 class _RecordingSceneGateway implements ViewerSceneGateway {
   int? activeLevelId;
@@ -263,6 +266,7 @@ void main() {
   registerArchitectureModuleTests();
   registerAuthoringToolModuleTests();
   registerViewNavigationPolicyTests();
+  registerElementModuleRegistryTests();
 
   test(
     'project recovery store writes and removes a durable checkpoint',

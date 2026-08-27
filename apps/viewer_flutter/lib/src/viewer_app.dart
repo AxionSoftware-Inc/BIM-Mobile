@@ -21,6 +21,7 @@ import 'documentation/document_models.dart';
 import 'documentation/documentation_workspace.dart';
 import 'documentation/sheet_canvas.dart';
 import 'documentation/sheet_workspace_controller.dart';
+import 'elements/bim_element_registry.dart';
 import 'inspector_controller.dart';
 import 'ifc_template_catalog.dart';
 import 'property_editor.dart';
@@ -83,19 +84,8 @@ class _ViewerHomePageState extends State<ViewerHomePage>
       RenderSceneEditor.defaultWallThicknessMeters;
   static const double _defaultWallHeightMeters =
       RenderSceneEditor.defaultWallHeightMeters;
-  static const Set<String> _coreKindOrder = <String>{
-    'wall',
-    'door',
-    'window',
-    'room',
-    'slab',
-    'floor',
-    'ceiling',
-    'roof',
-    'column',
-    'beam',
-    'stair',
-  };
+  static final List<String> _coreKindOrder =
+      BimElementRegistry.standard.coreKindOrder;
 
   final RenderSceneViewportController _viewportController =
       RenderSceneViewportController();

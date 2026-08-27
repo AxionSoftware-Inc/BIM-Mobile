@@ -505,73 +505,11 @@ List<RenderSceneLevel> _inferLevelsFromObjects(
 }
 
 String normalizeSceneKind(String value) {
-  final trimmed = value.trim().toLowerCase();
-  if (trimmed.isEmpty) {
-    return 'unknown';
-  }
-  if (trimmed == 'floorsystem') {
-    return 'floor';
-  }
-  if (trimmed == 'ceilingsystem') {
-    return 'ceiling';
-  }
-  if (trimmed == 'opening') {
-    return 'door';
-  }
-  // Imported external meshes share the native generic/proxy renderer. This
-  // keeps Flutter filtering, hit testing and the Filament edge pass in sync
-  // for FBX (and equivalent mesh) payloads.
-  if (<String>{
-    'fbx',
-    'fbxmesh',
-    'fbxmodel',
-    'fbximport',
-    'fbx_import',
-    'mesh',
-    'meshmodel',
-    'imported',
-    'importedmesh',
-    'importedmodel',
-    'model3d',
-    'external',
-    'externalmesh',
-    'foreignmesh',
-  }.contains(trimmed)) {
-    return 'proxy';
-  }
-  return trimmed;
+  return BimElementRegistry.standard.normalizeKind(value);
 }
 
 String prettySceneKind(String value) {
-  final normalized = normalizeSceneKind(value);
-  switch (normalized) {
-    case 'wall':
-      return 'Wall';
-    case 'door':
-      return 'Door';
-    case 'window':
-      return 'Window';
-    case 'slab':
-      return 'Slab';
-    case 'floor':
-      return 'Floor';
-    case 'ceiling':
-      return 'Ceiling';
-    case 'roof':
-      return 'Roof';
-    case 'column':
-      return 'Column';
-    case 'beam':
-      return 'Beam';
-    case 'stair':
-      return 'Stair';
-    case 'room':
-      return 'Room';
-    case 'proxy':
-      return 'Imported element';
-    default:
-      return value.isEmpty ? 'Unknown' : value;
-  }
+  return BimElementRegistry.standard.displayName(value);
 }
 
 String toSceneString(Object? value, {required String fallback}) {
