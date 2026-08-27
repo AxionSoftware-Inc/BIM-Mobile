@@ -653,6 +653,13 @@ internal class RenderSceneFilamentHostView(
   private var topDownZoom = 1.0
   private var projectionMode = "topDown"
   private var orbitProjectionStyle = "orthographic"
+  // VIEWPORT FREEZE (2026-08-27): keep the 4c61f3c Solid/Shaded contract
+  // intact. In Solid, faces stay filled and the edge pass stays depth-tested
+  // and Revit-like. Do not replace this with PrimitiveType.LINES, a Canvas
+  // overlay, full-mesh edges, or a style-specific shortcut: each of those
+  // regressions has already turned Solid into Wireframe or removed borders
+  // on the connected tablet. Any future renderer work must be isolated and
+  // tablet-verified before changing this path.
   private var displayStyle = "solid"
   private var viewportTheme = "light"
   private var shadowsEnabled = false
@@ -2875,6 +2882,9 @@ internal class RenderSceneFilamentHostView(
     (displayStyle == "solid" || displayStyle == "shaded") &&
       kindVisible(kind) && openingVisibleInPlan(kind)
 
+  // VIEWPORT FREEZE: this is the production Solid border gate. Keep native
+  // Filament edge batches enabled for Solid/Shaded; NativeSelectionOverlay is
+  // only for selection/feedback and must not become the Solid renderer.
   private fun edgeVisible(key: EdgeBatchKey): Boolean =
     (displayStyle == "wireframe" || displayStyle == "solid" || displayStyle == "shaded") &&
       (key.nativeKindMask?.let(::nativeCacheKindMaskVisible)
@@ -4304,6 +4314,9 @@ internal class RenderSceneFilamentHostView(
     }
   }
 
+  // VIEWPORT FREEZE: edgeGeometry is the stable depth-tested triangle-prism
+  // implementation selected for the tablet. Preserve its topology, offset,
+  // culling and batching behavior unless a new tablet fixture proves parity.
   private fun edgeGeometry(
     points: List<ScenePoint>,
     edges: List<NativeVisualEdge>,

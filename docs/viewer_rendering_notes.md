@@ -1,5 +1,17 @@
 # Viewer Rendering Notes
 
+## Frozen viewport contract (do not casually modify)
+
+The Android 3D viewport is frozen at `4c61f3c` (`Restore clean solid edge
+rendering for imported models`). This is the known-good tablet baseline:
+Solid keeps filled faces and adds clean, depth-tested architectural edges;
+Wireframe remains a separate mode. Changes to `RenderSceneFilamentHostView.kt`
+must not replace the native triangle-prism edge pass with `PrimitiveType.LINES`,
+a Flutter/Canvas overlay, full-mesh edge drawing, or a display-style shortcut.
+Those changes repeatedly caused Solid to look like Wireframe or made the model
+edges disappear on the tablet. Any viewport change requires a fresh connected-
+tablet Solid/Shaded/orbit check before merge.
+
 This file tracks rendering-specific issues we hit in the Flutter fallback CAD/3D viewport and Android Filament renderer so future edits do not reintroduce them.
 
 ## Confirmed problems
