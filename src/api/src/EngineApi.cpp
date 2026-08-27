@@ -1628,6 +1628,7 @@ RenderSceneDTO build_render_scene(
                     {"thickness_meters", std::to_string(wall->thickness_meters)},
                     {"assembly_id", std::to_string(wall->assembly_id)},
                     {"wall_type_id", std::to_string(wall->wall_type_id)},
+                    {"wall_type_name", wall_type == nullptr ? "Generic Wall" : wall_type->name},
                     {"wall_type_category", wall_type == nullptr ? "Generic" : wall_type_category_name(wall_type->category)},
                     {"height_meters", std::to_string(resolved_wall_height(*wall, elevations))},
                     {"base_level_id", std::to_string(wall->base_level_id)},

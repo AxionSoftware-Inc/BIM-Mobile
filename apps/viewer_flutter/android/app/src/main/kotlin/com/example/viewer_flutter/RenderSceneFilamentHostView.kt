@@ -124,78 +124,43 @@ void material(inout MaterialInputs material) {
 }
 """
 
-private const val WALL_BRICK_MAT = """
+// One wall shader serves every wall type.  The visual variant is a uniform,
+// so changing a type never changes geometry, edge batches, or the Solid/Shaded
+// display contract.  The texture signal is present in Solid as well; Shaded
+// adds only the stable directional value change supplied by the scene lights.
+private const val WALL_SURFACE_MAT = """
 void material(inout MaterialInputs material) {
     prepareMaterial(material);
     float3 world = getWorldPosition();
     material.normal = normalize(cross(dFdx(world), dFdy(world)));
+    float variant = materialParams.surfaceKind;
+    float brickMask = 1.0 - step(0.5, variant);
+    float plasterMask = step(0.5, variant) * (1.0 - step(1.5, variant));
+    float concreteMask = step(1.5, variant) * (1.0 - step(2.5, variant));
+    float glassMask = step(2.5, variant);
+
     float row = floor(world.y / 0.075);
     float jointY = step(fract(world.y / 0.075), 0.018);
     float jointX = step(fract((world.x + mod(row, 2.0) * 0.12) / 0.24), 0.014);
-    // Keep this subtle enough for a working BIM view, but distinct on a
-    // tablet-sized wall face; the prior 16% contrast disappeared in Solid.
-    float mortar = max(jointY, jointX) * 0.58 * materialParams.displayShade;
+    float mortar = max(jointY, jointX) * 0.52;
     float3 brick = materialParams.baseColor.rgb * (1.0 - mortar);
-    float shade = mix(1.0, 0.82 + 0.18 * sin(world.x * 0.45 + world.z * 0.31), materialParams.displayShade);
-    material.baseColor = float4(brick * shade, materialParams.baseColor.a);
-}
-"""
 
-private const val PLASTER_MAT = """
-void material(inout MaterialInputs material) {
-    prepareMaterial(material);
-    float3 world = getWorldPosition();
-    material.normal = normalize(cross(dFdx(world), dFdy(world)));
-    float variation = 0.035 * sin(world.x * 31.0 + world.y * 17.0 + world.z * 23.0) * materialParams.displayShade;
-    float shade = mix(1.0, 0.82 + 0.18 * sin(world.x * 0.45 + world.z * 0.31), materialParams.displayShade);
-    material.baseColor = float4(materialParams.baseColor.rgb * (1.0 + variation) * shade, materialParams.baseColor.a);
-}
-"""
+    float plasterVariation = 0.026 * sin(world.x * 31.0 + world.y * 17.0 + world.z * 23.0);
+    float3 plaster = materialParams.baseColor.rgb * (1.0 + plasterVariation);
 
-private const val WOOD_MAT = """
-void material(inout MaterialInputs material) {
-    prepareMaterial(material);
-    float3 world = getWorldPosition();
-    material.normal = normalize(cross(dFdx(world), dFdy(world)));
-    float grain = 0.10 * sin((world.x + world.z) * 46.0 + sin(world.y * 5.0)) * materialParams.displayShade;
-    float shade = mix(1.0, 0.82 + 0.18 * sin(world.x * 0.45 + world.z * 0.31), materialParams.displayShade);
-    material.baseColor = float4(materialParams.baseColor.rgb * (1.0 + grain) * shade, materialParams.baseColor.a);
-}
-"""
-
-private const val FLOOR_MAT = """
-void material(inout MaterialInputs material) {
-    prepareMaterial(material);
-    float3 world = getWorldPosition();
-    material.normal = normalize(cross(dFdx(world), dFdy(world)));
-    float board = step(0.94, fract((world.x + world.z * 0.18) / 0.18)) * materialParams.displayShade;
-    float grain = 0.06 * sin(world.x * 58.0 + world.z * 9.0) * materialParams.displayShade;
-    float shade = mix(1.0, 0.82 + 0.18 * sin(world.x * 0.45 + world.z * 0.31), materialParams.displayShade);
-    material.baseColor = float4(materialParams.baseColor.rgb * (1.0 + grain - board * 0.20) * shade, materialParams.baseColor.a);
-}
-"""
-
-private const val ROOF_MAT = """
-void material(inout MaterialInputs material) {
-    prepareMaterial(material);
-    float3 world = getWorldPosition();
-    material.normal = normalize(cross(dFdx(world), dFdy(world)));
-    float course = step(0.90, fract((world.x + world.z) / 0.28)) * materialParams.displayShade;
-    float joint = step(0.94, fract((world.x - world.z) / 0.42)) * materialParams.displayShade;
-    float shade = mix(1.0, 0.82 + 0.18 * sin(world.x * 0.45 + world.z * 0.31), materialParams.displayShade);
-    material.baseColor = float4(materialParams.baseColor.rgb * (1.0 - max(course, joint) * 0.24) * shade, materialParams.baseColor.a);
-}
-"""
-
-private const val CONCRETE_MAT = """
-void material(inout MaterialInputs material) {
-    prepareMaterial(material);
-    float3 world = getWorldPosition();
-    material.normal = normalize(cross(dFdx(world), dFdy(world)));
     float speckle = fract(sin(dot(world.xz, float2(12.9898, 78.233))) * 43758.5453);
-    float variation = (speckle - 0.5) * 0.10 * materialParams.displayShade;
-    float shade = mix(1.0, 0.82 + 0.18 * sin(world.x * 0.45 + world.z * 0.31), materialParams.displayShade);
-    material.baseColor = float4(materialParams.baseColor.rgb * (1.0 + variation) * shade, materialParams.baseColor.a);
+    float3 concrete = materialParams.baseColor.rgb * (1.0 + (speckle - 0.5) * 0.08);
+
+    float glassLine = step(0.965, fract((world.x + world.y + world.z) * 0.42));
+    float3 glass = mix(materialParams.baseColor.rgb, float3(0.22, 0.58, 0.72), 0.28);
+    glass *= 1.0 - glassLine * 0.18;
+
+    float3 surface = brick * brickMask + plaster * plasterMask + concrete * concreteMask + glass * glassMask;
+    float directionalShade = mix(1.0, 0.84 + 0.16 * sin(world.x * 0.45 + world.z * 0.31), materialParams.displayShade);
+    material.baseColor = float4(surface * directionalShade, materialParams.baseColor.a);
+    material.metallic = 0.0;
+    material.roughness = mix(0.88, 0.16, glassMask);
+    material.reflectance = mix(0.35, 0.55, glassMask);
 }
 """
 
@@ -621,6 +586,7 @@ internal class RenderSceneFilamentHostView(
   private var materialBuilderReady = false
   private var material: Material? = null
   private var wallMaterial: Material? = null
+  private var wallGlassMaterial: Material? = null
   private var windowMaterial: Material? = null
   private var plasterMaterial: Material? = null
   private var woodMaterial: Material? = null
@@ -628,6 +594,8 @@ internal class RenderSceneFilamentHostView(
   private var roofMaterial: Material? = null
   private var concreteMaterial: Material? = null
   private var solidMaterial: Material? = null
+  private var solidWallMaterial: Material? = null
+  private var solidWallGlassMaterial: Material? = null
   private var solidWindowMaterial: Material? = null
   private var edgeMaterial: Material? = null
   private var gridMaterial: Material? = null
@@ -1588,6 +1556,7 @@ internal class RenderSceneFilamentHostView(
       val replacement = target.createInstance()
       applySectionBoxState(replacement)
       applyDisplayStyle(replacement)
+      applyWallSurfaceKind(replacement, entry.objectData)
       val instance = manager.getInstance(entry.entity)
       if (instance != 0) manager.setMaterialInstanceAt(instance, 0, replacement)
       engine.destroyMaterialInstance(entry.materialInstance)
@@ -1600,6 +1569,7 @@ internal class RenderSceneFilamentHostView(
       val replacement = target.createInstance()
       applySectionBoxState(replacement)
       applyDisplayStyle(replacement)
+      applyWallSurfaceKind(replacement, batch.representative)
       val instance = manager.getInstance(batch.entity)
       if (instance != 0) manager.setMaterialInstanceAt(instance, 0, replacement)
       engine.destroyMaterialInstance(batch.materialInstance)
@@ -1612,6 +1582,7 @@ internal class RenderSceneFilamentHostView(
       val replacement = target.createInstance().also { instance ->
         applySectionBoxState(instance)
         applyDisplayStyle(instance)
+        applyWallSurfaceKind(instance, group.representative)
         instance.setParameter(
           "baseColor", Colors.RgbaType.LINEAR,
           group.baseColor[0], group.baseColor[1], group.baseColor[2], group.baseColor[3],
@@ -2162,6 +2133,7 @@ internal class RenderSceneFilamentHostView(
       engine?.destroyMaterial(material)
     }
     wallMaterial?.let { material -> engine?.destroyMaterial(material) }
+    wallGlassMaterial?.let { material -> engine?.destroyMaterial(material) }
     windowMaterial?.let { material -> engine?.destroyMaterial(material) }
     plasterMaterial?.let { material -> engine?.destroyMaterial(material) }
     woodMaterial?.let { material -> engine?.destroyMaterial(material) }
@@ -2169,6 +2141,8 @@ internal class RenderSceneFilamentHostView(
     roofMaterial?.let { material -> engine?.destroyMaterial(material) }
     concreteMaterial?.let { material -> engine?.destroyMaterial(material) }
     solidMaterial?.let { material -> engine?.destroyMaterial(material) }
+    solidWallMaterial?.let { material -> engine?.destroyMaterial(material) }
+    solidWallGlassMaterial?.let { material -> engine?.destroyMaterial(material) }
     solidWindowMaterial?.let { material -> engine?.destroyMaterial(material) }
     edgeMaterial?.let { material -> engine?.destroyMaterial(material) }
     gridMaterial?.let { material -> engine?.destroyMaterial(material) }
@@ -2190,6 +2164,7 @@ internal class RenderSceneFilamentHostView(
     engine = null
     material = null
     wallMaterial = null
+    wallGlassMaterial = null
     windowMaterial = null
     plasterMaterial = null
     woodMaterial = null
@@ -2197,6 +2172,8 @@ internal class RenderSceneFilamentHostView(
     roofMaterial = null
     concreteMaterial = null
     solidMaterial = null
+    solidWallMaterial = null
+    solidWallGlassMaterial = null
     solidWindowMaterial = null
     edgeMaterial = null
     gridMaterial = null
@@ -2209,7 +2186,14 @@ internal class RenderSceneFilamentHostView(
     val engine = engine ?: return false
     return try {
       material = buildMaterial(engine, "RenderSceneArchitectural", ARCHITECTURAL_LIT_MAT, lit = true)
-      wallMaterial = buildMaterial(engine, "RenderSceneWall", ARCHITECTURAL_LIT_MAT, lit = true)
+      wallMaterial = buildMaterial(engine, "RenderSceneWall", WALL_SURFACE_MAT, lit = true)
+      wallGlassMaterial = buildMaterial(
+        engine,
+        "RenderSceneWallGlass",
+        WALL_SURFACE_MAT,
+        transparent = true,
+        lit = true,
+      )
       windowMaterial = buildMaterial(engine, "RenderSceneWindowGlass", ARCHITECTURAL_LIT_MAT, transparent = true, lit = true)
       plasterMaterial = buildMaterial(engine, "RenderScenePlaster", ARCHITECTURAL_LIT_MAT, lit = true)
       woodMaterial = buildMaterial(engine, "RenderSceneWood", ARCHITECTURAL_LIT_MAT, lit = true)
@@ -2220,6 +2204,14 @@ internal class RenderSceneFilamentHostView(
       // HDRI/Sun changes. Real lighting belongs to Shaded, where it can be
       // inspected without compromising the primary BIM coordination view.
       solidMaterial = buildMaterial(engine, "RenderSceneSolid", FLAT_COLOR_MAT, lit = false)
+      solidWallMaterial = buildMaterial(engine, "RenderSceneSolidWall", WALL_SURFACE_MAT, lit = false)
+      solidWallGlassMaterial = buildMaterial(
+        engine,
+        "RenderSceneSolidWallGlass",
+        WALL_SURFACE_MAT,
+        transparent = true,
+        lit = false,
+      )
       solidWindowMaterial = buildMaterial(
         engine,
         "RenderSceneSolidWindow",
@@ -2244,9 +2236,10 @@ internal class RenderSceneFilamentHostView(
         transparent = true,
         lit = false,
       )
-      if (listOf(material, wallMaterial, windowMaterial, plasterMaterial,
+      if (listOf(material, wallMaterial, wallGlassMaterial, windowMaterial, plasterMaterial,
           woodMaterial, floorMaterial, roofMaterial, concreteMaterial,
-           solidMaterial, solidWindowMaterial, edgeMaterial, gridMaterial,
+           solidMaterial, solidWallMaterial, solidWallGlassMaterial,
+           solidWindowMaterial, edgeMaterial, gridMaterial,
            groundMaterial, shadowMaterial).any { it == null }) {
         statusMessage = "Filament material build returned an invalid package."
         updateStatus()
@@ -2276,6 +2269,7 @@ internal class RenderSceneFilamentHostView(
         .doubleSided(true)
       .uniformParameter(MaterialBuilder.UniformType.FLOAT4, "baseColor")
         .uniformParameter(MaterialBuilder.UniformType.FLOAT, "displayShade")
+        .uniformParameter(MaterialBuilder.UniformType.FLOAT, "surfaceKind")
         .uniformParameter(MaterialBuilder.UniformType.FLOAT, "sectionBoxEnabled")
         .uniformParameter(MaterialBuilder.UniformType.FLOAT4, "sectionBoxMin")
         .uniformParameter(MaterialBuilder.UniformType.FLOAT4, "sectionBoxMax")
@@ -2512,6 +2506,7 @@ internal class RenderSceneFilamentHostView(
       val materialInstance = sharedMaterial.createInstance().also { instance ->
         applySectionBoxState(instance)
         applyDisplayStyle(instance)
+        applyWallSurfaceKind(instance, representative)
         instance.setParameter(
           "baseColor",
           Colors.RgbaType.LINEAR,
@@ -2635,11 +2630,12 @@ internal class RenderSceneFilamentHostView(
     destroyRenderables()
     val scene = scene ?: return
     val sceneState = currentScene ?: return
-    if ((material == null || wallMaterial == null || windowMaterial == null ||
+    if ((material == null || wallMaterial == null || wallGlassMaterial == null || windowMaterial == null ||
         plasterMaterial == null || woodMaterial == null || floorMaterial == null ||
          roofMaterial == null || concreteMaterial == null || edgeMaterial == null ||
          gridMaterial == null ||
-         groundMaterial == null || shadowMaterial == null) &&
+         groundMaterial == null || shadowMaterial == null || solidWallMaterial == null ||
+         solidWallGlassMaterial == null) &&
       materialBuilderReady) {
       buildRuntimeMaterial()
     }
@@ -2794,14 +2790,20 @@ internal class RenderSceneFilamentHostView(
     if (displayStyle == "solid") {
       return if (kind == "window") {
         solidWindowMaterial ?: fallback
+      } else if (kind == "wall") {
+        if (wallSurfaceVariant(objectData) == "glass") {
+          solidWallGlassMaterial ?: fallback
+        } else {
+          solidWallMaterial ?: fallback
+        }
       } else {
         solidMaterial ?: fallback
       }
     }
     if (kind == "window") return windowMaterial ?: fallback
     return when (kind) {
-      "wall" -> if (objectData.metadata["wall_type_category"] == "Interior") {
-        plasterMaterial ?: fallback
+      "wall" -> if (wallSurfaceVariant(objectData) == "glass") {
+        wallGlassMaterial ?: fallback
       } else {
         wallMaterial ?: fallback
       }
@@ -2816,6 +2818,32 @@ internal class RenderSceneFilamentHostView(
     }
   }
 
+  /** Stable renderer-only material family derived from the semantic wall type. */
+  private fun wallSurfaceVariant(objectData: SceneObject): String {
+    val typeName = objectData.metadata["wall_type_name"]?.trim()?.lowercase().orEmpty()
+    val category = objectData.metadata["wall_type_category"]?.trim()?.lowercase().orEmpty()
+    return when {
+      typeName.contains("glass") -> "glass"
+      typeName.contains("concrete") -> "concrete"
+      typeName.contains("brick") -> "brick"
+      typeName.contains("interior") || category == "interior" -> "plaster"
+      typeName.contains("exterior") || category == "exterior" -> "brick"
+      else -> "plaster"
+    }
+  }
+
+  private fun wallSurfaceKind(objectData: SceneObject): Float = when (wallSurfaceVariant(objectData)) {
+    "brick" -> 0.0f
+    "plaster" -> 1.0f
+    "concrete" -> 2.0f
+    "glass" -> 3.0f
+    else -> 1.0f
+  }
+
+  private fun applyWallSurfaceKind(instance: MaterialInstance, objectData: SceneObject) {
+    instance.setParameter("surfaceKind", wallSurfaceKind(objectData))
+  }
+
   private fun applyDisplayStyle(instance: MaterialInstance) {
     instance.setParameter("displayShade", if (displayStyle == "shaded") 1.0f else 0.0f)
   }
@@ -2824,6 +2852,14 @@ internal class RenderSceneFilamentHostView(
     val kind = normalizeKind(objectData.kind)
     val isWindow = kind == "window"
     return if (displayStyle == "solid") {
+      if (kind == "wall") {
+        return when (wallSurfaceVariant(objectData)) {
+          "brick" -> floatArrayOf(0.70f, 0.34f, 0.22f, 1.0f)
+          "concrete" -> floatArrayOf(0.57f, 0.61f, 0.65f, 1.0f)
+          "glass" -> floatArrayOf(0.25f, 0.62f, 0.76f, 0.36f)
+          else -> floatArrayOf(0.82f, 0.84f, 0.84f, 1.0f)
+        }
+      }
       val surface = when (viewportTheme) {
         "standardDark" -> 0.34f
         "amoledBlack" -> 0.24f
@@ -2839,23 +2875,26 @@ internal class RenderSceneFilamentHostView(
       // the sun establish the form, instead of dark category colors masking
       // the light/shadow boundary. Dark viewport themes keep the same palette
       // but scale it down so the model remains comfortable to read.
-      revitShadedColor(kind)
+      revitShadedColor(kind, if (kind == "wall") wallSurfaceVariant(objectData) else null)
     }
   }
 
-  private fun revitShadedColor(kind: String): FloatArray {
-    val base = when (kind) {
-      "wall" -> floatArrayOf(0.72f, 0.74f, 0.77f, 1.0f)
-      "door" -> floatArrayOf(0.34f, 0.36f, 0.39f, 1.0f)
-      "window" -> floatArrayOf(0.36f, 0.50f, 0.60f, 0.42f)
-      "slab" -> floatArrayOf(0.66f, 0.68f, 0.71f, 1.0f)
-      "floor" -> floatArrayOf(0.67f, 0.69f, 0.72f, 1.0f)
-      "ceiling" -> floatArrayOf(0.84f, 0.85f, 0.86f, 1.0f)
-      "roof" -> floatArrayOf(0.78f, 0.79f, 0.81f, 1.0f)
-      "column" -> floatArrayOf(0.62f, 0.65f, 0.69f, 1.0f)
-      "beam" -> floatArrayOf(0.58f, 0.61f, 0.65f, 1.0f)
-      "stair" -> floatArrayOf(0.70f, 0.72f, 0.75f, 1.0f)
-      "proxy" -> floatArrayOf(0.64f, 0.60f, 0.55f, 1.0f)
+  private fun revitShadedColor(kind: String, wallVariant: String?): FloatArray {
+    val base = when {
+      kind == "wall" && wallVariant == "brick" -> floatArrayOf(0.72f, 0.30f, 0.18f, 1.0f)
+      kind == "wall" && wallVariant == "concrete" -> floatArrayOf(0.58f, 0.62f, 0.67f, 1.0f)
+      kind == "wall" && wallVariant == "glass" -> floatArrayOf(0.26f, 0.62f, 0.78f, 0.40f)
+      kind == "wall" -> floatArrayOf(0.78f, 0.80f, 0.82f, 1.0f)
+      kind == "door" -> floatArrayOf(0.34f, 0.36f, 0.39f, 1.0f)
+      kind == "window" -> floatArrayOf(0.36f, 0.50f, 0.60f, 0.42f)
+      kind == "slab" -> floatArrayOf(0.66f, 0.68f, 0.71f, 1.0f)
+      kind == "floor" -> floatArrayOf(0.67f, 0.69f, 0.72f, 1.0f)
+      kind == "ceiling" -> floatArrayOf(0.84f, 0.85f, 0.86f, 1.0f)
+      kind == "roof" -> floatArrayOf(0.78f, 0.79f, 0.81f, 1.0f)
+      kind == "column" -> floatArrayOf(0.62f, 0.65f, 0.69f, 1.0f)
+      kind == "beam" -> floatArrayOf(0.58f, 0.61f, 0.65f, 1.0f)
+      kind == "stair" -> floatArrayOf(0.70f, 0.72f, 0.75f, 1.0f)
+      kind == "proxy" -> floatArrayOf(0.64f, 0.60f, 0.55f, 1.0f)
       else -> floatArrayOf(0.68f, 0.70f, 0.73f, 1.0f)
     }
     val themeScale = when (viewportTheme) {
@@ -3251,7 +3290,7 @@ internal class RenderSceneFilamentHostView(
   private fun faceMaterialVariant(objectData: SceneObject): String {
     val kind = normalizeKind(objectData.kind)
     return if (kind == "wall") {
-      objectData.metadata["wall_type_category"] ?: "Generic"
+      wallSurfaceVariant(objectData)
     } else {
       objectData.materialCategory
     }
@@ -3362,6 +3401,7 @@ internal class RenderSceneFilamentHostView(
     val materialInstance = sharedMaterial.createInstance().also { instance ->
       applySectionBoxState(instance)
       applyDisplayStyle(instance)
+      applyWallSurfaceKind(instance, representative)
       instance.setParameter(
         "baseColor", Colors.RgbaType.LINEAR,
         baseColor[0], baseColor[1], baseColor[2], baseColor[3],
@@ -3441,6 +3481,7 @@ internal class RenderSceneFilamentHostView(
       val materialInstance = sharedMaterial.createInstance().also { instance ->
         applySectionBoxState(instance)
         applyDisplayStyle(instance)
+        applyWallSurfaceKind(instance, representative)
         instance.setParameter(
           "baseColor", Colors.RgbaType.LINEAR,
           baseColor[0], baseColor[1], baseColor[2], baseColor[3],
@@ -4040,6 +4081,7 @@ internal class RenderSceneFilamentHostView(
     val materialInstance = sharedMaterial.createInstance()
     applySectionBoxState(materialInstance)
     applyDisplayStyle(materialInstance)
+    applyWallSurfaceKind(materialInstance, objectData)
     val baseColor = displayBaseColor(objectData)
     materialInstance.setParameter(
       "baseColor",
