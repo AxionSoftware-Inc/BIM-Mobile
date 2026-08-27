@@ -170,6 +170,7 @@ class RenderSceneTapDetails {
     required this.modelPoint,
     required this.pickedObject,
     this.pickedLevel,
+    this.pointerCount = 1,
   });
 
   final Offset screenPosition;
@@ -177,6 +178,12 @@ class RenderSceneTapDetails {
   final RenderScenePoint? modelPoint;
   final RenderSceneObject? pickedObject;
   final RenderSceneLevel? pickedLevel;
+
+  /// Number of active pointers at the time this detail was emitted.
+  ///
+  /// Authoring handlers use this as a final guard so a second finger cannot
+  /// accidentally turn a camera gesture into a committed model point.
+  final int pointerCount;
 }
 
 @immutable
@@ -292,6 +299,7 @@ abstract class RenderSceneViewportActions extends ChangeNotifier
   RenderSceneDisplayStyle get displayStyle;
   RenderSceneViewportTheme get viewportTheme;
   bool get shadowsEnabled;
+  bool get hdriVisible;
   RenderSceneViewportBackend get backend;
   RenderSceneInteractionMode get interactionMode;
   RenderScenePlanCameraState get planCamera;
@@ -309,6 +317,7 @@ abstract class RenderSceneViewportActions extends ChangeNotifier
   Future<void> setOrbitProjectionStyle(RenderSceneOrbitProjectionStyle style);
   Future<void> setDisplayStyle(RenderSceneDisplayStyle style);
   Future<void> setViewportTheme(RenderSceneViewportTheme theme);
+  Future<void> setHdriVisible(bool visible);
   Future<void> setShadowsEnabled(bool enabled);
   Future<void> setBackend(RenderSceneViewportBackend backend);
   Future<void> setInteractionMode(RenderSceneInteractionMode mode);

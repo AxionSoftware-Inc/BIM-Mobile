@@ -122,6 +122,16 @@ enum class WallLayerFunction {
     Generic
 };
 
+// The layer list is ordered from one wall face to the other.  Side is kept
+// explicit when an authoring/import pipeline knows it; Unspecified preserves
+// compatibility with older projects and lets the assembly infer the side
+// from the layer position and core range.
+enum class WallLayerSide {
+    Unspecified,
+    Exterior,
+    Interior,
+};
+
 enum class WallTypeCategory {
     Interior,
     Exterior,
@@ -216,6 +226,7 @@ struct MeshBuffer {
 struct GeneratedGeometry {
     bool dirty{true};
     Revision source_revision{};
+    Revision assembly_revision{};
     int vertices{};
     int triangles{};
     int openings_cut{};
@@ -241,6 +252,11 @@ struct WallData {
     std::vector<WallJoin> joins{};
     std::vector<HostedOpening> openings{};
     GeneratedGeometry geometry{};
+    // Detailed compound geometry is a derived artifact.  It is generated on
+    // demand for sections/documentation and is deliberately not persisted in
+    // the project JSON or used by the interactive envelope viewport.
+    GeneratedGeometry layered_geometry{};
+    bool geometry_is_layered{false};
 };
 
 struct DoorData {
@@ -256,6 +272,20 @@ struct DoorData {
     bool level_locked{true};
     // Exact third-party IFC product geometry when the importer can tessellate
     // the source representation. Empty for authored/legacy doors.
+    MeshBuffer mesh{};
+};
+
+// Meshes are derived artifacts, never part of the authored model contract.
+// Keeping the two requested detail levels separate lets the interactive
+// viewport retain a cheap envelope while a section/documentation request
+// materializes the layered mesh only for the elements that need it.
+struct GeneratedMeshCache {
+    bool dirty{true};
+    Revision source_revision{};
+    // Shared semantic assemblies are versioned independently from elements.
+    // The element's generated_geometry_dirty flag remains the authoritative
+    // geometry invalidation bit; this revision is the assembly-side key.
+    Revision assembly_revision{};
     MeshBuffer mesh{};
 };
 
@@ -310,6 +340,9 @@ struct SlabData {
     MeshBuffer mesh{};
     double area_square_meters{};
     double volume_cubic_meters{};
+    GeneratedMeshCache envelope_geometry{};
+    GeneratedMeshCache layered_geometry{};
+    bool geometry_is_layered{false};
 };
 
 struct RoofData {
@@ -329,6 +362,9 @@ struct RoofData {
     MeshBuffer mesh{};
     double area_square_meters{};
     double volume_cubic_meters{};
+    GeneratedMeshCache envelope_geometry{};
+    GeneratedMeshCache layered_geometry{};
+    bool geometry_is_layered{false};
 };
 
 struct ColumnData {
@@ -372,6 +408,9 @@ struct StairData {
     MeshBuffer mesh{};
     double footprint_area_square_meters{};
     double volume_cubic_meters{};
+    GeneratedMeshCache envelope_geometry{};
+    GeneratedMeshCache layered_geometry{};
+    bool geometry_is_layered{false};
 };
 
 struct ProxyData {
@@ -443,6 +482,9 @@ struct WallAssemblyLayer {
     WallLayerFunction function{WallLayerFunction::Generic};
     int priority{};
     bool structural{};
+    WallLayerSide side{WallLayerSide::Unspecified};
+    bool wraps_openings{true};
+    bool wraps_ends{true};
 };
 
 struct LayeredAssemblyData {
@@ -450,6 +492,14 @@ struct LayeredAssemblyData {
     LayeredAssemblyKind kind{LayeredAssemblyKind::Floor};
     std::string name{};
     std::vector<WallAssemblyLayer> layers{};
+    // Inclusive layer indices.  -1 means infer the contiguous Core range
+    // from layer functions.  This mirrors Revit's explicit core boundary
+    // concept while remaining backward compatible with old JSON projects.
+    int core_start_layer{-1};
+    int core_end_layer{-1};
+    // Runtime revision for shared assembly invalidation. It is deliberately
+    // not authored geometry and is not serialized as project data.
+    Revision revision{};
 };
 
 struct WallTypeData {
@@ -457,6 +507,11 @@ struct WallTypeData {
     std::string name{};
     WallTypeCategory category{WallTypeCategory::Generic};
     std::vector<WallAssemblyLayer> layers{};
+    // Keep the legacy wall-type path semantically equivalent to a layered
+    // wall assembly.  -1 means infer the contiguous Core range from the
+    // layer functions for backward-compatible projects.
+    int core_start_layer{-1};
+    int core_end_layer{-1};
 };
 
 struct WallRoomAdjacency {

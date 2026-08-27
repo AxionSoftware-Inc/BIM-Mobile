@@ -57,6 +57,12 @@ enum class ApiWallLayerFunction {
     Generic
 };
 
+enum class ApiWallLayerSide {
+    Unspecified,
+    Exterior,
+    Interior,
+};
+
 enum class ApiWallTypeCategory {
     Interior,
     Exterior,
@@ -392,6 +398,9 @@ struct AssemblyLayerDTO {
     ApiWallLayerFunction function{ApiWallLayerFunction::Generic};
     int priority{};
     bool structural{};
+    ApiWallLayerSide side{ApiWallLayerSide::Unspecified};
+    bool wraps_openings{true};
+    bool wraps_ends{true};
 };
 
 struct LayeredAssemblyDTO {
@@ -399,6 +408,8 @@ struct LayeredAssemblyDTO {
     ApiLayeredAssemblyKind kind{ApiLayeredAssemblyKind::Floor};
     std::string name{};
     std::vector<AssemblyLayerDTO> layers{};
+    int core_start_layer{-1};
+    int core_end_layer{-1};
 };
 
 struct WallTypeDTO {
@@ -407,6 +418,8 @@ struct WallTypeDTO {
     ApiWallTypeCategory category{ApiWallTypeCategory::Generic};
     double total_thickness_meters{};
     std::vector<AssemblyLayerDTO> layers{};
+    int core_start_layer{-1};
+    int core_end_layer{-1};
 };
 
 struct WallScheduleDTO {
@@ -690,6 +703,7 @@ public:
     ApiVoidResult set_unit_settings(UnitSettingsDTO settings);
     ApiResult<RenderSceneDTO> get_render_scene() const;
     ApiResult<std::string> get_render_scene_json() const;
+    ApiResult<std::string> get_render_scene_json_primary(std::uint64_t active_level_id) const;
     ApiResult<std::string> get_render_scene_json_near_level(std::uint64_t active_level_id, int adjacent_level_count = 1) const;
     // Builds a vertical section along a plan line. The returned scene uses
     // section distance as X and world elevation as Z, with layer-aware cut
@@ -723,7 +737,13 @@ public:
     );
     ApiVoidResult move_level_elevation(std::uint64_t level_id, double elevation_meters);
     ApiResult<ElementIdDTO> create_wall(std::string name, Vec2 start, Vec2 end, double thickness_meters, double height_meters, std::uint64_t level_id = 0);
-    ApiResult<ElementIdDTO> create_wall_type(ApiWallTypeCategory category, std::string name, std::vector<AssemblyLayerDTO> layers);
+    ApiResult<ElementIdDTO> create_wall_type(
+        ApiWallTypeCategory category,
+        std::string name,
+        std::vector<AssemblyLayerDTO> layers,
+        int core_start_layer = -1,
+        int core_end_layer = -1
+    );
     ApiVoidResult update_wall_type(WallTypeDTO wall_type);
     ApiResult<std::vector<WallTypeDTO>> list_wall_types() const;
     ApiVoidResult set_wall_level_constraints(
@@ -767,7 +787,13 @@ public:
     );
     ApiVoidResult update_material(MaterialDTO material);
     ApiResult<std::vector<MaterialDTO>> list_materials() const;
-    ApiResult<ElementIdDTO> create_layered_assembly(ApiLayeredAssemblyKind kind, std::string name, std::vector<AssemblyLayerDTO> layers);
+    ApiResult<ElementIdDTO> create_layered_assembly(
+        ApiLayeredAssemblyKind kind,
+        std::string name,
+        std::vector<AssemblyLayerDTO> layers,
+        int core_start_layer = -1,
+        int core_end_layer = -1
+    );
     ApiVoidResult update_layered_assembly(LayeredAssemblyDTO assembly);
     ApiResult<std::vector<LayeredAssemblyDTO>> list_layered_assemblies() const;
     ApiVoidResult update_roof_properties(

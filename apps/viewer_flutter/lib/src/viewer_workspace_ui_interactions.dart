@@ -189,6 +189,22 @@ extension _ViewerWorkspaceInteractions on _ViewerHomePageState {
     }
   }
 
+  void _handleSceneMultiTouchStart() {
+    if (!_isSurfaceAuthoring) {
+      return;
+    }
+
+    _surfaceBoundaryMultiTouch = true;
+    final lastPoint = _draftSurfacePoints.lastOrNull;
+    _updateViewportState(() {
+      // Keep only committed corners. The live cursor belongs to the
+      // one-finger authoring gesture and must not be committed by a pinch.
+      _draftSurfaceEnd = lastPoint;
+      _editStatusMessage = 'Two-finger pan/zoom: boundary drawing paused.';
+    });
+    _syncSurfaceDraftPreview();
+  }
+
   void _handleSceneDragStart(RenderSceneTapDetails details) {
     final scene = _scene;
     if (scene == null) {
@@ -259,6 +275,7 @@ extension _ViewerWorkspaceInteractions on _ViewerHomePageState {
       case RenderSceneInteractionMode.addFloor:
       case RenderSceneInteractionMode.addCeiling:
       case RenderSceneInteractionMode.addRoof:
+        _surfaceBoundaryMultiTouch = false;
         final point = details.modelPoint;
         if (point == null) return;
         if (_surfaceDrawMode == RenderSceneSurfaceDrawMode.polyline) {
@@ -322,6 +339,9 @@ extension _ViewerWorkspaceInteractions on _ViewerHomePageState {
     final scene = _scene;
     final point = details.modelPoint;
     if (scene == null || point == null) {
+      return;
+    }
+    if (details.pointerCount > 1) {
       return;
     }
     switch (_interactionMode) {
@@ -404,6 +424,9 @@ extension _ViewerWorkspaceInteractions on _ViewerHomePageState {
       case RenderSceneInteractionMode.addFloor:
       case RenderSceneInteractionMode.addCeiling:
       case RenderSceneInteractionMode.addRoof:
+        if (_surfaceBoundaryMultiTouch || details.pointerCount > 1) {
+          return;
+        }
         if (_surfaceDrawMode == RenderSceneSurfaceDrawMode.polyline) {
           _commitSurfaceBoundarySegment(details.modelPoint);
           return;

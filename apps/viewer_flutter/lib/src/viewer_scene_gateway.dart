@@ -16,3 +16,11 @@ abstract interface class ViewerSceneGateway {
     RenderScenePoint end,
   );
 }
+
+/// Optional fast-open capability. Keeping this separate from the normal
+/// scene gateway means fallback/test gateways do not need to know about the
+/// native primary-stage query.
+abstract interface class ViewerPrimarySceneGateway
+    implements ViewerSceneGateway {
+  Future<RenderSceneLoadResult> currentPrimaryRenderScene();
+}

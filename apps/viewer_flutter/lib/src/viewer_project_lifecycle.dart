@@ -164,6 +164,7 @@ extension _IfcImportCache on _ViewerHomePageState {
 extension _ViewerProjectLifecycle on _ViewerHomePageState {
   Future<void> _createBlankProject() async {
     if (_isBusy) return;
+    ++_sceneLoadGeneration;
     _currentProjectName = 'New Project';
     _updateViewportState(() {
       _isBusy = true;
@@ -198,11 +199,16 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
   }
 
   void _onViewportChanged() {
-    if (mounted) {
-      _updateViewportState(() {
-        // Rebuild inspector/status when selection/highlight changes.
-      });
-    }
+    final selectedIds = _viewportController.selectedElementIds.toList()..sort();
+    final nextSignature = <String>[
+      selectedIds.join(','),
+      _viewportController.activeElementId ?? '',
+      _viewportController.selectedLevelId?.toString() ?? '',
+      _viewportController.highlightedElementId ?? '',
+    ].join('\u001f');
+    if (_lastViewportUiSignature == nextSignature) return;
+    _lastViewportUiSignature = nextSignature;
+    if (mounted) _updateViewportState(() {});
   }
 
   void _onSheetWorkspaceChanged() {
@@ -244,6 +250,7 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
     if (_isBusy) {
       return;
     }
+    ++_sceneLoadGeneration;
 
     _updateViewportState(() {
       _isBusy = true;
@@ -293,6 +300,7 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
     String? sourcePath,
   }) async {
     if (_isBusy) return;
+    final generation = ++_sceneLoadGeneration;
     _currentProjectName = projectName;
     _updateViewportState(() {
       _isBusy = true;
@@ -313,11 +321,16 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
       }
       _projectSession.activate(launch.session);
       _engineLoadDiagnostic = null;
-      final result = await _sceneViews.refresh();
+      final result = await _sceneViews.refreshPrimary();
       await _applyLoadResult(
         result,
         sourceLabel: projectName,
         resetProjectChanges: true,
+      );
+      _hydrateSecondaryScene(
+        session: launch.session,
+        generation: generation,
+        sourceLabel: projectName,
       );
     } catch (error) {
       if (!mounted) return;
@@ -329,10 +342,54 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
     }
   }
 
+  void _hydrateSecondaryScene({
+    required ViewerEngineSession session,
+    required int generation,
+    required String sourceLabel,
+  }) {
+    unawaited(() async {
+      // Give the platform view one event turn to paint the primary scene
+      // before serializing the heavier secondary scene.
+      await Future<void>.delayed(Duration.zero);
+      if (!mounted ||
+          generation != _sceneLoadGeneration ||
+          !identical(_projectSession.session, session)) {
+        return;
+      }
+      _updateViewportState(() {
+        _statusMessage = '$sourceLabel · loading details...';
+      });
+      try {
+        final result = await _sceneViews.refresh();
+        if (!mounted ||
+            generation != _sceneLoadGeneration ||
+            !identical(_projectSession.session, session)) {
+          return;
+        }
+        await _applyLoadResult(
+          result,
+          sourceLabel: '$sourceLabel · details',
+          preserveViewport: true,
+        );
+      } catch (error) {
+        if (!mounted ||
+            generation != _sceneLoadGeneration ||
+            !identical(_projectSession.session, session)) {
+          return;
+        }
+        _updateViewportState(() {
+          _engineLoadDiagnostic = 'Secondary details deferred: $error';
+          _statusMessage = '$sourceLabel · core scene ready';
+        });
+      }
+    }());
+  }
+
   Future<void> _createResidentialTemplate(
     _ResidentialTemplateKind template,
   ) async {
     if (_isBusy) return;
+    ++_sceneLoadGeneration;
     final buildingCount =
         template == _ResidentialTemplateKind.campus6x9 ? 6 : 1;
     final storyCount = template == _ResidentialTemplateKind.default3 ? 3 : 9;
@@ -411,6 +468,7 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
 
   Future<void> _reloadCurrentScene() async {
     if (_engineBackedMode && _engineRepository != null) {
+      ++_sceneLoadGeneration;
       _updateViewportState(() {
         _isBusy = true;
         _loadError = null;
@@ -473,6 +531,7 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
     required String projectName,
   }) async {
     if (_isBusy) return;
+    final generation = ++_sceneLoadGeneration;
     try {
       _updateViewportState(() {
         _isBusy = true;
@@ -555,7 +614,7 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
         }
       }
       final nativeBimCachePath = await _ensureNativeBimCache(path);
-      final result = await _sceneViews.refresh();
+      final result = await _sceneViews.refreshPrimary();
       await _applyLoadResult(
         result,
         sourceLabel: projectName,
@@ -566,6 +625,15 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
           sourceIfcPath: path,
           cachePath: nativeBimCachePath,
         );
+      } else {
+        final activeSession = _projectSession.session;
+        if (activeSession != null) {
+          _hydrateSecondaryScene(
+            session: activeSession,
+            generation: generation,
+            sourceLabel: projectName,
+          );
+        }
       }
     } catch (error) {
       if (!mounted) return;
@@ -1355,6 +1423,7 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
     required String sourceLabel,
     bool resetProjectChanges = false,
     bool nativeGeometryAlreadyLoaded = false,
+    bool preserveViewport = false,
   }) async {
     final rawScene = result.scene;
     final scene = rawScene == null
@@ -1365,14 +1434,25 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
     _viewWorkspace.clearSheetCache();
 
     _updateViewportState(() {
-      _scene = scene;
+      // A deferred detail query is best-effort. If it fails, keep the
+      // already interactive primary scene instead of blanking the viewport.
+      if (scene != null || !preserveViewport) {
+        _scene = scene;
+      }
       if (resetProjectChanges) {
         _projectHasChanges = false;
       }
-      _loadError = result.errors.isNotEmpty ? result.errors.join('\n') : null;
-      _statusMessage = scene == null
-          ? 'RenderScene load failed.'
-          : '$sourceLabel · ${scene.objectCount} objects';
+      if (scene == null && preserveViewport) {
+        _engineLoadDiagnostic =
+            result.errors.isNotEmpty ? result.errors.join('\n') : null;
+        _loadError = null;
+        _statusMessage = '$sourceLabel · core scene ready';
+      } else {
+        _loadError = result.errors.isNotEmpty ? result.errors.join('\n') : null;
+        _statusMessage = scene == null
+            ? 'RenderScene load failed.'
+            : '$sourceLabel · ${scene.objectCount} objects';
+      }
       _isBusy = false;
 
       if (scene != null) {
@@ -1400,7 +1480,9 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
     });
 
     if (scene == null) {
-      await _viewportController.clearScene();
+      if (!preserveViewport) {
+        await _viewportController.clearScene();
+      }
       await _refreshHistoryState();
       return;
     }
@@ -1409,6 +1491,11 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
       await _viewportController.loadNativeSceneSummary(
         _sceneForViewport(scene),
       );
+    } else if (preserveViewport) {
+      await _viewportController.updateRenderScene(
+        _sceneForViewport(scene),
+        resetView: false,
+      );
     } else {
       await _viewportController.loadRenderScene(_sceneForViewport(scene));
     }
@@ -1416,10 +1503,12 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
     await _viewportController.setProjectionMode(_projectionMode);
     await _viewportController.setOrbitProjectionStyle(_orbitProjectionStyle);
     await _viewportController.setDisplayStyle(_displayStyle);
-    _interactionMode = RenderSceneInteractionMode.select;
-    await _viewportController.setInteractionMode(_interactionMode);
-    _viewportController.clearDraft();
-    await _viewportController.fitCamera();
+    if (!preserveViewport) {
+      _interactionMode = RenderSceneInteractionMode.select;
+      await _viewportController.setInteractionMode(_interactionMode);
+      _viewportController.clearDraft();
+      await _viewportController.fitCamera();
+    }
     if (kDebugMode &&
         _viewportController.backend == RenderSceneViewportBackend.native) {
       final diagnostics = await _viewportController.nativeDiagnostics();

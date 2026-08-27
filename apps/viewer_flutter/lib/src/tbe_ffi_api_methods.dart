@@ -58,6 +58,24 @@ extension _TbeViewerApiMethods on TbeViewerApi {
     }
   }
 
+  String getRenderSceneJsonPrimary(
+    ffi.Pointer<ffi.Void> handle,
+    int activeLevelId,
+  ) {
+    final out = calloc<ffi.Pointer<Utf8>>();
+    try {
+      _check(
+        handle,
+        _getRenderSceneJsonPrimary(handle, activeLevelId, out),
+      );
+      final value = out.value.toDartString();
+      _freeString(out.value);
+      return value;
+    } finally {
+      calloc.free(out);
+    }
+  }
+
   String getSectionSceneJson(
     ffi.Pointer<ffi.Void> handle,
     RenderScenePoint start,

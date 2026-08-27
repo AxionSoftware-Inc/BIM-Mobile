@@ -117,24 +117,24 @@ int main() {
     assert(near(joined_profile.polygon[2].x, 4.4));
 
     const std::vector<tbe::core::WallAssemblyLayer> joined_layers{
-        {.material_id = 1, .thickness_meters = 0.1},
-        {.material_id = 2, .thickness_meters = 0.1},
+        {.material_id = 1, .thickness_meters = 0.05},
+        {.material_id = 2, .thickness_meters = 0.15},
     };
     const auto layered_joined_geometry = geometry.build_wall_geometry(*wall_a, 1, joined_layers);
     assert(layered_joined_geometry.mesh.triangle_material_ids.size() ==
            layered_joined_geometry.mesh.indices.size() / 3);
-    const auto has_layered_outer_miter = std::any_of(
+    const auto has_thin_layer_miter = std::any_of(
         layered_joined_geometry.mesh.vertices.begin(),
         layered_joined_geometry.mesh.vertices.end(),
-        [](const auto& point) { return near(point.x, 4.6) && near(point.y, -0.1); }
+        [](const auto& point) { return near(point.x, 4.55) && near(point.y, -0.1); }
     );
-    const auto has_layered_inner_miter = std::any_of(
+    const auto has_thick_layer_miter = std::any_of(
         layered_joined_geometry.mesh.vertices.begin(),
         layered_joined_geometry.mesh.vertices.end(),
-        [](const auto& point) { return near(point.x, 4.4) && near(point.y, 0.1); }
+        [](const auto& point) { return near(point.x, 4.65) && near(point.y, -0.05); }
     );
-    assert(has_layered_outer_miter);
-    assert(has_layered_inner_miter);
+    assert(has_thin_layer_miter);
+    assert(has_thick_layer_miter);
 
     const auto wall_t_id = document.create_wall(
         "Wall T",
@@ -1704,6 +1704,40 @@ int main() {
     assert(near(l_room->centerline_area_square_meters, 20.0));
     assert(l_room->centerline_boundary_polygon.size() >= 6);
 
+    // Concave authored floor profiles must triangulate inside the contour.
+    // A triangle fan from the first vertex would cover the U-shaped notch and
+    // produce a mesh area larger than the stored boundary area.
+    tbe::core::Document concave_floor_document{"Concave Floor"};
+    const auto concave_floor_level =
+        concave_floor_document.create_level("Level 1", 0.0, 3.0);
+    const std::vector<tbe::core::Point2> concave_floor_polygon{
+        {.x = 0.0, .y = 0.0}, {.x = 8.0, .y = 0.0}, {.x = 8.0, .y = 8.0},
+        {.x = 6.0, .y = 8.0}, {.x = 6.0, .y = 2.0}, {.x = 2.0, .y = 2.0},
+        {.x = 2.0, .y = 8.0}, {.x = 0.0, .y = 8.0},
+    };
+    const auto concave_floor_id = concave_floor_document.create_slab(
+        concave_floor_level, concave_floor_polygon, 0.18
+    );
+    const auto* concave_floor =
+        concave_floor_document.find_ptr(concave_floor_id)->slab();
+    assert(concave_floor != nullptr);
+    assert(near(concave_floor->area_square_meters, 40.0));
+    double triangulated_area = 0.0;
+    const auto top_index_count = (concave_floor_polygon.size() - 2) * 6;
+    for (std::size_t index = 0; index < top_index_count; index += 6) {
+        const auto& first = concave_floor->mesh.vertices[
+            concave_floor->mesh.indices[index]];
+        const auto& second = concave_floor->mesh.vertices[
+            concave_floor->mesh.indices[index + 1]];
+        const auto& third = concave_floor->mesh.vertices[
+            concave_floor->mesh.indices[index + 2]];
+        triangulated_area += std::abs(
+            (second.x - first.x) * (third.y - first.y) -
+            (second.y - first.y) * (third.x - first.x)
+        ) * 0.5;
+    }
+    assert(near(triangulated_area, concave_floor->area_square_meters));
+
     // Automatic footprint roof regression: a concave U profile must keep its
     // exact boundary while producing a non-empty sloped mesh. The old
     // rectangle-only gable path returned an empty mesh for this case.
@@ -1877,6 +1911,12 @@ int main() {
     assert(!loaded_materials_project.active_document().materials().empty());
     assert(!loaded_materials_project.active_document().wall_types().empty());
     assert(!loaded_materials_project.active_document().layered_assemblies().empty());
+    const auto* loaded_persisted_wall_type =
+        loaded_materials_project.active_document().get_wall_type(persisted_wall_type);
+    assert(loaded_persisted_wall_type != nullptr);
+    assert(loaded_persisted_wall_type->core_start_layer == 1);
+    assert(loaded_persisted_wall_type->core_end_layer == 1);
+    assert(loaded_persisted_wall_type->layers.front().side == tbe::core::WallLayerSide::Interior);
     assert(!loaded_materials_project.active_document().floor_systems().empty());
     assert(!loaded_materials_project.active_document().ceiling_systems().empty());
     assert(std::count_if(
@@ -2389,6 +2429,22 @@ int main() {
             tbe::core::WallAssemblyLayer{.material_id = laminate, .thickness_meters = 0.012, .function = tbe::core::WallLayerFunction::InteriorFinish},
         });
         const auto wall = compound.create_wall("Wall", {{0.0, 0.0}, {6.0, 0.0}}, 0.2, 3.2, level, wall_assembly);
+        compound.regenerate_dirty_geometry(tbe::core::GeometryDetail::Envelope);
+        const auto* envelope_wall = compound.find_ptr(wall)->wall();
+        assert(envelope_wall != nullptr);
+        assert(!envelope_wall->geometry.dirty);
+        assert(!envelope_wall->geometry_is_layered);
+        assert(envelope_wall->layered_geometry.dirty);
+        compound.regenerate_dirty_geometry(tbe::core::GeometryDetail::Layered);
+        const auto* layered_wall = compound.find_ptr(wall)->wall();
+        assert(layered_wall != nullptr);
+        assert(!layered_wall->layered_geometry.dirty);
+        assert(layered_wall->geometry_is_layered);
+        assert(layered_wall->layered_geometry.mesh.triangle_material_ids.size() ==
+               layered_wall->layered_geometry.mesh.indices.size() / 3);
+        compound.regenerate_dirty_geometry(tbe::core::GeometryDetail::Envelope);
+        assert(!compound.find_ptr(wall)->wall()->geometry_is_layered);
+        assert(!compound.find_ptr(wall)->wall()->layered_geometry.dirty);
         const auto compound_wall_schedule = compound.generate_wall_schedule();
         const auto compound_wall_row = std::find_if(compound_wall_schedule.begin(), compound_wall_schedule.end(), [wall](const auto& row) {
             return row.wall_id == wall;
@@ -2411,6 +2467,10 @@ int main() {
         assert(slab_data != nullptr);
         assert(near(slab_data->thickness_meters, 0.242));
         assert(slab_data->mesh.triangle_material_ids.size() == slab_data->mesh.indices.size() / 3);
+        assert(!slab_data->envelope_geometry.dirty);
+        assert(!slab_data->envelope_geometry.mesh.indices.empty());
+        assert(!slab_data->layered_geometry.dirty);
+        assert(slab_data->geometry_is_layered);
         const auto compound_slab_schedule = compound.generate_slab_schedule();
         const auto compound_slab_row = std::find_if(compound_slab_schedule.begin(), compound_slab_schedule.end(), [slab](const auto& row) {
             return row.slab_id == slab;
@@ -2419,6 +2479,14 @@ int main() {
         assert(near(compound_slab_row->material_volume_by_id.at(concrete), 4.32));
         assert(near(compound_slab_row->material_volume_by_id.at(screed), 1.2));
         assert(near(compound_slab_row->material_volume_by_id.at(laminate), 0.288));
+        auto floor_metadata_only = *compound.get_layered_assembly(slab_assembly);
+        floor_metadata_only.layers.front().priority = 42;
+        compound.update_layered_assembly(std::move(floor_metadata_only));
+        const auto* metadata_slab = compound.find_ptr(slab)->slab();
+        assert(metadata_slab != nullptr);
+        assert(!metadata_slab->generated_geometry_dirty);
+        assert(!metadata_slab->envelope_geometry.dirty);
+        assert(metadata_slab->layered_geometry.dirty);
         const auto roof = compound.create_roof(level, {{0.0, 0.0}, {6.0, 0.0}, {6.0, 4.0}, {0.0, 4.0}}, tbe::core::RoofType::SimpleGable, 0.18, concrete, roof_assembly, 25.0);
         assert(!compound.find_ptr(roof)->roof()->mesh.vertices.empty());
         const auto stair = compound.create_stair(level, level, {0.0, 0.5}, {1.0, 0.0}, 1.1, 3.0, 4.0, 18, 17, concrete, stair_assembly);
@@ -2596,6 +2664,55 @@ int main() {
         assert(imported_external_proxy->metadata().at("ifc_guid").value == "F1");
         assert(!external_report.warnings.empty());
         std::filesystem::remove(external_ifc_path);
+    }
+
+    {
+        // Level elevations are a strict semantic contract: duplicates and
+        // inverted vertical constraints must be rejected before geometry is
+        // marked dirty or regenerated.
+        tbe::core::Document level_validation{"Level validation"};
+        const auto level_1 = level_validation.create_level("Level 1", 0.0, 3.0);
+        const auto level_2 = level_validation.create_level("Level 2", 3.2, 3.0);
+        bool duplicate_rejected = false;
+        try {
+            level_validation.create_level("Duplicate", 3.2, 3.0);
+        } catch (const std::invalid_argument&) {
+            duplicate_rejected = true;
+        }
+        assert(duplicate_rejected);
+
+        const auto wall = level_validation.create_wall(
+            "Constrained wall", {{0.0, 0.0}, {4.0, 0.0}}, 0.2, 3.0, level_1);
+        level_validation.set_wall_level_constraints(
+            wall, level_1, level_2, 0.0, 0.0, tbe::core::WallHeightMode::TopLevel);
+
+        bool inverted_constraint_rejected = false;
+        try {
+            level_validation.set_wall_level_constraints(
+                wall, level_2, level_1, 0.0, 0.0, tbe::core::WallHeightMode::TopLevel);
+        } catch (const std::invalid_argument&) {
+            inverted_constraint_rejected = true;
+        }
+        assert(inverted_constraint_rejected);
+
+        bool inverted_move_rejected = false;
+        try {
+            level_validation.move_level_elevation(level_2, 0.5);
+        } catch (const std::invalid_argument&) {
+            inverted_move_rejected = true;
+        }
+        assert(inverted_move_rejected);
+        assert(near(level_validation.find_ptr(level_2)->level()->elevation_meters, 3.2));
+
+        bool inverted_stair_rejected = false;
+        try {
+            level_validation.create_stair(
+                level_2, level_1, {0.0, 0.0}, {1.0, 0.0}, 1.0, 3.0, 4.0, 10, 9, 0, 0);
+        } catch (const std::invalid_argument&) {
+            inverted_stair_rejected = true;
+        }
+        assert(inverted_stair_rejected);
+        assert(level_validation.validate_document().error_count() == 0);
     }
 
     return 0;

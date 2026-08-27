@@ -83,6 +83,7 @@ extension _ViewerViewportInput on _ViewerHomePageState {
       case RenderSceneInteractionMode.addFloor:
       case RenderSceneInteractionMode.addCeiling:
       case RenderSceneInteractionMode.addRoof:
+        _surfaceBoundaryMultiTouch = false;
         await _handleSurfaceTap(scene, tappedObject, modelPoint);
         return;
       case RenderSceneInteractionMode.addStair:
@@ -113,10 +114,6 @@ extension _ViewerViewportInput on _ViewerHomePageState {
           return;
         }
         _wallTool.preview(snappedPoint);
-        _updateViewportState(() {
-          _editStatusMessage =
-              'Wall draft: ${start.distanceTo(snappedPoint).toStringAsFixed(2)} m';
-        });
         _viewportController.setWallDraft(start, snappedPoint);
         return;
       case RenderSceneInteractionMode.addLevel:
@@ -194,6 +191,9 @@ extension _ViewerViewportInput on _ViewerHomePageState {
       case RenderSceneInteractionMode.addFloor:
       case RenderSceneInteractionMode.addCeiling:
       case RenderSceneInteractionMode.addRoof:
+        if (_surfaceBoundaryMultiTouch || details.pointerCount > 1) {
+          return;
+        }
         if (_surfaceDrawMode == RenderSceneSurfaceDrawMode.pickWalls) {
           final candidate = details.pickedObject;
           if (candidate?.kindKey == 'wall' && candidate?.elementId != null) {
@@ -214,10 +214,7 @@ extension _ViewerViewportInput on _ViewerHomePageState {
           if (_surfaceTool.boundaryClosed) {
             return;
           }
-          final snapped = _draftLinePoint(
-            rawPoint: modelPoint,
-            referenceStart: _draftSurfacePoints.lastOrNull,
-          );
+          final snapped = _surfaceBoundarySnap(modelPoint);
           final first = _draftSurfacePoints.firstOrNull;
           final previewPoint = first != null &&
                   _draftSurfacePoints.length >= 3 &&

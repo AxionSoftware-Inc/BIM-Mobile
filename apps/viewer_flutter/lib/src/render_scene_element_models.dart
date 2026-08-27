@@ -29,16 +29,18 @@ class RenderSceneLevel {
     if (levelId == null) {
       return null;
     }
+    final rawElevation = value['elevation_meters'] ?? value['elevationMeters'];
+    final parsedElevation = _toFiniteDouble(rawElevation);
+    if (rawElevation != null && parsedElevation == null) {
+      return null;
+    }
     return RenderSceneLevel(
       levelId: levelId,
       name: toSceneString(
         value['name'],
         fallback: 'Level $levelId',
       ),
-      elevationMeters: _toFiniteDouble(
-            value['elevation_meters'] ?? value['elevationMeters'],
-          ) ??
-          0.0,
+      elevationMeters: parsedElevation ?? 0.0,
       defaultWallHeightMeters: _toFiniteDouble(
             value['default_wall_height_meters'] ??
                 value['defaultWallHeightMeters'],
@@ -157,16 +159,19 @@ class RenderSceneObject {
           'Render object ${value['kind'] ?? 'Unknown'} has non-finite bounds; zeroing them.');
     }
     return RenderSceneObject(
-      elementId: _toNullableInt(value['element_id']),
+      elementId: _toNullableInt(value['element_id'] ?? value['elementId']),
       kind: toSceneString(value['kind'], fallback: 'Unknown'),
-      levelId: _toNullableInt(value['level_id']),
+      levelId: _toNullableInt(value['level_id'] ?? value['levelId']),
       selectable: value['selectable'] != false,
       visibleByDefault: value['visible_by_default'] != false,
       revision: _toNullableInt(value['revision']) ?? 0,
       bounds: bounds.isFinite ? bounds : RenderSceneBounds.zero(),
       mesh: mesh,
       materialCategory:
-          toSceneString(value['material_category'], fallback: 'generic'),
+          toSceneString(
+            value['material_category'] ?? value['materialCategory'],
+            fallback: 'generic',
+          ),
       metadata: value['metadata'] is Map
           ? Map<String, Object?>.from(
               (value['metadata'] as Map).cast<String, Object?>(),

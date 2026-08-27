@@ -29,6 +29,7 @@ import com.google.android.filament.Engine
 import com.google.android.filament.EntityManager
 import com.google.android.filament.Filament
 import com.google.android.filament.IndexBuffer
+import com.google.android.filament.IndirectLight
 import com.google.android.filament.LightManager
 import com.google.android.filament.Material
 import com.google.android.filament.MaterialInstance
@@ -38,6 +39,7 @@ import com.google.android.filament.Renderer
 import com.google.android.filament.Scene
 import com.google.android.filament.Skybox
 import com.google.android.filament.SwapChain
+import com.google.android.filament.Texture
 import com.google.android.filament.VertexBuffer
 import com.google.android.filament.View
 import com.google.android.filament.Viewport
@@ -46,6 +48,8 @@ import com.google.android.filament.android.DisplayHelper
 import com.google.android.filament.android.UiHelper
 import com.google.android.filament.filamat.MaterialBuilder
 import com.google.android.filament.filamat.MaterialPackage
+import com.google.android.filament.utils.KTX1Loader
+import com.google.android.filament.utils.Utils
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.IntBuffer
@@ -66,13 +70,57 @@ private const val NATIVE_CACHE_INITIAL_UPLOAD_CHUNKS = 3
 private const val NATIVE_CACHE_STEADY_UPLOAD_CHUNKS = 1
 private const val NATIVE_CACHE_UPLOAD_DELAY_MS = 8L
 private const val NATIVE_CACHE_REPRIORITIZE_DELAY_MS = 56L
+private const val NATIVE_CACHE_EDGE_TRIANGLE_BUDGET = 1_024
+private const val NATIVE_CACHE_EDGE_SEGMENT_BUDGET = 60_000
+
+// External mesh formats (FBX and equivalent payloads) do not carry BIM
+// semantics that can be used to select a small architectural edge subset.
+// Keep a bounded, deterministic edge budget so their linework is visible
+// without turning a large imported scene into a second full mesh upload.
+private const val IMPORTED_MESH_EDGE_SEGMENT_BUDGET = 48_000
+private const val IMPORTED_MESH_EDGE_SEGMENT_LIMIT_SMALL_SCENE = 384
+private const val IMPORTED_MESH_EDGE_SEGMENT_LIMIT_LARGE_SCENE = 128
+private val EXTERNAL_MESH_KIND_ALIASES = setOf(
+  "fbx",
+  "fbxmesh",
+  "fbxmodel",
+  "fbximport",
+  "fbx_import",
+  "mesh",
+  "meshmodel",
+  "imported",
+  "importedmesh",
+  "importedmodel",
+  "model3d",
+  "external",
+  "externalmesh",
+  "foreignmesh",
+)
+
+// BIM sun preset: a strong directional source with restrained environment
+// fill. This keeps the sun-facing facade bright while preserving a readable
+// light/shadow boundary on the opposite facade and on the receiver plane.
+private const val BIM_SUN_INTENSITY = 65000.0f
+// Keep the environment restrained for the lit Shaded view. Solid is unlit and
+// therefore independent of scene lighting, matching a clean coordination view.
+private const val BIM_IBL_INTENSITY = 6000.0f
+private const val BIM_SUN_ANGULAR_RADIUS = 0.018f
 
 private const val FLAT_COLOR_MAT = """
 void material(inout MaterialInputs material) {
     prepareMaterial(material);
     float3 world = getWorldPosition();
-    material.normal = normalize(cross(dFdx(world), dFdy(world)));
-    float shade = mix(1.0, 0.82 + 0.18 * sin(world.x * 0.45 + world.z * 0.31), materialParams.displayShade);
+    float3 normal = normalize(cross(dFdx(world), dFdy(world)));
+    material.normal = normal;
+    // Solid is intentionally not a wireframe substitute.  Keep the neutral
+    // Revit-like surface, but give differently oriented faces a stable,
+    // low-frequency value difference so a large imported building reads as a
+    // filled model at fit-to-view scale.  This is deterministic (no
+    // camera-dependent noise or procedural texture) and therefore does not
+    // sparkle while orbiting on mobile GPUs.
+    float3 lightDirection = normalize(float3(-0.35, 0.82, 0.42));
+    float faceShade = 0.78 + 0.22 * abs(dot(normal, lightDirection));
+    float shade = faceShade;
     material.baseColor = float4(materialParams.baseColor.rgb * shade, materialParams.baseColor.a);
 }
 """
@@ -152,6 +200,20 @@ void material(inout MaterialInputs material) {
 }
 """
 
+// The model uses Filament's real lit path. The previous unlit workaround
+// avoided black faces only because the scene had no environment light; with a
+// stable baked IBL, the normal/tangent data can now drive actual sun + ambient
+// shading without camera-dependent procedural patterns.
+private const val ARCHITECTURAL_LIT_MAT = """
+void material(inout MaterialInputs material) {
+    prepareMaterial(material);
+    material.baseColor = materialParams.baseColor;
+    material.metallic = 0.0;
+    material.roughness = 0.88;
+    material.reflectance = 0.35;
+}
+"""
+
 private const val GRID_MAT = """
 void material(inout MaterialInputs material) {
     prepareMaterial(material);
@@ -184,6 +246,7 @@ private data class EdgeBatchKey(
   val levelId: Long?,
   val tileX: Int,
   val tileZ: Int,
+  val nativeKindMask: Long? = null,
 )
 
 private data class FaceBatchKey(
@@ -395,6 +458,7 @@ internal class RenderSceneFilamentHostView(
     init {
       Filament.init()
       MaterialBuilder.init()
+      Utils.init()
     }
   }
 
@@ -488,6 +552,11 @@ internal class RenderSceneFilamentHostView(
   private var filamentView: View? = null
   private var camera: Camera? = null
   private var skybox: Skybox? = null
+  private var colorSkybox: Skybox? = null
+  private var hdriSkybox: Skybox? = null
+  private var hdriSkyboxTexture: Texture? = null
+  private var indirectLight: IndirectLight? = null
+  private var indirectLightTexture: Texture? = null
   private var sunLightEntity: Int? = null
   private var fillLightEntity: Int? = null
   private var colorGrading: ColorGrading? = null
@@ -559,6 +628,8 @@ internal class RenderSceneFilamentHostView(
   private var floorMaterial: Material? = null
   private var roofMaterial: Material? = null
   private var concreteMaterial: Material? = null
+  private var solidMaterial: Material? = null
+  private var solidWindowMaterial: Material? = null
   private var edgeMaterial: Material? = null
   private var gridMaterial: Material? = null
   private var groundMaterial: Material? = null
@@ -571,6 +642,8 @@ internal class RenderSceneFilamentHostView(
   private var gridBatch: GridBatchEntry? = null
   private var groundReceiver: GroundReceiverEntry? = null
   private val edgeGeometryCache = linkedMapOf<Long, CachedEdgeGeometry>()
+  private var importedMeshEdgeBudgetRemaining = IMPORTED_MESH_EDGE_SEGMENT_BUDGET
+  private var nativeCacheEdgeBudgetRemaining = NATIVE_CACHE_EDGE_SEGMENT_BUDGET
   private val attachedEntities = linkedSetOf<Int>()
   private var statusMessage = DEFAULT_RENDERER_STATUS
   private var disposed = false
@@ -584,6 +657,7 @@ internal class RenderSceneFilamentHostView(
   private var displayStyle = "solid"
   private var viewportTheme = "light"
   private var shadowsEnabled = false
+  private var hdriVisible = false
   private var clipVolume = ClipVolumeState.none()
   private val sectionBoxEnabled get() = clipVolume.isSectionBox
   private val sectionBoxMin get() = clipVolume.boxMin
@@ -679,10 +753,12 @@ internal class RenderSceneFilamentHostView(
       filamentView?.scene = scene
       filamentView?.camera = camera
       createSunLight(filamentEngine)
-      createFillLight(filamentEngine)
       filamentView?.setShadowingEnabled(false)
       filamentView?.setShadowType(View.ShadowType.PCF)
       colorGrading = ColorGrading.Builder()
+        // Keep Solid on the same linear presentation curve as the proven
+        // tablet renderer. ACES compresses the near-white unlit BIM faces
+        // into the light background and makes them look transparent.
         .toneMapping(ColorGrading.ToneMapping.LINEAR)
         .build(filamentEngine)
       filamentView?.colorGrading = colorGrading
@@ -690,8 +766,10 @@ internal class RenderSceneFilamentHostView(
       // Light paper canvas preserves true-white Solid geometry without the
       // old overall grey cast. The selected viewport theme can replace both
       // the clear color and skybox later without rebuilding model geometry.
-      skybox = Skybox.Builder().color(0.91f, 0.92f, 0.91f, 1.0f).build(filamentEngine)
-      scene?.skybox = skybox
+      colorSkybox = Skybox.Builder().color(0.91f, 0.92f, 0.91f, 1.0f).build(filamentEngine)
+      skybox = colorSkybox
+      scene?.skybox = colorSkybox
+      loadHdriEnvironment(filamentEngine)
       applyViewportTheme()
       statusMessage = "Filament renderer created."
       Log.i(TAG, statusMessage)
@@ -713,7 +791,7 @@ internal class RenderSceneFilamentHostView(
       mapSize = 1024
       shadowCascades = 1
       constantBias = 0.001f
-      normalBias = 0.025f
+      normalBias = 0.015f
       shadowNearHint = 0.5f
       shadowFarHint = 120.0f
       shadowFar = 120.0f
@@ -724,9 +802,15 @@ internal class RenderSceneFilamentHostView(
     try {
       LightManager.Builder(LightManager.Type.SUN)
         .color(1.0f, 0.96f, 0.90f)
-        .intensity(70000.0f)
-        .direction(0.58f, -1.0f, 0.36f)
-        .sunAngularRadius(0.045f)
+        // A stable sun supplies the directional part and the actual cast
+        // shadow. HDRI/IBL supplies the soft ambient part below.
+        .intensity(BIM_SUN_INTENSITY)
+        // Filament stores the direction of the incoming light rays. The
+        // Keep the source on the camera-facing/right side, but offset it in Z
+        // so the cast shadow travels into the visible ground plane instead of
+        // disappearing directly behind the building.
+        .direction(-0.68f, -0.92f, 0.36f)
+        .sunAngularRadius(BIM_SUN_ANGULAR_RADIUS)
         .castShadows(true)
         .shadowOptions(shadowOptions)
         .build(engine, entity)
@@ -740,8 +824,52 @@ internal class RenderSceneFilamentHostView(
   }
 
   private fun realShadowVisible(mode: String = projectionMode): Boolean =
-    viewportTheme == "light" && shadowsEnabled && sunLightEntity != null &&
-      mode == "isometric" && displayStyle != "wireframe"
+    shadowsEnabled && sunLightEntity != null &&
+      mode == "isometric" && displayStyle == "shaded"
+
+  private fun loadHdriEnvironment(engine: Engine): Boolean {
+    return try {
+      val iblBundle = KTX1Loader.createIndirectLight(
+        engine,
+        readAssetBuffer("envs/default/default_env_ibl.ktx"),
+        KTX1Loader.Options(),
+      )
+      val skyboxBundle = KTX1Loader.createSkybox(
+        engine,
+        readAssetBuffer("envs/default/default_env_skybox.ktx"),
+        KTX1Loader.Options(),
+      )
+      indirectLight = iblBundle.indirectLight
+      indirectLightTexture = iblBundle.cubemap
+      // Keep ambient fill below the direct sun so facade orientation remains
+      // visible instead of flattening the model to white on tablet displays.
+      applyDisplayLightingPreset()
+      hdriSkybox = skyboxBundle.skybox
+      hdriSkyboxTexture = skyboxBundle.cubemap
+      scene?.indirectLight = indirectLight
+      statusMessage = "HDRI environment loaded; stable IBL lighting enabled."
+      Log.i(TAG, statusMessage)
+      true
+    } catch (error: Throwable) {
+      statusMessage = "HDRI environment unavailable; using neutral skybox."
+      Log.w(TAG, "$statusMessage ${error.message ?: error::class.java.simpleName}", error)
+      false
+    }
+  }
+
+  private fun readAssetBuffer(path: String): ByteBuffer {
+    val bytes = context.assets.open(path).use { input -> input.readBytes() }
+    return ByteBuffer.allocateDirect(bytes.size)
+      .order(ByteOrder.nativeOrder())
+      .apply {
+        put(bytes)
+        flip()
+      }
+  }
+
+  private fun applyDisplayLightingPreset() {
+    indirectLight?.intensity = BIM_IBL_INTENSITY
+  }
 
   private fun createFillLight(engine: Engine) {
     val entity = EntityManager.get().create()
@@ -847,7 +975,11 @@ internal class RenderSceneFilamentHostView(
         fitCamera()
         rebuildScene()
         selectionOverlay.setVisualScene(
-          loaded.primitives.map(::nativeCacheVisualObject),
+          loaded.primitives.map(::nativeCacheVisualObject).also { visualObjects ->
+            val importedCount = visualObjects.count { it.metadata["external_mesh"] == "true" }
+            val edgeCount = visualObjects.sumOf { it.featureEdges.size }
+            Log.i(TAG, "Native cache overlay: primitives=${visualObjects.size}, imported=$importedCount, boundsEdges=$edgeCount")
+          },
           currentScene?.levels?.map { level -> level.name to level.elevationMeters } ?: emptyList(),
           sceneMetrics.bounds,
         )
@@ -1000,6 +1132,12 @@ internal class RenderSceneFilamentHostView(
   }
 
   private fun nativeCacheVisualObject(primitive: NativeBimCachePrimitive): NativeVisualObject {
+    val sourceElementId = NativeBimCacheBridge.virtualIfcPartSourceId(primitive.elementId)
+    // The cache compiler preserves IFCBUILDINGELEMENTPROXY as `proxy` when
+    // the source exporter did not provide virtual part ids. Those objects are
+    // still imported mesh payloads from the viewport's point of view and must
+    // receive the same stable outline fallback as FBX/OBJ imports.
+    val importedPart = sourceElementId != null || normalizeKind(primitive.kind) == "proxy"
     val points = boxCorners(primitive.sourceBounds).map(::toFilamentPoint)
     val triangles = listOf(
       intArrayOf(0, 1, 2), intArrayOf(0, 2, 3),
@@ -1032,8 +1170,16 @@ internal class RenderSceneFilamentHostView(
       metadata = buildMap {
         put("native_cache", "true")
         put("level_id", primitive.levelId.toString())
-        NativeBimCacheBridge.virtualIfcPartSourceId(primitive.elementId)?.let { sourceElementId ->
-          put("source_element_id", sourceElementId.toString())
+        if (importedPart) {
+          // Native cache primitives for collapsed IFC/CAD payloads are the
+          // same semantic class as an imported FBX part. Their mesh stays in
+          // native memory, so the Android overlay needs this small marker to
+          // draw a stable bounds outline when the GPU edge pass is occluded
+          // or temporarily absent on a mobile OpenGL driver.
+          put("external_mesh", "true")
+        }
+        sourceElementId?.let { sourceId ->
+          put("source_element_id", sourceId.toString())
           put("selection_scope", "imported_mesh_part")
         }
       },
@@ -1144,11 +1290,6 @@ internal class RenderSceneFilamentHostView(
       (projectionMode == "topDown") != (mode == "topDown")
     projectionMode = mode
     filamentView?.setShadowingEnabled(realShadowVisible(mode))
-    if (mode == "isometric" && shadowsEnabled && sunLightEntity == null && staticShadowBatch == null && currentScene != null && materialBuilderReady) {
-      // Plan/elevation snapshots do not need shadow geometry. Build it lazily
-      // the first time the cached authoritative scene enters 3D.
-      createStaticShadowBatch(engine ?: return, scene ?: return, currentScene!!)
-    }
     if (mode == "isometric" && shadowsEnabled && groundReceiver == null && currentScene != null && materialBuilderReady) {
       createGroundReceiver(engine ?: return, scene ?: return, currentScene!!)
     }
@@ -1237,8 +1378,14 @@ internal class RenderSceneFilamentHostView(
   fun setDisplayStyle(style: String) {
     if (displayStyle == style) return
     displayStyle = style
+    // Solid is a clean, unlit coordination view; Shaded owns scene lighting
+    // and the optional real shadow path.
+    applyDisplayLightingPreset()
     filamentView?.setShadowingEnabled(realShadowVisible())
     selectionOverlay.setDisplayStyle(style)
+    if (nativeBimCache != null) {
+      rebuildNativeBimCacheEdgeBatches()
+    }
     // Wire hides Filament faces entirely; do not churn thousands of material
     // instances for a pass that is not visible. The desired face material is
     // applied only when Solid or Shaded becomes active again.
@@ -1255,6 +1402,34 @@ internal class RenderSceneFilamentHostView(
     invalidate()
   }
 
+  private fun rebuildNativeBimCacheEdgeBatches() {
+    val engine = engine ?: return
+    val scene = scene ?: return
+    val cache = nativeBimCache ?: return
+    destroyEdgeBatches(engine, scene)
+    if (displayStyle != "wireframe") {
+      updateMetrics()
+      return
+    }
+    val edgeChunks = linkedMapOf<EdgeBatchKey, MutableList<GeometryData>>()
+    nativeCacheResidentChunks.forEach { index ->
+      val chunk = cache.chunks.getOrNull(index) ?: return@forEach
+      nativeCacheEdgeGeometry(chunk)?.let { geometry ->
+        val key = EdgeBatchKey(
+          kind = normalizeKind(chunk.kind),
+          levelId = chunk.levelId,
+          tileX = kotlin.math.floor((geometry.bounds.min.x + geometry.bounds.max.x) * 0.5 / 24.0).toInt(),
+          tileZ = kotlin.math.floor((geometry.bounds.min.z + geometry.bounds.max.z) * 0.5 / 24.0).toInt(),
+          nativeKindMask = chunk.kindMask,
+        )
+        edgeChunks.getOrPut(key) { mutableListOf() }.add(geometry)
+      }
+    }
+    createEdgeBatches(engine, scene, edgeChunks)
+    updateMetrics()
+    renderDirty = true
+  }
+
   fun setViewportTheme(theme: String) {
     val normalized = when (theme) {
       "standardDark", "amoledBlack" -> theme
@@ -1269,6 +1444,22 @@ internal class RenderSceneFilamentHostView(
     invalidate()
   }
 
+  fun setHdriVisible(visible: Boolean) {
+    val available = hdriSkybox != null
+    hdriVisible = visible && available
+    applyViewportTheme()
+    syncVisibility()
+    requestRender(180L)
+    invalidate()
+    updateStatus(
+      when {
+        hdriVisible -> "HDRI background visible."
+        visible && !available -> "HDRI background is unavailable; neutral background kept."
+        else -> "HDRI background hidden; IBL lighting remains active."
+      },
+    )
+  }
+
   private fun applyViewportTheme() {
     val background = when (viewportTheme) {
       "standardDark" -> intArrayOf(32, 36, 39)
@@ -1278,12 +1469,12 @@ internal class RenderSceneFilamentHostView(
     val clear = when (viewportTheme) {
       "standardDark" -> doubleArrayOf(0.125, 0.141, 0.153, 1.0)
       "amoledBlack" -> doubleArrayOf(0.0, 0.0, 0.0, 1.0)
-      else -> doubleArrayOf(0.95, 0.96, 0.95, 1.0)
+      else -> doubleArrayOf(0.985, 0.99, 0.985, 1.0)
     }
     val sky = when (viewportTheme) {
       "standardDark" -> floatArrayOf(0.018f, 0.021f, 0.024f, 1.0f)
       "amoledBlack" -> floatArrayOf(0.0f, 0.0f, 0.0f, 1.0f)
-      else -> floatArrayOf(0.91f, 0.92f, 0.91f, 1.0f)
+      else -> floatArrayOf(0.985f, 0.99f, 0.985f, 1.0f)
     }
     setBackgroundColor(Color.rgb(background[0], background[1], background[2]))
     renderer?.setClearOptions(Renderer.ClearOptions().apply {
@@ -1293,19 +1484,38 @@ internal class RenderSceneFilamentHostView(
     selectionOverlay.setViewportTheme(viewportTheme)
     val engine = engine ?: return
     val nativeScene = scene ?: return
-    val previousSkybox = skybox
-    val nextSkybox = Skybox.Builder()
-      .color(sky[0], sky[1], sky[2], sky[3])
-      .build(engine)
-    skybox = nextSkybox
-    nativeScene.skybox = nextSkybox
-    previousSkybox?.let { engine.destroySkybox(it) }
+    if (hdriVisible && hdriSkybox != null) {
+      skybox = hdriSkybox
+      nativeScene.skybox = hdriSkybox
+    } else {
+      val previousColorSkybox = colorSkybox
+      val nextColorSkybox = Skybox.Builder()
+        .color(sky[0], sky[1], sky[2], sky[3])
+        .build(engine)
+      colorSkybox = nextColorSkybox
+      skybox = nextColorSkybox
+      nativeScene.skybox = nextColorSkybox
+      previousColorSkybox?.let { old ->
+        if (old !== hdriSkybox && old !== nextColorSkybox) engine.destroySkybox(old)
+      }
+    }
   }
 
-  private fun viewportEdgeColor(): FloatArray = if (viewportTheme == "light") {
-    floatArrayOf(0.0f, 0.0f, 0.0f, 1.0f)
-  } else {
-    floatArrayOf(0.72f, 0.77f, 0.80f, 1.0f)
+  private fun viewportEdgeColor(): FloatArray {
+    // Shaded keeps readable silhouette/feature edges, but they should recede
+    // behind the lit surfaces instead of looking like a black cartoon outline.
+    if (displayStyle == "shaded") {
+      return if (viewportTheme == "light") {
+        floatArrayOf(0.30f, 0.34f, 0.38f, 1.0f)
+      } else {
+        floatArrayOf(0.47f, 0.51f, 0.55f, 1.0f)
+      }
+    }
+    return if (viewportTheme == "light") {
+      floatArrayOf(0.0f, 0.0f, 0.0f, 1.0f)
+    } else {
+      floatArrayOf(0.72f, 0.77f, 0.80f, 1.0f)
+    }
   }
 
   private fun viewportGridColor(): FloatArray = if (viewportTheme == "light") {
@@ -1415,6 +1625,14 @@ internal class RenderSceneFilamentHostView(
   fun setVisibleKinds(kinds: Set<String>) {
     visibleKinds.clear()
     visibleKinds.addAll(kinds.map { normalizeKind(it) })
+    selectionOverlay.setVisibleKinds(visibleKinds)
+    Log.i(
+      TAG,
+      "Visibility kinds=${visibleKinds.sorted().joinToString(",")} " +
+        "faceAttached=${faceBatches.count { it.attached }} " +
+        "edgeAttached=${edgeBatches.count { it.attached }} " +
+        "cache=${nativeBimCache != null}",
+    )
     syncVisibility()
     updateStatus()
     invalidate()
@@ -1919,9 +2137,15 @@ internal class RenderSceneFilamentHostView(
     colorGrading?.let { grading ->
       engine?.destroyColorGrading(grading)
     }
-    skybox?.let { box ->
+    colorSkybox?.let { box ->
       engine?.destroySkybox(box)
     }
+    hdriSkybox?.let { box ->
+      if (box !== colorSkybox) engine?.destroySkybox(box)
+    }
+    indirectLight?.let { light -> engine?.destroyIndirectLight(light) }
+    indirectLightTexture?.let { texture -> engine?.destroyTexture(texture) }
+    hdriSkyboxTexture?.let { texture -> engine?.destroyTexture(texture) }
     renderer?.let { renderer ->
       engine?.destroyRenderer(renderer)
     }
@@ -1939,6 +2163,8 @@ internal class RenderSceneFilamentHostView(
     floorMaterial?.let { material -> engine?.destroyMaterial(material) }
     roofMaterial?.let { material -> engine?.destroyMaterial(material) }
     concreteMaterial?.let { material -> engine?.destroyMaterial(material) }
+    solidMaterial?.let { material -> engine?.destroyMaterial(material) }
+    solidWindowMaterial?.let { material -> engine?.destroyMaterial(material) }
     edgeMaterial?.let { material -> engine?.destroyMaterial(material) }
     gridMaterial?.let { material -> engine?.destroyMaterial(material) }
     groundMaterial?.let { material -> engine?.destroyMaterial(material) }
@@ -1950,6 +2176,11 @@ internal class RenderSceneFilamentHostView(
     filamentView = null
     camera = null
     skybox = null
+    colorSkybox = null
+    hdriSkybox = null
+    hdriSkyboxTexture = null
+    indirectLight = null
+    indirectLightTexture = null
     colorGrading = null
     engine = null
     material = null
@@ -1960,6 +2191,8 @@ internal class RenderSceneFilamentHostView(
     floorMaterial = null
     roofMaterial = null
     concreteMaterial = null
+    solidMaterial = null
+    solidWindowMaterial = null
     edgeMaterial = null
     gridMaterial = null
     groundMaterial = null
@@ -1970,14 +2203,25 @@ internal class RenderSceneFilamentHostView(
   private fun buildRuntimeMaterial(): Boolean {
     val engine = engine ?: return false
     return try {
-      material = buildMaterial(engine, "RenderSceneFlatColor", FLAT_COLOR_MAT, lit = false)
-      wallMaterial = buildMaterial(engine, "RenderSceneWallBrick", WALL_BRICK_MAT, lit = false)
-      windowMaterial = buildMaterial(engine, "RenderSceneWindowGlass", FLAT_COLOR_MAT, transparent = true, lit = false)
-      plasterMaterial = buildMaterial(engine, "RenderScenePlaster", PLASTER_MAT, lit = false)
-      woodMaterial = buildMaterial(engine, "RenderSceneWood", WOOD_MAT, lit = false)
-      floorMaterial = buildMaterial(engine, "RenderSceneFloor", FLOOR_MAT, lit = false)
-      roofMaterial = buildMaterial(engine, "RenderSceneRoof", ROOF_MAT, lit = false)
-      concreteMaterial = buildMaterial(engine, "RenderSceneConcrete", CONCRETE_MAT, lit = false)
+      material = buildMaterial(engine, "RenderSceneArchitectural", ARCHITECTURAL_LIT_MAT, lit = true)
+      wallMaterial = buildMaterial(engine, "RenderSceneWall", ARCHITECTURAL_LIT_MAT, lit = true)
+      windowMaterial = buildMaterial(engine, "RenderSceneWindowGlass", ARCHITECTURAL_LIT_MAT, transparent = true, lit = true)
+      plasterMaterial = buildMaterial(engine, "RenderScenePlaster", ARCHITECTURAL_LIT_MAT, lit = true)
+      woodMaterial = buildMaterial(engine, "RenderSceneWood", ARCHITECTURAL_LIT_MAT, lit = true)
+      floorMaterial = buildMaterial(engine, "RenderSceneFloor", ARCHITECTURAL_LIT_MAT, lit = true)
+      roofMaterial = buildMaterial(engine, "RenderSceneRoof", ARCHITECTURAL_LIT_MAT, lit = true)
+      concreteMaterial = buildMaterial(engine, "RenderSceneConcrete", ARCHITECTURAL_LIT_MAT, lit = true)
+      // Solid is deliberately unlit: it stays clean white and does not inherit
+      // HDRI/Sun changes. Real lighting belongs to Shaded, where it can be
+      // inspected without compromising the primary BIM coordination view.
+      solidMaterial = buildMaterial(engine, "RenderSceneSolid", FLAT_COLOR_MAT, lit = false)
+      solidWindowMaterial = buildMaterial(
+        engine,
+        "RenderSceneSolidWindow",
+        FLAT_COLOR_MAT,
+        transparent = true,
+        lit = false,
+      )
       edgeMaterial = buildMaterial(engine, "RenderSceneEdges", FLAT_COLOR_MAT, lit = false)
       gridMaterial = buildMaterial(
         engine,
@@ -1997,7 +2241,8 @@ internal class RenderSceneFilamentHostView(
       )
       if (listOf(material, wallMaterial, windowMaterial, plasterMaterial,
           woodMaterial, floorMaterial, roofMaterial, concreteMaterial,
-           edgeMaterial, gridMaterial, groundMaterial, shadowMaterial).any { it == null }) {
+           solidMaterial, solidWindowMaterial, edgeMaterial, gridMaterial,
+           groundMaterial, shadowMaterial).any { it == null }) {
         statusMessage = "Filament material build returned an invalid package."
         updateStatus()
         return false
@@ -2068,6 +2313,7 @@ internal class RenderSceneFilamentHostView(
     nativeCacheUploadPosted = false
     nativeCachePendingChunks.clear()
     nativeCacheResidentChunks.clear()
+    nativeCacheEdgeBudgetRemaining = NATIVE_CACHE_EDGE_SEGMENT_BUDGET
     val revision = nativeCacheUploadRevision
     cache.chunks.indices
       .sortedBy { index -> nativeCacheChunkDistanceSquared(cache, index) }
@@ -2080,6 +2326,12 @@ internal class RenderSceneFilamentHostView(
       revision = revision,
       maxChunks = NATIVE_CACHE_INITIAL_UPLOAD_CHUNKS,
     )
+    // Native cache rebuilds destroy auxiliary renderables as well. Recreate
+    // the navigation grid here so a section-box toggle cannot leave the
+    // viewport in a different visual state from a normal 3D load.
+    if (projectionMode == "isometric") {
+      currentScene?.let { createGridBatch(engine, scene, it) }
+    }
     updateMetrics()
     renderDirty = true
   }
@@ -2107,12 +2359,31 @@ internal class RenderSceneFilamentHostView(
     maxChunks: Int,
   ) {
     if (disposed || revision != nativeCacheUploadRevision || cache !== nativeBimCache) return
+    val edgeChunks = linkedMapOf<EdgeBatchKey, MutableList<GeometryData>>()
     repeat(maxChunks) {
       val index = nativeCachePendingChunks.pollFirst() ?: return@repeat
       if (createNativeBimCacheChunk(engine, scene, cache, fallbackMaterial, index)) {
         nativeCacheResidentChunks.add(index)
+        val chunk = cache.chunks.getOrNull(index)
+        // Native cache edges are an explicit Wireframe aid. Never create or
+        // attach this second triangle-prism pass in Solid/Shaded: on some
+        // mobile OpenGL drivers it survives a style transition and reads as
+        // dotted wireframe over an otherwise filled model.
+        if (chunk != null && displayStyle == "wireframe") {
+          nativeCacheEdgeGeometry(chunk)?.let { geometry ->
+            val key = EdgeBatchKey(
+              kind = normalizeKind(chunk.kind),
+              levelId = chunk.levelId,
+              tileX = kotlin.math.floor((geometry.bounds.min.x + geometry.bounds.max.x) * 0.5 / 24.0).toInt(),
+              tileZ = kotlin.math.floor((geometry.bounds.min.z + geometry.bounds.max.z) * 0.5 / 24.0).toInt(),
+              nativeKindMask = chunk.kindMask,
+            )
+            edgeChunks.getOrPut(key) { mutableListOf() }.add(geometry)
+          }
+        }
       }
     }
+    createEdgeBatches(engine, scene, edgeChunks)
     rendererBenchmark?.takeIf {
       it.mode == "NEW_BIMCACHE" && nativeCacheResidentChunks.isNotEmpty()
     }?.let(::markBenchmarkFirstSceneVisible)
@@ -2184,9 +2455,25 @@ internal class RenderSceneFilamentHostView(
     val sceneState = currentScene ?: return false
     val chunk = cache.chunks.getOrNull(index) ?: return false
     val representative = sceneState.objects.getOrNull(index) ?: return false
-    val vertexCount = chunk.positions.capacity() / 12
+    // Keep the cache's native memory ownership, but upload the small axis-remap
+    // staging buffer in Filament coordinates.  Relying on a per-entity matrix
+    // for this conversion made the Adreno/OpenGL driver validate the face AABB
+    // in source coordinates; the result was a completely invisible solid pass
+    // while the Canvas bounds overlay still showed its edges.  The conversion
+    // happens once per streamed chunk (not per frame), so orbiting remains
+    // native/GPU-only and the source `.bimcache` stays untouched.
+    val filamentPositions = nativeCacheFilamentPositions(chunk)
+    val vertexCount = filamentPositions.capacity() / 12
     val indexCount = chunk.indices.capacity()
     if (vertexCount <= 0 || indexCount < 3) return false
+    if (index < 8) {
+      Log.i(
+        TAG,
+        "Cache face chunk=$index kind=${chunk.kind} mask=${chunk.kindMask} " +
+          "vertices=$vertexCount indices=$indexCount bounds=${chunk.sourceBounds} " +
+          "representative=${representative.kind}",
+      )
+    }
     return try {
       // Cache coordinates stay in the engine's X/Y-plan/Z-up convention.
       // One entity transform maps that buffer to Filament X/Z/-Y without
@@ -2197,7 +2484,7 @@ internal class RenderSceneFilamentHostView(
         .attribute(VertexBuffer.VertexAttribute.POSITION, 0, VertexBuffer.AttributeType.FLOAT3, 0, 12)
         .build(engine)
         .also { buffer ->
-          buffer.setBufferAt(engine, 0, chunk.positions.duplicate().apply { rewind() })
+          buffer.setBufferAt(engine, 0, filamentPositions)
         }
       val indexBuffer = IndexBuffer.Builder()
         .indexCount(indexCount)
@@ -2213,7 +2500,11 @@ internal class RenderSceneFilamentHostView(
       // perceived as white/black flicker.  Keep the complete cached geometry
       // and use the low-frequency neutral material for the streamed path;
       // material detail remains available in the compatibility renderer.
-      val sharedMaterial = fallbackMaterial
+      val sharedMaterial = if (displayStyle == "solid") {
+        solidMaterial ?: fallbackMaterial
+      } else {
+        fallbackMaterial
+      }
       val baseColor = displayBaseColor(representative)
       val materialInstance = sharedMaterial.createInstance().also { instance ->
         applySectionBoxState(instance)
@@ -2226,14 +2517,20 @@ internal class RenderSceneFilamentHostView(
       }
       val entity = EntityManager.get().create()
       RenderableManager.Builder(1)
-        .boundingBox(filamentBox(chunk.sourceBounds))
-        .culling(true)
+        .boundingBox(filamentBox(transformBounds(chunk.sourceBounds)))
+        // The cache mesh is authored in the source (X/Y plan, Z up) space and
+        // receives the axis remap in TransformManager below.  On the tablet's
+        // Adreno/OpenGL path the renderer can evaluate the local AABB before
+        // that remap and cull the complete face pass, while the separate edge
+        // overlay remains visible.  Cache chunks are already spatially
+        // streamed (only a handful of entities), so keep their face pass
+        // visible and leave fine-grained culling to the native chunk loader.
+        .culling(false)
         .castShadows(false)
         .receiveShadows(false)
         .geometry(0, PrimitiveType.TRIANGLES, vertexBuffer, indexBuffer, 0, indexCount)
         .material(0, materialInstance)
         .build(engine, entity)
-      applyCacheCoordinateTransform(engine, entity)
       val visible = nativeCacheChunkVisible(chunk)
       if (visible) scene.addEntity(entity)
       faceBatches.add(
@@ -2270,6 +2567,26 @@ internal class RenderSceneFilamentHostView(
   private fun nativeCacheChunkVisible(chunk: NativeBimCacheChunk): Boolean =
     nativeCacheKindMaskVisible(chunk.kindMask)
 
+  private fun nativeCacheFilamentPositions(chunk: NativeBimCacheChunk): ByteBuffer {
+    val source = chunk.positions.duplicate()
+      .order(ByteOrder.nativeOrder())
+      .apply { rewind() }
+    val vertexCount = source.capacity() / 12
+    val converted = ByteBuffer.allocateDirect(vertexCount * 12)
+      .order(ByteOrder.nativeOrder())
+    for (vertexIndex in 0 until vertexCount) {
+      val offset = vertexIndex * 12
+      val sourceX = source.getFloat(offset)
+      val sourceY = source.getFloat(offset + 4)
+      val sourceZ = source.getFloat(offset + 8)
+      converted.putFloat(sourceX)
+      converted.putFloat(sourceZ)
+      converted.putFloat(-sourceY)
+    }
+    converted.flip()
+    return converted
+  }
+
   private fun nativeCacheKindMaskVisible(mask: Long): Boolean {
     if (visibleKinds.isEmpty() || mask == 0L) return true
     return visibleKinds.any { kind ->
@@ -2305,6 +2622,10 @@ internal class RenderSceneFilamentHostView(
         0f, 0f, 0f, 1f,
       ),
     )
+  }
+
+  private fun resetImportedMeshEdgeBudget() {
+    importedMeshEdgeBudgetRemaining = IMPORTED_MESH_EDGE_SEGMENT_BUDGET
   }
 
   private fun rebuildScene() {
@@ -2354,6 +2675,7 @@ internal class RenderSceneFilamentHostView(
     val faceChunks = linkedMapOf<FaceBatchKey, MutableList<Pair<SceneObject, GeometryData>>>()
     val instanceChunks = linkedMapOf<InstanceFaceKey, MutableList<Triple<SceneObject, GeometryData, NormalizedInstanceGeometry>>>()
     val edgeChunks = linkedMapOf<EdgeBatchKey, MutableList<GeometryData>>()
+    resetImportedMeshEdgeBudget()
     for (objectData in objects) {
       try {
         val geometry = objectGeometry(objectData) ?: continue
@@ -2412,9 +2734,6 @@ internal class RenderSceneFilamentHostView(
     if (projectionMode == "isometric") {
       createGridBatch(engine, scene, sceneState)
     }
-    if (projectionMode == "isometric" && shadowsEnabled && sunLightEntity == null) {
-      createStaticShadowBatch(engine, scene, sceneState)
-    }
     if (projectionMode == "isometric" && shadowsEnabled) {
       createGroundReceiver(engine, scene, sceneState)
     }
@@ -2442,6 +2761,7 @@ internal class RenderSceneFilamentHostView(
     // when switching between plan and 3D so the lighter top-down geometry is
     // actually regenerated.
     edgeGeometryCache.clear()
+    resetImportedMeshEdgeBudget()
 
     val wallJunctionElevations = sceneState.objects
       .filter { normalizeKind(it.kind) == "ceiling" || normalizeKind(it.kind) == "floor" }
@@ -2468,6 +2788,13 @@ internal class RenderSceneFilamentHostView(
 
   private fun materialForObject(objectData: SceneObject, fallback: Material): Material {
     val kind = normalizeKind(objectData.kind)
+    if (displayStyle == "solid") {
+      return if (kind == "window") {
+        solidWindowMaterial ?: fallback
+      } else {
+        solidMaterial ?: fallback
+      }
+    }
     if (kind == "window") return windowMaterial ?: fallback
     return when (kind) {
       "wall" -> if (objectData.metadata["wall_type_category"] == "Interior") {
@@ -2476,9 +2803,8 @@ internal class RenderSceneFilamentHostView(
         wallMaterial ?: fallback
       }
       "door" -> woodMaterial ?: fallback
-      // Solid keeps the simple material for non-architectural surfaces, but
-      // walls and doors retain their subtle pattern shaders in both display
-      // modes so the model does not become visually flat.
+      // IFC categories use the same small set of real Filament materials so
+      // the view stays consistent across imported and native scene objects.
       "floor" -> floorMaterial ?: fallback
       "roof" -> roofMaterial ?: fallback
       "slab", "column", "beam", "stair", "proxy" -> concreteMaterial ?: fallback
@@ -2492,17 +2818,54 @@ internal class RenderSceneFilamentHostView(
   }
 
   private fun displayBaseColor(objectData: SceneObject): FloatArray {
-    val isWindow = normalizeKind(objectData.kind) == "window"
+    val kind = normalizeKind(objectData.kind)
+    val isWindow = kind == "window"
     return if (displayStyle == "solid") {
       val surface = when (viewportTheme) {
         "standardDark" -> 0.34f
         "amoledBlack" -> 0.24f
-        else -> 0.98f
+        // Keep the light Revit-like solid appearance, but leave enough
+        // neutral contrast against the paper background for filled faces to
+        // remain obvious on a tablet.  Pure white made a valid surface pass
+        // look empty and was easily mistaken for wireframe.
+        else -> 0.82f
       }
       floatArrayOf(surface, surface, surface, if (isWindow) 0.30f else 1.0f)
     } else {
-      kindColor(normalizeKind(objectData.kind))
+      // Revit-like Lighting/Shaded view: neutral architectural surfaces let
+      // the sun establish the form, instead of dark category colors masking
+      // the light/shadow boundary. Dark viewport themes keep the same palette
+      // but scale it down so the model remains comfortable to read.
+      revitShadedColor(kind)
     }
+  }
+
+  private fun revitShadedColor(kind: String): FloatArray {
+    val base = when (kind) {
+      "wall" -> floatArrayOf(0.72f, 0.74f, 0.77f, 1.0f)
+      "door" -> floatArrayOf(0.34f, 0.36f, 0.39f, 1.0f)
+      "window" -> floatArrayOf(0.36f, 0.50f, 0.60f, 0.42f)
+      "slab" -> floatArrayOf(0.66f, 0.68f, 0.71f, 1.0f)
+      "floor" -> floatArrayOf(0.67f, 0.69f, 0.72f, 1.0f)
+      "ceiling" -> floatArrayOf(0.84f, 0.85f, 0.86f, 1.0f)
+      "roof" -> floatArrayOf(0.78f, 0.79f, 0.81f, 1.0f)
+      "column" -> floatArrayOf(0.62f, 0.65f, 0.69f, 1.0f)
+      "beam" -> floatArrayOf(0.58f, 0.61f, 0.65f, 1.0f)
+      "stair" -> floatArrayOf(0.70f, 0.72f, 0.75f, 1.0f)
+      "proxy" -> floatArrayOf(0.64f, 0.60f, 0.55f, 1.0f)
+      else -> floatArrayOf(0.68f, 0.70f, 0.73f, 1.0f)
+    }
+    val themeScale = when (viewportTheme) {
+      "standardDark" -> 0.62f
+      "amoledBlack" -> 0.52f
+      else -> 1.0f
+    }
+    return floatArrayOf(
+      base[0] * themeScale,
+      base[1] * themeScale,
+      base[2] * themeScale,
+      base[3],
+    )
   }
 
   private fun openingVisibleInPlan(kind: String): Boolean =
@@ -2516,8 +2879,210 @@ internal class RenderSceneFilamentHostView(
     (displayStyle == "solid" || displayStyle == "shaded") &&
       kindVisible(kind) && openingVisibleInPlan(kind)
 
+  private fun edgeVisible(key: EdgeBatchKey): Boolean =
+    (displayStyle == "solid" || displayStyle == "shaded") &&
+      // Native cache chunks are already a complete filled mesh. Their
+      // sampled edge batch is useful for the explicit Wireframe diagnostic
+      // view only; keeping it in Solid makes sampled tile boundaries read as
+      // a second wireframe over the surfaces.
+      (key.nativeKindMask == null) &&
+      (key.nativeKindMask?.let(::nativeCacheKindMaskVisible)
+        ?: kindVisible(key.kind)) &&
+      openingVisibleInPlan(key.kind)
+
   private fun baseColorForObject(objectData: SceneObject): FloatArray =
     kindColor(normalizeKind(objectData.kind))
+
+  private fun isImportedMeshObject(objectData: SceneObject): Boolean {
+    val rawKind = objectData.kind.trim().lowercase()
+    if (rawKind in EXTERNAL_MESH_KIND_ALIASES ||
+      rawKind.contains("fbx") ||
+      rawKind.contains("external") ||
+      rawKind.contains("mesh")
+    ) return true
+    if (objectData.metadata.any { (key, value) ->
+      val normalizedKey = key.trim().lowercase()
+      if (normalizedKey !in setOf(
+          "format",
+          "file_format",
+          "fileformat",
+          "source_format",
+          "sourceformat",
+          "import_format",
+          "importformat",
+          "source_type",
+          "sourcetype",
+        )) {
+        false
+      } else {
+        val normalizedValue = value.trim().lowercase()
+        normalizedValue.contains("fbx") || normalizedValue in setOf(
+          "obj",
+          "gltf",
+          "glb",
+          "mesh",
+          "external",
+        )
+      }
+    }) return true
+    // Some import adapters only preserve a source filename/URI and do not
+    // copy it into a canonical format field. Recognize that contract too,
+    // without treating ordinary BIM names as external meshes.
+    return objectData.metadata.values.any { value ->
+      val normalizedValue = value.trim().lowercase()
+      normalizedValue.contains(".fbx") ||
+        normalizedValue.contains("/fbx/") ||
+        normalizedValue.contains("\\fbx\\")
+    }
+  }
+
+  private fun importedMeshTriangleBudget(objectData: SceneObject): Int? {
+    val sourceTriangleCount = objectData.mesh.indices.size / 3
+    if (!isImportedMeshObject(objectData) || sourceTriangleCount <= 0) {
+      return if ((currentScene?.objects?.size ?: 0) > 600) 16 else null
+    }
+    // Preserve all topology for ordinary-sized meshes. Only large external
+    // meshes use deterministic sampling for the edge overlay; the Filament
+    // face render still receives the original geometry unchanged.
+    return when {
+      sourceTriangleCount <= 4_096 -> null
+      sourceTriangleCount > 200_000 -> 256
+      sourceTriangleCount > 50_000 -> 512
+      else -> 1_024
+    }
+  }
+
+  private fun capGenericMeshEdges(
+    objectData: SceneObject,
+    edges: List<NativeVisualEdge>,
+  ): List<NativeVisualEdge> {
+    if (normalizeKind(objectData.kind) != "proxy") return edges
+    val sceneObjectCount = currentScene?.objects?.size ?: 0
+    val perObjectLimit = if (sceneObjectCount > 600) {
+      IMPORTED_MESH_EDGE_SEGMENT_LIMIT_LARGE_SCENE
+    } else {
+      IMPORTED_MESH_EDGE_SEGMENT_LIMIT_SMALL_SCENE
+    }
+    val allowed = min(perObjectLimit, importedMeshEdgeBudgetRemaining)
+    if (allowed <= 0) return emptyList()
+    val capped = if (edges.size <= allowed) {
+      edges
+    } else {
+      // Sharp edges are the useful architectural/model contours. Keep them
+      // first, then fill the remainder with boundary edges in source order.
+      (edges.filter { it.sharp } + edges.filterNot { it.sharp })
+        .take(allowed)
+    }
+    importedMeshEdgeBudgetRemaining -= capped.size
+    return capped
+  }
+
+  private fun capNativeCacheEdges(edges: List<NativeVisualEdge>): List<NativeVisualEdge> {
+    val allowed = min(512, nativeCacheEdgeBudgetRemaining)
+    if (allowed <= 0) return emptyList()
+    val capped = if (edges.size <= allowed) {
+      edges
+    } else {
+      (edges.filter { it.sharp } + edges.filterNot { it.sharp }).take(allowed)
+    }
+    nativeCacheEdgeBudgetRemaining -= capped.size
+    return capped
+  }
+
+  /**
+   * Builds a small edge-only view of a streamed cache chunk. The face chunk
+   * keeps its direct native buffers and its cache transform; this temporary
+   * CPU view only decodes the triangles needed for linework and uploads a
+   * separate, already-transformed edge mesh.
+   */
+  private fun nativeCacheEdgeGeometry(chunk: NativeBimCacheChunk): GeometryData? {
+    if (nativeCacheEdgeBudgetRemaining <= 0) return null
+    val vertexCount = chunk.positions.capacity() / 12
+    val indexCount = chunk.indices.capacity()
+    if (vertexCount <= 0 || indexCount < 3) return null
+
+    val positionBuffer = chunk.positions.duplicate()
+      .order(ByteOrder.nativeOrder())
+      .apply { rewind() }
+    val indexBuffer = chunk.indices.duplicate().apply { rewind() }
+    val sourceTriangleCount = indexCount / 3
+    val stride = max(
+      1,
+      (sourceTriangleCount + NATIVE_CACHE_EDGE_TRIANGLE_BUDGET - 1) /
+        NATIVE_CACHE_EDGE_TRIANGLE_BUDGET,
+    )
+    val points = mutableListOf<ScenePoint>()
+    val localBySourceIndex = hashMapOf<Int, Int>()
+
+    fun readPoint(sourceIndex: Int): ScenePoint? {
+      if (sourceIndex !in 0 until vertexCount) return null
+      val existing = localBySourceIndex[sourceIndex]
+      if (existing != null) return points[existing]
+      val byteOffset = sourceIndex * 12
+      val point = ScenePoint(
+        positionBuffer.getFloat(byteOffset).toDouble(),
+        positionBuffer.getFloat(byteOffset + 4).toDouble(),
+        positionBuffer.getFloat(byteOffset + 8).toDouble(),
+      )
+      if (!point.x.isFinite() || !point.y.isFinite() || !point.z.isFinite()) return null
+      val transformed = toFilamentPoint(point)
+      val localIndex = points.size
+      points.add(transformed)
+      localBySourceIndex[sourceIndex] = localIndex
+      return transformed
+    }
+
+    val triangles = mutableListOf<IntArray>()
+    for (triangleIndex in 0 until sourceTriangleCount) {
+      if (stride > 1 && triangleIndex % stride != 0 && triangleIndex != sourceTriangleCount - 1) {
+        continue
+      }
+      val offset = triangleIndex * 3
+      val firstSource = indexBuffer.get(offset)
+      val secondSource = indexBuffer.get(offset + 1)
+      val thirdSource = indexBuffer.get(offset + 2)
+      val first = readPoint(firstSource) ?: continue
+      val second = readPoint(secondSource) ?: continue
+      val third = readPoint(thirdSource) ?: continue
+      val abX = second.x - first.x
+      val abY = second.y - first.y
+      val abZ = second.z - first.z
+      val acX = third.x - first.x
+      val acY = third.y - first.y
+      val acZ = third.z - first.z
+      val crossX = abY * acZ - abZ * acY
+      val crossY = abZ * acX - abX * acZ
+      val crossZ = abX * acY - abY * acX
+      if (crossX * crossX + crossY * crossY + crossZ * crossZ <= 1.0e-16) continue
+      triangles.add(
+        intArrayOf(
+          localBySourceIndex[firstSource] ?: continue,
+          localBySourceIndex[secondSource] ?: continue,
+          localBySourceIndex[thirdSource] ?: continue,
+        ),
+      )
+    }
+    if (points.isEmpty() || triangles.isEmpty()) return null
+
+    val edgePoints: List<ScenePoint> = points
+    val edgeTriangles: List<IntArray> = triangles
+    // The sampled cache pass is intentionally not allowed to promote an
+    // unpaired triangle edge into a visible border.  Sampling breaks the
+    // adjacency table, so treating every one-use edge as a boundary creates
+    // a dotted box around the whole streamed tile and makes Solid look like
+    // a wireframe.  Real BIM boundaries remain available through the semantic
+    // selection overlay; this GPU pass is only for meaningful creases.
+    val edges = meshFeatureEdges(points, triangles, includeBoundaryEdges = false)
+      // A sampled triangle soup can only prove a real crease when the same
+      // welded edge is shared by at least two sampled faces.  One-use edges
+      // are sampling artefacts here, not reliable architectural boundaries.
+      .filter { it.triangleIndices.size >= 2 }
+    // A smooth chunk without a crease edge is still valid geometry. Never
+    // substitute its full bounds with a misleading giant wireframe.
+    if (edges.isEmpty()) return null
+    val boundedEdges = capNativeCacheEdges(edges)
+    return edgeGeometry(edgePoints, boundedEdges, edgeTriangles)
+  }
 
   private fun edgeGeometryFor(
     objectData: SceneObject,
@@ -2525,15 +3090,6 @@ internal class RenderSceneFilamentHostView(
     wallJunctionElevations: List<Double>,
   ): GeometryData? {
     val kind = normalizeKind(objectData.kind)
-    // Large IFC coordination files can contain thousands of tiny proxy
-    // objects (fasteners, accessories and void markers). Their face geometry
-    // remains in the interactive scene, but generating a second feature-edge
-    // mesh for every proxy blocks the Android UI thread and provides no useful
-    // architectural linework at fit-to-model scale. Keep edges for the real
-    // architectural categories and for small scenes where they are useful.
-    if (kind == "proxy" && (currentScene?.objects?.size ?: 0) >= 256) {
-      return null
-    }
     // In orbit view floors/ceilings are surfaces, not architectural linework.
     // Their coplanar borders were being depth-tested as repeated heavy storey
     // bands and could flicker while orbiting. Columns keep only their vertical
@@ -2590,9 +3146,10 @@ internal class RenderSceneFilamentHostView(
     } else {
       stableSectionEdges
     }
+    val boundedEdges = capGenericMeshEdges(objectData, stableColumnEdges)
     val generated = edgeGeometry(
       points,
-      stableColumnEdges,
+      boundedEdges,
       triangles,
       wallJunctionEdges = wallEdges && isSectionLike,
       wallJunctionElevations = relevantJunctions,
@@ -2897,7 +3454,7 @@ internal class RenderSceneFilamentHostView(
         .geometry(0, PrimitiveType.TRIANGLES, vertexBuffer, indexBuffer, 0, geometry.indexCount)
         .material(0, materialInstance)
         .build(engine, entity)
-      val visible = edgeVisible(key.kind)
+      val visible = edgeVisible(key)
       if (visible) scene.addEntity(entity)
       edgeBatches.add(
         EdgeBatchEntry(
@@ -3005,6 +3562,12 @@ internal class RenderSceneFilamentHostView(
     sceneState: SceneState,
   ) {
     destroyGridBatch(engine, scene)
+    // Native IFC caches already contain the complete building/site payload.
+    // A 50 m helper grid is useful for authoring primitives, but around a
+    // streamed imported model its projected outer lines read like a second
+    // wireframe/bounding cage at fit-to-view scale. Keep the cache view clean;
+    // the grid remains available for the lightweight authoring scene.
+    if (nativeBimCache != null) return
     val gridMaterial = gridMaterial ?: return
     if (sceneState.objects.isEmpty()) return
     val allBounds = sceneState.objects
@@ -3022,30 +3585,36 @@ internal class RenderSceneFilamentHostView(
     val lineIndices = mutableListOf<Int>()
     val lineHalfWidth = 0.012
 
-    fun addVerticalLine(x: Double) {
+    fun addVerticalLine(x: Double, halfSpan: Double) {
       val base = lineVertices.size / 3
-      lineVertices += (x - lineHalfWidth).toFloat(); lineVertices += groundY.toFloat(); lineVertices += minZ.toFloat()
-      lineVertices += (x + lineHalfWidth).toFloat(); lineVertices += groundY.toFloat(); lineVertices += minZ.toFloat()
-      lineVertices += (x + lineHalfWidth).toFloat(); lineVertices += groundY.toFloat(); lineVertices += maxZ.toFloat()
-      lineVertices += (x - lineHalfWidth).toFloat(); lineVertices += groundY.toFloat(); lineVertices += maxZ.toFloat()
+      lineVertices += (x - lineHalfWidth).toFloat(); lineVertices += groundY.toFloat(); lineVertices += (centerZ - halfSpan).toFloat()
+      lineVertices += (x + lineHalfWidth).toFloat(); lineVertices += groundY.toFloat(); lineVertices += (centerZ - halfSpan).toFloat()
+      lineVertices += (x + lineHalfWidth).toFloat(); lineVertices += groundY.toFloat(); lineVertices += (centerZ + halfSpan).toFloat()
+      lineVertices += (x - lineHalfWidth).toFloat(); lineVertices += groundY.toFloat(); lineVertices += (centerZ + halfSpan).toFloat()
       lineIndices += base; lineIndices += base + 2; lineIndices += base + 1
       lineIndices += base; lineIndices += base + 3; lineIndices += base + 2
     }
 
-    fun addHorizontalLine(z: Double) {
+    fun addHorizontalLine(z: Double, halfSpan: Double) {
       val base = lineVertices.size / 3
-      lineVertices += minX.toFloat(); lineVertices += groundY.toFloat(); lineVertices += (z - lineHalfWidth).toFloat()
-      lineVertices += maxX.toFloat(); lineVertices += groundY.toFloat(); lineVertices += (z - lineHalfWidth).toFloat()
-      lineVertices += maxX.toFloat(); lineVertices += groundY.toFloat(); lineVertices += (z + lineHalfWidth).toFloat()
-      lineVertices += minX.toFloat(); lineVertices += groundY.toFloat(); lineVertices += (z + lineHalfWidth).toFloat()
+      lineVertices += (centerX - halfSpan).toFloat(); lineVertices += groundY.toFloat(); lineVertices += (z - lineHalfWidth).toFloat()
+      lineVertices += (centerX + halfSpan).toFloat(); lineVertices += groundY.toFloat(); lineVertices += (z - lineHalfWidth).toFloat()
+      lineVertices += (centerX + halfSpan).toFloat(); lineVertices += groundY.toFloat(); lineVertices += (z + lineHalfWidth).toFloat()
+      lineVertices += (centerX - halfSpan).toFloat(); lineVertices += groundY.toFloat(); lineVertices += (z + lineHalfWidth).toFloat()
       lineIndices += base; lineIndices += base + 2; lineIndices += base + 1
       lineIndices += base; lineIndices += base + 3; lineIndices += base + 2
     }
 
-    var offset = -radius
-    while (offset <= radius + 0.001) {
-      addVerticalLine(centerX + offset)
-      addHorizontalLine(centerZ + offset)
+    // The grid is a navigation aid, not a bounding box. Clip every line to a
+    // circular 50 m working area; a square line extent creates four apparent
+    // walls around the model at fit-to-view scale and looks like wireframe.
+    var offset = -radius + 1.0
+    while (offset <= radius - 1.0 + 0.001) {
+      val halfSpan = kotlin.math.sqrt((radius * radius - offset * offset).coerceAtLeast(0.0))
+      if (halfSpan >= 0.25) {
+        addVerticalLine(centerX + offset, halfSpan)
+        addHorizontalLine(centerZ + offset, halfSpan)
+      }
       offset += 1.0
     }
     val vertexData = ByteBuffer.allocateDirect(lineVertices.size * Float.SIZE_BYTES)
@@ -3101,7 +3670,11 @@ internal class RenderSceneFilamentHostView(
       .geometry(0, PrimitiveType.TRIANGLES, vertexBuffer, indexBuffer, 0, lineIndices.size)
       .material(0, materialInstance)
       .build(engine, entity)
-    val attached = projectionMode == "isometric"
+    // Solid is the primary coordination view. Keep its background clean so
+    // the model's filled surfaces are never mistaken for a wireframe. The
+    // optional working grid remains available in Shaded, where it reads as a
+    // navigation aid rather than an architectural edge pass.
+    val attached = projectionMode == "isometric" && displayStyle != "solid"
     if (attached) scene.addEntity(entity)
     gridBatch = GridBatchEntry(
       entity = entity,
@@ -3267,9 +3840,10 @@ internal class RenderSceneFilamentHostView(
     Log.i(TAG, "Baked shadow mesh: polygons=${polygons.size}, vertices=${vertices.size}, triangles=${indices.size / 3}")
   }
 
-  private fun staticShadowVisible(): Boolean =
-    viewportTheme == "light" && shadowsEnabled && sunLightEntity == null &&
-      projectionMode == "isometric" && displayStyle != "wireframe"
+  // Never show the old baked silhouette. It was a visual approximation and
+  // looked like a shadow sticker when the camera moved. Real shadows come
+  // only from the Filament sun and the receiving ground plane now.
+  private fun staticShadowVisible(): Boolean = false
 
   private fun combineGeometry(geometries: List<GeometryData>): GeometryData? {
     if (geometries.isEmpty()) return null
@@ -4017,6 +4591,13 @@ internal class RenderSceneFilamentHostView(
 
   private fun syncVisibility() {
     val scene = scene ?: return
+    // Cache edge prisms are an opt-in Wireframe diagnostic. A streamed chunk
+    // can finish after a style change, so enforce this invariant here as well
+    // as in the upload path; otherwise a late chunk could leave dotted edges
+    // over Solid until the next full scene rebuild.
+    if (nativeBimCache != null && displayStyle != "wireframe" && edgeBatches.isNotEmpty()) {
+      engine?.let { destroyEdgeBatches(it, scene) }
+    }
     for (entry in renderables.values) {
       val visible = faceVisible(entry.objectData)
       if (visible && !entry.attached) {
@@ -4052,7 +4633,7 @@ internal class RenderSceneFilamentHostView(
     // feedback remains in NativeSelectionOverlay, so one border batch can
     // safely represent many BIM elements without losing per-object picking.
     for (batch in edgeBatches) {
-      val visible = edgeVisible(batch.key.kind)
+      val visible = edgeVisible(batch.key)
       if (visible && !batch.attached) {
         scene.addEntity(batch.entity)
         batch.attached = true
@@ -4062,7 +4643,7 @@ internal class RenderSceneFilamentHostView(
       }
     }
     gridBatch?.let { batch ->
-      val visible = projectionMode == "isometric"
+      val visible = projectionMode == "isometric" && displayStyle != "solid"
       if (visible && !batch.attached) {
         scene.addEntity(batch.entity)
         batch.attached = true
@@ -5008,19 +5589,21 @@ internal class RenderSceneFilamentHostView(
 
   private fun kindColor(kind: String): FloatArray {
     return when (kind) {
-      "wall" -> floatArrayOf(0.58f, 0.61f, 0.66f, 1f)
-      "door" -> floatArrayOf(0.12f, 0.35f, 0.92f, 1f)
-      "window" -> floatArrayOf(0.08f, 0.58f, 0.92f, 0.30f)
-      "slab" -> floatArrayOf(0.57f, 0.63f, 0.71f, 1f)
-      "floor" -> floatArrayOf(0.62f, 0.42f, 0.23f, 1f)
-      "ceiling" -> floatArrayOf(0.91f, 0.90f, 0.86f, 1f)
-      "roof" -> floatArrayOf(0.48f, 0.16f, 0.10f, 1f)
-      "column" -> floatArrayOf(0.41f, 0.45f, 0.52f, 1f)
-      "beam" -> floatArrayOf(0.30f, 0.36f, 0.42f, 1f)
-      "stair" -> floatArrayOf(0.50f, 0.34f, 0.76f, 1f)
-      "room" -> floatArrayOf(0.13f, 0.74f, 0.53f, 1f)
-      "proxy" -> floatArrayOf(0.68f, 0.46f, 0.18f, 1f)
-      else -> floatArrayOf(0.42f, 0.47f, 0.56f, 1f)
+      // Muted architectural palette: the categories remain distinguishable
+      // without saturated blue/purple/green faces overwhelming the model.
+      "wall" -> floatArrayOf(0.50f, 0.53f, 0.57f, 1f)
+      "door" -> floatArrayOf(0.30f, 0.18f, 0.10f, 1f)
+      "window" -> floatArrayOf(0.16f, 0.40f, 0.54f, 0.38f)
+      "slab" -> floatArrayOf(0.44f, 0.48f, 0.53f, 1f)
+      "floor" -> floatArrayOf(0.46f, 0.32f, 0.20f, 1f)
+      "ceiling" -> floatArrayOf(0.68f, 0.68f, 0.64f, 1f)
+      "roof" -> floatArrayOf(0.28f, 0.14f, 0.11f, 1f)
+      "column" -> floatArrayOf(0.40f, 0.44f, 0.49f, 1f)
+      "beam" -> floatArrayOf(0.32f, 0.37f, 0.42f, 1f)
+      "stair" -> floatArrayOf(0.46f, 0.48f, 0.53f, 1f)
+      "room" -> floatArrayOf(0.26f, 0.43f, 0.35f, 0.18f)
+      "proxy" -> floatArrayOf(0.42f, 0.32f, 0.20f, 1f)
+      else -> floatArrayOf(0.40f, 0.45f, 0.50f, 1f)
     }
   }
 
@@ -5029,28 +5612,72 @@ internal class RenderSceneFilamentHostView(
     // scenes, retaining a tiny deterministic sample here avoids rebuilding a
     // second triangle soup on the UI thread while Filament keeps its separate
     // runtime LOD geometry for rendering.
-    val overlayBudget = if ((currentScene?.objects?.size ?: 0) > 600) 16 else null
-    val meshGeometry = meshGeometryFor(objectData, overlayBudget)
-    val points = meshGeometry?.first ?: boxCorners(objectData.bounds).map(::toFilamentPoint)
-    val triangles = meshGeometry?.second ?: run {
+    val overlayBudget = importedMeshTriangleBudget(objectData)
+    // Legacy IFC detail proxies are intentionally represented by their bounds
+    // at city/campus scale. This keeps their newly restored outline path cheap;
+    // FBX/generic mesh objects still use the sampled source topology above.
+    val largeIfcProxy = normalizeKind(objectData.kind) == "proxy" &&
+      !isImportedMeshObject(objectData) &&
+      (currentScene?.objects?.size ?: 0) >= 256
+    val meshGeometry = if (largeIfcProxy) null else meshGeometryFor(objectData, overlayBudget)
+    val sourcePoints = meshGeometry?.first ?: boxCorners(objectData.bounds).map(::toFilamentPoint)
+    val sourceTriangles = meshGeometry?.second ?: run {
       listOf(
         intArrayOf(0, 1, 2), intArrayOf(0, 2, 3), intArrayOf(4, 6, 5), intArrayOf(4, 7, 6),
         intArrayOf(0, 4, 5), intArrayOf(0, 5, 1), intArrayOf(1, 5, 6), intArrayOf(1, 6, 2),
         intArrayOf(2, 6, 7), intArrayOf(2, 7, 4), intArrayOf(3, 7, 4), intArrayOf(3, 4, 0),
       )
     }
+    var points = sourcePoints
+    val triangles = sourceTriangles
+    var featureEdges = meshFeatureEdges(
+      sourcePoints,
+      sourceTriangles,
+      creaseDotThreshold = if (normalizeKind(objectData.kind) == "roof") 0.995 else 0.90,
+    )
+    // Some FBX exporters mark every surface smooth, leaving no boundary or
+    // crease in the geometric topology even though the model is valid. Keep
+    // a lightweight envelope outline as a readable fallback instead of
+    // making the imported model look like a flat, edge-less solid.
+    if (isImportedMeshObject(objectData) && featureEdges.isEmpty() && meshGeometry != null) {
+      val envelopePoints = boxCorners(objectData.bounds).map(::toFilamentPoint)
+      val offset = points.size
+      points = points + envelopePoints
+      val envelopeEdges = listOf(
+        0 to 1, 1 to 2, 2 to 3, 3 to 0,
+        4 to 5, 5 to 6, 6 to 7, 7 to 4,
+        0 to 4, 1 to 5, 2 to 6, 3 to 7,
+      ).map { (first, second) ->
+        NativeVisualEdge(
+          first = offset + first,
+          second = offset + second,
+          triangleIndices = intArrayOf(),
+          sharp = true,
+        )
+      }
+      featureEdges = envelopeEdges
+    }
+    val overlayEdges = if (isImportedMeshObject(objectData)) {
+      // The Filament edge prism remains the primary path. This bounded copy
+      // is only for external meshes whose internal edges are hidden by the
+      // face depth pass on some mobile GPUs. It keeps the overlay cheap even
+      // when an FBX contains a large amount of tessellation.
+      (featureEdges.filter { it.sharp } + featureEdges.filterNot { it.sharp })
+        .take(IMPORTED_MESH_EDGE_SEGMENT_LIMIT_SMALL_SCENE)
+    } else {
+      featureEdges
+    }
     return NativeVisualObject(
       elementId = objectData.elementId,
       kind = normalizeKind(objectData.kind),
       selectable = objectData.selectable,
-      metadata = objectData.metadata.mapValues { (_, value) -> value },
+      metadata = buildMap {
+        putAll(objectData.metadata)
+        if (isImportedMeshObject(objectData)) put("external_mesh", "true")
+      },
       points = points,
       triangles = triangles,
-      featureEdges = meshFeatureEdges(
-        points,
-        triangles,
-        creaseDotThreshold = if (normalizeKind(objectData.kind) == "roof") 0.995 else 0.90,
-      ),
+      featureEdges = overlayEdges,
     )
   }
 
@@ -5058,6 +5685,7 @@ internal class RenderSceneFilamentHostView(
     points: List<ScenePoint>,
     triangles: List<IntArray>,
     creaseDotThreshold: Double = 0.90,
+    includeBoundaryEdges: Boolean = true,
   ): List<NativeVisualEdge> {
     data class PointKey(val x: Long, val y: Long, val z: Long)
     data class Edge(val first: Int, val second: Int)
@@ -5095,11 +5723,11 @@ internal class RenderSceneFilamentHostView(
     return usesByEdge.values.mapNotNull { uses ->
       // A crease must be visually meaningful. This suppresses triangulation
       // seams and tiny tessellation changes while retaining real BIM corners.
-      val feature = uses.size == 1 || uses.zipWithNext().any { (first, second) ->
+      val feature = (includeBoundaryEdges && uses.size == 1) || uses.zipWithNext().any { (first, second) ->
         normalDot(first.normal, second.normal) < creaseDotThreshold
       }
       if (!feature) return@mapNotNull null
-      val sharp = uses.size == 1 || uses.zipWithNext().any { (first, second) ->
+      val sharp = (includeBoundaryEdges && uses.size == 1) || uses.zipWithNext().any { (first, second) ->
         normalDot(first.normal, second.normal) < 0.35
       }
       NativeVisualEdge(
@@ -5149,6 +5777,7 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
   private var allObjects = emptyList<NativeVisualObject>()
   private var selectedIds = emptySet<Long>()
   private var activeId: Long? = null
+  private var visibleKinds = emptySet<String>()
   private var levels = emptyList<Pair<String, Double>>()
   private val openingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
     style = Paint.Style.STROKE
@@ -5186,6 +5815,7 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
   // face-facing tests) on the UI thread. Keep this overlay path reserved for
   // wireframe and explicit selection feedback.
   private var showObjectEdges = false
+  private var hasExternalMeshEdges = false
   private var sectionBoxEnabled = false
   private var sectionBoxMin = ScenePoint(0.0, 0.0, 0.0)
   private var sectionBoxMax = ScenePoint(0.0, 0.0, 0.0)
@@ -5206,6 +5836,13 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
     style = Paint.Style.STROKE
     color = Color.argb(155, 24, 39, 52)
     strokeWidth = context.resources.displayMetrics.density * 0.85f
+  }
+  private val externalOutline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    style = Paint.Style.STROKE
+    color = Color.argb(232, 28, 45, 55)
+    strokeWidth = context.resources.displayMetrics.density * 1.35f
+    strokeCap = Paint.Cap.SQUARE
+    strokeJoin = Paint.Join.MITER
   }
   private val selectedOutline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
     style = Paint.Style.STROKE
@@ -5294,8 +5931,15 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
     // Keep coverage across every building at city scale. Sampling avoids line
     // soup but never makes a campus fall back to an unannotated old view.
     val stride = max(1, (value.size + 649) / 650)
+    hasExternalMeshEdges = value.any {
+      it.metadata["external_mesh"] == "true" && it.metadata["native_cache"] != "true"
+    }
     allObjects = value
-    objects = value.filterIndexed { index, _ -> index % stride == 0 }
+    val sampledObjects = value.filterIndexed { index, _ -> index % stride == 0 }
+    val externalObjects = value.filter { it.metadata["external_mesh"] == "true" }
+    // A large scene may be sampled for the lightweight Canvas overlay. Never
+    // let that sampling omit the imported mesh that the user is inspecting.
+    objects = (sampledObjects + externalObjects).distinctBy { it.elementId ?: it.hashCode().toLong() }
     planOpeningSpecs = buildPlanOpeningSpecs(value)
     levels = levelValues
     sceneBounds = bounds
@@ -5547,6 +6191,8 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
   fun clearVisualScene() {
     objects = emptyList()
     allObjects = emptyList()
+    hasExternalMeshEdges = false
+    visibleKinds = emptySet()
     planOpeningSpecs = emptyList()
     levels = emptyList()
     invalidate()
@@ -5566,13 +6212,21 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
     // line width is density-aware, unlike GPU line primitives on Android.
     // Solid borders are a depth-tested Filament mesh. The overlay is retained
     // for Wire and selected-object feedback only.
-    showObjectEdges = style == "wireframe"
+    // External mesh imports need a small screen-space fallback because their
+    // Filament edge prisms can be depth-occluded by coplanar FBX faces on
+    // mobile drivers. Architectural BIM edges stay GPU-only for performance.
+    showObjectEdges = style == "wireframe" || hasExternalMeshEdges
     outline.color = when (style) {
       "wireframe" -> Color.argb(225, 18, 30, 42)
       "solid" -> Color.argb(170, 37, 51, 65)
       else -> Color.TRANSPARENT
     }
     outline.strokeWidth = resources.displayMetrics.density * if (wireframe) 1.45f else 1.6f
+    invalidate()
+  }
+
+  fun setVisibleKinds(kinds: Set<String>) {
+    visibleKinds = kinds.map(::normalizeKind).toSet()
     invalidate()
   }
 
@@ -5583,6 +6237,7 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
     }
     val dark = viewportTheme != "light"
     outline.color = if (dark) Color.argb(210, 218, 226, 231) else Color.argb(155, 24, 39, 52)
+    externalOutline.color = if (dark) Color.argb(235, 226, 235, 238) else Color.argb(232, 28, 45, 55)
     openingPaint.color = if (dark) Color.rgb(220, 228, 232) else Color.rgb(17, 24, 39)
     windowPaint.color = if (dark) Color.rgb(190, 211, 219) else Color.rgb(17, 24, 39)
     openingCutPaint.color = if (dark) {
@@ -5672,15 +6327,31 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
   private fun drawAuthoringEdges(canvas: Canvas) {
     if (width <= 1 || height <= 1) return
     for (objectData in objects) {
+      if (visibleKinds.isNotEmpty() &&
+        !visibleKinds.contains(normalizeKind(objectData.kind))
+      ) continue
       val selected = objectData.elementId != null && selectedIds.contains(objectData.elementId)
-      if (!showObjectEdges && !selected) continue
+      val externalMesh = objectData.metadata["external_mesh"] == "true"
+      // The Android overlay is a semantic interaction layer, not a second
+      // renderer. In Solid/Shaded it must never paint native-cache bounds:
+      // those envelopes are not architectural edges and make filled IFC
+      // models look like wireframe. External mesh imports are different: an
+      // FBX/OBJ/GLB often has smooth or split topology, so its bounded,
+      // deterministic feature-edge fallback is the only lightweight way to
+      // preserve a readable model outline on tablet GPUs. Keep that fallback
+      // enabled only for explicitly identified external meshes.
+      if (!wireframe && !selected && (!externalMesh || !showObjectEdges)) continue
       // Do not project sampled geometry for the normal path. Filament already
       // owns the batched architectural edges; this Android overlay is only
       // needed for wireframe or selected-object feedback.
       val projected = objectData.points.map(::project)
-      val edgePaint = if (selected) selectedOutline else outline
+      val edgePaint = when {
+        selected -> selectedOutline
+        externalMesh -> externalOutline
+        else -> outline
+      }
       for (edge in objectData.featureEdges) {
-        if (!wireframe && !selected && !isVisibleSolidEdge(objectData, edge)) continue
+        if (!wireframe && !selected && !externalMesh && !isVisibleSolidEdge(objectData, edge)) continue
         val first = projected.getOrNull(edge.first)
         val second = projected.getOrNull(edge.second)
         if (first != null && second != null) {

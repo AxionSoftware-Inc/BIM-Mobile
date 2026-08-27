@@ -532,12 +532,13 @@ void pick_chunk(
 
 struct ChunkKey {
     std::uint64_t level_id{};
+    ApiElementKind kind{ApiElementKind::Unknown};
     std::string material_category{};
     std::int32_t tile_x{};
     std::int32_t tile_y{};
 
     [[nodiscard]] auto as_tuple() const {
-        return std::tie(level_id, material_category, tile_x, tile_y);
+        return std::tie(level_id, kind, material_category, tile_x, tile_y);
     }
 
     bool operator<(const ChunkKey& other) const {
@@ -672,6 +673,7 @@ BimCacheSceneDTO compile(
         const auto center = bounds_center(object.bounds);
         const ChunkKey key{
             .level_id = object.level_id.value,
+            .kind = object.kind,
             .material_category = object.material_category.empty() ? "generic" : object.material_category,
             .tile_x = static_cast<std::int32_t>(std::floor(center.x / policy.seed_tile_size_meters)),
             .tile_y = static_cast<std::int32_t>(std::floor(center.y / policy.seed_tile_size_meters)),

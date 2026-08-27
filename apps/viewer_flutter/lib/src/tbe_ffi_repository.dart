@@ -10,7 +10,8 @@ class ViewerRepository
         ViewerAuthoringGateway,
         ViewerBimRuntimeCacheGateway,
         ViewerEngineSession,
-        ViewerSceneGateway {
+        ViewerSceneGateway,
+        ViewerPrimarySceneGateway {
   ViewerRepository(this._api);
 
   final TbeViewerApi _api;
@@ -339,6 +340,10 @@ class ViewerRepository
       _sceneQueries.currentRenderScene();
 
   @override
+  Future<RenderSceneLoadResult> currentPrimaryRenderScene() =>
+      _sceneQueries.currentPrimaryRenderScene();
+
+  @override
   Future<RenderSceneLoadResult> sectionScene(
     RenderScenePoint start,
     RenderScenePoint end,
@@ -377,7 +382,13 @@ class ViewerRepository
           wall.levelId;
       final topLevelId =
           int.tryParse(wall.metadata['top_level_id']?.toString() ?? '') ?? 0;
-      if (baseLevelId == null || topLevelId != 0 || heightMode == 'TopLevel') {
+      // Only repair genuinely legacy snapshots that have no height-mode
+      // metadata. An explicit Unconnected wall is a valid authoring choice
+      // and must not be silently converted to a top-level constraint before
+      // every level move.
+      if (baseLevelId == null ||
+          topLevelId != 0 ||
+          heightMode?.isNotEmpty == true) {
         continue;
       }
       final base = scene.levelById(baseLevelId);

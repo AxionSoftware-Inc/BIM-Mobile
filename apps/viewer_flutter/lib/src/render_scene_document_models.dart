@@ -287,8 +287,33 @@ RenderSceneLoadResult parseRenderSceneJson(
       final level = RenderSceneLevel.fromJson(entry);
       if (level != null) {
         levels.add(level);
+      } else {
+        warnings.add('Skipped a malformed level record in $source.');
       }
     }
+  }
+  levels.sort((a, b) => a.elevationMeters.compareTo(b.elevationMeters));
+  final normalizedLevels = <RenderSceneLevel>[];
+  var previousLevelElevation = double.negativeInfinity;
+  for (final level in levels) {
+    var elevation = level.elevationMeters;
+    if (!elevation.isFinite) continue;
+    if (elevation <= previousLevelElevation + 1e-6) {
+      warnings.add(
+          'Adjusted duplicate or descending level elevation for ${level.name} in $source.');
+      elevation = previousLevelElevation.isFinite
+          ? previousLevelElevation + 3.0
+          : 0.0;
+    }
+    normalizedLevels.add(
+      RenderSceneLevel(
+        levelId: level.levelId,
+        name: level.name,
+        elevationMeters: elevation,
+        defaultWallHeightMeters: level.defaultWallHeightMeters,
+      ),
+    );
+    previousLevelElevation = elevation;
   }
 
   final materials = <RenderSceneMaterial>[];
@@ -405,9 +430,8 @@ RenderSceneLoadResult parseRenderSceneJson(
       indexCount: indexCount,
       bounds: derivedBounds,
       objects: objects,
-      levels: levels.isNotEmpty
-          ? (levels.toList()
-            ..sort((a, b) => a.elevationMeters.compareTo(b.elevationMeters)))
+      levels: normalizedLevels.isNotEmpty
+          ? normalizedLevels
           : _inferLevelsFromObjects(objects),
       materials: materials,
       sections: sections,
@@ -422,9 +446,22 @@ RenderSceneLoadResult parseRenderSceneJson(
 List<RenderSceneLevel> _inferLevelsFromObjects(
     List<RenderSceneObject> objects) {
   final levelIds = <int>{};
+  final elevationCandidates = <int, List<double>>{};
   for (final object in objects) {
     if (object.levelId != null) {
       levelIds.add(object.levelId!);
+      final metadataElevation = object.metadata['level_elevation_meters'] ??
+          object.metadata['levelElevationMeters'];
+      final explicitElevation = metadataElevation is num
+          ? metadataElevation.toDouble()
+          : double.tryParse(metadataElevation?.toString() ?? '');
+      final candidate = explicitElevation != null && explicitElevation.isFinite
+          ? explicitElevation
+          : object.bounds.min.z;
+      if (candidate.isFinite) {
+        elevationCandidates.putIfAbsent(object.levelId!, () => <double>[])
+          ..add(candidate);
+      }
     }
   }
   final sorted = levelIds.toList()..sort();
@@ -438,15 +475,33 @@ List<RenderSceneLevel> _inferLevelsFromObjects(
       ),
     ];
   }
-  return <RenderSceneLevel>[
-    for (final levelId in sorted)
+  var previousElevation = double.negativeInfinity;
+  final inferred = <RenderSceneLevel>[];
+  for (var index = 0; index < sorted.length; index += 1) {
+    final levelId = sorted[index];
+    final candidates = elevationCandidates[levelId] ?? const <double>[];
+    var elevation = candidates.isEmpty
+        ? index * 3.0
+        : candidates.reduce((left, right) => left < right ? left : right);
+    // Legacy snapshots often contain level ids but no level records and
+    // store every local mesh at z=0. Keep those levels usable and
+    // deterministic instead of stacking every inferred level together.
+    if (!elevation.isFinite || elevation <= previousElevation + 1e-6) {
+      elevation = previousElevation.isFinite
+          ? previousElevation + 3.0
+          : index * 3.0;
+    }
+    previousElevation = elevation;
+    inferred.add(
       RenderSceneLevel(
         levelId: levelId,
         name: 'Level $levelId',
-        elevationMeters: 0.0,
+        elevationMeters: elevation,
         defaultWallHeightMeters: 3.0,
       ),
-  ];
+    );
+  }
+  return inferred;
 }
 
 String normalizeSceneKind(String value) {
@@ -462,6 +517,27 @@ String normalizeSceneKind(String value) {
   }
   if (trimmed == 'opening') {
     return 'door';
+  }
+  // Imported external meshes share the native generic/proxy renderer. This
+  // keeps Flutter filtering, hit testing and the Filament edge pass in sync
+  // for FBX (and equivalent mesh) payloads.
+  if (<String>{
+    'fbx',
+    'fbxmesh',
+    'fbxmodel',
+    'fbximport',
+    'fbx_import',
+    'mesh',
+    'meshmodel',
+    'imported',
+    'importedmesh',
+    'importedmodel',
+    'model3d',
+    'external',
+    'externalmesh',
+    'foreignmesh',
+  }.contains(trimmed)) {
+    return 'proxy';
   }
   return trimmed;
 }

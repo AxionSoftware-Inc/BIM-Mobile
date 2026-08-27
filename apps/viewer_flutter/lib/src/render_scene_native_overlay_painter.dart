@@ -6,6 +6,7 @@ import 'render_scene_editor.dart';
 import 'render_scene_models.dart';
 import 'render_scene_viewport_projection.dart';
 import 'render_scene_viewport_types.dart';
+import 'tools/wall_authoring_geometry.dart';
 
 class NativeDraftOverlayPainter extends CustomPainter {
   NativeDraftOverlayPainter({
@@ -327,6 +328,36 @@ class NativeDraftOverlayPainter extends CustomPainter {
         ..color = const Color(0xFFE0F2FE)
         ..strokeWidth = 1.4,
     );
+    _drawWallLengthLabel(
+      canvas,
+      Offset((a.dx + b.dx) * 0.5, (a.dy + b.dy) * 0.5),
+      WallAuthoringGeometry.formatWallLengthMeters(start.distanceTo(end)),
+    );
+  }
+
+  void _drawWallLengthLabel(Canvas canvas, Offset midpoint, String text) {
+    final painter = TextPainter(
+      text: TextSpan(
+        text: text,
+        style: const TextStyle(
+          color: Color(0xFF0F172A),
+          fontSize: 12,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+      maxLines: 1,
+    )..layout();
+    final rect = Rect.fromCenter(
+      center: midpoint + const Offset(0, -22),
+      width: painter.width + 16,
+      height: painter.height + 10,
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(rect, const Radius.circular(7)),
+      Paint()..color = const Color(0xFFF8FAFC).withValues(alpha: 0.96),
+    );
+    painter.paint(canvas, rect.topLeft + const Offset(8, 5));
   }
 
   void _drawZoomedOutPlanWallGuides(

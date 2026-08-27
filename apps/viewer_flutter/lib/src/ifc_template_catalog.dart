@@ -47,18 +47,6 @@ const List<IfcTemplate> onlineIfcTemplates = <IfcTemplate>[
     sizeLabel: '10.6 MB',
   ),
   IfcTemplate(
-    id: 'openifc-primark',
-    title: 'PRIMARK building',
-    subtitle: 'Large retail building coordination sample',
-    meta: 'IFC · 12.9 MB · large building',
-    fileName: 'openifc-primark.ifc',
-    downloadUrl:
-        'https://openifcmodel.cs.auckland.ac.nz/api/download/20210221PRIMARK.ifc',
-    sourceUrl: 'https://openifcmodel.cs.auckland.ac.nz/Model/Details/226',
-    kind: IfcTemplateKind.building,
-    sizeLabel: '12.9 MB',
-  ),
-  IfcTemplate(
     id: 'openifc-wellness-center',
     title: 'Wellness Center',
     subtitle: 'Multi-storey wellness center building sample',

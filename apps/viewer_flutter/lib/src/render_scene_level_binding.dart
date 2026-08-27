@@ -40,9 +40,17 @@ class RenderSceneLevelBinding {
         continue;
       }
       final metadata = metadataOf(object);
-      final normalizedBaseId = toInt(metadata['base_level_id']) ?? baseId;
+      final metadataBaseId = toInt(metadata['base_level_id']);
+      final normalizedBaseId = metadataBaseId != null &&
+              elevations.containsKey(metadataBaseId)
+          ? metadataBaseId
+          : baseId;
       final explicitTopId = toInt(metadata['top_level_id']);
-      final normalizedTopId = explicitTopId != null && explicitTopId > 0
+      final normalizedTopId = explicitTopId != null &&
+              explicitTopId > 0 &&
+              elevations.containsKey(explicitTopId) &&
+              elevations[explicitTopId]! >
+                  elevations[normalizedBaseId]! + 1e-6
           ? explicitTopId
           : nearestHigherLevelId(
               levels: levels,
@@ -52,6 +60,9 @@ class RenderSceneLevelBinding {
       if (normalizedTopId != null) {
         metadata['top_level_id'] = normalizedTopId.toString();
         metadata['height_mode'] = 'TopLevel';
+      } else {
+        metadata.remove('top_level_id');
+        metadata['height_mode'] = 'Unconnected';
       }
       metadata.putIfAbsent('level_locked', () => true);
       object['level_id'] = normalizedBaseId;
@@ -111,8 +122,27 @@ class RenderSceneLevelBinding {
   static int? levelId(Map<String, Object?> object) =>
       toInt(object['level_id']) ?? toInt(object['levelId']);
 
-  static double levelElevation(Map<String, Object?> level) =>
-      toDouble(level['elevation_meters']) ?? 0.0;
+  static double levelElevation(Map<String, Object?> level) {
+    final elevation = toDouble(level['elevation_meters']);
+    return elevation != null && elevation.isFinite ? elevation : 0.0;
+  }
+
+  static bool canUseElevation({
+    required List<Map<String, Object?>> levels,
+    required int targetLevelId,
+    required double elevationMeters,
+  }) {
+    if (!elevationMeters.isFinite) return false;
+    for (final level in levels) {
+      final otherId = levelId(level);
+      if (otherId != null &&
+          otherId != targetLevelId &&
+          (levelElevation(level) - elevationMeters).abs() <= 1e-6) {
+        return false;
+      }
+    }
+    return true;
+  }
 
   static Map<String, Object?> metadataOf(Map<String, Object?> object) {
     final raw = object['metadata'];

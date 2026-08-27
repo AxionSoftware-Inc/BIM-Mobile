@@ -30,6 +30,7 @@ class RenderSceneViewport extends StatefulWidget {
     this.onSceneDragStart,
     this.onSceneDragUpdate,
     this.onSceneDragEnd,
+    this.onSceneMultiTouchStart,
     this.onSceneSecondaryTap,
     this.onSceneHover,
     this.authoringPickKinds = const <String>{},
@@ -48,6 +49,7 @@ class RenderSceneViewport extends StatefulWidget {
   final ValueChanged<RenderSceneTapDetails>? onSceneDragStart;
   final ValueChanged<RenderSceneTapDetails>? onSceneDragUpdate;
   final ValueChanged<RenderSceneTapDetails>? onSceneDragEnd;
+  final VoidCallback? onSceneMultiTouchStart;
   final ValueChanged<RenderSceneTapDetails>? onSceneSecondaryTap;
   final ValueChanged<RenderSceneTapDetails>? onSceneHover;
   final Set<String> authoringPickKinds;
@@ -126,6 +128,7 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
         onSceneDragStart: widget.onSceneDragStart,
         onSceneDragUpdate: widget.onSceneDragUpdate,
         onSceneDragEnd: widget.onSceneDragEnd,
+        onSceneMultiTouchStart: widget.onSceneMultiTouchStart,
         onSceneSecondaryTap: widget.onSceneSecondaryTap,
         onSceneHover: widget.onSceneHover,
         authoringPickKinds: widget.authoringPickKinds,
@@ -154,6 +157,7 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
       onSceneDragStart: widget.onSceneDragStart,
       onSceneDragUpdate: widget.onSceneDragUpdate,
       onSceneDragEnd: widget.onSceneDragEnd,
+      onSceneMultiTouchStart: widget.onSceneMultiTouchStart,
       onSceneSecondaryTap: widget.onSceneSecondaryTap,
       onSceneHover: widget.onSceneHover,
       authoringPickKinds: widget.authoringPickKinds,

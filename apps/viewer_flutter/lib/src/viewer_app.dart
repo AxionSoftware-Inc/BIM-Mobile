@@ -120,6 +120,7 @@ class _ViewerHomePageState extends State<ViewerHomePage>
   String? _statusMessage;
   String? _loadError;
   bool _isBusy = false;
+  int _sceneLoadGeneration = 0;
   bool _isViewNavigationBusy = false;
   bool _projectHasChanges = false;
   bool _canUndo = false;
@@ -132,6 +133,10 @@ class _ViewerHomePageState extends State<ViewerHomePage>
   bool _showObjectList = true;
   bool _showDiagnostics = false;
   String? _engineLoadDiagnostic;
+  // Camera deltas are emitted for every gesture sample. Keep the workspace
+  // rebuild reserved for semantic viewport changes such as selection and
+  // level highlighting; pan/zoom is painted by the viewport itself.
+  String? _lastViewportUiSignature;
   int? _activeLevelId;
   RenderSceneSection? _activeSectionView;
   final ViewWorkspaceStore _viewWorkspace = ViewWorkspaceStore.standard();
@@ -166,10 +171,15 @@ class _ViewerHomePageState extends State<ViewerHomePage>
   WallMoveMode _wallMoveMode = WallMoveMode.translate;
   String? _editStatusMessage;
   bool _snapDraftToGrid = true;
+  bool _surfaceBoundaryMultiTouch = false;
   final List<String> _androidMutationTrace = <String>[];
   // Wall gestures can arrive before the previous engine mutation has
   // finished. Keep the commits ordered instead of dropping the next segment.
   Future<void> _wallCommitTail = Future<void>.value();
+  RenderScene? _wallSnapIndexScene;
+  WallSnapIndex? _wallSnapIndex;
+  int? _wallSnapIndexLevelId;
+  int? _wallSnapIndexExcludeWallId;
 
   RenderSceneObject? get _draftHostWall => _openingTool.hostWall;
   set _draftHostWall(RenderSceneObject? value) =>
@@ -464,5 +474,19 @@ class _ViewerHomePageState extends State<ViewerHomePage>
   }
 
   @override
-  Widget build(BuildContext context) => _buildWorkspace(context);
+  Widget build(BuildContext context) {
+    // A project session is hosted by the start screen. Intercept Android
+    // back here so the app-level navigator is never popped while a model is
+    // open; the existing save/discard flow owns the return to Start screen.
+    final canLeaveWorkspace = widget.onReturnToStart == null;
+    return PopScope<void>(
+      canPop: canLeaveWorkspace,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop && !canLeaveWorkspace) {
+          unawaited(_requestReturnToStart());
+        }
+      },
+      child: _buildWorkspace(context),
+    );
+  }
 }

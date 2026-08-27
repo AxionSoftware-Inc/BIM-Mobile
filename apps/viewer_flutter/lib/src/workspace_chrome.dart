@@ -602,6 +602,8 @@ class ViewportControlDeck extends StatelessWidget {
     required this.onDisplayStyleChanged,
     required this.shadowsEnabled,
     required this.onShadowsChanged,
+    required this.hdriVisible,
+    required this.onHdriChanged,
     required this.onOrbitStyleChanged,
     required this.onFit,
     required this.hasSectionBox,
@@ -616,6 +618,8 @@ class ViewportControlDeck extends StatelessWidget {
   final ValueChanged<RenderSceneDisplayStyle> onDisplayStyleChanged;
   final bool shadowsEnabled;
   final ValueChanged<bool> onShadowsChanged;
+  final bool hdriVisible;
+  final ValueChanged<bool> onHdriChanged;
   final ValueChanged<RenderSceneOrbitProjectionStyle> onOrbitStyleChanged;
   final VoidCallback onFit;
   final bool hasSectionBox;
@@ -674,6 +678,18 @@ class ViewportControlDeck extends StatelessWidget {
                 enabled: hasScene,
                 icon: shadowsEnabled ? Icons.wb_sunny_outlined : Icons.wb_sunny,
                 onPressed: () => onShadowsChanged(!shadowsEnabled),
+              ),
+            if (is3D)
+              _DeckIconButton(
+                tooltip: hdriVisible
+                    ? 'Hide HDRI background'
+                    : 'Show HDRI background',
+                selected: hdriVisible,
+                enabled: hasScene,
+                icon: hdriVisible
+                    ? Icons.landscape
+                    : Icons.landscape_outlined,
+                onPressed: () => onHdriChanged(!hdriVisible),
               ),
             if (is3D)
               _DeckIconButton(

@@ -144,6 +144,7 @@ class PlanSketchGeometry {
     required RenderScenePoint? referenceStart,
     Iterable<RenderScenePoint> candidatePoints = const <RenderScenePoint>[],
     bool useGridSnap = true,
+    double gridStepMeters = defaultGridStepMeters,
     bool constrainOrtho = true,
     bool lockElevationAxis = false,
     bool snapVertical = false,
@@ -152,7 +153,11 @@ class PlanSketchGeometry {
   }) {
     RenderScenePoint point;
     if (useGridSnap) {
-      point = snapToGrid(rawPoint, snapVertical: snapVertical);
+      point = snapToGrid(
+        rawPoint,
+        stepMeters: gridStepMeters,
+        snapVertical: snapVertical,
+      );
     } else {
       point = rawPoint;
     }

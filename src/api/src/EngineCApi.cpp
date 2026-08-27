@@ -1064,6 +1064,21 @@ TbeApiStatusCode tbe_get_render_scene_json(TbeEngineHandle* handle, char** out_j
     return copy_string_result(handle, handle->session->get_render_scene_json(), out_json);
 }
 
+TbeApiStatusCode tbe_get_render_scene_json_primary(
+    TbeEngineHandle* handle,
+    uint64_t active_level_id,
+    char** out_json
+) {
+    if (handle == nullptr || handle->session == nullptr || out_json == nullptr) {
+        return null_handle_error(handle);
+    }
+    return copy_string_result(
+        handle,
+        handle->session->get_render_scene_json_primary(active_level_id),
+        out_json
+    );
+}
+
 TbeApiStatusCode tbe_get_render_scene_json_near_level(
     TbeEngineHandle* handle,
     uint64_t active_level_id,

@@ -61,6 +61,13 @@ internal fun normalizeKind(value: String): String {
     "floorsystem" -> "floor"
     "ceilingsystem" -> "ceiling"
     "opening" -> "door"
+    // External mesh importers use several names for the same renderable
+    // category. Keep the viewport's visibility, material and edge passes on
+    // the single generic-mesh path instead of treating FBX as an unknown BIM
+    // category that gets filtered out by the architectural kind mask.
+    "fbx", "fbxmesh", "fbxmodel", "fbximport", "fbx_import", "mesh",
+    "meshmodel", "imported", "importedmesh", "importedmodel", "model3d",
+    "external", "externalmesh", "foreignmesh" -> "proxy"
     else -> if (trimmed.isEmpty()) "unknown" else trimmed
   }
 }
@@ -396,6 +403,11 @@ internal class RenderScenePlatformView(
 
       "setViewportTheme" -> {
         view.setViewportTheme(call.arguments as? String ?: "light")
+        result.success(null)
+      }
+
+      "setHdriVisible" -> {
+        view.setHdriVisible(call.arguments as? Boolean ?: false)
         result.success(null)
       }
 

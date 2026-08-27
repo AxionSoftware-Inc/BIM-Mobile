@@ -142,11 +142,18 @@ extension _ViewerViewportSurfaceEditing on _ViewerHomePageState {
   }
 
   RenderScenePoint _surfaceBoundarySnap(RenderScenePoint rawPoint) {
-    return _draftLinePoint(
-      rawPoint: rawPoint,
-      referenceStart: _draftSurfacePoints.lastOrNull,
-      useOrthogonalSnap: false,
-    );
+    final wallSnap = _wallSnapIndexFor();
+    if (wallSnap != null) {
+      final wallPoint = WallAuthoringGeometry.snapBoundaryPointToWalls(
+        rawPoint,
+        snapIndex: wallSnap,
+      );
+      if (wallPoint != null) return wallPoint;
+    }
+    // Boundary authoring must not fall back to a wall centre-line endpoint.
+    // If no inner/outer corner is close enough, keep only the existing grid
+    // rule and leave the point where the user actually drew it.
+    return _snapDraftToGrid ? _snapPoint(rawPoint) : rawPoint;
   }
 
   /// Starts one live, straight boundary segment. Only the first touch of the
@@ -279,6 +286,34 @@ extension _ViewerViewportSurfaceEditing on _ViewerHomePageState {
     );
   }
 
+  WallSnapIndex? _wallSnapIndexFor({int? excludeWallId}) {
+    final scene = _scene;
+    if (scene == null) return null;
+    var levelId = _activeLevelId;
+    if (excludeWallId != null) {
+      for (final object in scene.objects) {
+        if (object.kindKey == 'wall' && object.elementId == excludeWallId) {
+          levelId = object.levelId ?? levelId;
+          break;
+        }
+      }
+    }
+    if (_wallSnapIndexScene == scene &&
+        _wallSnapIndexLevelId == levelId &&
+        _wallSnapIndexExcludeWallId == excludeWallId) {
+      return _wallSnapIndex;
+    }
+    _wallSnapIndexScene = scene;
+    _wallSnapIndexLevelId = levelId;
+    _wallSnapIndexExcludeWallId = excludeWallId;
+    _wallSnapIndex = WallSnapIndex.fromScene(
+      scene,
+      levelId: levelId,
+      excludeWallId: excludeWallId,
+    );
+    return _wallSnapIndex;
+  }
+
   RenderScenePoint _draftLinePoint({
     required RenderScenePoint rawPoint,
     required RenderScenePoint? referenceStart,
@@ -297,6 +332,10 @@ extension _ViewerViewportSurfaceEditing on _ViewerHomePageState {
           _interactionMode == RenderSceneInteractionMode.addWall ||
               _interactionMode == RenderSceneInteractionMode.moveWall,
       excludeWallId: excludeWallId,
+      snapIndex: (_interactionMode == RenderSceneInteractionMode.addWall ||
+              _interactionMode == RenderSceneInteractionMode.moveWall)
+          ? _wallSnapIndexFor(excludeWallId: excludeWallId)
+          : null,
     );
   }
 

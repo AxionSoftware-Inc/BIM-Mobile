@@ -38,6 +38,22 @@ final class TbeSceneQueryRepository {
     return parseRenderSceneJson(json, source: source);
   }
 
+  Future<RenderSceneLoadResult> currentPrimaryRenderScene() async {
+    final handle = _requireHandle();
+    final levelId = _activeLevelId();
+    final timer = Stopwatch()..start();
+    final json = levelId > 0
+        ? _api.getRenderSceneJsonPrimary(handle, levelId)
+        : _api.getRenderSceneJson(handle);
+    timer.stop();
+    final source = levelId > 0
+        ? 'engine:primary active=$levelId · '
+            '${timer.elapsedMilliseconds} ms · ${json.length ~/ 1024} KiB'
+        : 'engine:primary full fallback · '
+            '${timer.elapsedMilliseconds} ms · ${json.length ~/ 1024} KiB';
+    return parseRenderSceneJson(json, source: source);
+  }
+
   Future<RenderSceneLoadResult> sectionScene(
     RenderScenePoint start,
     RenderScenePoint end,

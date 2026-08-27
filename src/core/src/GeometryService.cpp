@@ -201,7 +201,9 @@ void append_layer_prism(
     double y_max,
     double height,
     const std::vector<OpeningRectangle>& openings,
-    ElementId material_id
+    ElementId material_id,
+    bool wraps_openings,
+    bool wraps_ends
 ) {
     append_layer_face_with_openings(mesh, y_min, x_min_at_y_min, x_max_at_y_min, height, openings, material_id);
     append_layer_face_with_openings(mesh, y_max, x_min_at_y_max, x_max_at_y_max, height, openings, material_id);
@@ -218,59 +220,62 @@ void append_layer_prism(
         {x_min_at_y_min, y_min, 0.0}, {x_min_at_y_max, y_max, 0.0},
         {x_min_at_y_max, y_max, height}, {x_min_at_y_min, y_min, height}
     );
-    append_rect(
-        {x_max_at_y_min, y_min, 0.0}, {x_max_at_y_min, y_min, height},
-        {x_max_at_y_max, y_max, height}, {x_max_at_y_max, y_max, 0.0}
-    );
-    append_rect(
-        {x_min_at_y_min, y_min, 0.0}, {x_min_at_y_min, y_min, height},
-        {x_max_at_y_min, y_min, height}, {x_max_at_y_min, y_min, 0.0}
-    );
+    if (wraps_ends) {
+        append_rect(
+            {x_max_at_y_min, y_min, 0.0}, {x_max_at_y_min, y_min, height},
+            {x_max_at_y_max, y_max, height}, {x_max_at_y_max, y_max, 0.0}
+        );
+        append_rect(
+            {x_min_at_y_min, y_min, 0.0}, {x_min_at_y_min, y_min, height},
+            {x_max_at_y_min, y_min, height}, {x_max_at_y_min, y_min, 0.0}
+        );
+    }
     append_rect(
         {x_min_at_y_max, y_max, 0.0}, {x_max_at_y_max, y_max, 0.0},
         {x_max_at_y_max, y_max, height}, {x_min_at_y_max, y_max, height}
     );
 
-    // Every layer terminates at the opening, while finish layers become the
-    // visible jamb/head/sill return surfaces at their own material depth.
-    for (const auto& opening : openings) {
-        append_rect({opening.x_min, y_min, opening.z_min}, {opening.x_min, y_max, opening.z_min}, {opening.x_min, y_max, opening.z_max}, {opening.x_min, y_min, opening.z_max});
-        append_rect({opening.x_max, y_min, opening.z_min}, {opening.x_max, y_min, opening.z_max}, {opening.x_max, y_max, opening.z_max}, {opening.x_max, y_max, opening.z_min});
-        append_rect({opening.x_min, y_min, opening.z_min}, {opening.x_max, y_min, opening.z_min}, {opening.x_max, y_max, opening.z_min}, {opening.x_min, y_max, opening.z_min});
-        append_rect({opening.x_min, y_min, opening.z_max}, {opening.x_min, y_max, opening.z_max}, {opening.x_max, y_max, opening.z_max}, {opening.x_max, y_min, opening.z_max});
+    // Only layers configured to wrap openings receive jamb/head/sill return
+    // faces.  The analytical opening cut remains shared by every layer.
+    if (wraps_openings) {
+        for (const auto& opening : openings) {
+            append_rect({opening.x_min, y_min, opening.z_min}, {opening.x_min, y_max, opening.z_min}, {opening.x_min, y_max, opening.z_max}, {opening.x_min, y_min, opening.z_max});
+            append_rect({opening.x_max, y_min, opening.z_min}, {opening.x_max, y_min, opening.z_max}, {opening.x_max, y_max, opening.z_max}, {opening.x_max, y_max, opening.z_min});
+            append_rect({opening.x_min, y_min, opening.z_min}, {opening.x_max, y_min, opening.z_min}, {opening.x_max, y_max, opening.z_min}, {opening.x_min, y_max, opening.z_min});
+            append_rect({opening.x_min, y_min, opening.z_max}, {opening.x_min, y_max, opening.z_max}, {opening.x_max, y_max, opening.z_max}, {opening.x_max, y_min, opening.z_max});
+        }
     }
 }
 
 MeshBuffer build_layered_wall_mesh(
-    const WallProfile2D& profile,
+    const std::vector<WallProfile2D>& layer_profiles,
     double height_meters,
-    const std::vector<WallAssemblyLayer>& layers,
-    double total_thickness
+    const std::vector<WallAssemblyLayer>& layers
 ) {
     MeshBuffer mesh;
-    if (layers.empty()) {
+    if (layers.empty() || layer_profiles.size() != layers.size()) {
         return mesh;
     }
-    const auto interpolate_endpoint = [&](Point2 lower, Point2 upper, double y) {
-        const auto denominator = upper.y - lower.y;
-        if (std::abs(denominator) <= epsilon) {
-            return lower.x;
+    auto y = -std::accumulate(layers.begin(), layers.end(), 0.0, [](double total, const auto& layer) {
+        return total + layer.thickness_meters;
+    }) / 2.0;
+    for (std::size_t index = 0; index < layers.size(); ++index) {
+        const auto& layer = layers[index];
+        const auto& profile = layer_profiles[index];
+        if (profile.polygon.size() < 4) {
+            return {};
         }
-        const auto t = std::clamp((y - lower.y) / denominator, 0.0, 1.0);
-        return lower.x + ((upper.x - lower.x) * t);
-    };
-    auto y = -total_thickness / 2.0;
-    for (const auto& layer : layers) {
         const auto next_y = y + layer.thickness_meters;
-        const auto start_at_y = interpolate_endpoint(profile.polygon[0], profile.polygon[3], y);
-        const auto end_at_y = interpolate_endpoint(profile.polygon[1], profile.polygon[2], y);
-        const auto start_at_next_y = interpolate_endpoint(profile.polygon[0], profile.polygon[3], next_y);
-        const auto end_at_next_y = interpolate_endpoint(profile.polygon[1], profile.polygon[2], next_y);
+        // Each layer receives its own solved plan profile.  This is what
+        // makes a thin finish, an insulation layer and a structural core
+        // clean up independently at a joined endpoint instead of inheriting
+        // the envelope wall's mitre distance.
         append_layer_prism(
             mesh,
-            start_at_y, end_at_y,
-            start_at_next_y, end_at_next_y,
-            y, next_y, height_meters, profile.openings, layer.material_id
+            profile.polygon[0].x, profile.polygon[1].x,
+            profile.polygon[3].x, profile.polygon[2].x,
+            y, next_y, height_meters, profile.openings, layer.material_id,
+            layer.wraps_openings, layer.wraps_ends
         );
         y = next_y;
     }
@@ -477,9 +482,18 @@ GeneratedGeometry GeometryService::build_wall_geometry(
     const auto layer_thickness = std::accumulate(layers.begin(), layers.end(), 0.0, [](double total, const auto& layer) {
         return total + layer.thickness_meters;
     });
-    auto mesh = layers.empty() || layer_thickness <= epsilon
+    std::vector<WallProfile2D> layer_profiles;
+    if (!layers.empty() && layer_thickness > epsilon) {
+        layer_profiles.reserve(layers.size());
+        for (const auto& layer : layers) {
+            auto layer_wall = wall;
+            layer_wall.thickness_meters = layer.thickness_meters;
+            layer_profiles.push_back(build_wall_profile(layer_wall));
+        }
+    }
+    auto mesh = layer_profiles.empty()
         ? extrude_profile(profile, wall.height_meters)
-        : build_layered_wall_mesh(profile, wall.height_meters, layers, layer_thickness);
+        : build_layered_wall_mesh(layer_profiles, wall.height_meters, layers);
 
     for (auto& vertex : mesh.vertices) {
         vertex = to_world_point(vertex, wall.axis);

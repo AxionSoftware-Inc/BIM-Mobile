@@ -233,6 +233,16 @@ extension _ViewerViewCommands on _ViewerHomePageState {
     });
   }
 
+  Future<void> _setHdriVisible(bool visible) async {
+    await _viewportController.setHdriVisible(visible);
+    if (!mounted) return;
+    _updateViewportState(() {
+      _statusMessage = visible
+          ? 'HDRI background visible'
+          : 'HDRI background hidden; environment lighting remains active';
+    });
+  }
+
   Future<void> _showSectionBoxDialog() async {
     final bounds = _viewportController.sceneBounds;
     if (!bounds.isFinite || _projectionMode.is3D == false) return;

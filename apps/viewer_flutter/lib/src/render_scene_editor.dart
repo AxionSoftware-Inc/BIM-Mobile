@@ -89,6 +89,56 @@ class RenderSceneEditor {
 
     final map = _sceneMap(scene);
     final levels = _levelsFromSceneMap(map);
+    if (!RenderSceneLevelBinding.canUseElevation(
+      levels: levels,
+      targetLevelId: levelId,
+      elevationMeters: elevationMeters,
+    )) {
+      return scene;
+    }
+    final elevations = <int, double>{
+      for (final entry in levels)
+        if (RenderSceneLevelBinding.levelId(entry) != null)
+          RenderSceneLevelBinding.levelId(entry)!:
+              RenderSceneLevelBinding.levelElevation(entry),
+    };
+    elevations[levelId] = elevationMeters;
+    final initialObjects = _objectsFromSceneMap(map);
+    for (final object in initialObjects) {
+      final metadata = RenderSceneLevelBinding.metadataOf(object);
+      if (RenderSceneLevelBinding.kindKey(object) == 'wall' &&
+          (metadata['height_mode']?.toString().toLowerCase() == 'toplevel' ||
+              RenderSceneLevelBinding.toInt(metadata['top_level_id']) != null)) {
+        final baseId = RenderSceneLevelBinding.toInt(metadata['base_level_id']) ??
+            RenderSceneLevelBinding.levelId(object);
+        final topId = RenderSceneLevelBinding.toInt(metadata['top_level_id']);
+        if (baseId != null && topId != null &&
+            elevations.containsKey(baseId) && elevations.containsKey(topId)) {
+          final baseOffset = RenderSceneLevelBinding.toDouble(
+                metadata['base_offset_meters'],
+              ) ??
+              0.0;
+          final topOffset = RenderSceneLevelBinding.toDouble(
+                metadata['top_offset_meters'],
+              ) ??
+              0.0;
+          if (elevations[topId]! + topOffset <=
+              elevations[baseId]! + baseOffset + 1e-6) {
+            return scene;
+          }
+        }
+      }
+      if (RenderSceneLevelBinding.kindKey(object) == 'stair') {
+        final baseId = RenderSceneLevelBinding.toInt(metadata['base_level_id']) ??
+            RenderSceneLevelBinding.levelId(object);
+        final topId = RenderSceneLevelBinding.toInt(metadata['top_level_id']);
+        if (baseId != null && topId != null && topId != baseId &&
+            elevations.containsKey(baseId) && elevations.containsKey(topId) &&
+            elevations[topId]! <= elevations[baseId]! + 1e-6) {
+          return scene;
+        }
+      }
+    }
     for (final entry in levels) {
       final entryLevelId =
           _toInt(entry['level_id']) ?? _toInt(entry['levelId']);
@@ -185,8 +235,9 @@ class RenderSceneEditor {
             if (metadataMap != null)
               ...Map<String, Object?>.from(metadataMap.cast<String, Object?>()),
             'base_level_id': baseLevelId,
-            'top_level_id': topLevelId,
+            if (topLevelId != 0) 'top_level_id': topLevelId,
             if (topLevelId != 0) 'height_mode': 'TopLevel',
+            if (topLevelId == 0) 'height_mode': 'Unconnected',
           },
           revision: _toInt(object['revision']) ?? parsedObject.revision,
           materialCategory: object['material_category']?.toString() ??
@@ -231,9 +282,21 @@ class RenderSceneEditor {
     if (trimmedName.isEmpty) {
       return scene;
     }
+    if (!elevationMeters.isFinite ||
+        !defaultWallHeightMeters.isFinite ||
+        defaultWallHeightMeters <= 0.0) {
+      return scene;
+    }
     final map = _sceneMap(scene);
     final levels = _levelsFromSceneMap(map);
     final nextLevelId = _nextLevelId(levels);
+    if (!RenderSceneLevelBinding.canUseElevation(
+      levels: levels,
+      targetLevelId: nextLevelId,
+      elevationMeters: elevationMeters,
+    )) {
+      return scene;
+    }
     levels.add(
       <String, Object?>{
         'level_id': nextLevelId,
@@ -280,9 +343,6 @@ class RenderSceneEditor {
           levels: _levelsFromSceneMap(map),
           baseLevelId: resolvedLevelId,
         );
-    if (resolvedTopLevelId == null) {
-      return scene;
-    }
     final resolvedHeight = heightMeters <= 1e-6
         ? _levelDefaultWallHeightMeters(scene, resolvedLevelId)
         : heightMeters;
@@ -295,8 +355,9 @@ class RenderSceneEditor {
       levelId: resolvedLevelId,
       metadata: <String, Object?>{
         'base_level_id': resolvedLevelId.toString(),
-        'top_level_id': resolvedTopLevelId.toString(),
-        'height_mode': 'TopLevel',
+        if (resolvedTopLevelId != null)
+          'top_level_id': resolvedTopLevelId.toString(),
+        'height_mode': resolvedTopLevelId == null ? 'Unconnected' : 'TopLevel',
         'level_locked': true,
       },
     );

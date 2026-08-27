@@ -71,6 +71,167 @@ void registerAuthoringToolModuleTests() {
     );
   });
 
+  test('wall drawing quantizes freehand length to 10 mm and snap to 100 mm',
+      () {
+    const start = RenderScenePoint(x: 0, y: 0, z: 0);
+    final freehand = WallAuthoringGeometry.resolveLineEndpoint(
+      rawPoint: const RenderScenePoint(x: 5.532, y: 0.01, z: 0),
+      referenceStart: start,
+      scene: null,
+      activeLevelId: null,
+      snapToGrid: false,
+      projectionMode: RenderSceneProjectionMode.topDown,
+      useOrthogonalSnap: true,
+      wallOrthogonalSnap: true,
+    );
+    expect(freehand.x, closeTo(5.53, 1e-9));
+    expect(freehand.y, closeTo(0, 1e-9));
+    expect(
+      WallAuthoringGeometry.formatWallLengthMeters(5.532),
+      '5.53 m',
+    );
+
+    final snapped = WallAuthoringGeometry.resolveLineEndpoint(
+      rawPoint: const RenderScenePoint(x: 5.54, y: 0.01, z: 0),
+      referenceStart: start,
+      scene: null,
+      activeLevelId: null,
+      snapToGrid: true,
+      projectionMode: RenderSceneProjectionMode.topDown,
+      useOrthogonalSnap: true,
+      wallOrthogonalSnap: true,
+    );
+    expect(snapped.x, closeTo(5.5, 1e-9));
+    expect(snapped.y, closeTo(0, 1e-9));
+  });
+
+  test('wall drawing aligns distant corners on the active wall axis', () {
+    final index = WallSnapIndex(<WallSnapSegment>[
+      const WallSnapSegment(
+        elementId: 10,
+        levelId: 1,
+        start: RenderScenePoint(x: 8, y: 4, z: 0),
+        end: RenderScenePoint(x: 12, y: 4, z: 0),
+      ),
+    ]);
+    final resolved = WallAuthoringGeometry.resolveLineEndpoint(
+      rawPoint: const RenderScenePoint(x: 7.94, y: 0.10, z: 0),
+      referenceStart: const RenderScenePoint(x: 0, y: 0, z: 0),
+      scene: null,
+      activeLevelId: 1,
+      snapToGrid: false,
+      projectionMode: RenderSceneProjectionMode.topDown,
+      useOrthogonalSnap: true,
+      wallOrthogonalSnap: true,
+      snapIndex: index,
+    );
+
+    expect(resolved.x, closeTo(8, 1e-9));
+    expect(resolved.y, closeTo(0, 1e-9));
+  });
+
+  test('surface boundary snapping prioritizes nearby wall corners', () {
+    final index = WallSnapIndex(<WallSnapSegment>[
+      const WallSnapSegment(
+        elementId: 10,
+        levelId: 1,
+        start: RenderScenePoint(x: 0, y: 0, z: 0),
+        end: RenderScenePoint(x: 4, y: 0, z: 0),
+        thicknessMeters: 0.2,
+      ),
+      const WallSnapSegment(
+        elementId: 11,
+        levelId: 1,
+        start: RenderScenePoint(x: 4, y: 0, z: 0),
+        end: RenderScenePoint(x: 4, y: 4, z: 0),
+        thicknessMeters: 0.2,
+      ),
+    ]);
+
+    final corner = WallAuthoringGeometry.snapBoundaryPointToWalls(
+      const RenderScenePoint(x: 4.42, y: 0.08, z: 1.2),
+      snapIndex: index,
+    );
+    expect(corner, isNotNull);
+    expect(corner!.x, closeTo(4.1, 1e-9));
+    expect(corner.y, closeTo(0.1, 1e-9));
+    expect(corner.z, closeTo(1.2, 1e-9));
+
+    final outerCorner = WallAuthoringGeometry.snapBoundaryPointToWalls(
+      const RenderScenePoint(x: 4.34, y: -0.07, z: 0),
+      snapIndex: index,
+    );
+    expect(outerCorner, isNotNull);
+    expect(outerCorner!.x, closeTo(4.1, 1e-9));
+    expect(outerCorner.y, closeTo(-0.1, 1e-9));
+
+    final wallBody = WallAuthoringGeometry.snapBoundaryPointToWalls(
+      const RenderScenePoint(x: 2.0, y: 0.24, z: 0),
+      snapIndex: index,
+    );
+    expect(wallBody, isNull);
+
+    expect(
+      WallAuthoringGeometry.snapBoundaryPointToWalls(
+        const RenderScenePoint(x: 7, y: 7, z: 0),
+        snapIndex: index,
+      ),
+      isNull,
+    );
+  });
+
+  test('surface boundary snapping uses the final joined wall profile', () {
+    // These are the native mitered profiles for an east wall joining a north
+    // wall at (4, 0). The old independent face endpoint (4.1, 0.1) is not a
+    // snap target after the join; the final inner/outer points are (3.9, 0.1)
+    // and (4.1, -0.1).
+    final index = WallSnapIndex(<WallSnapSegment>[
+      const WallSnapSegment(
+        elementId: 20,
+        levelId: 1,
+        start: RenderScenePoint(x: 0, y: 0, z: 0),
+        end: RenderScenePoint(x: 4, y: 0, z: 0),
+        thicknessMeters: 0.2,
+        profileCorners: <RenderScenePoint>[
+          RenderScenePoint(x: 0, y: -0.1, z: 0),
+          RenderScenePoint(x: 4.1, y: -0.1, z: 0),
+          RenderScenePoint(x: 3.9, y: 0.1, z: 0),
+          RenderScenePoint(x: 0, y: 0.1, z: 0),
+        ],
+      ),
+      const WallSnapSegment(
+        elementId: 21,
+        levelId: 1,
+        start: RenderScenePoint(x: 4, y: 0, z: 0),
+        end: RenderScenePoint(x: 4, y: 4, z: 0),
+        thicknessMeters: 0.2,
+        profileCorners: <RenderScenePoint>[
+          RenderScenePoint(x: 4.1, y: -0.1, z: 0),
+          RenderScenePoint(x: 3.9, y: 0.1, z: 0),
+          RenderScenePoint(x: 3.9, y: 4, z: 0),
+          RenderScenePoint(x: 4.1, y: 4, z: 0),
+        ],
+      ),
+    ]);
+
+    final joinedCorner = WallAuthoringGeometry.snapBoundaryPointToWalls(
+      const RenderScenePoint(x: 4.08, y: -0.08, z: 0),
+      snapIndex: index,
+    );
+    expect(joinedCorner, isNotNull);
+    expect(joinedCorner!.x, closeTo(4.1, 1e-9));
+    expect(joinedCorner.y, closeTo(-0.1, 1e-9));
+
+    final nearRemovedCorner = WallAuthoringGeometry.snapBoundaryPointToWalls(
+      const RenderScenePoint(x: 4.08, y: 0.08, z: 0),
+      snapIndex: index,
+    );
+    expect(nearRemovedCorner, isNotNull);
+    expect(nearRemovedCorner!.x, closeTo(3.9, 1e-9));
+    expect(nearRemovedCorner.y, closeTo(0.1, 1e-9));
+    expect(nearRemovedCorner.x, isNot(closeTo(4.1, 1e-9)));
+  });
+
   test('wall continuation ignores a nearby parallel wall', () {
     final scene = parseRenderSceneJson(
       jsonEncode(<String, Object?>{

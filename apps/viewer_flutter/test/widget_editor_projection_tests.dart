@@ -161,6 +161,82 @@ void registerEditorProjectionTests() {
     expect(filtered.kindCounts['wall'], greaterThan(0));
   });
 
+  test('fallback keeps one-level walls unconnected and rejects bad levels', () {
+    final json =
+        File('test/fixtures/render_scene_sample.json').readAsStringSync();
+    final source = parseRenderSceneJson(json, source: 'one-level').scene!;
+    final wallScene = RenderSceneEditor.addWall(
+      scene: source,
+      start: const RenderScenePoint(x: 12, y: 0, z: 0),
+      end: const RenderScenePoint(x: 16, y: 0, z: 0),
+    );
+    final wall = wallScene.objects.lastWhere((object) => object.kindKey == 'wall');
+    expect(wall.metadata['height_mode'], equals('Unconnected'));
+    expect(wall.metadata['top_level_id'], isNull);
+
+    final duplicate = RenderSceneEditor.createLevel(
+      scene: source,
+      name: 'Duplicate',
+      elevationMeters: 0.0,
+    );
+    expect(duplicate.levels.length, equals(source.levels.length));
+
+    final invalidMove = RenderSceneEditor.setLevelElevation(
+      scene: source,
+      levelId: source.levels.first.levelId,
+      elevationMeters: double.nan,
+    );
+    expect(invalidMove.levels.first.elevationMeters,
+        equals(source.levels.first.elevationMeters));
+  });
+
+  test('legacy camelCase level ids are preserved and inferred levels do not overlap', () {
+    final result = parseRenderSceneJson(
+      jsonEncode(<String, Object?>{
+        'objects': <Object?>[
+          <String, Object?>{
+            'elementId': 1,
+            'kind': 'Wall',
+            'levelId': 10,
+            'bounds': <String, Object?>{
+              'min': <String, Object?>{'x': 0, 'y': 0, 'z': 0},
+              'max': <String, Object?>{'x': 2, 'y': 0.2, 'z': 3},
+            },
+            'mesh': <String, Object?>{
+              'positions': <Object?>[
+                <String, Object?>{'x': 0, 'y': 0, 'z': 0},
+                <String, Object?>{'x': 2, 'y': 0, 'z': 3},
+              ],
+              'indices': <int>[0, 1, 1],
+            },
+          },
+          <String, Object?>{
+            'elementId': 2,
+            'kind': 'Wall',
+            'levelId': 20,
+            'bounds': <String, Object?>{
+              'min': <String, Object?>{'x': 0, 'y': 0, 'z': 0},
+              'max': <String, Object?>{'x': 2, 'y': 0.2, 'z': 3},
+            },
+            'mesh': <String, Object?>{
+              'positions': <Object?>[
+                <String, Object?>{'x': 0, 'y': 0, 'z': 0},
+                <String, Object?>{'x': 2, 'y': 0, 'z': 3},
+              ],
+              'indices': <int>[0, 1, 1],
+            },
+          },
+        ],
+      }),
+      source: 'legacy-camel-case',
+    );
+    expect(result.scene, isNotNull);
+    expect(result.scene!.objects.map((object) => object.levelId),
+        containsAll(<int?>[10, 20]));
+    expect(result.scene!.levels.map((level) => level.elevationMeters).toSet().length,
+        equals(result.scene!.levels.length));
+  });
+
   test('Level elevation moves locked wall and leaves unlocked wall in place',
       () {
     final json =

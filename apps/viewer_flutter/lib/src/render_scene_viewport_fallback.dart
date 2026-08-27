@@ -40,6 +40,7 @@ class _FallbackRenderSceneView extends StatefulWidget {
     required this.onSceneDragStart,
     required this.onSceneDragUpdate,
     required this.onSceneDragEnd,
+    this.onSceneMultiTouchStart,
     required this.onSceneSecondaryTap,
     required this.onSceneHover,
     required this.authoringPickKinds,
@@ -59,6 +60,7 @@ class _FallbackRenderSceneView extends StatefulWidget {
   final ValueChanged<RenderSceneTapDetails>? onSceneDragStart;
   final ValueChanged<RenderSceneTapDetails>? onSceneDragUpdate;
   final ValueChanged<RenderSceneTapDetails>? onSceneDragEnd;
+  final VoidCallback? onSceneMultiTouchStart;
   final ValueChanged<RenderSceneTapDetails>? onSceneSecondaryTap;
   final ValueChanged<RenderSceneTapDetails>? onSceneHover;
   final Set<String> authoringPickKinds;
@@ -83,6 +85,7 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
   int? _activePointer;
   bool _isSecondaryDrag = false;
   int _activePointerCount = 0;
+  bool _multiTouchOccurred = false;
   bool _sceneDragStarted = false;
   Timer? _longPressTimer;
   bool _touchRectangleArmed = false;
@@ -196,6 +199,7 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
         authoringPickKinds: widget.authoringPickKinds,
         planPickResolver: widget.planPickResolver,
         touchFriendly: touchFriendly,
+        pointerCount: _activePointerCount,
       );
 
   RenderSceneViewportController get controller => widget.controller;
@@ -307,6 +311,7 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
               }
               _activePointerCount += 1;
               if (_activePointerCount > 1) {
+                _multiTouchOccurred = true;
                 // A second finger belongs to pan/zoom navigation. Cancel the
                 // active one-finger authoring gesture so lifting the second
                 // finger cannot accidentally finish a boundary or rectangle.
@@ -315,6 +320,7 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                 if (_usesDirectAuthoringDrag) {
                   _sceneDragStarted = false;
                 }
+                widget.onSceneMultiTouchStart?.call();
               }
               _activePointer = event.pointer;
               _pointerDownPosition = event.localPosition;
@@ -377,7 +383,9 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                 widget.onSceneDragStart?.call(details);
                 _sceneDragStarted = true;
               }
-              if (!_isSecondaryDrag && _usesDirectAuthoringDrag) {
+              if (!_isSecondaryDrag &&
+                  _usesDirectAuthoringDrag &&
+                  !widget.directSurfaceDrag) {
                 widget.onSceneDragStart?.call(_sceneDetails(
                   scene,
                   size,
@@ -493,6 +501,26 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                 ));
                 _sceneDragStarted = true;
               }
+              // Surface boundary/rectangle authoring waits until the first
+              // finger actually moves. If a second finger arrives while the
+              // first is still down, the pinch is navigation and no initial
+              // boundary point is committed.
+              if (!_sceneDragStarted &&
+                  !_isSecondaryDrag &&
+                  widget.directSurfaceDrag &&
+                  _activePointerCount == 1 &&
+                  movedFromDown > _tapDistanceThreshold(event)) {
+                final startPosition =
+                    _pointerDownPosition ?? event.localPosition;
+                widget.onSceneDragStart?.call(_sceneDetails(
+                  scene,
+                  size,
+                  startPosition,
+                  event.position,
+                  touchFriendly: _usesTouchNavigation(event),
+                ));
+                _sceneDragStarted = true;
+              }
               if (_sceneDragStarted &&
                   (widget.interactionMode ==
                           RenderSceneInteractionMode.select ||
@@ -556,6 +584,14 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                 return;
               }
               if (_activePointerCount > 0) {
+                return;
+              }
+
+              if (_multiTouchOccurred) {
+                // Do not turn the final finger-up of a pinch into a one-finger
+                // tap. This is especially important before the first boundary
+                // point, when the gesture must leave the draft untouched.
+                _clearPointerState();
                 return;
               }
 
@@ -798,6 +834,7 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
     _lastPointerPosition = null;
     _isSecondaryDrag = false;
     _activePointerCount = 0;
+    _multiTouchOccurred = false;
     _gesture.reset();
     _sceneDragStarted = false;
     controller.setSelectionRectangle(null);

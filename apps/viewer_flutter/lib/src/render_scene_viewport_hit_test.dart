@@ -147,6 +147,7 @@ class RenderSceneViewportHitTest {
     required Set<String> authoringPickKinds,
     RenderScenePlanPickResolver? planPickResolver,
     bool touchFriendly = false,
+    int pointerCount = 1,
   }) {
     final picked = objectAtPosition(
       scene: scene,
@@ -170,6 +171,7 @@ class RenderSceneViewportHitTest {
       modelPoint: controller.screenToModelPlan(localPosition, size),
       pickedObject: pickedLevel == null ? picked : null,
       pickedLevel: pickedLevel,
+      pointerCount: pointerCount,
     );
   }
 

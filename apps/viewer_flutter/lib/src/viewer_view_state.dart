@@ -59,6 +59,27 @@ extension _ViewerViewState on _ViewerHomePageState {
         return visible;
       }
     }
+
+    // A 3D view should open on the architectural model. Imported/detail
+    // proxies remain available through the category controls, but making all
+    // of them visible by default turns a large IFC into a noisy wireframe.
+    const architecturalKinds = <String>{
+      'wall',
+      'door',
+      'window',
+      'room',
+      'floor',
+      'ceiling',
+      'column',
+      'beam',
+      'stair',
+      'slab',
+      'roof',
+    };
+    final architectural = architecturalKinds.intersection(available);
+    if (architectural.isNotEmpty) {
+      return architectural;
+    }
     return <String>{};
   }
 

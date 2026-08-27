@@ -31,6 +31,7 @@ extension _RenderSceneViewportNative on RenderSceneViewportController {
     });
     await _invoke('setDisplayStyle', _displayStyle.name);
     await _invoke('setViewportTheme', _viewportTheme.name);
+    await _invoke('setHdriVisible', _hdriVisible);
     await _invoke('setShadowsEnabled', _shadowsEnabled);
     await _invoke('setProjectionMode', _projectionMode.name);
     await _invoke('setOrbitProjectionStyle', _orbitProjectionStyle.name);

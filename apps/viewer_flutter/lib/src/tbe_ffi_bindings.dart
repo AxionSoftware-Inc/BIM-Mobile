@@ -120,6 +120,16 @@ typedef _NearbyRenderSceneDart = int Function(
   int,
   ffi.Pointer<ffi.Pointer<Utf8>>,
 );
+typedef _PrimaryRenderSceneNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Uint64,
+  ffi.Pointer<ffi.Pointer<Utf8>>,
+);
+typedef _PrimaryRenderSceneDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  int,
+  ffi.Pointer<ffi.Pointer<Utf8>>,
+);
 typedef _SectionRenderSceneNative = ffi.Int32 Function(
   ffi.Pointer<ffi.Void>,
   TbeVec2,

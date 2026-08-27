@@ -9,6 +9,7 @@ import 'render_scene_models.dart';
 import 'render_scene_viewport_planar.dart';
 import 'render_scene_viewport_projection.dart';
 import 'render_scene_viewport_types.dart';
+import 'tools/wall_authoring_geometry.dart';
 
 part 'render_scene_painter_plan.dart';
 part 'render_scene_painter_render.dart';

@@ -1048,6 +1048,7 @@ Document import_ifc(const std::filesystem::path& path, std::string document_name
     std::map<int, Point2> placement_point_cache;
     std::map<int, IfcTransform> placement_transform_cache;
     std::map<int, MeshBuffer> exact_mesh_cache;
+    std::unordered_set<int> fallback_level_entities;
     bool used_approximation = false;
     const auto supported_type = [](std::string_view type) {
         return type == "IFCBUILDINGSTOREY" || type == "IFCLEVEL" ||
@@ -1066,38 +1067,122 @@ Document import_ifc(const std::filesystem::path& path, std::string document_name
         return document;
     }
 
+    const auto storey_elevation = [&](const StepEntity& entity) {
+        if (entity.arguments.size() > 5) {
+            if (const auto placement_id = step_reference(entity.arguments[5]); placement_id.has_value()) {
+                std::vector<int> guard;
+                const auto placement = axis_placement_transform(
+                    *placement_id, by_id, placement_transform_cache, guard);
+                if (std::isfinite(placement.origin.z)) {
+                    return placement.origin.z * length_scale;
+                }
+            }
+        }
+        // IFC2x3 exporters sometimes omit ObjectPlacement and only populate
+        // the optional Elevation attribute at the end of the storey entity.
+        return last_step_number(entity).value_or(0.0) * length_scale;
+    };
+    std::map<int, double> level_elevation_by_ifc_id;
     for (const auto& entity : entities) {
         if (entity.type != "IFCBUILDINGSTOREY" && entity.type != "IFCLEVEL") continue;
-        const auto elevation = last_step_number(entity).value_or(0.0) * length_scale;
-        const auto level_id = document.create_level(product_name(entity), elevation, 3.0);
+        const auto elevation = storey_elevation(entity);
+        ElementId level_id{};
+        for (const auto& [existing_ifc_id, existing_elevation] : level_elevation_by_ifc_id) {
+            if (std::abs(existing_elevation - elevation) <= 1.0e-6) {
+                level_id = levels.at(existing_ifc_id);
+                if (report != nullptr) {
+                    report->warnings.push_back(
+                        "Merged IFC storey " + std::to_string(entity.id) +
+                        " into the existing level because both storeys have the same elevation.");
+                }
+                break;
+            }
+        }
+        if (level_id == 0) {
+            level_id = document.create_level(product_name(entity), elevation, 3.0);
+            level_elevation_by_ifc_id[entity.id] = elevation;
+            if (auto* created = document.find_ptr(level_id); created != nullptr) set_ifc_metadata(*created, entity);
+        }
         levels[entity.id] = level_id;
-        if (auto* created = document.find_ptr(level_id); created != nullptr) set_ifc_metadata(*created, entity);
     }
     if (levels.empty()) {
         const auto level_id = document.create_level("Level 1", 0.0, 3.0);
         levels[-1] = level_id;
     }
-    const auto default_level = levels.begin()->second;
+    auto default_level = levels.begin()->second;
     const auto level_elevation_for = [&](ElementId level_id) {
         const auto* level_element = document.find_ptr(level_id);
         return level_element != nullptr && level_element->level() != nullptr
             ? level_element->level()->elevation_meters
             : 0.0;
     };
+    for (const auto& [_, level_id] : levels) {
+        if (level_elevation_for(level_id) < level_elevation_for(default_level)) {
+            default_level = level_id;
+        }
+    }
     const auto exact_mesh_for = [&](const StepEntity& entity) {
         return product_mesh(entity, by_id, length_scale, placement_transform_cache, exact_mesh_cache);
     };
+
+    // Resolve an IFC product to its actual building storey. Most exporters
+    // use IFCRELCONTAINEDINSPATIALSTRUCTURE directly, while some place
+    // products inside an IFCSPACE or another decomposition below the storey.
+    // Following both relation families keeps the semantic level assignment
+    // correct without changing the imported world-space geometry.
+    std::unordered_map<int, int> spatial_parent_by_child;
+    std::unordered_map<int, int> aggregate_parent_by_child;
+    for (const auto& relation : entities) {
+        if (relation.type == "IFCRELCONTAINEDINSPATIALSTRUCTURE" && relation.arguments.size() > 5) {
+            const auto parent = step_reference(relation.arguments[5]);
+            if (!parent.has_value()) continue;
+            for (const auto child : references_in(relation.arguments[4])) {
+                spatial_parent_by_child[child] = *parent;
+            }
+        } else if ((relation.type == "IFCRELAGGREGATES" ||
+                    relation.type == "IFCRELDECOMPOSES" ||
+                    relation.type == "IFCRELNESTS") &&
+            relation.arguments.size() > 5) {
+            const auto parent = step_reference(relation.arguments[4]);
+            if (!parent.has_value()) continue;
+            for (const auto child : references_in(relation.arguments[5])) {
+                aggregate_parent_by_child[child] = *parent;
+            }
+        }
+    }
+    const auto ifc_storey_for = [&](const StepEntity& entity) -> std::optional<int> {
+        auto current = entity.id;
+        std::unordered_set<int> visited;
+        for (std::size_t depth = 0; depth < 64 && visited.insert(current).second; ++depth) {
+            if (levels.find(current) != levels.end()) return current;
+            if (const auto contained = spatial_parent_by_child.find(current);
+                contained != spatial_parent_by_child.end()) {
+                current = contained->second;
+                continue;
+            }
+            if (const auto aggregate = aggregate_parent_by_child.find(current);
+                aggregate != aggregate_parent_by_child.end()) {
+                current = aggregate->second;
+                continue;
+            }
+            break;
+        }
+        return std::nullopt;
+    };
     const auto level_for = [&](const StepEntity& entity) {
-        // IFC containment relations are intentionally optional for this
-        // lightweight path. A stable first storey keeps imported geometry
-        // visible while preserving the source ids in metadata.
-        (void)entity;
+        if (const auto storey_id = ifc_storey_for(entity); storey_id.has_value()) {
+            return levels.at(*storey_id);
+        }
+        if (entity.type != "IFCBUILDINGSTOREY" && entity.type != "IFCLEVEL") {
+            fallback_level_entities.insert(entity.id);
+        }
         return default_level;
     };
 
     struct ImportedWall {
         ElementId id{};
         Line2 axis{};
+        ElementId level_id{};
     };
     std::vector<ImportedWall> imported_walls;
     for (const auto& entity : entities) {
@@ -1121,6 +1206,7 @@ Document import_ifc(const std::filesystem::path& path, std::string document_name
         imported_walls.push_back(ImportedWall{
             .id = wall_id,
             .axis = Line2{.start = origin, .end = {.x = origin.x + 4.0, .y = origin.y}},
+            .level_id = level_for(entity),
         });
         used_approximation = true;
     }
@@ -1137,6 +1223,7 @@ Document import_ifc(const std::filesystem::path& path, std::string document_name
             continue;
         }
 
+        const auto opening_level_id = level_for(entity);
         std::vector<std::pair<double, std::size_t>> candidates;
         candidates.reserve(imported_walls.size());
         for (std::size_t index = 0; index < imported_walls.size(); ++index) {
@@ -1152,7 +1239,29 @@ Document import_ifc(const std::filesystem::path& path, std::string document_name
             const auto closest_y = axis.start.y + dy * clamped;
             const auto distance_x = origin.x - closest_x;
             const auto distance_y = origin.y - closest_y;
+            if (imported_walls[index].level_id != opening_level_id) continue;
             candidates.emplace_back(distance_x * distance_x + distance_y * distance_y, index);
+        }
+        if (candidates.empty()) {
+            // A few exporters omit the opening's containment relation even
+            // though the host wall is correctly contained. Keep the opening
+            // import usable in that case, but prefer the same-level host
+            // whenever the source provides enough information.
+            for (std::size_t index = 0; index < imported_walls.size(); ++index) {
+                const auto& axis = imported_walls[index].axis;
+                const auto dx = axis.end.x - axis.start.x;
+                const auto dy = axis.end.y - axis.start.y;
+                const auto length_squared = dx * dx + dy * dy;
+                const auto projection = length_squared <= 0.0
+                    ? 0.0
+                    : ((origin.x - axis.start.x) * dx + (origin.y - axis.start.y) * dy) / length_squared;
+                const auto clamped = std::clamp(projection, 0.0, 1.0);
+                const auto closest_x = axis.start.x + dx * clamped;
+                const auto closest_y = axis.start.y + dy * clamped;
+                const auto distance_x = origin.x - closest_x;
+                const auto distance_y = origin.y - closest_y;
+                candidates.emplace_back(distance_x * distance_x + distance_y * distance_y, index);
+            }
         }
         std::sort(candidates.begin(), candidates.end());
 
@@ -1182,9 +1291,9 @@ Document import_ifc(const std::filesystem::path& path, std::string document_name
                     const auto exact_mesh = exact_mesh_for(entity);
                     if (!exact_mesh.vertices.empty() && !exact_mesh.indices.empty()) {
                         if (auto* door = created->door(); door != nullptr) {
-                            door->mesh = mesh_relative_to_level(exact_mesh, level_elevation_for(level_for(entity)));
+                            door->mesh = mesh_relative_to_level(exact_mesh, level_elevation_for(door->level_id));
                         } else if (auto* window = created->window(); window != nullptr) {
-                            window->mesh = mesh_relative_to_level(exact_mesh, level_elevation_for(level_for(entity)));
+                            window->mesh = mesh_relative_to_level(exact_mesh, level_elevation_for(window->level_id));
                         }
                         set_ifc_metadata(*created, entity, "Exact IFC BREP mesh imported.");
                         mark_exact_ifc_geometry(*created);
@@ -1316,7 +1425,7 @@ Document import_ifc(const std::filesystem::path& path, std::string document_name
         );
         if (auto* created = document.find_ptr(id); created != nullptr) {
             if (has_exact_mesh) {
-                created->proxy()->mesh = exact_mesh;
+                created->proxy()->mesh = mesh_relative_to_level(exact_mesh, level_elevation_for(level_id));
                 set_ifc_metadata(*created, entity, "Exact IFC BREP mesh imported.");
                 mark_exact_ifc_geometry(*created);
             } else {
@@ -1337,6 +1446,12 @@ Document import_ifc(const std::filesystem::path& path, std::string document_name
         if (skipped_openings != 0) {
             report->warnings.push_back("Skipped " + std::to_string(skipped_openings) +
                 " overlapping or unhosted third-party openings in the lightweight fallback.");
+        }
+        if (!fallback_level_entities.empty()) {
+            report->warnings.push_back(
+                "Used the lowest level as fallback for " +
+                std::to_string(fallback_level_entities.size()) +
+                " IFC products without a resolvable storey containment relation.");
         }
         if (!proxy_fallback_counts.empty()) {
             std::ostringstream proxy_warning;

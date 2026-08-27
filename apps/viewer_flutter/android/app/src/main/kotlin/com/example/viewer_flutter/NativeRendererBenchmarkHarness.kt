@@ -44,9 +44,9 @@ internal object NativeRendererBenchmarkHarness {
     val mode = intent.getStringExtra("mode")?.trim()?.lowercase() ?: "json"
     val projects = File(context.filesDir, "projects")
     val source = intent.getStringExtra("sourceIfcPath")
-      ?: File(projects, "templates/openifc-primark.ifc").absolutePath
+      ?: File(projects, "templates/openifc-energy-tower.ifc").absolutePath
     val cache = intent.getStringExtra("cachePath")
-      ?: File(projects, "ifc-cache/benchmark-openifc-primark.bimcache").absolutePath
+      ?: File(projects, "ifc-cache/benchmark-openifc-energy-tower.bimcache").absolutePath
     pendingRequest = Request(
       mode = mode,
       sourceIfcPath = source,

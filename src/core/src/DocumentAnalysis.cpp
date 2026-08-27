@@ -651,16 +651,61 @@ ValidationReport Document::validate_document() const {
     ValidationReport report;
     (void)dependency_graph();
 
+    std::vector<std::pair<ElementId, double>> level_elevations;
+    for (const auto& element : elements_) {
+        const auto* level = element.level();
+        if (level == nullptr) continue;
+        if (!std::isfinite(level->elevation_meters)) {
+            add_issue(report, ValidationSeverity::Error, ValidationIssueCode::LevelMismatch,
+                element.id(), "level elevation must be finite");
+        }
+        if (!std::isfinite(level->default_wall_height_meters) ||
+            level->default_wall_height_meters <= 0.0) {
+            add_issue(report, ValidationSeverity::Error, ValidationIssueCode::WallTooShort,
+                element.id(), "level default wall height must be positive and finite");
+        }
+        for (const auto& [other_id, other_elevation] : level_elevations) {
+            if (std::isfinite(level->elevation_meters) &&
+                std::abs(other_elevation - level->elevation_meters) <= epsilon) {
+                add_issue(report, ValidationSeverity::Error, ValidationIssueCode::LevelMismatch,
+                    element.id(), "level elevations must be unique");
+                break;
+            }
+            (void)other_id;
+        }
+        level_elevations.emplace_back(element.id(), level->elevation_meters);
+    }
+
     for (const auto& [wall_type_id, wall_type] : wall_types_) {
         if (total_wall_type_thickness(wall_type) <= 0.0) {
             add_issue(report, ValidationSeverity::Error, ValidationIssueCode::WallTooShort, wall_type_id, "wall type total thickness must be positive");
         }
-        for (const auto& layer : wall_type.layers) {
-            if (layer.thickness_meters <= 0.0) {
+        if (wall_type.core_start_layer < -1 || wall_type.core_end_layer < -1 ||
+            (wall_type.core_start_layer < 0) != (wall_type.core_end_layer < 0) ||
+            (wall_type.core_start_layer >= 0 &&
+             (wall_type.core_start_layer > wall_type.core_end_layer ||
+              wall_type.core_end_layer >= static_cast<int>(wall_type.layers.size())))) {
+            add_issue(report, ValidationSeverity::Error, ValidationIssueCode::InvalidJoin, wall_type_id, "wall type core layer range is invalid");
+        }
+        for (std::size_t index = 0; index < wall_type.layers.size(); ++index) {
+            const auto& layer = wall_type.layers[index];
+            if (!std::isfinite(layer.thickness_meters) || layer.thickness_meters <= 0.0) {
                 add_issue(report, ValidationSeverity::Error, ValidationIssueCode::WallTooShort, wall_type_id, "wall type layer thickness must be positive");
             }
-            if (layer.material_id != 0 && get_material(layer.material_id) == nullptr) {
+            if (layer.material_id == 0 || get_material(layer.material_id) == nullptr) {
                 add_issue(report, ValidationSeverity::Error, ValidationIssueCode::InvalidJoin, wall_type_id, "wall type references missing material");
+            }
+            if (layer.function == WallLayerFunction::ExteriorFinish && layer.side == WallLayerSide::Interior) {
+                add_issue(report, ValidationSeverity::Error, ValidationIssueCode::InvalidJoin, wall_type_id, "exterior finish layer is marked as interior");
+            }
+            if (layer.function == WallLayerFunction::InteriorFinish && layer.side == WallLayerSide::Exterior) {
+                add_issue(report, ValidationSeverity::Error, ValidationIssueCode::InvalidJoin, wall_type_id, "interior finish layer is marked as exterior");
+            }
+            if (wall_type.core_start_layer >= 0 &&
+                index >= static_cast<std::size_t>(wall_type.core_start_layer) &&
+                index <= static_cast<std::size_t>(wall_type.core_end_layer) &&
+                layer.function != WallLayerFunction::Core) {
+                add_issue(report, ValidationSeverity::Error, ValidationIssueCode::InvalidJoin, wall_type_id, "wall type core range contains a non-core layer");
             }
         }
     }
@@ -668,12 +713,32 @@ ValidationReport Document::validate_document() const {
         if (layered_assembly_total_thickness(assembly) <= 0.0) {
             add_issue(report, ValidationSeverity::Error, ValidationIssueCode::WallTooShort, assembly_id, "assembly total thickness must be positive");
         }
-        for (const auto& layer : assembly.layers) {
-            if (layer.thickness_meters <= 0.0) {
+        if (assembly.core_start_layer < -1 || assembly.core_end_layer < -1 ||
+            (assembly.core_start_layer < 0) != (assembly.core_end_layer < 0) ||
+            (assembly.core_start_layer >= 0 &&
+             (assembly.core_start_layer > assembly.core_end_layer ||
+              assembly.core_end_layer >= static_cast<int>(assembly.layers.size())))) {
+            add_issue(report, ValidationSeverity::Error, ValidationIssueCode::InvalidJoin, assembly_id, "assembly core layer range is invalid");
+        }
+        for (std::size_t index = 0; index < assembly.layers.size(); ++index) {
+            const auto& layer = assembly.layers[index];
+            if (!std::isfinite(layer.thickness_meters) || layer.thickness_meters <= 0.0) {
                 add_issue(report, ValidationSeverity::Error, ValidationIssueCode::WallTooShort, assembly_id, "assembly layer thickness must be positive");
             }
-            if (layer.material_id != 0 && get_material(layer.material_id) == nullptr) {
+            if (layer.material_id == 0 || get_material(layer.material_id) == nullptr) {
                 add_issue(report, ValidationSeverity::Error, ValidationIssueCode::InvalidJoin, assembly_id, "assembly references missing material");
+            }
+            if (assembly.core_start_layer >= 0 &&
+                index >= static_cast<std::size_t>(assembly.core_start_layer) &&
+                index <= static_cast<std::size_t>(assembly.core_end_layer) &&
+                layer.function != WallLayerFunction::Core) {
+                add_issue(report, ValidationSeverity::Error, ValidationIssueCode::InvalidJoin, assembly_id, "assembly core range contains a non-core layer");
+            }
+            if (layer.function == WallLayerFunction::ExteriorFinish && layer.side == WallLayerSide::Interior) {
+                add_issue(report, ValidationSeverity::Error, ValidationIssueCode::InvalidJoin, assembly_id, "exterior finish layer is marked as interior");
+            }
+            if (layer.function == WallLayerFunction::InteriorFinish && layer.side == WallLayerSide::Exterior) {
+                add_issue(report, ValidationSeverity::Error, ValidationIssueCode::InvalidJoin, assembly_id, "interior finish layer is marked as exterior");
             }
         }
     }
@@ -683,18 +748,32 @@ ValidationReport Document::validate_document() const {
             if (line_length(wall->axis) <= epsilon) {
                 add_issue(report, ValidationSeverity::Error, ValidationIssueCode::WallTooShort, element.id(), "wall length must be positive");
             }
-            if (wall->base_level_id != 0 && (find_ptr(wall->base_level_id) == nullptr || find_ptr(wall->base_level_id)->level() == nullptr)) {
+            const auto wall_base_level_id = wall->base_level_id != 0 ? wall->base_level_id : wall->level_id;
+            if (wall_base_level_id != 0 && (find_ptr(wall_base_level_id) == nullptr || find_ptr(wall_base_level_id)->level() == nullptr)) {
                 add_issue(report, ValidationSeverity::Error, ValidationIssueCode::LevelMismatch, element.id(), "wall base level does not exist");
             }
             if (wall->height_mode == WallHeightMode::TopLevel) {
                 if (wall->top_level_id == 0 || find_ptr(wall->top_level_id) == nullptr || find_ptr(wall->top_level_id)->level() == nullptr) {
                     add_issue(report, ValidationSeverity::Error, ValidationIssueCode::LevelMismatch, element.id(), "wall top level does not exist");
-                } else if (resolved_wall_height(*wall) <= 0.0) {
-                    add_issue(report, ValidationSeverity::Error, ValidationIssueCode::WallTooShort, element.id(), "wall constrained height must be positive");
+                } else if (wall_base_level_id != 0 &&
+                    find_ptr(wall_base_level_id) != nullptr && find_ptr(wall_base_level_id)->level() != nullptr) {
+                    const auto base = level_elevation(wall_base_level_id) + wall->base_offset_meters;
+                    const auto top = level_elevation(wall->top_level_id) + wall->top_offset_meters;
+                    if (!std::isfinite(base) || !std::isfinite(top) || top <= base + epsilon) {
+                        add_issue(report, ValidationSeverity::Error, ValidationIssueCode::WallTooShort, element.id(), "wall constrained top level must be above base level");
+                    }
                 }
             }
             if (wall->wall_type_id != 0 && get_wall_type(wall->wall_type_id) == nullptr) {
                 add_issue(report, ValidationSeverity::Error, ValidationIssueCode::InvalidJoin, element.id(), "wall references missing wall type");
+            }
+            if (wall->assembly_id != 0) {
+                const auto* assembly = get_layered_assembly(wall->assembly_id);
+                if (assembly == nullptr) {
+                    add_issue(report, ValidationSeverity::Error, ValidationIssueCode::InvalidJoin, element.id(), "wall references missing assembly");
+                } else if (assembly->kind != LayeredAssemblyKind::Wall) {
+                    add_issue(report, ValidationSeverity::Error, ValidationIssueCode::InvalidJoin, element.id(), "wall assembly must have Wall kind");
+                }
             }
 
             std::set<std::pair<ElementId, std::string>> seen_joins;
@@ -780,6 +859,9 @@ ValidationReport Document::validate_document() const {
                 }
             }
         } else if (const auto* slab = element.slab()) {
+            if (find_ptr(slab->level_id) == nullptr || find_ptr(slab->level_id)->level() == nullptr) {
+                add_issue(report, ValidationSeverity::Error, ValidationIssueCode::LevelMismatch, element.id(), "slab level does not exist");
+            }
             if (slab->thickness_meters <= 0.0) {
                 add_issue(report, ValidationSeverity::Error, ValidationIssueCode::WallTooShort, element.id(), "slab thickness must be positive");
             }
@@ -793,6 +875,9 @@ ValidationReport Document::validate_document() const {
                 add_issue(report, ValidationSeverity::Error, ValidationIssueCode::InvalidJoin, element.id(), "slab references missing assembly");
             }
         } else if (const auto* roof = element.roof()) {
+            if (find_ptr(roof->level_id) == nullptr || find_ptr(roof->level_id)->level() == nullptr) {
+                add_issue(report, ValidationSeverity::Error, ValidationIssueCode::LevelMismatch, element.id(), "roof level does not exist");
+            }
             if (roof->thickness_meters <= 0.0 || polygon_area(roof->boundary_polygon) <= 0.0) {
                 add_issue(report, ValidationSeverity::Error, ValidationIssueCode::WallTooShort, element.id(), "roof dimensions must be positive");
             }
@@ -803,6 +888,9 @@ ValidationReport Document::validate_document() const {
                 add_issue(report, ValidationSeverity::Error, ValidationIssueCode::InvalidJoin, element.id(), "roof references missing assembly");
             }
         } else if (const auto* column = element.column()) {
+            if (find_ptr(column->level_id) == nullptr || find_ptr(column->level_id)->level() == nullptr) {
+                add_issue(report, ValidationSeverity::Error, ValidationIssueCode::LevelMismatch, element.id(), "column level does not exist");
+            }
             if (column->width_meters <= 0.0 || column->depth_meters <= 0.0 || column->height_meters <= 0.0) {
                 add_issue(report, ValidationSeverity::Error, ValidationIssueCode::WallTooShort, element.id(), "column dimensions must be positive");
             }
@@ -810,6 +898,9 @@ ValidationReport Document::validate_document() const {
                 add_issue(report, ValidationSeverity::Error, ValidationIssueCode::InvalidJoin, element.id(), "column references missing material");
             }
         } else if (const auto* beam = element.beam()) {
+            if (find_ptr(beam->level_id) == nullptr || find_ptr(beam->level_id)->level() == nullptr) {
+                add_issue(report, ValidationSeverity::Error, ValidationIssueCode::LevelMismatch, element.id(), "beam level does not exist");
+            }
             if (beam->width_meters <= 0.0 || beam->height_meters <= 0.0 || line_length(Line2{.start = beam->start, .end = beam->end}) <= 0.0) {
                 add_issue(report, ValidationSeverity::Error, ValidationIssueCode::WallTooShort, element.id(), "beam dimensions must be positive");
             }
@@ -825,14 +916,26 @@ ValidationReport Document::validate_document() const {
             }
             if (stair->top_level_id != 0 && (find_ptr(stair->top_level_id) == nullptr || find_ptr(stair->top_level_id)->level() == nullptr)) {
                 add_issue(report, ValidationSeverity::Error, ValidationIssueCode::LevelMismatch, element.id(), "stair top level does not exist");
+            } else if (stair->top_level_id != 0 && stair->top_level_id != stair->base_level_id &&
+                find_ptr(stair->base_level_id) != nullptr && find_ptr(stair->base_level_id)->level() != nullptr &&
+                level_elevation(stair->top_level_id) <= level_elevation(stair->base_level_id) + epsilon) {
+                add_issue(report, ValidationSeverity::Error, ValidationIssueCode::LevelMismatch, element.id(), "stair top level must be above base level");
             }
             if (stair->material_id != 0 && get_material(stair->material_id) == nullptr) {
                 add_issue(report, ValidationSeverity::Error, ValidationIssueCode::InvalidJoin, element.id(), "stair references missing material");
+            }
+        } else if (const auto* proxy = element.proxy()) {
+            if (find_ptr(proxy->level_id) == nullptr || find_ptr(proxy->level_id)->level() == nullptr) {
+                add_issue(report, ValidationSeverity::Error, ValidationIssueCode::LevelMismatch, element.id(), "proxy level does not exist");
             }
         }
     }
 
     for (const auto& [system_id, system] : floor_systems_) {
+        if (system.level_id != 0 &&
+            (find_ptr(system.level_id) == nullptr || find_ptr(system.level_id)->level() == nullptr)) {
+            add_issue(report, ValidationSeverity::Error, ValidationIssueCode::LevelMismatch, system_id, "floor system level does not exist");
+        }
         const auto* room_element = find_ptr(system.room_id);
         const auto* room = room_element == nullptr ? nullptr : room_element->room();
         if (room == nullptr && system.room_id != 0) {
@@ -862,6 +965,10 @@ ValidationReport Document::validate_document() const {
     }
 
     for (const auto& [system_id, system] : ceiling_systems_) {
+        if (system.level_id != 0 &&
+            (find_ptr(system.level_id) == nullptr || find_ptr(system.level_id)->level() == nullptr)) {
+            add_issue(report, ValidationSeverity::Error, ValidationIssueCode::LevelMismatch, system_id, "ceiling system level does not exist");
+        }
         const auto* room_element = find_ptr(system.room_id);
         const auto* room = room_element == nullptr ? nullptr : room_element->room();
         if (room == nullptr && system.room_id != 0) {
@@ -890,17 +997,21 @@ ValidationReport Document::validate_document() const {
         }
     }
 
-    for (const auto& row : generate_wall_schedule()) {
-        if (row.opening_area_square_meters > row.gross_area_square_meters) {
-            add_issue(report, ValidationSeverity::Error, ValidationIssueCode::OpeningOutsideWall, row.wall_id, "opening area exceeds wall gross area");
+    // Validation must stay lightweight.  Detailed layer quantities and
+    // material takeoff are explicit report operations, not a side effect of
+    // merely validating the document.
+    for (const auto& element : elements_) {
+        const auto* wall = element.wall();
+        if (wall == nullptr) {
+            continue;
         }
-        if (row.net_area_square_meters < 0.0) {
-            add_issue(report, ValidationSeverity::Error, ValidationIssueCode::OpeningOutsideWall, row.wall_id, "wall net area cannot be negative");
+        const auto gross_area = line_length(wall->axis) * resolved_wall_height(*wall);
+        auto opening_area = 0.0;
+        for (const auto& opening : wall->openings) {
+            opening_area += opening.width_meters * opening.height_meters;
         }
-    }
-    for (const auto& row : generate_material_takeoff()) {
-        if (row.quantity < 0.0) {
-            add_issue(report, ValidationSeverity::Error, ValidationIssueCode::OpeningOutsideWall, row.material_id, "material takeoff quantity cannot be negative");
+        if (opening_area > gross_area + epsilon) {
+            add_issue(report, ValidationSeverity::Error, ValidationIssueCode::OpeningOutsideWall, element.id(), "opening area exceeds wall gross area");
         }
     }
     return report;

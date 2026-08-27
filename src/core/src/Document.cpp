@@ -1,6 +1,7 @@
 #include "tbe/core/Document.hpp"
 
 #include "tbe/core/GeometryService.hpp"
+#include "tbe/core/PolygonTriangulation.hpp"
 
 #include <algorithm>
 #include <array>
@@ -507,6 +508,94 @@ double layered_assembly_total_thickness(const LayeredAssemblyData& assembly) {
     return total;
 }
 
+Revision cache_assembly_revision(const LayeredAssemblyData* assembly) {
+    return assembly == nullptr ? 0 : assembly->revision;
+}
+
+void assign_cache_material(MeshBuffer& mesh, ElementId material_id) {
+    if (mesh.indices.empty()) {
+        mesh.triangle_material_ids.clear();
+        return;
+    }
+    mesh.triangle_material_ids.assign(mesh.indices.size() / 3, material_id);
+}
+
+bool rebind_envelope_material(
+    GeneratedMeshCache& cache,
+    MeshBuffer& active_mesh,
+    bool active_is_layered,
+    const LayeredAssemblyData* assembly
+) {
+    if (assembly == nullptr || cache.dirty || assembly->layers.empty()) {
+        return false;
+    }
+    auto* mesh = !cache.mesh.indices.empty()
+        ? &cache.mesh
+        : (!active_is_layered && !active_mesh.indices.empty() ? &active_mesh : nullptr);
+    if (mesh == nullptr) {
+        return false;
+    }
+    assign_cache_material(*mesh, assembly->layers.front().material_id);
+    cache.assembly_revision = assembly->revision;
+    return true;
+}
+
+void normalize_wall_layer_semantics(
+    std::vector<WallAssemblyLayer>& layers,
+    int& core_start_layer,
+    int& core_end_layer
+) {
+    for (auto& layer : layers) {
+        if (layer.side == WallLayerSide::Unspecified) {
+            if (layer.function == WallLayerFunction::ExteriorFinish) {
+                layer.side = WallLayerSide::Exterior;
+            } else if (layer.function == WallLayerFunction::InteriorFinish) {
+                layer.side = WallLayerSide::Interior;
+            }
+        }
+    }
+
+    if (core_start_layer >= 0 || core_end_layer >= 0) {
+        // An explicit core boundary is authoritative. Keep the function
+        // flags and the indices consistent so downstream geometry,
+        // quantities, and UI all read the same semantic contract.
+        if (core_start_layer >= 0 && core_end_layer >= core_start_layer &&
+            core_end_layer < static_cast<int>(layers.size())) {
+            for (std::size_t index = 0; index < layers.size(); ++index) {
+                if (static_cast<int>(index) >= core_start_layer &&
+                    static_cast<int>(index) <= core_end_layer) {
+                    layers[index].function = WallLayerFunction::Core;
+                } else if (layers[index].function == WallLayerFunction::Core) {
+                    layers[index].function = WallLayerFunction::Generic;
+                }
+            }
+        }
+        return;
+    }
+
+    int first_core = -1;
+    int last_core = -1;
+    for (std::size_t index = 0; index < layers.size(); ++index) {
+        if (layers[index].function != WallLayerFunction::Core) {
+            continue;
+        }
+        if (first_core < 0) {
+            first_core = static_cast<int>(index);
+        }
+        last_core = static_cast<int>(index);
+    }
+    core_start_layer = first_core;
+    core_end_layer = last_core;
+}
+
+void normalize_layered_assembly_semantics(LayeredAssemblyData& assembly) {
+    normalize_wall_layer_semantics(
+        assembly.layers,
+        assembly.core_start_layer,
+        assembly.core_end_layer
+    );
+}
+
 std::string material_category_label(MaterialCategory category) {
     switch (category) {
     case MaterialCategory::Structural: return "Structural";
@@ -776,14 +865,18 @@ MeshBuffer extrude_polygon_mesh(const std::vector<Point2>& polygon, double thick
         mesh.vertices.push_back(Point3{.x = point.x, .y = point.y, .z = elevation_offset + thickness});
     }
 
-    for (std::uint32_t index = 1; index + 1 < vertex_count; ++index) {
-        mesh.indices.push_back(0);
-        mesh.indices.push_back(index);
-        mesh.indices.push_back(index + 1);
+    const auto top_triangles = triangulate_simple_polygon(polygon);
+    for (std::size_t index = 0; index + 2 < top_triangles.size(); index += 3) {
+        const auto first = top_triangles[index];
+        const auto second = top_triangles[index + 1];
+        const auto third = top_triangles[index + 2];
+        mesh.indices.push_back(first);
+        mesh.indices.push_back(second);
+        mesh.indices.push_back(third);
 
-        mesh.indices.push_back(static_cast<std::uint32_t>(vertex_count));
-        mesh.indices.push_back(static_cast<std::uint32_t>(vertex_count + index + 1));
-        mesh.indices.push_back(static_cast<std::uint32_t>(vertex_count + index));
+        mesh.indices.push_back(static_cast<std::uint32_t>(vertex_count + third));
+        mesh.indices.push_back(static_cast<std::uint32_t>(vertex_count + second));
+        mesh.indices.push_back(static_cast<std::uint32_t>(vertex_count + first));
     }
 
     for (std::uint32_t index = 0; index < vertex_count; ++index) {
@@ -819,6 +912,55 @@ MeshBuffer build_layered_slab_mesh(
             layer.material_id
         );
         layer_elevation += layer.thickness_meters;
+    }
+    return mesh;
+}
+
+MeshBuffer build_gable_roof_mesh(const RoofData& roof, double thickness);
+MeshBuffer build_auto_footprint_roof_mesh(const RoofData& roof, double thickness);
+
+void append_mesh_with_material(
+    MeshBuffer& target,
+    const MeshBuffer& source,
+    double z_offset,
+    ElementId material_id
+) {
+    const auto vertex_offset = static_cast<std::uint32_t>(target.vertices.size());
+    target.vertices.reserve(target.vertices.size() + source.vertices.size());
+    for (const auto& vertex : source.vertices) {
+        target.vertices.push_back(Point3{
+            .x = vertex.x,
+            .y = vertex.y,
+            .z = vertex.z + z_offset,
+        });
+    }
+    target.indices.reserve(target.indices.size() + source.indices.size());
+    for (const auto index : source.indices) {
+        target.indices.push_back(vertex_offset + index);
+    }
+    target.triangle_material_ids.insert(
+        target.triangle_material_ids.end(),
+        source.indices.size() / 3,
+        material_id
+    );
+}
+
+MeshBuffer build_layered_roof_mesh(
+    const RoofData& roof,
+    const LayeredAssemblyData& assembly
+) {
+    MeshBuffer mesh;
+    auto layer_offset = 0.0;
+    for (const auto& layer : assembly.layers) {
+        RoofData layer_roof = roof;
+        layer_roof.thickness_meters = layer.thickness_meters;
+        const auto layer_mesh = layer_roof.roof_type == RoofType::Flat
+            ? extrude_polygon_mesh(layer_roof.boundary_polygon, layer.thickness_meters, 0.0)
+            : layer_roof.roof_type == RoofType::SimpleGable
+                ? build_gable_roof_mesh(layer_roof, layer.thickness_meters)
+                : build_auto_footprint_roof_mesh(layer_roof, layer.thickness_meters);
+        append_mesh_with_material(mesh, layer_mesh, layer_offset, layer.material_id);
+        layer_offset += layer.thickness_meters;
     }
     return mesh;
 }
@@ -1204,6 +1346,28 @@ MeshBuffer build_stair_mesh(const StairData& stair) {
     return mesh;
 }
 
+MeshBuffer build_layered_stair_mesh(
+    const StairData& stair,
+    const LayeredAssemblyData& assembly
+) {
+    // Stair layer thickness is a material build-up property; it must not be
+    // interpreted as extra rise, which would duplicate the whole staircase
+    // vertically. Keep one watertight stair solid and expose the assembly's
+    // core material on its triangles. The semantic layer list remains
+    // available to quantity/documentation consumers.
+    auto mesh = build_stair_mesh(stair);
+    if (mesh.indices.empty() || assembly.layers.empty()) {
+        return mesh;
+    }
+    auto material_id = assembly.layers.front().material_id;
+    if (assembly.core_start_layer >= 0 &&
+        assembly.core_start_layer < static_cast<int>(assembly.layers.size())) {
+        material_id = assembly.layers[static_cast<std::size_t>(assembly.core_start_layer)].material_id;
+    }
+    mesh.triangle_material_ids.assign(mesh.indices.size() / 3, material_id);
+    return mesh;
+}
+
 double roof_plan_area(const RoofData& roof) {
     return polygon_area(roof.boundary_polygon);
 }
@@ -1301,18 +1465,24 @@ ElementId Document::create_wall_type(std::string name, std::vector<WallAssemblyL
         throw std::invalid_argument("wall type must contain layers");
     }
     for (const auto& layer : layers) {
-        if (layer.thickness_meters <= 0.0) {
+        if (!std::isfinite(layer.thickness_meters) || layer.thickness_meters <= 0.0) {
             throw std::invalid_argument("wall type layer thickness must be positive");
         }
     }
 
     const auto wall_type_id = allocate_id();
-    wall_types_[wall_type_id] = WallTypeData{
+    WallTypeData wall_type{
         .wall_type_id = wall_type_id,
         .name = std::move(name),
         .category = category,
         .layers = std::move(layers),
     };
+    normalize_wall_layer_semantics(
+        wall_type.layers,
+        wall_type.core_start_layer,
+        wall_type.core_end_layer
+    );
+    wall_types_[wall_type_id] = std::move(wall_type);
     return wall_type_id;
 }
 
@@ -1325,7 +1495,63 @@ void Document::update_wall_type(WallTypeData wall_type) {
     if (wall_type.wall_type_id == 0 || wall_type.name.empty() || wall_type.layers.empty()) {
         throw std::invalid_argument("wall type is invalid");
     }
+    for (const auto& layer : wall_type.layers) {
+        if (!std::isfinite(layer.thickness_meters) || layer.thickness_meters <= 0.0) {
+            throw std::invalid_argument("wall type layer thickness must be positive");
+        }
+    }
+    normalize_wall_layer_semantics(
+        wall_type.layers,
+        wall_type.core_start_layer,
+        wall_type.core_end_layer
+    );
+    if (wall_type.core_start_layer < -1 || wall_type.core_end_layer < -1 ||
+        (wall_type.core_start_layer < 0) != (wall_type.core_end_layer < 0) ||
+        (wall_type.core_start_layer >= 0 &&
+         (wall_type.core_start_layer > wall_type.core_end_layer ||
+          wall_type.core_end_layer >= static_cast<int>(wall_type.layers.size())))) {
+        throw std::invalid_argument("wall type core layer range is invalid");
+    }
+    const auto wall_type_id = wall_type.wall_type_id;
+    const auto previous = get_wall_type(wall_type_id);
+    const auto previous_thickness = previous == nullptr ? -1.0 : total_wall_type_thickness(*previous);
+    // The interactive envelope only depends on the total wall thickness.
+    // Splitting that thickness into more layers is a detailed-cache change,
+    // not a reason to rebuild the lightweight viewport mesh.
+    const auto envelope_geometry_changed = previous == nullptr ||
+        std::abs(previous_thickness - total_wall_type_thickness(wall_type)) > epsilon;
+    const auto layered_geometry_changed = envelope_geometry_changed || previous == nullptr ||
+        previous->core_start_layer != wall_type.core_start_layer ||
+        previous->core_end_layer != wall_type.core_end_layer ||
+        previous->layers.size() != wall_type.layers.size() ||
+        std::any_of(previous->layers.begin(), previous->layers.end(), [&](const auto& layer) {
+            const auto index = static_cast<std::size_t>(&layer - previous->layers.data());
+            if (index >= wall_type.layers.size()) {
+                return true;
+            }
+            const auto& next_layer = wall_type.layers[index];
+            return layer.material_id != next_layer.material_id ||
+                layer.function != next_layer.function ||
+                layer.priority != next_layer.priority ||
+                layer.structural != next_layer.structural ||
+                layer.side != next_layer.side ||
+                layer.wraps_openings != next_layer.wraps_openings ||
+                layer.wraps_ends != next_layer.wraps_ends ||
+                std::abs(layer.thickness_meters - next_layer.thickness_meters) > epsilon;
+        });
     wall_types_[wall_type.wall_type_id] = std::move(wall_type);
+    const auto total_thickness = total_wall_type_thickness(wall_types_.at(wall_type_id));
+    for (auto& element : elements_) {
+        if (auto* wall = element.wall(); wall != nullptr && wall->wall_type_id == wall_type_id) {
+            if (layered_geometry_changed) {
+                wall->layered_geometry.dirty = true;
+            }
+            if (envelope_geometry_changed) {
+                wall->thickness_meters = total_thickness;
+                mark_wall_dirty(element);
+            }
+        }
+    }
     invalidate_dependency_graph_cache();
 }
 
@@ -1334,18 +1560,21 @@ ElementId Document::create_layered_assembly(LayeredAssemblyKind kind, std::strin
         throw std::invalid_argument("layered assembly is invalid");
     }
     for (const auto& layer : layers) {
-        if (layer.thickness_meters <= 0.0) {
+        if (!std::isfinite(layer.thickness_meters) || layer.thickness_meters <= 0.0) {
             throw std::invalid_argument("assembly layer thickness must be positive");
         }
     }
 
     const auto assembly_id = allocate_id();
-    layered_assemblies_[assembly_id] = LayeredAssemblyData{
+    LayeredAssemblyData assembly{
         .assembly_id = assembly_id,
         .kind = kind,
         .name = std::move(name),
         .layers = std::move(layers),
+        .revision = 1,
     };
+    normalize_layered_assembly_semantics(assembly);
+    layered_assemblies_[assembly_id] = std::move(assembly);
     invalidate_dependency_graph_cache();
     return assembly_id;
 }
@@ -1360,46 +1589,142 @@ void Document::update_layered_assembly(LayeredAssemblyData assembly) {
         throw std::invalid_argument("layered assembly is invalid");
     }
     for (const auto& layer : assembly.layers) {
-        if (layer.thickness_meters <= 0.0) {
+        if (!std::isfinite(layer.thickness_meters) || layer.thickness_meters <= 0.0) {
             throw std::invalid_argument("assembly layer thickness must be positive");
         }
     }
+    normalize_layered_assembly_semantics(assembly);
+    if (assembly.core_start_layer < -1 || assembly.core_end_layer < -1 ||
+        (assembly.core_start_layer < 0) != (assembly.core_end_layer < 0) ||
+        (assembly.core_start_layer >= 0 &&
+         (assembly.core_start_layer > assembly.core_end_layer ||
+          assembly.core_end_layer >= static_cast<int>(assembly.layers.size())))) {
+        throw std::invalid_argument("assembly core layer range is invalid");
+    }
     const auto assembly_id = assembly.assembly_id;
     const auto previous = get_layered_assembly(assembly_id);
-    // Rendering uses a single proxy envelope. Material/function/priority edits
-    // are semantic-only and must not trigger a viewport geometry rebuild. The
-    // only current proxy-affecting layer value is total thickness.
     const auto previous_thickness = previous == nullptr ? -1.0 : layered_assembly_total_thickness(*previous);
     const auto next_thickness = layered_assembly_total_thickness(assembly);
-    const auto material_geometry_changed = previous == nullptr ||
-        std::abs(previous_thickness - next_thickness) > epsilon ||
+    // The interactive envelope only depends on the total wall thickness.
+    // Changes to the layer split stay in the detailed cache and are loaded
+    // only by a section/documentation request.
+    const auto envelope_geometry_changed = previous == nullptr ||
+        std::abs(previous_thickness - next_thickness) > epsilon;
+    const auto layered_geometry_changed = envelope_geometry_changed || previous == nullptr ||
+        previous->core_start_layer != assembly.core_start_layer ||
+        previous->core_end_layer != assembly.core_end_layer ||
         previous->layers.size() != assembly.layers.size() ||
         std::any_of(previous->layers.begin(), previous->layers.end(), [&](const auto& layer) {
             const auto index = static_cast<std::size_t>(&layer - previous->layers.data());
+            if (index >= assembly.layers.size()) {
+                return true;
+            }
             const auto& next_layer = assembly.layers[index];
             return layer.material_id != next_layer.material_id ||
+                layer.function != next_layer.function ||
+                layer.priority != next_layer.priority ||
+                layer.structural != next_layer.structural ||
+                layer.side != next_layer.side ||
+                layer.wraps_openings != next_layer.wraps_openings ||
+                layer.wraps_ends != next_layer.wraps_ends ||
                 std::abs(layer.thickness_meters - next_layer.thickness_meters) > epsilon;
         });
+    assembly.revision = previous == nullptr
+        ? 1
+        : (layered_geometry_changed ? previous->revision + 1 : previous->revision);
+    const auto assembly_was_missing = previous == nullptr;
     layered_assemblies_[assembly_id] = std::move(assembly);
-    if (!material_geometry_changed) {
-        // Reports/export read the semantic layers on demand. Do not touch any
-        // element revision or mesh when only metadata changes.
-        invalidate_dependency_graph_cache();
-        return;
-    }
+    const auto& stored_assembly = layered_assemblies_.at(assembly_id);
     for (auto& element : elements_) {
         if (auto* wall = element.wall(); wall != nullptr && wall->assembly_id == assembly_id) {
-            wall->thickness_meters = layered_assembly_total_thickness(layered_assemblies_.at(assembly_id));
-            mark_wall_dirty(element);
+            const auto preserve_loaded_envelope = assembly_was_missing &&
+                !wall->geometry.dirty && !wall->geometry.mesh.indices.empty();
+            if (layered_geometry_changed) {
+                wall->layered_geometry.dirty = true;
+            }
+            if (envelope_geometry_changed) {
+                wall->thickness_meters = layered_assembly_total_thickness(stored_assembly);
+                if (preserve_loaded_envelope) {
+                    wall->geometry.assembly_revision = stored_assembly.revision;
+                } else {
+                    mark_wall_dirty(element);
+                }
+            }
         } else if (auto* slab = element.slab(); slab != nullptr && slab->assembly_id == assembly_id) {
-            slab->generated_geometry_dirty = true;
-            element.touch();
+            const auto preserve_loaded_envelope = assembly_was_missing &&
+                !slab->generated_geometry_dirty && !slab->envelope_geometry.dirty &&
+                (!slab->envelope_geometry.mesh.indices.empty() || !slab->mesh.indices.empty());
+            if (layered_geometry_changed) {
+                slab->layered_geometry.dirty = true;
+                if ((preserve_loaded_envelope || !envelope_geometry_changed) &&
+                    rebind_envelope_material(
+                        slab->envelope_geometry,
+                        slab->mesh,
+                        slab->geometry_is_layered,
+                        &stored_assembly
+                    )) {
+                    if (!slab->geometry_is_layered && !slab->envelope_geometry.mesh.indices.empty()) {
+                        slab->mesh = slab->envelope_geometry.mesh;
+                    }
+                }
+                if (preserve_loaded_envelope) {
+                    slab->envelope_geometry.dirty = false;
+                } else {
+                    slab->envelope_geometry.dirty = slab->envelope_geometry.dirty || envelope_geometry_changed;
+                    slab->generated_geometry_dirty = slab->generated_geometry_dirty || envelope_geometry_changed;
+                }
+                element.touch();
+            }
         } else if (auto* roof = element.roof(); roof != nullptr && roof->assembly_id == assembly_id) {
-            roof->generated_geometry_dirty = true;
-            element.touch();
+            const auto preserve_loaded_envelope = assembly_was_missing &&
+                !roof->generated_geometry_dirty && !roof->envelope_geometry.dirty &&
+                (!roof->envelope_geometry.mesh.indices.empty() || !roof->mesh.indices.empty());
+            if (layered_geometry_changed) {
+                roof->layered_geometry.dirty = true;
+                if ((preserve_loaded_envelope || !envelope_geometry_changed) &&
+                    rebind_envelope_material(
+                        roof->envelope_geometry,
+                        roof->mesh,
+                        roof->geometry_is_layered,
+                        &stored_assembly
+                    )) {
+                    if (!roof->geometry_is_layered && !roof->envelope_geometry.mesh.indices.empty()) {
+                        roof->mesh = roof->envelope_geometry.mesh;
+                    }
+                }
+                if (preserve_loaded_envelope) {
+                    roof->envelope_geometry.dirty = false;
+                } else {
+                    roof->envelope_geometry.dirty = roof->envelope_geometry.dirty || envelope_geometry_changed;
+                    roof->generated_geometry_dirty = roof->generated_geometry_dirty || envelope_geometry_changed;
+                }
+                element.touch();
+            }
         } else if (auto* stair = element.stair(); stair != nullptr && stair->assembly_id == assembly_id) {
-            stair->generated_geometry_dirty = true;
-            element.touch();
+            const auto preserve_loaded_envelope = assembly_was_missing &&
+                !stair->generated_geometry_dirty && !stair->envelope_geometry.dirty &&
+                (!stair->envelope_geometry.mesh.indices.empty() || !stair->mesh.indices.empty());
+            if (layered_geometry_changed) {
+                stair->layered_geometry.dirty = true;
+                if ((preserve_loaded_envelope || !envelope_geometry_changed) &&
+                    rebind_envelope_material(
+                        stair->envelope_geometry,
+                        stair->mesh,
+                        stair->geometry_is_layered,
+                        &stored_assembly
+                    )) {
+                    if (!stair->geometry_is_layered && !stair->envelope_geometry.mesh.indices.empty()) {
+                        stair->mesh = stair->envelope_geometry.mesh;
+                    }
+                }
+                if (preserve_loaded_envelope) {
+                    stair->envelope_geometry.dirty = false;
+                } else {
+                    stair->envelope_geometry.dirty = stair->envelope_geometry.dirty || envelope_geometry_changed;
+                    stair->generated_geometry_dirty = stair->generated_geometry_dirty || envelope_geometry_changed;
+                }
+                element.touch();
+            }
         }
     }
     invalidate_dependency_graph_cache();
@@ -1409,8 +1734,18 @@ ElementId Document::create_level(std::string name, double elevation_meters, doub
     if (name.empty()) {
         throw std::invalid_argument("level name must not be empty");
     }
-    if (default_wall_height_meters <= 0.0) {
+    if (!std::isfinite(elevation_meters)) {
+        throw std::invalid_argument("level elevation must be finite");
+    }
+    if (!std::isfinite(default_wall_height_meters) || default_wall_height_meters <= 0.0) {
         throw std::invalid_argument("default wall height must be positive");
+    }
+    for (const auto& element : elements_) {
+        const auto* existing = element.level();
+        if (existing != nullptr &&
+            std::abs(existing->elevation_meters - elevation_meters) <= epsilon) {
+            throw std::invalid_argument("level elevations must be unique");
+        }
     }
 
     const auto id = allocate_id();
@@ -1484,20 +1819,32 @@ void Document::set_element_assembly(ElementId element_id, ElementId assembly_id)
         wall->assembly_id = assembly_id;
         wall->wall_type_id = 0;
         wall->thickness_meters = layered_assembly_total_thickness(*assembly);
+        wall->layered_geometry.dirty = true;
         mark_wall_dirty(*element);
         refresh_dependencies_for_wall(element_id);
     } else if (auto* slab = element->slab()) {
         if (assembly->kind != LayeredAssemblyKind::Floor) throw std::invalid_argument("slab requires Floor assembly");
         slab->assembly_id = assembly_id;
         slab->thickness_meters = layered_assembly_total_thickness(*assembly);
+        slab->envelope_geometry.dirty = true;
+        slab->layered_geometry.dirty = true;
         slab->generated_geometry_dirty = true;
         element->touch();
     } else if (auto* roof = element->roof()) {
         if (assembly->kind != LayeredAssemblyKind::Roof) throw std::invalid_argument("roof requires Roof assembly");
-        roof->assembly_id = assembly_id; roof->generated_geometry_dirty = true; element->touch();
+        roof->assembly_id = assembly_id;
+        roof->thickness_meters = layered_assembly_total_thickness(*assembly);
+        roof->envelope_geometry.dirty = true;
+        roof->layered_geometry.dirty = true;
+        roof->generated_geometry_dirty = true;
+        element->touch();
     } else if (auto* stair = element->stair()) {
         if (assembly->kind != LayeredAssemblyKind::Stair) throw std::invalid_argument("stair requires Stair assembly");
-        stair->assembly_id = assembly_id; stair->generated_geometry_dirty = true; element->touch();
+        stair->assembly_id = assembly_id;
+        stair->envelope_geometry.dirty = true;
+        stair->layered_geometry.dirty = true;
+        stair->generated_geometry_dirty = true;
+        element->touch();
     } else {
         throw std::invalid_argument("element does not support compound assemblies");
     }
@@ -2087,10 +2434,11 @@ ElementId Document::create_slab(
 
     const auto id = allocate_id();
     auto area = polygon_area(boundary_polygon);
-    auto mesh = slab_assembly == nullptr
-        ? extrude_polygon_mesh(boundary_polygon, resolved_thickness, elevation_offset_meters)
-        : build_layered_slab_mesh(boundary_polygon, *slab_assembly, elevation_offset_meters);
-    elements_.emplace_back(id, ElementKind::Slab, "Slab", SlabData{
+    // Creation is an interactive operation. Keep the initial mesh at the
+    // envelope level and defer the compound build until a detail consumer
+    // explicitly asks for it.
+    auto mesh = extrude_polygon_mesh(boundary_polygon, resolved_thickness, elevation_offset_meters);
+    SlabData slab{
         .level_id = level_id,
         .boundary_polygon = std::move(boundary_polygon),
         .thickness_meters = resolved_thickness,
@@ -2101,7 +2449,10 @@ ElementId Document::create_slab(
         .mesh = std::move(mesh),
         .area_square_meters = area,
         .volume_cubic_meters = area * resolved_thickness,
-    });
+    };
+    slab.envelope_geometry.dirty = false;
+    slab.envelope_geometry.assembly_revision = cache_assembly_revision(slab_assembly);
+    elements_.emplace_back(id, ElementKind::Slab, "Slab", std::move(slab));
     invalidate_dependency_graph_cache();
     return id;
 }
@@ -2143,26 +2494,31 @@ ElementId Document::create_roof(
     const auto resolved_thickness = assembly_id != 0 ? layered_assembly_total_thickness(*get_layered_assembly(assembly_id)) : thickness_meters;
     const RoofData area_roof{.boundary_polygon = boundary_polygon, .roof_type = roof_type, .thickness_meters = resolved_thickness, .slope_degrees = slope_degrees, .overhang_meters = overhang_meters};
     const auto area = roof_type == RoofType::Flat ? polygon_area(boundary_polygon) : roof_surface_area(area_roof);
-    const auto mesh = roof_type == RoofType::Flat
+    auto mesh = roof_type == RoofType::Flat
         ? extrude_polygon_mesh(boundary_polygon, resolved_thickness, 0.0)
         : roof_type == RoofType::SimpleGable
             ? build_gable_roof_mesh(area_roof, resolved_thickness)
             : build_auto_footprint_roof_mesh(area_roof, resolved_thickness);
-    elements_.emplace_back(id, ElementKind::Roof, "Roof", RoofData{
+    RoofData roof_data{
         .level_id = level_id,
         .boundary_polygon = std::move(boundary_polygon),
         .source_wall_ids = std::move(source_wall_ids),
         .roof_type = roof_type,
-        .thickness_meters = thickness_meters,
+        .thickness_meters = resolved_thickness,
         .slope_degrees = slope_degrees,
         .overhang_meters = overhang_meters,
         .material_id = material_id,
         .assembly_id = assembly_id,
         .generated_geometry_dirty = false,
-        .mesh = mesh,
+        .mesh = std::move(mesh),
         .area_square_meters = area,
         .volume_cubic_meters = area * resolved_thickness,
-    });
+    };
+    roof_data.envelope_geometry.dirty = false;
+    roof_data.envelope_geometry.assembly_revision = cache_assembly_revision(
+        assembly_id == 0 ? nullptr : get_layered_assembly(assembly_id)
+    );
+    elements_.emplace_back(id, ElementKind::Roof, "Roof", std::move(roof_data));
     invalidate_dependency_graph_cache();
     return id;
 }
@@ -2248,6 +2604,10 @@ ElementId Document::create_stair(
     if (top_level_id != 0) {
         (void)require_level(top_level_id);
     }
+    if (top_level_id != 0 && top_level_id != base_level_id &&
+        level_elevation(top_level_id) <= level_elevation(base_level_id) + epsilon) {
+        throw std::invalid_argument("stair top level must be above base level");
+    }
     if (width_meters <= 0.0 || total_rise_meters <= 0.0 || total_run_meters <= 0.0 || riser_count <= 0 || tread_count <= 0) {
         throw std::invalid_argument("stair dimensions and counts must be positive");
     }
@@ -2280,6 +2640,10 @@ ElementId Document::create_stair(
         .volume_cubic_meters = footprint_area * (total_rise_meters / 2.0),
     };
     stair.mesh = build_stair_mesh(stair);
+    stair.envelope_geometry.dirty = false;
+    stair.envelope_geometry.assembly_revision = cache_assembly_revision(
+        assembly_id == 0 ? nullptr : get_layered_assembly(assembly_id)
+    );
     elements_.emplace_back(id, ElementKind::Stair, "Stair", stair);
     invalidate_dependency_graph_cache();
     return id;
@@ -3670,7 +4034,7 @@ void Document::update_level(
         level->name = *name;
     }
     if (default_wall_height_meters.has_value()) {
-        if (*default_wall_height_meters <= 0.0) {
+        if (!std::isfinite(*default_wall_height_meters) || *default_wall_height_meters <= 0.0) {
             throw std::invalid_argument("default wall height must be positive");
         }
         level->default_wall_height_meters = *default_wall_height_meters;
@@ -3689,8 +4053,38 @@ void Document::move_level_elevation(ElementId level_id, double elevation_meters)
     if (level == nullptr) {
         throw std::invalid_argument("level does not exist");
     }
+    if (!std::isfinite(elevation_meters)) {
+        throw std::invalid_argument("level elevation must be finite");
+    }
     if (std::abs(level->elevation_meters - elevation_meters) <= epsilon) {
         return;
+    }
+    for (const auto& element : elements_) {
+        const auto* other = element.level();
+        if (other != nullptr && element.id() != level_id &&
+            std::abs(other->elevation_meters - elevation_meters) <= epsilon) {
+            throw std::invalid_argument("level elevations must be unique");
+        }
+    }
+
+    const auto elevation_for = [&](ElementId candidate_id) {
+        return candidate_id == level_id ? elevation_meters : level_elevation(candidate_id);
+    };
+    for (const auto& element : elements_) {
+        if (const auto* wall = element.wall(); wall != nullptr &&
+            wall->height_mode == WallHeightMode::TopLevel && wall->top_level_id != 0) {
+            const auto base_id = wall->base_level_id != 0 ? wall->base_level_id : wall->level_id;
+            const auto base = elevation_for(base_id) + wall->base_offset_meters;
+            const auto top = elevation_for(wall->top_level_id) + wall->top_offset_meters;
+            if (!std::isfinite(base) || !std::isfinite(top) || top <= base + epsilon) {
+                throw std::invalid_argument("moving level would invert a wall top/base constraint");
+            }
+        }
+        if (const auto* stair = element.stair(); stair != nullptr &&
+            stair->top_level_id != 0 && stair->top_level_id != stair->base_level_id &&
+            elevation_for(stair->top_level_id) <= elevation_for(stair->base_level_id) + epsilon) {
+            throw std::invalid_argument("moving level would invert a stair top/base constraint");
+        }
     }
     level->elevation_meters = elevation_meters;
     level_element.touch();
@@ -3779,6 +4173,16 @@ void Document::set_wall_level_constraints(
     }
     if (height_mode == WallHeightMode::TopLevel && top_level_id == 0) {
         throw std::invalid_argument("top level constraint requires top_level_id");
+    }
+    if (!std::isfinite(base_offset_meters) || !std::isfinite(top_offset_meters)) {
+        throw std::invalid_argument("wall level offsets must be finite");
+    }
+    if (height_mode == WallHeightMode::TopLevel) {
+        const auto base = level_elevation(base_level_id) + base_offset_meters;
+        const auto top = level_elevation(top_level_id) + top_offset_meters;
+        if (!std::isfinite(base) || !std::isfinite(top) || top <= base + epsilon) {
+            throw std::invalid_argument("wall top level must be above base level");
+        }
     }
     wall->base_level_id = base_level_id;
     wall->level_id = base_level_id;
@@ -4076,56 +4480,170 @@ void Document::regenerate_dirty_geometry(GeometryDetail detail) {
     GeometryService geometry;
     for (auto& element : elements_) {
         auto* wall = element.wall();
-        if (wall != nullptr && wall->geometry.dirty) {
+        if (wall != nullptr) {
             auto resolved = *wall;
             resolved.height_meters = resolved_wall_height(*wall);
             const auto* wall_assembly = wall->assembly_id == 0 ? nullptr : get_layered_assembly(wall->assembly_id);
             const auto* wall_type = wall->wall_type_id == 0 ? nullptr : get_wall_type(wall->wall_type_id);
-            const auto* layers = detail == GeometryDetail::Layered && wall_assembly != nullptr
+            const auto* layers = wall_assembly != nullptr
                 ? &wall_assembly->layers
-                : (detail == GeometryDetail::Layered && wall_type != nullptr ? &wall_type->layers : nullptr);
-            wall->geometry = geometry.build_wall_geometry(
-                resolved,
-                element.revision(),
-                layers == nullptr ? std::vector<WallAssemblyLayer>{} : *layers
-            );
-            if (detail == GeometryDetail::Envelope && wall_assembly != nullptr &&
-                !wall_assembly->layers.empty() && !wall->geometry.mesh.indices.empty()) {
-                // One proxy slot keeps the envelope material-aware without
-                // expanding the viewport mesh into all assembly layers.
-                wall->geometry.mesh.triangle_material_ids.assign(
-                    wall->geometry.mesh.indices.size() / 3,
-                    wall_assembly->layers.front().material_id
+                : (wall_type != nullptr ? &wall_type->layers : nullptr);
+            const auto assembly_revision = cache_assembly_revision(wall_assembly);
+            if (layers != nullptr && !layers->empty()) {
+                resolved.thickness_meters = std::accumulate(layers->begin(), layers->end(), 0.0, [](double total, const auto& layer) {
+                    return total + layer.thickness_meters;
+                });
+            }
+
+            if (detail == GeometryDetail::Envelope) {
+                const auto envelope_needs_rebuild = wall->geometry.dirty || wall->geometry_is_layered;
+                if (envelope_needs_rebuild) {
+                    wall->geometry = geometry.build_wall_geometry(
+                        resolved,
+                        element.revision(),
+                        {}
+                    );
+                    wall->geometry_is_layered = false;
+                }
+                if (layers != nullptr && !layers->empty() &&
+                    !wall->geometry.mesh.indices.empty()) {
+                    // One proxy material slot keeps the envelope
+                    // material-aware without expanding the viewport mesh
+                    // into every compound layer. Refresh the slot even when
+                    // only layer metadata changed and the envelope vertices
+                    // were reusable.
+                    const auto triangle_count = wall->geometry.mesh.indices.size() / 3;
+                    const auto material_changed =
+                        wall->geometry.mesh.triangle_material_ids.size() != triangle_count ||
+                        std::any_of(
+                            wall->geometry.mesh.triangle_material_ids.begin(),
+                            wall->geometry.mesh.triangle_material_ids.end(),
+                            [&](ElementId material_id) {
+                                return material_id != layers->front().material_id;
+                            }
+                        );
+                    if (material_changed) {
+                        wall->geometry.mesh.triangle_material_ids.assign(
+                            triangle_count,
+                            layers->front().material_id
+                        );
+                    }
+                }
+            } else if (wall->layered_geometry.dirty ||
+                       wall->layered_geometry.assembly_revision != assembly_revision) {
+                wall->layered_geometry = geometry.build_wall_geometry(
+                    resolved,
+                    element.revision(),
+                    layers == nullptr ? std::vector<WallAssemblyLayer>{} : *layers
                 );
+                wall->layered_geometry.assembly_revision = assembly_revision;
+            }
+            if (detail == GeometryDetail::Layered) {
+                // Keep the historical geometry field as the requested active
+                // detail for callers that explicitly ask for Layered. The
+                // envelope cache remains available for the next interactive
+                // preview without rebuilding the compound mesh.
+                wall->geometry = wall->layered_geometry;
+                wall->geometry_is_layered = true;
             }
         }
 
         auto* slab = element.slab();
-        if (slab != nullptr && slab->generated_geometry_dirty) {
-            slab->area_square_meters = polygon_area(slab->boundary_polygon);
-            slab->volume_cubic_meters = slab->area_square_meters * slab->thickness_meters;
+        if (slab != nullptr) {
+            const auto needs_recompute = slab->generated_geometry_dirty;
             const auto* slab_assembly = slab->assembly_id == 0 ? nullptr : get_layered_assembly(slab->assembly_id);
+            const auto assembly_revision = cache_assembly_revision(slab_assembly);
             const auto thickness = slab_assembly == nullptr
                 ? slab->thickness_meters
                 : layered_assembly_total_thickness(*slab_assembly);
-            slab->thickness_meters = thickness;
-            slab->volume_cubic_meters = slab->area_square_meters * thickness;
-            slab->mesh = detail == GeometryDetail::Envelope || slab_assembly == nullptr
-                ? extrude_polygon_mesh(slab->boundary_polygon, thickness, slab->elevation_offset_meters)
-                : build_layered_slab_mesh(slab->boundary_polygon, *slab_assembly, slab->elevation_offset_meters);
-            if (detail == GeometryDetail::Envelope && slab_assembly != nullptr &&
-                !slab_assembly->layers.empty() && !slab->mesh.indices.empty()) {
-                slab->mesh.triangle_material_ids.assign(
-                    slab->mesh.indices.size() / 3,
-                    slab_assembly->layers.front().material_id
-                );
+            if (needs_recompute) {
+                slab->area_square_meters = polygon_area(slab->boundary_polygon);
+                slab->thickness_meters = thickness;
+                slab->volume_cubic_meters = slab->area_square_meters * thickness;
             }
-            slab->generated_geometry_dirty = false;
+
+            const auto build_envelope = [&]() {
+                auto envelope_mesh = extrude_polygon_mesh(
+                    slab->boundary_polygon,
+                    thickness,
+                    slab->elevation_offset_meters
+                );
+                if (slab_assembly != nullptr && !slab_assembly->layers.empty() &&
+                    !envelope_mesh.indices.empty()) {
+                    envelope_mesh.triangle_material_ids.assign(
+                        envelope_mesh.indices.size() / 3,
+                        slab_assembly->layers.front().material_id
+                    );
+                }
+                slab->envelope_geometry = GeneratedMeshCache{
+                    .dirty = false,
+                    .source_revision = element.revision(),
+                    .assembly_revision = assembly_revision,
+                    .mesh = std::move(envelope_mesh),
+                };
+                slab->mesh = slab->envelope_geometry.mesh;
+                slab->geometry_is_layered = false;
+                slab->layered_geometry.dirty = slab_assembly != nullptr;
+            };
+
+            const auto refresh_envelope_material = [&]() {
+                (void)rebind_envelope_material(
+                    slab->envelope_geometry,
+                    slab->mesh,
+                    slab->geometry_is_layered,
+                    slab_assembly
+                );
+            };
+            if (!slab->envelope_geometry.dirty &&
+                slab->envelope_geometry.assembly_revision != assembly_revision) {
+                // Rebind only material metadata when the shared assembly
+                // changed without changing its total thickness. This keeps
+                // imported/exact vertices intact and avoids a full rebuild.
+                refresh_envelope_material();
+            }
+
+            if (detail == GeometryDetail::Envelope) {
+                if (needs_recompute || slab->geometry_is_layered ||
+                    slab->envelope_geometry.dirty) {
+                    if (!needs_recompute && !slab->envelope_geometry.dirty &&
+                        !slab->envelope_geometry.mesh.indices.empty()) {
+                        refresh_envelope_material();
+                        slab->mesh = slab->envelope_geometry.mesh;
+                        slab->geometry_is_layered = false;
+                    } else {
+                        build_envelope();
+                    }
+                }
+            } else if (slab_assembly != nullptr &&
+                       (needs_recompute || slab->layered_geometry.dirty ||
+                        slab->layered_geometry.assembly_revision != assembly_revision)) {
+                auto layered_mesh = build_layered_slab_mesh(
+                    slab->boundary_polygon,
+                    *slab_assembly,
+                    slab->elevation_offset_meters
+                );
+                slab->layered_geometry = GeneratedMeshCache{
+                    .dirty = false,
+                    .source_revision = element.revision(),
+                    .assembly_revision = assembly_revision,
+                    .mesh = std::move(layered_mesh),
+                };
+                slab->mesh = slab->layered_geometry.mesh;
+                slab->geometry_is_layered = true;
+            } else if (slab_assembly == nullptr && needs_recompute) {
+                build_envelope();
+            }
+            if (needs_recompute) {
+                slab->generated_geometry_dirty = false;
+            }
         }
 
         auto* roof = element.roof();
-        if (roof != nullptr && roof->generated_geometry_dirty) {
-            if (!roof->source_wall_ids.empty()) {
+        if (roof != nullptr) {
+            const auto needs_recompute = roof->generated_geometry_dirty;
+            const auto* roof_assembly = roof->assembly_id == 0 ? nullptr : get_layered_assembly(roof->assembly_id);
+            const auto assembly_revision = cache_assembly_revision(roof_assembly);
+            if (needs_recompute && !roof->source_wall_ids.empty()) {
                 // A wall can be moved through a short invalid intermediate
                 // state while the user drags it.  Retain the last valid roof
                 // footprint until all source walls close into a loop again.
@@ -4141,25 +4659,90 @@ void Document::regenerate_dirty_geometry(GeometryDetail detail) {
                     // remains authoritative and can be completed or repaired.
                 }
             }
-            const auto thickness = roof->assembly_id != 0
-                ? (get_layered_assembly(roof->assembly_id) == nullptr ? roof->thickness_meters : layered_assembly_total_thickness(*get_layered_assembly(roof->assembly_id)))
+            const auto thickness = roof_assembly != nullptr
+                ? layered_assembly_total_thickness(*roof_assembly)
                 : roof->thickness_meters;
-            roof->area_square_meters = roof->roof_type == RoofType::Flat
-                ? roof_plan_area(*roof)
-                : roof_surface_area(RoofData{
-                    .boundary_polygon = roof->boundary_polygon,
-                    .roof_type = roof->roof_type,
-                    .thickness_meters = thickness,
-                    .slope_degrees = roof->slope_degrees,
-                    .overhang_meters = roof->overhang_meters,
-                });
-            roof->volume_cubic_meters = roof->area_square_meters * thickness;
-            roof->mesh = roof->roof_type == RoofType::Flat
-                ? extrude_polygon_mesh(roof->boundary_polygon, thickness, 0.0)
-                : roof->roof_type == RoofType::SimpleGable
-                    ? build_gable_roof_mesh(*roof, thickness)
-                    : build_auto_footprint_roof_mesh(*roof, thickness);
-            roof->generated_geometry_dirty = false;
+            if (needs_recompute) {
+                roof->thickness_meters = thickness;
+                roof->area_square_meters = roof->roof_type == RoofType::Flat
+                    ? roof_plan_area(*roof)
+                    : roof_surface_area(RoofData{
+                        .boundary_polygon = roof->boundary_polygon,
+                        .roof_type = roof->roof_type,
+                        .thickness_meters = thickness,
+                        .slope_degrees = roof->slope_degrees,
+                        .overhang_meters = roof->overhang_meters,
+                    });
+                roof->volume_cubic_meters = roof->area_square_meters * thickness;
+            }
+
+            const auto build_envelope = [&]() {
+                auto envelope_mesh = roof->roof_type == RoofType::Flat
+                    ? extrude_polygon_mesh(roof->boundary_polygon, thickness, 0.0)
+                    : roof->roof_type == RoofType::SimpleGable
+                        ? build_gable_roof_mesh(*roof, thickness)
+                        : build_auto_footprint_roof_mesh(*roof, thickness);
+                if (roof_assembly != nullptr && !roof_assembly->layers.empty() &&
+                    !envelope_mesh.indices.empty()) {
+                    assign_cache_material(envelope_mesh, roof_assembly->layers.front().material_id);
+                }
+                roof->envelope_geometry = GeneratedMeshCache{
+                    .dirty = false,
+                    .source_revision = element.revision(),
+                    .assembly_revision = assembly_revision,
+                    .mesh = std::move(envelope_mesh),
+                };
+                roof->mesh = roof->envelope_geometry.mesh;
+                roof->geometry_is_layered = false;
+                roof->layered_geometry.dirty = roof_assembly != nullptr;
+            };
+
+            const auto refresh_envelope_material = [&]() {
+                (void)rebind_envelope_material(
+                    roof->envelope_geometry,
+                    roof->mesh,
+                    roof->geometry_is_layered,
+                    roof_assembly
+                );
+            };
+            if (!roof->envelope_geometry.dirty &&
+                roof->envelope_geometry.assembly_revision != assembly_revision) {
+                refresh_envelope_material();
+            }
+
+            if (detail == GeometryDetail::Envelope) {
+                if (needs_recompute || roof->geometry_is_layered ||
+                    roof->envelope_geometry.dirty) {
+                    if (!needs_recompute && !roof->envelope_geometry.dirty &&
+                        !roof->envelope_geometry.mesh.indices.empty()) {
+                        refresh_envelope_material();
+                        roof->mesh = roof->envelope_geometry.mesh;
+                        roof->geometry_is_layered = false;
+                    } else {
+                        build_envelope();
+                    }
+                }
+            } else if (const auto* assembly = roof->assembly_id == 0
+                           ? nullptr
+                           : get_layered_assembly(roof->assembly_id);
+                       assembly != nullptr &&
+                       (needs_recompute || roof->layered_geometry.dirty ||
+                        roof->layered_geometry.assembly_revision != assembly_revision)) {
+                auto layered_mesh = build_layered_roof_mesh(*roof, *assembly);
+                roof->layered_geometry = GeneratedMeshCache{
+                    .dirty = false,
+                    .source_revision = element.revision(),
+                    .assembly_revision = assembly_revision,
+                    .mesh = std::move(layered_mesh),
+                };
+                roof->mesh = roof->layered_geometry.mesh;
+                roof->geometry_is_layered = true;
+            } else if (roof->assembly_id == 0 && needs_recompute) {
+                build_envelope();
+            }
+            if (needs_recompute) {
+                roof->generated_geometry_dirty = false;
+            }
         }
 
         auto* column = element.column();
@@ -4178,24 +4761,88 @@ void Document::regenerate_dirty_geometry(GeometryDetail detail) {
         }
 
         auto* stair = element.stair();
-        if (stair != nullptr && stair->generated_geometry_dirty) {
-            // Legacy/unconnected stairs may carry their own rise with base and
-            // top set to the same level. Only a distinct top level is a live
-            // vertical constraint.
-            if (stair->top_level_id != 0 && stair->top_level_id != stair->base_level_id) {
-                const auto* base_element = find_ptr(stair->base_level_id);
-                const auto* top_element = find_ptr(stair->top_level_id);
-                const auto* base = base_element == nullptr ? nullptr : base_element->level();
-                const auto* top = top_element == nullptr ? nullptr : top_element->level();
-                if (base != nullptr && top != nullptr) {
-                    stair->total_rise_meters = std::max(
-                        epsilon, top->elevation_meters - base->elevation_meters);
+        if (stair != nullptr) {
+            const auto needs_recompute = stair->generated_geometry_dirty;
+            const auto* stair_assembly = stair->assembly_id == 0 ? nullptr : get_layered_assembly(stair->assembly_id);
+            const auto assembly_revision = cache_assembly_revision(stair_assembly);
+
+            if (needs_recompute) {
+                // Legacy/unconnected stairs may carry their own rise with
+                // base and top set to the same level. Only a distinct top
+                // level is a live vertical constraint.
+                if (stair->top_level_id != 0 && stair->top_level_id != stair->base_level_id) {
+                    const auto* base_element = find_ptr(stair->base_level_id);
+                    const auto* top_element = find_ptr(stair->top_level_id);
+                    const auto* base = base_element == nullptr ? nullptr : base_element->level();
+                    const auto* top = top_element == nullptr ? nullptr : top_element->level();
+                    if (base != nullptr && top != nullptr) {
+                        stair->total_rise_meters = std::max(
+                            epsilon, top->elevation_meters - base->elevation_meters);
+                    }
                 }
+                stair->footprint_area_square_meters = stair->width_meters * stair->total_run_meters;
+                stair->volume_cubic_meters = stair->footprint_area_square_meters * (stair->total_rise_meters / 2.0);
             }
-            stair->footprint_area_square_meters = stair->width_meters * stair->total_run_meters;
-            stair->volume_cubic_meters = stair->footprint_area_square_meters * (stair->total_rise_meters / 2.0);
-            stair->mesh = build_stair_mesh(*stair);
-            stair->generated_geometry_dirty = false;
+
+            const auto build_envelope = [&]() {
+                auto envelope_mesh = build_stair_mesh(*stair);
+                if (stair_assembly != nullptr && !stair_assembly->layers.empty()) {
+                    assign_cache_material(envelope_mesh, stair_assembly->layers.front().material_id);
+                }
+                stair->envelope_geometry = GeneratedMeshCache{
+                    .dirty = false,
+                    .source_revision = element.revision(),
+                    .assembly_revision = assembly_revision,
+                    .mesh = std::move(envelope_mesh),
+                };
+                stair->mesh = stair->envelope_geometry.mesh;
+                stair->geometry_is_layered = false;
+                stair->layered_geometry.dirty = stair_assembly != nullptr;
+            };
+
+            const auto refresh_envelope_material = [&]() {
+                (void)rebind_envelope_material(
+                    stair->envelope_geometry,
+                    stair->mesh,
+                    stair->geometry_is_layered,
+                    stair_assembly
+                );
+            };
+            if (!stair->envelope_geometry.dirty &&
+                stair->envelope_geometry.assembly_revision != assembly_revision) {
+                refresh_envelope_material();
+            }
+
+            if (detail == GeometryDetail::Envelope) {
+                if (needs_recompute || stair->geometry_is_layered ||
+                    stair->envelope_geometry.dirty) {
+                    if (!needs_recompute && !stair->envelope_geometry.dirty &&
+                        !stair->envelope_geometry.mesh.indices.empty()) {
+                        refresh_envelope_material();
+                        stair->mesh = stair->envelope_geometry.mesh;
+                        stair->geometry_is_layered = false;
+                    } else {
+                        build_envelope();
+                    }
+                }
+            } else if (stair_assembly != nullptr &&
+                       (needs_recompute || stair->layered_geometry.dirty ||
+                        stair->layered_geometry.assembly_revision != assembly_revision)) {
+                auto layered_mesh = build_layered_stair_mesh(*stair, *stair_assembly);
+                stair->layered_geometry = GeneratedMeshCache{
+                    .dirty = false,
+                    .source_revision = element.revision(),
+                    .assembly_revision = assembly_revision,
+                    .mesh = std::move(layered_mesh),
+                };
+                stair->mesh = stair->layered_geometry.mesh;
+                stair->geometry_is_layered = true;
+            } else if (stair_assembly == nullptr && needs_recompute) {
+                build_envelope();
+            }
+            if (needs_recompute) {
+                stair->generated_geometry_dirty = false;
+            }
         }
     }
 }
@@ -5130,6 +5777,7 @@ void Document::mark_wall_dirty(Element& wall) noexcept {
     }
 
     wall_data->geometry.dirty = true;
+    wall_data->layered_geometry.dirty = true;
     wall.touch();
     touch_related_rooms(wall.id());
 }

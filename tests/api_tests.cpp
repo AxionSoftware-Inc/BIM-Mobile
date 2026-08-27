@@ -253,6 +253,18 @@ int main() {
         assert(door_object->metadata.at("level_locked") == "true");
         assert(door_object->level_id.value == level_2.value->value);
 
+        // Fast-open stage keeps the architectural shell but defers secondary
+        // openings until the normal nearby-level scene is requested.
+        const auto primary_json =
+            session->get_render_scene_json_primary(level_1.value->value);
+        assert(primary_json.ok() && primary_json.value.has_value());
+        assert(primary_json.value->find("\"kind\":\"wall\"") != std::string::npos);
+        assert(primary_json.value->find("\"kind\":\"door\"") == std::string::npos);
+        const auto full_nearby_json =
+            session->get_render_scene_json_near_level(level_1.value->value);
+        assert(full_nearby_json.ok() && full_nearby_json.value.has_value());
+        assert(full_nearby_json.value->find("\"kind\":\"door\"") != std::string::npos);
+
         // A section that crosses the hosted door must carry the opening cut
         // through every wall layer instead of showing a monolithic wall.
         const auto opening_section = session->get_section_scene_json(
@@ -306,6 +318,23 @@ int main() {
         assert(floor_created.value.has_value());
         assert(floor_created.value->size() == 1);
 
+        tbe::api::ProfileDraftDTO concave_floor_draft;
+        concave_floor_draft.mode = tbe::api::ApiProfileDraftMode::Polyline;
+        concave_floor_draft.target_kind = tbe::api::ApiProfileTargetKind::FloorBoundary;
+        concave_floor_draft.level_id = tbe::api::ElementIdDTO{level_id};
+        concave_floor_draft.points = {
+            {0.0, 0.0}, {8.0, 0.0}, {8.0, 8.0}, {6.0, 8.0},
+            {6.0, 2.0}, {2.0, 2.0}, {2.0, 8.0}, {0.0, 8.0},
+        };
+        concave_floor_draft.closed = true;
+        concave_floor_draft.thickness_meters = 0.18;
+        concave_floor_draft.assembly_id = tbe::api::ElementIdDTO{floor_assembly};
+        const auto concave_floor_created =
+            session->create_elements_from_profile(concave_floor_draft);
+        assert(concave_floor_created.ok());
+        assert(concave_floor_created.value.has_value());
+        assert(concave_floor_created.value->size() == 1);
+
         tbe::api::ProfileDraftDTO ceiling_draft;
         ceiling_draft.mode = tbe::api::ApiProfileDraftMode::Rectangle;
         ceiling_draft.target_kind = tbe::api::ApiProfileTargetKind::CeilingBoundary;
@@ -347,6 +376,28 @@ int main() {
         });
         assert(ceiling_object != render_scene.value->objects.end());
         assert(nearly_equal(ceiling_object->bounds.min.z, 2.6));
+        const auto concave_floor_object = std::find_if(
+            render_scene.value->objects.begin(), render_scene.value->objects.end(),
+            [](const auto& object) {
+                return object.kind == tbe::api::ApiElementKind::FloorSystem &&
+                    object.mesh.positions.size() == 16;
+            }
+        );
+        assert(concave_floor_object != render_scene.value->objects.end());
+        double concave_render_area = 0.0;
+        for (std::size_t index = 0; index < 36; index += 6) {
+            const auto& first = concave_floor_object->mesh.positions[
+                concave_floor_object->mesh.indices[index]];
+            const auto& second = concave_floor_object->mesh.positions[
+                concave_floor_object->mesh.indices[index + 1]];
+            const auto& third = concave_floor_object->mesh.positions[
+                concave_floor_object->mesh.indices[index + 2]];
+            concave_render_area += std::abs(
+                (second.x - first.x) * (third.y - first.y) -
+                (second.y - first.y) * (third.x - first.x)
+            ) * 0.5;
+        }
+        assert(nearly_equal(concave_render_area, 40.0));
     }
 
     {

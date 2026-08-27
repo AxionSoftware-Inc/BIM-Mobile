@@ -43,6 +43,9 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
   int _fitRevision = 0;
   int _sceneRevision = 0;
   bool _nativeCameraSyncScheduled = false;
+  bool _cameraNotificationScheduled = false;
+  bool _draftNotificationScheduled = false;
+  bool _disposed = false;
   // When true, Filament owns all large geometry through a validated
   // `.bimcache`; Flutter retains only the compact semantic envelope.
   bool _nativeGeometryActive = false;
@@ -53,6 +56,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
   RenderSceneDisplayStyle _displayStyle = RenderSceneDisplayStyle.solid;
   RenderSceneViewportTheme _viewportTheme = RenderSceneViewportTheme.light;
   bool _shadowsEnabled = false;
+  bool _hdriVisible = false;
   RenderSceneViewportBackend _backend;
   RenderSceneInteractionMode _interactionMode =
       RenderSceneInteractionMode.select;
@@ -128,6 +132,9 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
 
   @override
   bool get shadowsEnabled => _shadowsEnabled;
+
+  @override
+  bool get hdriVisible => _hdriVisible;
 
   @override
   RenderSceneViewportBackend get backend => _backend;
@@ -426,6 +433,14 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
   }
 
   @override
+  Future<void> setHdriVisible(bool visible) async {
+    if (_hdriVisible == visible) return;
+    _hdriVisible = visible;
+    notifyListeners();
+    await _invoke('setHdriVisible', visible);
+  }
+
+  @override
   Future<void> setShadowsEnabled(bool enabled) async {
     if (_shadowsEnabled == enabled) return;
     _shadowsEnabled = enabled;
@@ -490,7 +505,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
   void setWallDraft(RenderScenePoint? start, RenderScenePoint? end) {
     _draftWallStart = start;
     _draftWallEnd = end;
-    notifyListeners();
+    _scheduleDraftNotification();
   }
 
   @override
@@ -565,7 +580,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     _planCamera = _planCamera.copyWith(
       center: descriptor.planarPan(_planCamera.center, delta, zoom),
     );
-    notifyListeners();
+    _scheduleCameraNotification();
     _scheduleNativeCameraSync();
   }
 
@@ -615,7 +630,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
       center: nextCenter,
       zoom: nextZoom,
     );
-    notifyListeners();
+    _scheduleCameraNotification();
     _scheduleNativeCameraSync();
   }
 
@@ -786,5 +801,36 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
 
   void _notifyViewportListeners() {
     notifyListeners();
+  }
+
+  /// Coalesce high-frequency pan/pinch samples to the display frame rate.
+  ///
+  /// Pointer events can arrive faster than Flutter can paint. Notifying every
+  /// sample rebuilt the viewport and its Android platform-view wrapper several
+  /// times per frame, which made planar navigation feel sticky on tablets.
+  void _scheduleCameraNotification() {
+    if (_cameraNotificationScheduled || _disposed) return;
+    _cameraNotificationScheduled = true;
+    SchedulerBinding.instance.scheduleFrameCallback((_) {
+      _cameraNotificationScheduled = false;
+      if (!_disposed) notifyListeners();
+    });
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    _cameraNotificationScheduled = false;
+    _draftNotificationScheduled = false;
+    super.dispose();
+  }
+
+  void _scheduleDraftNotification() {
+    if (_draftNotificationScheduled || _disposed) return;
+    _draftNotificationScheduled = true;
+    SchedulerBinding.instance.scheduleFrameCallback((_) {
+      _draftNotificationScheduled = false;
+      if (!_disposed) notifyListeners();
+    });
   }
 }

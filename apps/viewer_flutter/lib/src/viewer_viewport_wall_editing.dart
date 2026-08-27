@@ -107,6 +107,9 @@ extension _ViewerViewportWallEditing on _ViewerHomePageState {
             end: originalEnd,
           )
         : point;
+    final wallSnapIndex = _wallSnapIndexFor(
+      excludeWallId: wall.elementId,
+    );
     if (_wallMoveMode == WallMoveMode.translate) {
       // Snap the grabbed point once, then apply one shared delta to both
       // endpoints. Snapping each endpoint independently changes the wall's
@@ -117,6 +120,7 @@ extension _ViewerViewportWallEditing on _ViewerHomePageState {
         constrainedPoint,
         anchor,
         snapToGrid: false,
+        snapIndex: wallSnapIndex,
       );
       final delta = WallAuthoringGeometry.projectToWallNormal(
             snappedPoint,
@@ -141,12 +145,13 @@ extension _ViewerViewportWallEditing on _ViewerHomePageState {
         referenceStart: originalEnd,
         excludeWallId: wall.elementId,
       );
-      nextStart = WallAuthoringGeometry.snapMovedWallPoint(
-        scene,
-        wall,
-        nextStart,
-        originalStart,
-      );
+        nextStart = WallAuthoringGeometry.snapMovedWallPoint(
+          scene,
+          wall,
+          nextStart,
+          originalStart,
+          snapIndex: wallSnapIndex,
+        );
       nextEnd = originalEnd;
     } else {
       nextStart = originalStart;
@@ -160,6 +165,7 @@ extension _ViewerViewportWallEditing on _ViewerHomePageState {
         wall,
         nextEnd,
         originalEnd,
+        snapIndex: wallSnapIndex,
       );
     }
     // The viewport controller owns this transient draft. Avoid rebuilding the

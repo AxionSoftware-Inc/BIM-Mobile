@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/foundation.dart';
 
 import 'render_scene_editor.dart';
@@ -128,7 +130,21 @@ class SceneMutationService {
       } else {
         trace.add('single-level wall: keeping explicit wall height');
       }
-      final finalScene = finalResult.scene;
+      var finalScene = finalResult.scene;
+      // IFC and large template imports deliberately disable the engine's
+      // automatic join pass while bulk-loading. Re-enable the useful
+      // interactive behavior only when this new wall actually lands near an
+      // existing endpoint; ordinary isolated walls stay O(1) after creation.
+      if (_hasNearbyWallEndpoint(request)) {
+        final joined = await engine.autoJoinWalls();
+        trace.add(
+          'endpoint auto-join walls=${joined.scene?.kindCounts['wall']} '
+          'errors=${joined.errors.join('|')}',
+        );
+        if (joined.scene != null) {
+          finalScene = joined.scene;
+        }
+      }
       if (finalScene == null || finalScene.objectById(wallId) == null) {
         return SceneMutationOutcome(
           scene: finalScene,
@@ -160,4 +176,33 @@ class SceneMutationService {
 
   static String _pointLabel(RenderScenePoint point) =>
       '${point.x.toStringAsFixed(3)},${point.y.toStringAsFixed(3)},${point.z.toStringAsFixed(3)}';
+
+  static bool _hasNearbyWallEndpoint(CreateWallRequest request) {
+    const endpointJoinToleranceMeters = 0.35;
+    for (final object in request.scene.objects) {
+      if (object.kindKey != 'wall' || object.levelId != request.baseLevelId) {
+        continue;
+      }
+      final start = RenderSceneEditor.wallStartPoint(object);
+      final end = RenderSceneEditor.wallEndPoint(object);
+      if ((start != null &&
+              (_planDistance(start, request.start) <=
+                      endpointJoinToleranceMeters ||
+                  _planDistance(start, request.end) <=
+                      endpointJoinToleranceMeters)) ||
+          (end != null &&
+              (_planDistance(end, request.start) <= endpointJoinToleranceMeters ||
+                  _planDistance(end, request.end) <=
+                      endpointJoinToleranceMeters))) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  static double _planDistance(RenderScenePoint first, RenderScenePoint second) {
+    final dx = first.x - second.x;
+    final dy = first.y - second.y;
+    return math.sqrt(dx * dx + dy * dy);
+  }
 }

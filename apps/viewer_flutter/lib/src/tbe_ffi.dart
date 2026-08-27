@@ -40,6 +40,9 @@ class TbeViewerApi {
         _getRenderSceneJsonNearLevel = library.lookupFunction<
             _NearbyRenderSceneNative,
             _NearbyRenderSceneDart>('tbe_get_render_scene_json_near_level'),
+        _getRenderSceneJsonPrimary = library.lookupFunction<
+            _PrimaryRenderSceneNative,
+            _PrimaryRenderSceneDart>('tbe_get_render_scene_json_primary'),
         _getSectionSceneJson = library.lookupFunction<_SectionRenderSceneNative,
             _SectionRenderSceneDart>('tbe_get_section_scene_json'),
         _setPerformanceProfile =
@@ -196,6 +199,7 @@ class TbeViewerApi {
   final _StringGetterDart _getApiVersion;
   final _StringGetterDart _getRenderSceneJson;
   final _NearbyRenderSceneDart _getRenderSceneJsonNearLevel;
+  final _PrimaryRenderSceneDart _getRenderSceneJsonPrimary;
   final _SectionRenderSceneDart _getSectionSceneJson;
   final _SetIntOptionDart _setPerformanceProfile;
   final _SetIntOptionDart _setComputeMode;

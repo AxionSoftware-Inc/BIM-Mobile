@@ -5,6 +5,7 @@
 #include "tbe/core/Project.hpp"
 #include "tbe/core/IfcExchange.hpp"
 #include "tbe/core/JobSystem.hpp"
+#include "tbe/core/PolygonTriangulation.hpp"
 
 #include <algorithm>
 #include <array>
@@ -578,6 +579,15 @@ enum class RenderSceneDetail {
     Exact,
 };
 
+// The primary stage is intentionally architectural: it contains the objects
+// needed to frame and navigate a project immediately. Secondary coordination
+// objects are requested by the normal scene query after the first frame is
+// already visible. The source Document is never changed by this filter.
+enum class RenderSceneStage {
+    Primary,
+    Full,
+};
+
 bool has_exact_ifc_geometry(const Element& element) {
     const auto found = element.metadata().find("ifc_exact_geometry");
     return found != element.metadata().end() && found->second.value == "true";
@@ -626,10 +636,17 @@ bool is_small_ifc_detail_proxy(const Element& element) {
 
 bool is_runtime_hidden_ifc_proxy(const Element& element, RenderSceneDetail detail) {
     // IFCOPENINGELEMENT describes a void/cutter, not a visible architectural
-    // object. It remains in the exact document for round-trip fidelity but is
-    // never useful as a selectable render mesh in the interactive viewport.
-    return detail == RenderSceneDetail::Interactive && element.proxy() != nullptr &&
-        ifc_entity_type(element) == "IFCOPENINGELEMENT";
+    // object. IFC spatial containers are likewise coordination metadata: some
+    // exporters attach a site/building envelope to them, and drawing that
+    // envelope in the interactive viewport produces a giant box around the
+    // actual building. Keep all of them in the exact document/IFC round trip,
+    // but do not turn their container bounds into viewport geometry.
+    if (detail != RenderSceneDetail::Interactive || element.proxy() == nullptr) return false;
+    const auto type = ifc_entity_type(element);
+    return type == "IFCOPENINGELEMENT" ||
+        type == "IFCPROJECT" ||
+        type == "IFCSITE" ||
+        type == "IFCBUILDING";
 }
 
 RenderSceneMeshDTO mesh_dto_from_mesh_buffer(
@@ -753,13 +770,17 @@ RenderSceneMeshDTO make_flat_polygon_mesh(const std::vector<tbe::core::Point2>& 
     for (const auto& point : polygon) {
         dto.positions.push_back(Vec3{.x = point.x, .y = point.y, .z = z + thickness});
     }
-    for (std::uint32_t index = 1; index + 1 < polygon.size(); ++index) {
-        dto.indices.push_back(0);
-        dto.indices.push_back(index);
-        dto.indices.push_back(index + 1);
-        dto.indices.push_back(static_cast<std::uint32_t>(polygon.size()));
-        dto.indices.push_back(static_cast<std::uint32_t>(polygon.size() + index + 1));
-        dto.indices.push_back(static_cast<std::uint32_t>(polygon.size() + index));
+    const auto top_triangles = tbe::core::triangulate_simple_polygon(polygon);
+    for (std::size_t index = 0; index + 2 < top_triangles.size(); index += 3) {
+        const auto first = top_triangles[index];
+        const auto second = top_triangles[index + 1];
+        const auto third = top_triangles[index + 2];
+        dto.indices.push_back(first);
+        dto.indices.push_back(second);
+        dto.indices.push_back(third);
+        dto.indices.push_back(static_cast<std::uint32_t>(polygon.size() + third));
+        dto.indices.push_back(static_cast<std::uint32_t>(polygon.size() + second));
+        dto.indices.push_back(static_cast<std::uint32_t>(polygon.size() + first));
     }
     return dto;
 }
@@ -896,6 +917,36 @@ std::string wall_layer_profile(const Document& document, const tbe::core::WallDa
         return wall_type == nullptr ? std::string{} : layer_profile(wall_type->layers);
     }
     return {};
+}
+
+// GeometryService has already resolved end-to-end mitres and T-junction
+// trims by the time a render scene is built. Keep those final plan profile
+// corners available to the tablet authoring layer so boundary snapping uses
+// the same visible join geometry as the wall mesh.
+std::string wall_profile_corners(const tbe::core::WallData& wall) {
+    const auto dx = wall.axis.end.x - wall.axis.start.x;
+    const auto dy = wall.axis.end.y - wall.axis.start.y;
+    const auto length = std::sqrt((dx * dx) + (dy * dy));
+    if (length <= 1.0e-9 || wall.geometry.profile.polygon.empty()) {
+        return {};
+    }
+
+    const auto direction_x = dx / length;
+    const auto direction_y = dy / length;
+    const auto perpendicular_x = -direction_y;
+    const auto perpendicular_y = direction_x;
+    std::ostringstream profile;
+    profile << std::setprecision(12);
+    for (std::size_t index = 0; index < wall.geometry.profile.polygon.size(); ++index) {
+        if (index != 0) {
+            profile << ';';
+        }
+        const auto& point = wall.geometry.profile.polygon[index];
+        const auto world_x = wall.axis.start.x + (point.x * direction_x) + (point.y * perpendicular_x);
+        const auto world_y = wall.axis.start.y + (point.x * direction_y) + (point.y * perpendicular_y);
+        profile << world_x << ',' << world_y;
+    }
+    return profile.str();
 }
 
 std::string wall_type_category_name(tbe::core::WallTypeCategory category) {
@@ -1408,7 +1459,8 @@ RenderSceneDTO build_section_scene(const Document& document, Vec2 start, Vec2 en
 RenderSceneDTO build_render_scene(
     const Document& document,
     const std::set<ElementId>* visible_level_ids = nullptr,
-    RenderSceneDetail detail = RenderSceneDetail::Exact
+    RenderSceneDetail detail = RenderSceneDetail::Exact,
+    RenderSceneStage stage = RenderSceneStage::Full
 ) {
     RenderSceneDTO scene;
     scene.scene_version = 1;
@@ -1431,6 +1483,13 @@ RenderSceneDTO build_render_scene(
                 !visible_level_ids->contains(static_cast<ElementId>(std::stoull(host_level->second)))) {
                 return;
             }
+        }
+        if (stage == RenderSceneStage::Primary &&
+            (object.kind == ApiElementKind::Door ||
+             object.kind == ApiElementKind::Window ||
+             object.kind == ApiElementKind::Room ||
+             object.kind == ApiElementKind::Proxy)) {
+            return;
         }
         if (const auto* source = document.find_ptr(object.element_id.value); source != nullptr) {
             for (const auto& [key, value] : source->metadata()) {
@@ -1529,6 +1588,7 @@ RenderSceneDTO build_render_scene(
                     {"height_mode", wall->height_mode == tbe::core::WallHeightMode::TopLevel ? "TopLevel" : "Unconnected"},
                     {"level_locked", "true"},
                     {"layer_profile", layer_profile},
+                    {"profile_corners", wall_profile_corners(*wall)},
                 }
             ));
             for (const auto& opening : wall->openings) {
@@ -1697,9 +1757,12 @@ RenderSceneDTO build_render_scene(
         if (const auto* proxy = element.proxy(); proxy != nullptr) {
             if (is_runtime_hidden_ifc_proxy(element, detail)) continue;
             const auto elevation = level_elevation(elevations, proxy->level_id, 0.0);
-            const auto simplify_detail = detail == RenderSceneDetail::Interactive &&
-                is_small_ifc_detail_proxy(element);
-            auto proxy_mesh = simplify_detail || proxy->mesh.vertices.empty() || proxy->mesh.indices.empty()
+            // Small exact IFC detail stays visually faithful. The interactive
+            // mesh_for_render path applies the deterministic triangle budget;
+            // replacing it with a generic box was cheap but made furniture and
+            // fixtures read as a wireframe cage. Only true fallback proxies
+            // (with no source mesh) use the selectable envelope.
+            auto proxy_mesh = proxy->mesh.vertices.empty() || proxy->mesh.indices.empty()
                 ? make_section_box(
                     proxy->position.x - proxy->width_meters * 0.5,
                     proxy->position.x + proxy->width_meters * 0.5,
@@ -1708,7 +1771,7 @@ RenderSceneDTO build_render_scene(
                     elevation,
                     elevation + proxy->height_meters,
                     0)
-                : mesh_for_render(proxy->mesh, 0.0, element);
+                : mesh_for_render(proxy->mesh, elevation, element);
             append_object(make_object_dto(
                 element.id(),
                 ApiElementKind::Proxy,
@@ -1950,6 +2013,24 @@ tbe::core::WallLayerFunction to_core_layer_function(ApiWallLayerFunction functio
     case ApiWallLayerFunction::Generic: return tbe::core::WallLayerFunction::Generic;
     }
     return tbe::core::WallLayerFunction::Generic;
+}
+
+ApiWallLayerSide to_api_layer_side(tbe::core::WallLayerSide side) {
+    switch (side) {
+    case tbe::core::WallLayerSide::Unspecified: return ApiWallLayerSide::Unspecified;
+    case tbe::core::WallLayerSide::Exterior: return ApiWallLayerSide::Exterior;
+    case tbe::core::WallLayerSide::Interior: return ApiWallLayerSide::Interior;
+    }
+    return ApiWallLayerSide::Unspecified;
+}
+
+tbe::core::WallLayerSide to_core_layer_side(ApiWallLayerSide side) {
+    switch (side) {
+    case ApiWallLayerSide::Unspecified: return tbe::core::WallLayerSide::Unspecified;
+    case ApiWallLayerSide::Exterior: return tbe::core::WallLayerSide::Exterior;
+    case ApiWallLayerSide::Interior: return tbe::core::WallLayerSide::Interior;
+    }
+    return tbe::core::WallLayerSide::Unspecified;
 }
 
 ApiWallTypeCategory to_api_wall_type_category(tbe::core::WallTypeCategory category) {
@@ -3235,6 +3316,45 @@ ApiResult<std::string> EngineSession::get_render_scene_json() const {
     }
 }
 
+ApiResult<std::string> EngineSession::get_render_scene_json_primary(
+    std::uint64_t active_level_id
+) const {
+    try {
+        auto recompute = recompute_impl(*impl_, ComputeMode::InteractivePreview);
+        if (!recompute.ok()) {
+            return error_result<std::string>(recompute.status, recompute.message);
+        }
+        const auto& document = impl_->document();
+        std::vector<std::pair<double, ElementId>> levels;
+        for (const auto& element : document.elements()) {
+            if (const auto* level = element.level(); level != nullptr) {
+                levels.emplace_back(level->elevation_meters, element.id());
+            }
+        }
+        std::sort(levels.begin(), levels.end());
+        const auto active = std::find_if(levels.begin(), levels.end(), [active_level_id](const auto& entry) {
+            return entry.second == active_level_id;
+        });
+        if (active == levels.end()) {
+            return error_result<std::string>(ApiStatus::NotFound, "active render level does not exist");
+        }
+        const auto active_index = static_cast<int>(std::distance(levels.begin(), active));
+        std::set<ElementId> visible_levels;
+        for (auto index = std::max(0, active_index - 1);
+             index <= std::min(static_cast<int>(levels.size()) - 1, active_index + 1);
+             ++index) {
+            visible_levels.insert(levels[static_cast<std::size_t>(index)].second);
+        }
+        return success_result(render_scene_to_json(build_render_scene(
+            document,
+            &visible_levels,
+            RenderSceneDetail::Interactive,
+            RenderSceneStage::Primary)));
+    } catch (const std::exception& error) {
+        return error_result<std::string>(status_from_exception(error), error.what());
+    }
+}
+
 ApiResult<std::string> EngineSession::get_render_scene_json_near_level(
     std::uint64_t active_level_id,
     int adjacent_level_count
@@ -3288,7 +3408,11 @@ ApiResult<std::string> EngineSession::get_section_scene_json(Vec2 start, Vec2 en
 ApiVoidResult EngineSession::export_render_scene_json(const std::string& path) const {
     namespace fs = std::filesystem;
     try {
-        auto recompute = recompute_impl(*impl_, ComputeMode::FinalExact);
+        // A render export is a viewport operation.  Do not block it on
+        // schedules, material takeoff, or the full validation report; those
+        // expensive derived products are generated by their explicit report
+        // APIs.  Normal mode still refreshes room-dependent scene data.
+        auto recompute = recompute_impl(*impl_, ComputeMode::Normal);
         if (!recompute.ok()) {
             return error_void(recompute.status, recompute.message);
         }
@@ -3500,7 +3624,9 @@ ApiResult<ElementIdDTO> EngineSession::create_wall(std::string name, Vec2 start,
 ApiResult<ElementIdDTO> EngineSession::create_wall_type(
     ApiWallTypeCategory category,
     std::string name,
-    std::vector<AssemblyLayerDTO> layers
+    std::vector<AssemblyLayerDTO> layers,
+    int core_start_layer,
+    int core_end_layer
 ) {
     ElementIdDTO created{};
     return apply_mutation_with_value(*impl_, "create_wall_type", created, [&](Document& document, ElementIdDTO& out) {
@@ -3513,9 +3639,19 @@ ApiResult<ElementIdDTO> EngineSession::create_wall_type(
                 .function = to_core_layer_function(layer.function),
                 .priority = layer.priority,
                 .structural = layer.structural,
+                .side = to_core_layer_side(layer.side),
+                .wraps_openings = layer.wraps_openings,
+                .wraps_ends = layer.wraps_ends,
             });
         }
-        out = to_id(document.create_wall_type(std::move(name), std::move(core_layers), to_core_wall_type_category(category)));
+        auto wall_type_id = document.create_wall_type(std::move(name), std::move(core_layers), to_core_wall_type_category(category));
+        if (core_start_layer >= 0 || core_end_layer >= 0) {
+            auto wall_type = *document.get_wall_type(wall_type_id);
+            wall_type.core_start_layer = core_start_layer;
+            wall_type.core_end_layer = core_end_layer;
+            document.update_wall_type(std::move(wall_type));
+        }
+        out = to_id(wall_type_id);
     });
 }
 
@@ -3525,6 +3661,8 @@ ApiVoidResult EngineSession::update_wall_type(WallTypeDTO wall_type) {
             .wall_type_id = wall_type.id.value,
             .name = std::move(wall_type.name),
             .category = to_core_wall_type_category(wall_type.category),
+            .core_start_layer = wall_type.core_start_layer,
+            .core_end_layer = wall_type.core_end_layer,
         };
         for (const auto& layer : wall_type.layers) {
             core_type.layers.push_back(tbe::core::WallAssemblyLayer{
@@ -3533,6 +3671,9 @@ ApiVoidResult EngineSession::update_wall_type(WallTypeDTO wall_type) {
                 .function = to_core_layer_function(layer.function),
                 .priority = layer.priority,
                 .structural = layer.structural,
+                .side = to_core_layer_side(layer.side),
+                .wraps_openings = layer.wraps_openings,
+                .wraps_ends = layer.wraps_ends,
             });
         }
         document.update_wall_type(std::move(core_type));
@@ -3543,11 +3684,13 @@ ApiResult<std::vector<WallTypeDTO>> EngineSession::list_wall_types() const {
     return query_result<std::vector<WallTypeDTO>>([&]() {
         std::vector<WallTypeDTO> rows;
         for (const auto& [wall_type_id, wall_type] : impl_->document().wall_types()) {
-            WallTypeDTO row{
+        WallTypeDTO row{
                 .id = to_id(wall_type_id),
                 .name = wall_type.name,
                 .category = to_api_wall_type_category(wall_type.category),
                 .total_thickness_meters = std::accumulate(wall_type.layers.begin(), wall_type.layers.end(), 0.0, [](double total, const auto& layer) { return total + layer.thickness_meters; }),
+                .core_start_layer = wall_type.core_start_layer,
+                .core_end_layer = wall_type.core_end_layer,
             };
             for (const auto& layer : wall_type.layers) {
                 row.layers.push_back(AssemblyLayerDTO{
@@ -3556,6 +3699,9 @@ ApiResult<std::vector<WallTypeDTO>> EngineSession::list_wall_types() const {
                     .function = to_api_layer_function(layer.function),
                     .priority = layer.priority,
                     .structural = layer.structural,
+                    .side = to_api_layer_side(layer.side),
+                    .wraps_openings = layer.wraps_openings,
+                    .wraps_ends = layer.wraps_ends,
                 });
             }
             rows.push_back(std::move(row));
@@ -3771,7 +3917,9 @@ ApiResult<std::vector<MaterialDTO>> EngineSession::list_materials() const {
 ApiResult<ElementIdDTO> EngineSession::create_layered_assembly(
     ApiLayeredAssemblyKind kind,
     std::string name,
-    std::vector<AssemblyLayerDTO> layers
+    std::vector<AssemblyLayerDTO> layers,
+    int core_start_layer,
+    int core_end_layer
 ) {
     ElementIdDTO created{};
     return apply_mutation_with_value(*impl_, "create_layered_assembly", created, [&](Document& document, ElementIdDTO& out) {
@@ -3784,9 +3932,19 @@ ApiResult<ElementIdDTO> EngineSession::create_layered_assembly(
                 .function = to_core_layer_function(layer.function),
                 .priority = layer.priority,
                 .structural = layer.structural,
+                .side = to_core_layer_side(layer.side),
+                .wraps_openings = layer.wraps_openings,
+                .wraps_ends = layer.wraps_ends,
             });
         }
-        out = to_id(document.create_layered_assembly(to_core_assembly_kind(kind), std::move(name), std::move(core_layers)));
+        auto assembly_id = document.create_layered_assembly(to_core_assembly_kind(kind), std::move(name), std::move(core_layers));
+        if (core_start_layer >= 0 || core_end_layer >= 0) {
+            auto assembly = *document.get_layered_assembly(assembly_id);
+            assembly.core_start_layer = core_start_layer;
+            assembly.core_end_layer = core_end_layer;
+            document.update_layered_assembly(std::move(assembly));
+        }
+        out = to_id(assembly_id);
     });
 }
 
@@ -3805,8 +3963,13 @@ ApiVoidResult EngineSession::update_layered_assembly(LayeredAssemblyDTO assembly
                 .function = to_core_layer_function(layer.function),
                 .priority = layer.priority,
                 .structural = layer.structural,
+                .side = to_core_layer_side(layer.side),
+                .wraps_openings = layer.wraps_openings,
+                .wraps_ends = layer.wraps_ends,
             });
         }
+        core_assembly.core_start_layer = assembly.core_start_layer;
+        core_assembly.core_end_layer = assembly.core_end_layer;
         document.update_layered_assembly(std::move(core_assembly));
     });
 }
@@ -3819,6 +3982,8 @@ ApiResult<std::vector<LayeredAssemblyDTO>> EngineSession::list_layered_assemblie
                 .id = to_id(assembly_id),
                 .kind = to_api_assembly_kind(assembly.kind),
                 .name = assembly.name,
+                .core_start_layer = assembly.core_start_layer,
+                .core_end_layer = assembly.core_end_layer,
             };
             for (const auto& layer : assembly.layers) {
                 row.layers.push_back(AssemblyLayerDTO{
@@ -3827,6 +3992,9 @@ ApiResult<std::vector<LayeredAssemblyDTO>> EngineSession::list_layered_assemblie
                     .function = to_api_layer_function(layer.function),
                     .priority = layer.priority,
                     .structural = layer.structural,
+                    .side = to_api_layer_side(layer.side),
+                    .wraps_openings = layer.wraps_openings,
+                    .wraps_ends = layer.wraps_ends,
                 });
             }
             rows.push_back(std::move(row));

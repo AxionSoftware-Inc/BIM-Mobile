@@ -178,6 +178,7 @@ TbeApiStatusCode tbe_get_unit_settings(TbeEngineHandle* handle, char** out_json)
 TbeApiStatusCode tbe_set_unit_settings(TbeEngineHandle* handle, const char* system, const char* length, const char* angle);
 TbeApiStatusCode tbe_export_render_scene_json(TbeEngineHandle* handle, const char* path);
 TbeApiStatusCode tbe_get_render_scene_json(TbeEngineHandle* handle, char** out_json);
+TbeApiStatusCode tbe_get_render_scene_json_primary(TbeEngineHandle* handle, uint64_t active_level_id, char** out_json);
 TbeApiStatusCode tbe_get_render_scene_json_near_level(TbeEngineHandle* handle, uint64_t active_level_id, int adjacent_level_count, char** out_json);
 TbeApiStatusCode tbe_get_section_scene_json(TbeEngineHandle* handle, TbeVec2 start, TbeVec2 end, char** out_json);
 TbeApiStatusCode tbe_set_performance_profile(TbeEngineHandle* handle, int profile);

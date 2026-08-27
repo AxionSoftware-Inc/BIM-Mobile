@@ -1,11 +1,13 @@
 #include "tbe/core/Element.hpp"
 #include "tbe/core/IfcExchange.hpp"
 
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <filesystem>
 #include <iostream>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -81,6 +83,31 @@ void validate_fixture(const std::filesystem::path& path, bool require_mesh) {
     }
 }
 
+void validate_multi_storey_containment(const std::filesystem::path& path) {
+    tbe::core::IfcExchangeReport report;
+    const auto document = tbe::core::import_ifc(path, "Multi-storey", &report);
+    std::vector<std::pair<tbe::core::ElementId, double>> levels;
+    for (const auto& element : document.elements()) {
+        if (const auto* level = element.level(); level != nullptr) {
+            levels.emplace_back(element.id(), level->elevation_meters);
+        }
+    }
+    assert(levels.size() == 2);
+    std::sort(levels.begin(), levels.end(), [](const auto& left, const auto& right) {
+        return left.second < right.second;
+    });
+    assert(std::abs(levels[0].second - 0.0) < 1.0e-6);
+    assert(std::abs(levels[1].second - 3.2) < 1.0e-6);
+
+    for (const auto& element : document.elements()) {
+        const auto* wall = element.wall();
+        if (wall == nullptr) continue;
+        const auto guid = element.metadata().at("ifc_guid").value;
+        if (guid == "W1") assert(wall->level_id == levels[0].first);
+        if (guid == "W2") assert(wall->level_id == levels[1].first);
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -93,5 +120,10 @@ int main(int argc, char** argv) {
     }
     assert(first_path < argc);
     for (int index = first_path; index < argc; ++index) validate_fixture(argv[index], require_mesh);
+    for (int index = first_path; index < argc; ++index) {
+        if (std::filesystem::path(argv[index]).stem() == "multi-storey-containment") {
+            validate_multi_storey_containment(argv[index]);
+        }
+    }
     return 0;
 }

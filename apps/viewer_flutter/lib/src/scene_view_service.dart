@@ -19,6 +19,14 @@ class SceneViewService {
   Future<RenderSceneLoadResult> refresh() =>
       _requireRepository().currentRenderScene();
 
+  Future<RenderSceneLoadResult> refreshPrimary() {
+    final repository = _requireRepository();
+    if (repository is ViewerPrimarySceneGateway) {
+      return repository.currentPrimaryRenderScene();
+    }
+    return repository.currentRenderScene();
+  }
+
   Future<RenderSceneLoadResult> activateLevel(int levelId) =>
       _requireRepository().setActiveLevel(levelId);
 
