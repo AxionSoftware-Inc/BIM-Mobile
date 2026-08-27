@@ -373,6 +373,10 @@ private data class NativeVisualEdge(
   // A true architectural corner (roughly 70 degrees or sharper), not a
   // tessellation seam. Solid can retain these after silhouette filtering.
   val sharp: Boolean,
+  // Native cache chunks contain many independent primitives. Keep the local
+  // primitive centre with the edge so winding correction never uses the
+  // centre of the whole streamed chunk.
+  val primitiveCenter: ScenePoint? = null,
 )
 
 /** Opening rectangle used to interrupt the Solid-only exterior brick pass. */
@@ -3309,6 +3313,12 @@ internal class RenderSceneFilamentHostView(
       }
       val boundedEdges = capNativeCacheEdges(localEdges)
       if (boundedEdges.isEmpty()) return
+      val localBounds = boundsForPoints(points)
+      val localCenter = ScenePoint(
+        (localBounds.min.x + localBounds.max.x) * 0.5,
+        (localBounds.min.y + localBounds.max.y) * 0.5,
+        (localBounds.min.z + localBounds.max.z) * 0.5,
+      )
       val pointBase = edgePoints.size
       val triangleBase = edgeTriangles.size
       edgePoints.addAll(points)
@@ -3326,6 +3336,7 @@ internal class RenderSceneFilamentHostView(
             second = edge.second + pointBase,
             triangleIndices = edge.triangleIndices.map { it + triangleBase }.toIntArray(),
             sharp = edge.sharp,
+            primitiveCenter = localCenter,
           ),
         )
       }
@@ -3345,9 +3356,12 @@ internal class RenderSceneFilamentHostView(
   }
 
   private fun edgeSurfaceOffset(
+    first: ScenePoint,
+    second: ScenePoint,
     triangleIndices: IntArray,
     points: List<ScenePoint>,
     triangles: List<IntArray>,
+    primitiveCenter: ScenePoint,
   ): ScenePoint {
     if (triangleIndices.isEmpty()) return ScenePoint(0.0, 0.0, 0.0)
     var reference: DoubleArray? = null
@@ -3372,10 +3386,27 @@ internal class RenderSceneFilamentHostView(
     if (count == 0) return ScenePoint(0.0, 0.0, 0.0)
     val length = kotlin.math.sqrt(normalX * normalX + normalY * normalY + normalZ * normalZ)
     if (length <= 1.0e-9) return ScenePoint(0.0, 0.0, 0.0)
+    // Imported meshes are not guaranteed to have consistent winding. Orient
+    // the offset away from the local primitive centre so a front-face edge is
+    // lifted out of the source surface instead of being pushed into it and
+    // depth-fighting on mobile GPUs.
+    val midpoint = ScenePoint(
+      (first.x + second.x) * 0.5,
+      (first.y + second.y) * 0.5,
+      (first.z + second.z) * 0.5,
+    )
+    val fromCenterX = midpoint.x - primitiveCenter.x
+    val fromCenterY = midpoint.y - primitiveCenter.y
+    val fromCenterZ = midpoint.z - primitiveCenter.z
+    if (normalX * fromCenterX + normalY * fromCenterY + normalZ * fromCenterZ < 0.0) {
+      normalX = -normalX
+      normalY = -normalY
+      normalZ = -normalZ
+    }
     val offset = when {
       projectionMode == "topDown" -> 0.006
-      projectionMode == "isometric" -> 0.025
-      else -> 0.012
+      projectionMode == "isometric" -> 0.040
+      else -> 0.018
     }
     return ScenePoint(
       normalX / length * offset,
@@ -4820,6 +4851,11 @@ internal class RenderSceneFilamentHostView(
       else -> 0.006
     } * radiusScale
     val sourceBounds = boundsForPoints(points)
+    val sourceCenter = ScenePoint(
+      (sourceBounds.min.x + sourceBounds.max.x) * 0.5,
+      (sourceBounds.min.y + sourceBounds.max.y) * 0.5,
+      (sourceBounds.min.z + sourceBounds.max.z) * 0.5,
+    )
     data class EdgeKey(val first: Int, val second: Int)
     fun edgeKey(first: Int, second: Int) = if (first < second) {
       EdgeKey(first, second)
@@ -4884,15 +4920,23 @@ internal class RenderSceneFilamentHostView(
       val second: ScenePoint,
       val junction: Boolean = false,
       val triangleIndices: IntArray = IntArray(0),
+      val primitiveCenter: ScenePoint? = null,
     )
     val edgeTriangleIndices = validEdges.associateBy(
       keySelector = { edgeKey(it.first, it.second) },
       valueTransform = { it.triangleIndices },
     )
-    val allEdges = validEdges.map { it.first to it.second }.toMutableList()
+    val allEdges = validEdges.toMutableList()
     for (key in junctionKeys) {
       if (allEdges.none { edgeKey(it.first, it.second) == key }) {
-        allEdges.add(key.first to key.second)
+        allEdges.add(
+          NativeVisualEdge(
+            first = key.first,
+            second = key.second,
+            triangleIndices = intArrayOf(),
+            sharp = true,
+          ),
+        )
       }
     }
     val rawRenderEdges = allEdges.map { edge ->
@@ -4901,6 +4945,7 @@ internal class RenderSceneFilamentHostView(
         points[edge.second],
         wallJunctionEdges && junctionKeys.contains(edgeKey(edge.first, edge.second)),
         edgeTriangleIndices[edgeKey(edge.first, edge.second)] ?: IntArray(0),
+        edge.primitiveCenter,
       )
     }.toMutableList()
     if (wallJunctionEdges && !isFloorPlan) {
@@ -4998,7 +5043,14 @@ internal class RenderSceneFilamentHostView(
       // as disappearing/dotted lines while orbiting.  Move it a tiny amount
       // along the average adjacent face normal; it remains depth-tested and
       // is still hidden by genuinely occluding geometry.
-      val surfaceOffset = edgeSurfaceOffset(edge.triangleIndices, points, triangles)
+      val surfaceOffset = edgeSurfaceOffset(
+        edge.first,
+        edge.second,
+        edge.triangleIndices,
+        points,
+        triangles,
+        edge.primitiveCenter ?: sourceCenter,
+      )
       val first = sourceFirst.copy(
         x = sourceFirst.x + faceOffset.x + surfaceOffset.x,
         y = sourceFirst.y + junctionOffset + surfaceOffset.y,
