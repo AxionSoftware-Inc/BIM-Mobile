@@ -16,6 +16,10 @@ class ViewerRepository
 
   final TbeViewerApi _api;
   final TbeRepositoryState _state = TbeRepositoryState();
+  // The native session is mutable and its snapshot is read immediately after
+  // each command. Serialize the complete command -> snapshot pair so a wall,
+  // door, or assembly update cannot race another authoring operation.
+  final AsyncSerialQueue _authoringQueue = AsyncSerialQueue();
   late final TbeProjectPersistenceRepository _persistence =
       TbeProjectPersistenceRepository(api: _api, state: _state);
   late final TbeSceneQueryRepository _sceneQueries = TbeSceneQueryRepository(
@@ -429,10 +433,12 @@ class ViewerRepository
     required double elevationMeters,
     required double defaultWallHeightMeters,
   }) =>
-      _mutations.createLevel(
-        name: name,
-        elevationMeters: elevationMeters,
-        defaultWallHeightMeters: defaultWallHeightMeters,
+      _authoringQueue.run(
+        () => _mutations.createLevel(
+          name: name,
+          elevationMeters: elevationMeters,
+          defaultWallHeightMeters: defaultWallHeightMeters,
+        ),
       );
 
   @override
@@ -440,9 +446,11 @@ class ViewerRepository
     required int levelId,
     required double elevationMeters,
   }) =>
-      _mutations.moveLevelElevation(
-        levelId: levelId,
-        elevationMeters: elevationMeters,
+      _authoringQueue.run(
+        () => _mutations.moveLevelElevation(
+          levelId: levelId,
+          elevationMeters: elevationMeters,
+        ),
       );
 
   @override
@@ -452,11 +460,13 @@ class ViewerRepository
     double? elevationMeters,
     double? defaultWallHeightMeters,
   }) =>
-      _mutations.updateLevel(
-        levelId: levelId,
-        name: name,
-        elevationMeters: elevationMeters,
-        defaultWallHeightMeters: defaultWallHeightMeters,
+      _authoringQueue.run(
+        () => _mutations.updateLevel(
+          levelId: levelId,
+          name: name,
+          elevationMeters: elevationMeters,
+          defaultWallHeightMeters: defaultWallHeightMeters,
+        ),
       );
 
   @override
@@ -468,13 +478,15 @@ class ViewerRepository
     required double thicknessMeters,
     required double heightMeters,
   }) =>
-      _mutations.createWall(
-        name: name,
-        levelId: levelId,
-        start: start,
-        end: end,
-        thicknessMeters: thicknessMeters,
-        heightMeters: heightMeters,
+      _authoringQueue.run(
+        () => _mutations.createWall(
+          name: name,
+          levelId: levelId,
+          start: start,
+          end: end,
+          thicknessMeters: thicknessMeters,
+          heightMeters: heightMeters,
+        ),
       );
 
   @override
@@ -489,16 +501,18 @@ class ViewerRepository
     required int riserCount,
     required int treadCount,
   }) =>
-      _mutations.createStair(
-        baseLevelId: baseLevelId,
-        topLevelId: topLevelId,
-        start: start,
-        direction: direction,
-        widthMeters: widthMeters,
-        totalRiseMeters: totalRiseMeters,
-        totalRunMeters: totalRunMeters,
-        riserCount: riserCount,
-        treadCount: treadCount,
+      _authoringQueue.run(
+        () => _mutations.createStair(
+          baseLevelId: baseLevelId,
+          topLevelId: topLevelId,
+          start: start,
+          direction: direction,
+          widthMeters: widthMeters,
+          totalRiseMeters: totalRiseMeters,
+          totalRunMeters: totalRunMeters,
+          riserCount: riserCount,
+          treadCount: treadCount,
+        ),
       );
 
   @override
@@ -510,13 +524,15 @@ class ViewerRepository
     double topOffsetMeters = 0.0,
     int heightMode = 0,
   }) =>
-      _mutations.setWallLevelConstraints(
-        wallId: wallId,
-        baseLevelId: baseLevelId,
-        topLevelId: topLevelId,
-        baseOffsetMeters: baseOffsetMeters,
-        topOffsetMeters: topOffsetMeters,
-        heightMode: heightMode,
+      _authoringQueue.run(
+        () => _mutations.setWallLevelConstraints(
+          wallId: wallId,
+          baseLevelId: baseLevelId,
+          topLevelId: topLevelId,
+          baseOffsetMeters: baseOffsetMeters,
+          topOffsetMeters: topOffsetMeters,
+          heightMode: heightMode,
+        ),
       );
 
   @override
@@ -525,10 +541,13 @@ class ViewerRepository
     required RenderScenePoint start,
     required RenderScenePoint end,
   }) =>
-      _mutations.setWallAxis(wallId: wallId, start: start, end: end);
+      _authoringQueue.run(
+        () => _mutations.setWallAxis(wallId: wallId, start: start, end: end),
+      );
 
   @override
-  Future<RenderSceneLoadResult> autoJoinWalls() => _mutations.autoJoinWalls();
+  Future<RenderSceneLoadResult> autoJoinWalls() =>
+      _authoringQueue.run(_mutations.autoJoinWalls);
 
   @override
   Future<RenderSceneLoadResult> trimExtendWalls({
@@ -537,11 +556,13 @@ class ViewerRepository
     required int secondWallId,
     required bool secondUsesStart,
   }) =>
-      _mutations.trimExtendWalls(
-        firstWallId: firstWallId,
-        firstUsesStart: firstUsesStart,
-        secondWallId: secondWallId,
-        secondUsesStart: secondUsesStart,
+      _authoringQueue.run(
+        () => _mutations.trimExtendWalls(
+          firstWallId: firstWallId,
+          firstUsesStart: firstUsesStart,
+          secondWallId: secondWallId,
+          secondUsesStart: secondUsesStart,
+        ),
       );
 
   @override
@@ -552,12 +573,14 @@ class ViewerRepository
     required double widthMeters,
     required double heightMeters,
   }) =>
-      _mutations.createDoor(
-        name: name,
-        hostWallId: hostWallId,
-        offsetMeters: offsetMeters,
-        widthMeters: widthMeters,
-        heightMeters: heightMeters,
+      _authoringQueue.run(
+        () => _mutations.createDoor(
+          name: name,
+          hostWallId: hostWallId,
+          offsetMeters: offsetMeters,
+          widthMeters: widthMeters,
+          heightMeters: heightMeters,
+        ),
       );
 
   @override
@@ -569,13 +592,15 @@ class ViewerRepository
     required double heightMeters,
     required double sillHeightMeters,
   }) =>
-      _mutations.createWindow(
-        name: name,
-        hostWallId: hostWallId,
-        offsetMeters: offsetMeters,
-        widthMeters: widthMeters,
-        heightMeters: heightMeters,
-        sillHeightMeters: sillHeightMeters,
+      _authoringQueue.run(
+        () => _mutations.createWindow(
+          name: name,
+          hostWallId: hostWallId,
+          offsetMeters: offsetMeters,
+          widthMeters: widthMeters,
+          heightMeters: heightMeters,
+          sillHeightMeters: sillHeightMeters,
+        ),
       );
 
   @override
@@ -583,13 +608,23 @@ class ViewerRepository
     required int openingId,
     required bool locked,
   }) =>
-      _mutations.setOpeningLevelLock(openingId: openingId, locked: locked);
+      _authoringQueue.run(
+        () => _mutations.setOpeningLevelLock(
+          openingId: openingId,
+          locked: locked,
+        ),
+      );
 
   Future<RenderSceneLoadResult> setOpeningLevel({
     required int openingId,
     required int levelId,
   }) =>
-      _mutations.setOpeningLevel(openingId: openingId, levelId: levelId);
+      _authoringQueue.run(
+        () => _mutations.setOpeningLevel(
+          openingId: openingId,
+          levelId: levelId,
+        ),
+      );
 
   @override
   Future<RenderSceneLoadResult> setOpeningLevelConstraint({
@@ -597,10 +632,12 @@ class ViewerRepository
     required int levelId,
     required double levelOffsetMeters,
   }) =>
-      _mutations.setOpeningLevelConstraint(
-        openingId: openingId,
-        levelId: levelId,
-        levelOffsetMeters: levelOffsetMeters,
+      _authoringQueue.run(
+        () => _mutations.setOpeningLevelConstraint(
+          openingId: openingId,
+          levelId: levelId,
+          levelOffsetMeters: levelOffsetMeters,
+        ),
       );
 
   @override
@@ -608,9 +645,11 @@ class ViewerRepository
     required int openingId,
     required double offsetMeters,
   }) =>
-      _mutations.moveHostedOpening(
-        openingId: openingId,
-        offsetMeters: offsetMeters,
+      _authoringQueue.run(
+        () => _mutations.moveHostedOpening(
+          openingId: openingId,
+          offsetMeters: offsetMeters,
+        ),
       );
 
   @override
@@ -621,12 +660,14 @@ class ViewerRepository
     required double heightMeters,
     double sillHeightMeters = 0.0,
   }) =>
-      _mutations.resizeOpening(
-        openingId: openingId,
-        kind: kind,
-        widthMeters: widthMeters,
-        heightMeters: heightMeters,
-        sillHeightMeters: sillHeightMeters,
+      _authoringQueue.run(
+        () => _mutations.resizeOpening(
+          openingId: openingId,
+          kind: kind,
+          widthMeters: widthMeters,
+          heightMeters: heightMeters,
+          sillHeightMeters: sillHeightMeters,
+        ),
       );
 
   @override
@@ -644,32 +685,37 @@ class ViewerRepository
     int assemblyId = 0,
     int roofType = 0,
   }) =>
-      _mutations.createProfile(
-        targetKind: targetKind,
-        draftMode: draftMode,
-        levelId: levelId,
-        points: points,
-        wallIds: wallIds,
-        closed: closed,
-        thicknessMeters: thicknessMeters,
-        heightMeters: heightMeters,
-        verticalOffsetMeters: verticalOffsetMeters,
-        materialId: materialId,
-        assemblyId: assemblyId,
-        roofType: roofType,
+      _authoringQueue.run(
+        () => _mutations.createProfile(
+          targetKind: targetKind,
+          draftMode: draftMode,
+          levelId: levelId,
+          points: points,
+          wallIds: wallIds,
+          closed: closed,
+          thicknessMeters: thicknessMeters,
+          heightMeters: heightMeters,
+          verticalOffsetMeters: verticalOffsetMeters,
+          materialId: materialId,
+          assemblyId: assemblyId,
+          roofType: roofType,
+        ),
       );
 
   @override
-  Future<RenderSceneLoadResult> detectRooms() => _mutations.detectRooms();
+  Future<RenderSceneLoadResult> detectRooms() =>
+      _authoringQueue.run(_mutations.detectRooms);
 
   @override
   Future<RenderSceneLoadResult> createFloorSystemForRoom({
     required int roomId,
     required int assemblyId,
   }) =>
-      _mutations.createFloorSystemForRoom(
-        roomId: roomId,
-        assemblyId: assemblyId,
+      _authoringQueue.run(
+        () => _mutations.createFloorSystemForRoom(
+          roomId: roomId,
+          assemblyId: assemblyId,
+        ),
       );
 
   @override
@@ -678,10 +724,12 @@ class ViewerRepository
     required int assemblyId,
     required double heightOffsetMeters,
   }) =>
-      _mutations.createCeilingSystemForRoom(
-        roomId: roomId,
-        assemblyId: assemblyId,
-        heightOffsetMeters: heightOffsetMeters,
+      _authoringQueue.run(
+        () => _mutations.createCeilingSystemForRoom(
+          roomId: roomId,
+          assemblyId: assemblyId,
+          heightOffsetMeters: heightOffsetMeters,
+        ),
       );
 
   @override
@@ -689,8 +737,12 @@ class ViewerRepository
     required int elementId,
     required int assemblyId,
   }) =>
-      _mutations.setElementAssembly(
-          elementId: elementId, assemblyId: assemblyId);
+      _authoringQueue.run(
+        () => _mutations.setElementAssembly(
+          elementId: elementId,
+          assemblyId: assemblyId,
+        ),
+      );
 
   @override
   Future<RenderSceneLoadResult> updateRoofProperties({
@@ -699,11 +751,13 @@ class ViewerRepository
     double? slopeDegrees,
     double? overhangMeters,
   }) =>
-      _mutations.updateRoofProperties(
-        roofId: roofId,
-        roofType: roofType,
-        slopeDegrees: slopeDegrees,
-        overhangMeters: overhangMeters,
+      _authoringQueue.run(
+        () => _mutations.updateRoofProperties(
+          roofId: roofId,
+          roofType: roofType,
+          slopeDegrees: slopeDegrees,
+          overhangMeters: overhangMeters,
+        ),
       );
 
   @override
@@ -713,11 +767,13 @@ class ViewerRepository
     required bool enabled,
     double clearanceMeters = 0.0,
   }) =>
-      _mutations.setStructuralWallCut(
-        wallId: wallId,
-        cutterId: cutterId,
-        enabled: enabled,
-        clearanceMeters: clearanceMeters,
+      _authoringQueue.run(
+        () => _mutations.setStructuralWallCut(
+          wallId: wallId,
+          cutterId: cutterId,
+          enabled: enabled,
+          clearanceMeters: clearanceMeters,
+        ),
       );
 
   @override
@@ -726,15 +782,19 @@ class ViewerRepository
     required int columnId,
     required bool enabled,
   }) =>
-      _mutations.setBeamColumnJoin(
-        beamId: beamId,
-        columnId: columnId,
-        enabled: enabled,
+      _authoringQueue.run(
+        () => _mutations.setBeamColumnJoin(
+          beamId: beamId,
+          columnId: columnId,
+          enabled: enabled,
+        ),
       );
 
   @override
   Future<RenderSceneLoadResult> deleteElement({required int elementId}) =>
-      _mutations.deleteElement(elementId: elementId);
+      _authoringQueue.run(
+        () => _mutations.deleteElement(elementId: elementId),
+      );
 
   @override
   List<HitCandidateView> hitTest(

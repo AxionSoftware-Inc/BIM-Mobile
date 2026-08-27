@@ -3,17 +3,21 @@
 part of 'viewer_app.dart';
 
 extension _ViewerViewState on _ViewerHomePageState {
+  ViewerViewportScenePolicy get _viewportScenePolicy =>
+      ViewerViewportScenePolicy(
+        projectionMode: _projectionMode,
+        activeLevelId: _activeLevelId,
+        planViewRangeMeters: _planViewRangeMeters,
+      );
+
   Set<String> _sanitizeVisibleKinds({
     required Set<String> visibleKinds,
     required RenderScene scene,
-  }) {
-    if (visibleKinds.isEmpty) {
-      return <String>{};
-    }
-
-    final available = scene.kindCounts.keys.toSet();
-    return visibleKinds.intersection(available);
-  }
+  }) =>
+      _viewportScenePolicy.sanitizeVisibleKinds(
+        visibleKinds: visibleKinds,
+        scene: scene,
+      );
 
   int? _resolveInitialLevelId(RenderScene scene, {int? preferred}) {
     final levels = scene.levels;
@@ -26,85 +30,17 @@ extension _ViewerViewState on _ViewerHomePageState {
     return levels.first.levelId;
   }
 
-  RenderScene _sceneForViewport(RenderScene scene) {
-    if (_projectionMode == RenderSceneProjectionMode.topDown) {
-      final activeLevel = _activeLevel(scene);
-      if (activeLevel != null) {
-        return scene.filteredByVerticalRange(
-          activeLevelId: activeLevel.levelId,
-          bottomMeters: activeLevel.elevationMeters,
-          topMeters: activeLevel.elevationMeters + _planViewRangeMeters,
-        );
-      }
-    }
-    return scene;
-  }
+  RenderScene _sceneForViewport(RenderScene scene) =>
+      _viewportScenePolicy.sceneForViewport(scene);
 
-  Set<String> _defaultVisibleKindsForProjection(RenderScene scene) {
-    final available = scene.kindCounts.keys.toSet();
-    if (_projectionMode == RenderSceneProjectionMode.topDown) {
-      const preferred = <String>{
-        'wall',
-        'door',
-        'window',
-        'room',
-        'floor',
-        'ceiling',
-        'column',
-        'beam',
-        'stair',
-      };
-      final visible = preferred.intersection(available);
-      if (visible.isNotEmpty) {
-        return visible;
-      }
-    }
+  Set<String> _defaultVisibleKindsForProjection(RenderScene scene) =>
+      _viewportScenePolicy.defaultVisibleKinds(scene);
 
-    // A 3D view should open on the architectural model. Imported/detail
-    // proxies remain available through the category controls, but making all
-    // of them visible by default turns a large IFC into a noisy wireframe.
-    const architecturalKinds = <String>{
-      'wall',
-      'door',
-      'window',
-      'room',
-      'floor',
-      'ceiling',
-      'column',
-      'beam',
-      'stair',
-      'slab',
-      'roof',
-    };
-    final architectural = architecturalKinds.intersection(available);
-    if (architectural.isNotEmpty) {
-      return architectural;
-    }
-    return <String>{};
-  }
+  Set<String> _ensurePlanCoreVisibility(Set<String> kinds, RenderScene scene) =>
+      _viewportScenePolicy.ensurePlanCoreVisibility(kinds, scene);
 
-  Set<String> _ensurePlanCoreVisibility(
-    Set<String> kinds,
-    RenderScene scene,
-  ) {
-    if (_projectionMode != RenderSceneProjectionMode.topDown || kinds.isEmpty) {
-      return kinds;
-    }
-    final available = scene.kindCounts.keys.toSet();
-    return <String>{
-      ...kinds,
-      for (final kind in <String>{'wall', 'door', 'window'})
-        if (available.contains(kind)) kind,
-    };
-  }
-
-  RenderSceneDisplayStyle _defaultDisplayStyleForProjection() {
-    if (_projectionMode == RenderSceneProjectionMode.topDown ||
-        _projectionMode.isElevation) {
-      return RenderSceneDisplayStyle.solid;
-    }
-    return RenderSceneDisplayStyle.solid;
-  }
+  RenderSceneDisplayStyle _defaultDisplayStyleForProjection() =>
+      _viewportScenePolicy.defaultDisplayStyle;
 
   RenderSceneLevel? _activeLevel(RenderScene? scene) {
     if (scene == null) {

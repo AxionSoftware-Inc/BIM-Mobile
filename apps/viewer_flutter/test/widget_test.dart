@@ -49,6 +49,8 @@ import 'package:viewer_flutter/src/view_workspace_store.dart';
 import 'package:viewer_flutter/src/view_navigation_coordinator.dart';
 import 'package:viewer_flutter/src/view_tabs.dart';
 import 'package:viewer_flutter/src/view_navigation_policy.dart';
+import 'package:viewer_flutter/src/async_serial_queue.dart';
+import 'package:viewer_flutter/src/viewer_viewport_scene_policy.dart';
 
 part 'widget_scene_geometry_tests.dart';
 part 'widget_engine_integration_tests.dart';
@@ -141,8 +143,7 @@ class _RecordingProjectGateway implements ViewerProjectGateway {
   Future<String> saveProjectJson() async => '{"schema_version": 1}';
 
   @override
-  Future<String> snapshotImportedProjectJson() async =>
-      '{"schema_version": 1}';
+  Future<String> snapshotImportedProjectJson() async => '{"schema_version": 1}';
 
   @override
   Future<File> saveProjectToDefaultLocation() async =>
@@ -261,23 +262,30 @@ void main() {
   registerAuthoringToolModuleTests();
   registerViewNavigationPolicyTests();
 
-  test('project recovery store writes and removes a durable checkpoint', () async {
-    final store = ProjectRecoveryStore();
-    const projectName = 'viewer-recovery-test';
-    await store.deleteForProject(projectName);
-    final entry = await store.write(
-      projectName: projectName,
-      json: '{"schema_version": 1, "recovery": true}',
-    );
-    expect(await entry.readJson(), contains('recovery'));
-    expect(
-      (await store.list()).any((candidate) => candidate.jsonPath == entry.jsonPath),
-      isTrue,
-    );
-    await store.deleteEntry(entry);
-    expect(
-      (await store.list()).any((candidate) => candidate.jsonPath == entry.jsonPath),
-      isFalse,
-    );
-  });
+  test(
+    'project recovery store writes and removes a durable checkpoint',
+    () async {
+      final store = ProjectRecoveryStore();
+      const projectName = 'viewer-recovery-test';
+      await store.deleteForProject(projectName);
+      final entry = await store.write(
+        projectName: projectName,
+        json: '{"schema_version": 1, "recovery": true}',
+      );
+      expect(await entry.readJson(), contains('recovery'));
+      expect(
+        (await store.list()).any(
+          (candidate) => candidate.jsonPath == entry.jsonPath,
+        ),
+        isTrue,
+      );
+      await store.deleteEntry(entry);
+      expect(
+        (await store.list()).any(
+          (candidate) => candidate.jsonPath == entry.jsonPath,
+        ),
+        isFalse,
+      );
+    },
+  );
 }

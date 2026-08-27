@@ -120,9 +120,11 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
     final baseLevel = scene.levelById(baseLevelId);
     final candidates = scene.objects
         .where((object) => object.kindKey == 'wall')
-        .where((object) =>
-            (_metadataInt(object, 'base_level_id') ?? object.levelId) ==
-            baseLevelId)
+        .where(
+          (object) =>
+              (_metadataInt(object, 'base_level_id') ?? object.levelId) ==
+              baseLevelId,
+        )
         .where((object) => object.elementId != null)
         .toList(growable: false);
     final topLevelIds = <int>{
@@ -132,17 +134,22 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
     };
     final roofLevelId = topLevelIds.isNotEmpty
         ? (topLevelIds.toList()
-              ..sort((left, right) =>
-                  (scene.levelById(left)?.elevationMeters ?? 0)
-                      .compareTo(scene.levelById(right)?.elevationMeters ?? 0)))
+              ..sort(
+                (left, right) => (scene.levelById(left)?.elevationMeters ?? 0)
+                    .compareTo(scene.levelById(right)?.elevationMeters ?? 0),
+              ))
             .last
         : (scene.levels
-                .where((level) =>
-                    baseLevel != null &&
-                    level.elevationMeters > baseLevel.elevationMeters + 1e-6)
+                .where(
+                  (level) =>
+                      baseLevel != null &&
+                      level.elevationMeters > baseLevel.elevationMeters + 1e-6,
+                )
                 .toList()
-              ..sort((left, right) =>
-                  left.elevationMeters.compareTo(right.elevationMeters)))
+              ..sort(
+                (left, right) =>
+                    left.elevationMeters.compareTo(right.elevationMeters),
+              ))
             .firstOrNull
             ?.levelId;
     if (roofLevelId == null) {
@@ -154,7 +161,8 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
     }
     final boundWalls = candidates
         .where(
-            (wall) => (_metadataInt(wall, 'top_level_id') ?? 0) == roofLevelId)
+          (wall) => (_metadataInt(wall, 'top_level_id') ?? 0) == roofLevelId,
+        )
         .toList(growable: false);
     final polygon = RenderSceneEditor.surfacePolygonForWalls(boundWalls);
     if (polygon == null || polygon.length < 3) {
@@ -350,8 +358,10 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
     for (final id in selectedIds) {
       final target = nextScene.objectByStableId(id.toString());
       if (target != null) {
-        nextScene =
-            RenderSceneEditor.deleteObject(scene: nextScene, target: target);
+        nextScene = RenderSceneEditor.deleteObject(
+          scene: nextScene,
+          target: target,
+        );
       }
     }
     await _applySceneChange(
@@ -361,6 +371,20 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
   }
 
   Future<void> _applySceneChange(
+    RenderScene nextScene, {
+    required String message,
+    bool authoritative = false,
+  }) {
+    return _sceneCommitQueue.run(
+      () => _applySceneChangeNow(
+        nextScene,
+        message: message,
+        authoritative: authoritative,
+      ),
+    );
+  }
+
+  Future<void> _applySceneChangeNow(
     RenderScene nextScene, {
     required String message,
     bool authoritative = false,
@@ -379,8 +403,10 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
     final nextSelected = previousSelectedId != null
         ? nextScene.objectByStableId(previousSelectedId)
         : null;
-    final resolvedLevelId =
-        _resolveInitialLevelId(nextScene, preferred: _activeLevelId);
+    final resolvedLevelId = _resolveInitialLevelId(
+      nextScene,
+      preferred: _activeLevelId,
+    );
     _viewWorkspace.clearSheetCache();
 
     _updateViewportState(() {
@@ -426,18 +452,22 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
     }
 
     if (nextSelected != null) {
-      await _viewportController
-          .selectElement(nextSelected.elementId?.toString());
-      await _viewportController
-          .highlightElement(nextSelected.elementId?.toString());
+      await _viewportController.selectElement(
+        nextSelected.elementId?.toString(),
+      );
+      await _viewportController.highlightElement(
+        nextSelected.elementId?.toString(),
+      );
     } else if (previousSelectedId != null) {
       await _viewportController.selectElement(null);
       await _viewportController.highlightElement(null);
     } else if (selectedBefore != null) {
-      await _viewportController
-          .selectElement(selectedBefore.elementId?.toString());
-      await _viewportController
-          .highlightElement(selectedBefore.elementId?.toString());
+      await _viewportController.selectElement(
+        selectedBefore.elementId?.toString(),
+      );
+      await _viewportController.highlightElement(
+        selectedBefore.elementId?.toString(),
+      );
     } else {
       await _viewportController.highlightElement(previousHighlightedId);
     }

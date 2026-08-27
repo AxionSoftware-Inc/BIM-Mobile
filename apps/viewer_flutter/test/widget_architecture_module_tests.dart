@@ -1,47 +1,120 @@
 part of 'widget_test.dart';
 
 void registerArchitectureModuleTests() {
-  test('view navigation coordinator serializes engine-backed transitions',
-      () async {
-    final coordinator = ViewNavigationCoordinator();
+  test('scene commit queue preserves mutation result order', () async {
+    final queue = AsyncSerialQueue();
     final events = <String>[];
     final firstStarted = Completer<void>();
     final releaseFirst = Completer<void>();
 
-    final first = coordinator.run(() async {
-      events.add('first-start');
+    final first = queue.run(() async {
+      events.add('wall-start');
       firstStarted.complete();
       await releaseFirst.future;
-      events.add('first-end');
+      events.add('wall-commit');
     });
     await firstStarted.future;
 
-    final second = coordinator.run(() async {
-      events.add('second');
+    final second = queue.run(() async {
+      events.add('door-start');
     });
-    expect(events, <String>['first-start']);
+    expect(events, <String>['wall-start']);
 
     releaseFirst.complete();
     await Future.wait(<Future<void>>[first, second]);
-    expect(events, <String>['first-start', 'first-end', 'second']);
+    expect(events, <String>['wall-start', 'wall-commit', 'door-start']);
   });
 
-  test('view navigation coordinator continues after a failed transition',
-      () async {
-    final coordinator = ViewNavigationCoordinator();
-    final events = <String>[];
+  test('scene commit queue remains usable after a failed commit', () async {
+    final queue = AsyncSerialQueue();
 
-    final failed = coordinator.run(() async {
-      events.add('failed');
-      throw StateError('engine response failed');
-    });
-    await expectLater(failed, throwsA(isA<StateError>()));
+    await expectLater(
+      queue.run<void>(() async {
+        throw StateError('viewport commit failed');
+      }),
+      throwsA(isA<StateError>()),
+    );
 
-    await coordinator.run(() async {
-      events.add('recovered');
+    var recovered = false;
+    await queue.run<void>(() async {
+      recovered = true;
     });
-    expect(events, <String>['failed', 'recovered']);
+    expect(recovered, isTrue);
   });
+
+  test(
+    'viewport scene policy keeps 3D presentation separate from authoring',
+    () {
+      final scene = parseRenderSceneJson(
+        File('test/fixtures/render_scene_sample.json').readAsStringSync(),
+        source: 'viewport policy test',
+      ).scene!;
+      const policy = ViewerViewportScenePolicy(
+        projectionMode: RenderSceneProjectionMode.isometric,
+        activeLevelId: 1,
+      );
+
+      expect(policy.sceneForViewport(scene), same(scene));
+      expect(policy.defaultDisplayStyle, RenderSceneDisplayStyle.solid);
+      expect(
+        policy.defaultVisibleKinds(scene),
+        containsAll(<String>{'wall', 'door', 'window'}),
+      );
+      expect(
+        policy.sanitizeVisibleKinds(
+          visibleKinds: <String>{'wall', 'missing'},
+          scene: scene,
+        ),
+        <String>{'wall'},
+      );
+    },
+  );
+
+  test(
+    'view navigation coordinator serializes engine-backed transitions',
+    () async {
+      final coordinator = ViewNavigationCoordinator();
+      final events = <String>[];
+      final firstStarted = Completer<void>();
+      final releaseFirst = Completer<void>();
+
+      final first = coordinator.run(() async {
+        events.add('first-start');
+        firstStarted.complete();
+        await releaseFirst.future;
+        events.add('first-end');
+      });
+      await firstStarted.future;
+
+      final second = coordinator.run(() async {
+        events.add('second');
+      });
+      expect(events, <String>['first-start']);
+
+      releaseFirst.complete();
+      await Future.wait(<Future<void>>[first, second]);
+      expect(events, <String>['first-start', 'first-end', 'second']);
+    },
+  );
+
+  test(
+    'view navigation coordinator continues after a failed transition',
+    () async {
+      final coordinator = ViewNavigationCoordinator();
+      final events = <String>[];
+
+      final failed = coordinator.run(() async {
+        events.add('failed');
+        throw StateError('engine response failed');
+      });
+      await expectLater(failed, throwsA(isA<StateError>()));
+
+      await coordinator.run(() async {
+        events.add('recovered');
+      });
+      expect(events, <String>['failed', 'recovered']);
+    },
+  );
 
   test('viewport gesture module owns shared two-finger camera rules', () {
     final target = _RecordingCameraTarget();
@@ -130,11 +203,7 @@ final class _RecordingCameraTarget implements ViewportCameraTarget {
   }
 
   @override
-  void zoomPlanBy(
-    double scaleDelta, {
-    Offset? focalPoint,
-    Size? viewportSize,
-  }) {
+  void zoomPlanBy(double scaleDelta, {Offset? focalPoint, Size? viewportSize}) {
     planZoom = scaleDelta;
     planZoomFocalPoint = focalPoint;
     planZoomViewport = viewportSize;

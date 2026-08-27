@@ -59,6 +59,8 @@ import 'viewer_project_session.dart';
 import 'workspace_chrome.dart';
 import 'render_scene_viewport.dart';
 import 'render_scene_viewport_planar.dart';
+import 'async_serial_queue.dart';
+import 'viewer_viewport_scene_policy.dart';
 
 part 'viewer_viewport_input.dart';
 part 'viewer_viewport_wall_editing.dart';
@@ -141,6 +143,10 @@ class _ViewerHomePageState extends State<ViewerHomePage>
   RenderSceneSection? _activeSectionView;
   final ViewWorkspaceStore _viewWorkspace = ViewWorkspaceStore.standard();
   final ViewNavigationCoordinator _viewNavigation = ViewNavigationCoordinator();
+  // Every authoritative mutation uses this lane before presenting a scene in
+  // the viewport. Domain mutations stay independent; presentation ordering is
+  // centralized here so a late door/wall result cannot overwrite a newer one.
+  final AsyncSerialQueue _sceneCommitQueue = AsyncSerialQueue();
 
   List<OpenedViewTab> get _openedViewTabs => _viewWorkspace.tabs;
   String? get _activeViewTabId => _viewWorkspace.activeTabId;

@@ -3,6 +3,7 @@ import 'dart:ffi' as ffi;
 import 'dart:io';
 
 import 'package:ffi/ffi.dart';
+import 'async_serial_queue.dart';
 import 'app_project_storage.dart';
 import 'native_engine_library_loader.dart';
 import 'render_scene_models.dart';
