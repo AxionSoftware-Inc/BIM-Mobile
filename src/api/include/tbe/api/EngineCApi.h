@@ -213,6 +213,11 @@ TbeApiStatusCode tbe_create_wall(
     double height_meters,
     uint64_t* out_wall_id
 );
+TbeApiStatusCode tbe_set_wall_type(
+    TbeEngineHandle* handle,
+    uint64_t wall_id,
+    uint64_t wall_type_id
+);
 TbeApiStatusCode tbe_set_wall_level_constraints(
     TbeEngineHandle* handle,
     uint64_t wall_id,

@@ -51,6 +51,15 @@ class AuthoringCommandService {
         topOffsetMeters: topOffsetMeters,
       );
 
+  Future<RenderSceneLoadResult> setWallType({
+    required int wallId,
+    required int wallTypeId,
+  }) =>
+      _requireRepository().setWallType(
+        wallId: wallId,
+        wallTypeId: wallTypeId,
+      );
+
   Future<RenderSceneLoadResult> setWallAxis({
     required int wallId,
     required RenderScenePoint start,

@@ -224,6 +224,14 @@ extension _TbeViewerApiMethods on TbeViewerApi {
     _check(handle, _moveLevelElevation(handle, levelId, elevationMeters));
   }
 
+  void setWallType(
+    ffi.Pointer<ffi.Void> handle, {
+    required int wallId,
+    required int wallTypeId,
+  }) {
+    _check(handle, _setWallType(handle, wallId, wallTypeId));
+  }
+
   void setWallLevelConstraints(
     ffi.Pointer<ffi.Void> handle, {
     required int wallId,

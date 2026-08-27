@@ -34,11 +34,13 @@ proxy elements each have a small module with its own aliases, display name,
 level-hosting behavior, plan participation, and type family. This replaces
 shared policy lists as the place where a new element is introduced.
 
-Type records use `BimElementTypeDefinition` and `BimElementTypeCatalog`. The
-native document remains the source of truth for persisted wall assemblies and
-opening types; the Dart catalog is the presentation-neutral contract used by
-future Inspector/type pickers. A new type can therefore be added to its
-element module or loaded through a gateway without changing viewport policy.
+Type records use `BimElementTypeDefinition` and `BimElementTypeCatalog`. Wall
+assembly records are exposed to the Inspector through
+`elements/wall_type_catalog.dart`; the native document remains the source of
+truth for persisted wall types and materials. The wall type command changes
+only the selected wall's semantic type and then refreshes the authoritative
+scene. A new wall type/material can therefore be added without changing
+viewport policy.
 
 Element-specific geometry and commands remain behind the authoring/repository
 boundary. The module registry owns semantics, not generated meshes, camera
@@ -60,7 +62,7 @@ the authoring or presentation path permanently blocked.
 | Change | Primary boundary | Expected viewport impact |
 | --- | --- | --- |
 | Wall/door/window authoring | Engine/repository + authoring gateway | New immutable scene commit only |
-| Material assembly/layers | Element assembly gateway | Scene data changes; viewport policy unchanged |
+| Wall type/material layers | Native wall-type command + Inspector | Scene data changes; viewport policy unchanged |
 | Plan range/category defaults | `ViewerViewportScenePolicy` | Presentation only |
 | Camera/gesture behavior | Viewport camera/gesture modules | Camera only |
 | Inspector property display | `InspectorController` + `PropertyEditor` | Selection/UI only |

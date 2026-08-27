@@ -13,6 +13,7 @@ class RenderScene {
     required this.objects,
     required this.levels,
     required this.materials,
+    this.wallTypes = const <WallTypeDefinition>[],
     required this.sections,
     required this.source,
     required this.diagnostics,
@@ -28,6 +29,7 @@ class RenderScene {
   final List<RenderSceneObject> objects;
   final List<RenderSceneLevel> levels;
   final List<RenderSceneMaterial> materials;
+  final List<WallTypeDefinition> wallTypes;
   final List<RenderSceneSection> sections;
   final String source;
   final RenderSceneDiagnostics diagnostics;
@@ -186,6 +188,7 @@ class RenderScene {
         'bounds': bounds.toJson(),
         'levels': levels.map((level) => level.toJson()).toList(),
         'materials': materials.map((material) => material.toJson()).toList(),
+        'wall_types': wallTypes.map((wallType) => wallType.toJson()).toList(),
         'sections': sections.map((section) => section.toJson()).toList(),
         'objects': objects.map((object) => object.toJson()).toList(),
       };
@@ -262,7 +265,8 @@ RenderSceneLoadResult parseRenderSceneJson(
   final declaredIndexCount = _toNullableInt(
     decoded['index_count'] ?? decoded['indexCount'],
   );
-  if (declaredIndexCount != null && declaredIndexCount > kMaxRenderSceneIndices) {
+  if (declaredIndexCount != null &&
+      declaredIndexCount > kMaxRenderSceneIndices) {
     return RenderSceneLoadResult(
       scene: null,
       warnings: const <String>[],
@@ -301,9 +305,8 @@ RenderSceneLoadResult parseRenderSceneJson(
     if (elevation <= previousLevelElevation + 1e-6) {
       warnings.add(
           'Adjusted duplicate or descending level elevation for ${level.name} in $source.');
-      elevation = previousLevelElevation.isFinite
-          ? previousLevelElevation + 3.0
-          : 0.0;
+      elevation =
+          previousLevelElevation.isFinite ? previousLevelElevation + 3.0 : 0.0;
     }
     normalizedLevels.add(
       RenderSceneLevel(
@@ -331,6 +334,15 @@ RenderSceneLoadResult parseRenderSceneJson(
     for (final entry in rawSections) {
       final section = RenderSceneSection.fromJson(entry);
       if (section != null) sections.add(section);
+    }
+  }
+
+  final wallTypes = <WallTypeDefinition>[];
+  final rawWallTypes = decoded['wall_types'] ?? decoded['wallTypes'];
+  if (rawWallTypes is List) {
+    for (final entry in rawWallTypes) {
+      final wallType = WallTypeDefinition.fromJson(entry);
+      if (wallType != null) wallTypes.add(wallType);
     }
   }
 
@@ -434,6 +446,7 @@ RenderSceneLoadResult parseRenderSceneJson(
           ? normalizedLevels
           : _inferLevelsFromObjects(objects),
       materials: materials,
+      wallTypes: wallTypes,
       sections: sections,
       source: source,
       diagnostics: diagnostics,
@@ -487,9 +500,8 @@ List<RenderSceneLevel> _inferLevelsFromObjects(
     // store every local mesh at z=0. Keep those levels usable and
     // deterministic instead of stacking every inferred level together.
     if (!elevation.isFinite || elevation <= previousElevation + 1e-6) {
-      elevation = previousElevation.isFinite
-          ? previousElevation + 3.0
-          : index * 3.0;
+      elevation =
+          previousElevation.isFinite ? previousElevation + 3.0 : index * 3.0;
     }
     previousElevation = elevation;
     inferred.add(

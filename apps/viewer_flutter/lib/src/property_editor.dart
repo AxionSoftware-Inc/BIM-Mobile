@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'authoring_command_service.dart';
 import 'elements/bim_element_registry.dart';
+import 'elements/wall_type_catalog.dart';
 import 'inspector_controller.dart';
 import 'render_scene_models.dart';
 
@@ -76,6 +77,7 @@ class PropertyEditor extends StatelessWidget {
           children: <Widget>[
             _ObjectPropertiesSection(
               object: target.object!,
+              scene: scene,
               levels: scene.levels,
               commands: commands,
               onApplied: onApplied,
@@ -262,11 +264,13 @@ class _LevelPropertiesSectionState extends State<_LevelPropertiesSection> {
 class _ObjectPropertiesSection extends StatelessWidget {
   const _ObjectPropertiesSection({
     required this.object,
+    required this.scene,
     required this.levels,
     required this.commands,
     required this.onApplied,
   });
   final RenderSceneObject object;
+  final RenderScene scene;
   final List<RenderSceneLevel> levels;
   final AuthoringCommandService commands;
   final ApplyInspectorResult onApplied;
@@ -276,6 +280,7 @@ class _ObjectPropertiesSection extends StatelessWidget {
     return switch (object.kindKey) {
       'wall' => _WallPropertiesSection(
           object: object,
+          scene: scene,
           levels: levels,
           commands: commands,
           onApplied: onApplied),
@@ -332,10 +337,12 @@ class _ObjectPropertiesSection extends StatelessWidget {
 class _WallPropertiesSection extends StatefulWidget {
   const _WallPropertiesSection(
       {required this.object,
+      required this.scene,
       required this.levels,
       required this.commands,
       required this.onApplied});
   final RenderSceneObject object;
+  final RenderScene scene;
   final List<RenderSceneLevel> levels;
   final AuthoringCommandService commands;
   final ApplyInspectorResult onApplied;
@@ -346,6 +353,7 @@ class _WallPropertiesSection extends StatefulWidget {
 class _WallPropertiesSectionState extends State<_WallPropertiesSection> {
   late int _base;
   late int _top;
+  late int _wallTypeId;
   late bool _connected;
   bool _busy = false;
   @override
@@ -355,7 +363,31 @@ class _WallPropertiesSectionState extends State<_WallPropertiesSection> {
         widget.object.levelId ??
         widget.levels.first.levelId;
     _top = _metaInt(widget.object, 'top_level_id') ?? 0;
+    _wallTypeId = _metaInt(widget.object, 'wall_type_id') ?? 0;
     _connected = _top != 0;
+  }
+
+  Future<void> _applyWallType() async {
+    final wallId = widget.object.elementId;
+    if (wallId == null) return;
+    final selected = widget.scene.wallTypes
+        .where((wallType) => wallType.id == _wallTypeId)
+        .firstOrNull;
+    setState(() => _busy = true);
+    try {
+      final result = await widget.commands.setWallType(
+        wallId: wallId,
+        wallTypeId: _wallTypeId,
+      );
+      await widget.onApplied(
+        result,
+        selected == null
+            ? 'Wall type cleared.'
+            : '${selected.name} applied to wall.',
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   Future<void> _apply() async {
@@ -384,8 +416,16 @@ class _WallPropertiesSectionState extends State<_WallPropertiesSection> {
           title: 'Wall properties',
           icon: Icons.view_week_outlined,
           children: <Widget>[
-            _row('Wall type', _meta(widget.object, 'wall_type_category')),
-            _row('Wall type ID', _meta(widget.object, 'wall_type_id')),
+            if (widget.scene.wallTypes.isNotEmpty)
+              _wallTypeDrop()
+            else ...<Widget>[
+              _row('Wall type', _meta(widget.object, 'wall_type_category')),
+              _row('Wall type ID', _meta(widget.object, 'wall_type_id')),
+            ],
+            if (widget.scene.wallTypes.isNotEmpty) ...<Widget>[
+              _wallAssemblyPreview(),
+              _applyButton(_busy, _applyWallType, label: 'Apply wall type'),
+            ],
             _row(
                 'Layer count',
                 widget.object.metadata['layer_profile']
@@ -411,6 +451,106 @@ class _WallPropertiesSectionState extends State<_WallPropertiesSection> {
                   (value) => setState(() => _top = value)),
             _applyButton(_busy, _apply, label: 'Apply wall levels'),
           ]);
+
+  Widget _wallTypeDrop() {
+    final value = widget.scene.wallTypes.any(
+      (wallType) => wallType.id == _wallTypeId,
+    )
+        ? _wallTypeId
+        : 0;
+    return DropdownButtonFormField<int>(
+      isExpanded: true,
+      initialValue: value,
+      decoration: const InputDecoration(
+        labelText: 'Wall type',
+        isDense: true,
+        border: OutlineInputBorder(),
+      ),
+      items: [
+        const DropdownMenuItem<int>(
+          value: 0,
+          child: Text('Unassigned · Generic'),
+        ),
+        for (final wallType in widget.scene.wallTypes)
+          DropdownMenuItem<int>(
+            value: wallType.id,
+            child: Text(
+              '${wallType.name} · ${wallType.categoryLabel}',
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+      ],
+      onChanged: (next) {
+        if (next != null) setState(() => _wallTypeId = next);
+      },
+    );
+  }
+
+  Widget _wallAssemblyPreview() {
+    final wallType = widget.scene.wallTypes
+        .where((candidate) => candidate.id == _wallTypeId)
+        .firstOrNull;
+    if (wallType == null) return const SizedBox.shrink();
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text(
+            'Assembly · ${_number(wallType.totalThicknessMeters)} m · ${wallType.layers.length} layers',
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 6),
+          for (final layer in wallType.layers)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 2),
+              child: Row(
+                children: <Widget>[
+                  _materialSwatch(widget.scene.materialById(layer.materialId)),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      '${widget.scene.materialById(layer.materialId)?.name ?? 'Material ${layer.materialId}'} · ${layer.function.label}',
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  Text('${_number(layer.thicknessMeters)} m'),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _materialSwatch(RenderSceneMaterial? material) {
+    return Container(
+      width: 12,
+      height: 12,
+      decoration: BoxDecoration(
+        color: _safeColor(material?.displayColor),
+        borderRadius: BorderRadius.circular(3),
+        border: Border.all(color: Colors.black26),
+      ),
+    );
+  }
+
+  Color _safeColor(String? value) {
+    final hex = value?.replaceFirst('#', '');
+    if (hex == null || (hex.length != 6 && hex.length != 8)) {
+      return Colors.blueGrey.shade200;
+    }
+    final parsed = int.tryParse(hex, radix: 16);
+    if (parsed == null) return Colors.blueGrey.shade200;
+    return Color(hex.length == 6 ? 0xFF000000 | parsed : parsed);
+  }
+
   Widget _levelDrop(String label, int value, ValueChanged<int> onChanged) =>
       DropdownButtonFormField<int>(
           isExpanded: true,

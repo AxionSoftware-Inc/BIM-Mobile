@@ -217,6 +217,16 @@ typedef _MoveLevelElevationDart = int Function(
   int,
   double,
 );
+typedef _SetWallTypeNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Uint64,
+  ffi.Uint64,
+);
+typedef _SetWallTypeDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  int,
+  int,
+);
 typedef _SetWallLevelConstraintsNative = ffi.Int32 Function(
   ffi.Pointer<ffi.Void>,
   ffi.Uint64,

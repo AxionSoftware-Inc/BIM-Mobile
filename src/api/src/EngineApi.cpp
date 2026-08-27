@@ -43,6 +43,9 @@ using tbe::core::Project;
 using tbe::core::UnitSettings;
 
 ApiMaterialCategory to_api_material_category(tbe::core::MaterialCategory category);
+ApiWallLayerFunction to_api_layer_function(tbe::core::WallLayerFunction function);
+ApiWallLayerSide to_api_layer_side(tbe::core::WallLayerSide side);
+ApiWallTypeCategory to_api_wall_type_category(tbe::core::WallTypeCategory category);
 
 struct SessionTransaction {
     std::string name{};
@@ -136,8 +139,23 @@ Project make_residential_template(int building_count, int story_count) {
     const auto generic_wall_type = document.create_wall_type("Generic Wall", {
         tbe::core::WallAssemblyLayer{.material_id = masonry, .thickness_meters = 0.12, .function = tbe::core::WallLayerFunction::Generic, .priority = 50, .structural = true},
     }, tbe::core::WallTypeCategory::Generic);
+    const auto glass = document.create_material("Template Glass", tbe::core::MaterialCategory::Glass, 2500.0, 80.0, {}, "#A8D8E8");
+    const auto exterior_glass_wall_type = document.create_wall_type("Exterior Glass Wall", {
+        tbe::core::WallAssemblyLayer{.material_id = glass, .thickness_meters = 0.12, .function = tbe::core::WallLayerFunction::Core, .priority = 100},
+        tbe::core::WallAssemblyLayer{.material_id = insulation, .thickness_meters = 0.08, .function = tbe::core::WallLayerFunction::Insulation, .priority = 70},
+        tbe::core::WallAssemblyLayer{.material_id = gypsum, .thickness_meters = 0.015, .function = tbe::core::WallLayerFunction::InteriorFinish, .priority = 10},
+    }, tbe::core::WallTypeCategory::Exterior);
+    const auto interior_glass_wall_type = document.create_wall_type("Interior Glass Partition", {
+        tbe::core::WallAssemblyLayer{.material_id = glass, .thickness_meters = 0.10, .function = tbe::core::WallLayerFunction::Core, .priority = 100},
+    }, tbe::core::WallTypeCategory::Interior);
+    const auto concrete_core_wall_type = document.create_wall_type("Concrete Core Wall", {
+        tbe::core::WallAssemblyLayer{.material_id = concrete, .thickness_meters = 0.20, .function = tbe::core::WallLayerFunction::Core, .priority = 100, .structural = true},
+    }, tbe::core::WallTypeCategory::Generic);
     (void)wall_assembly;
     (void)generic_wall_type;
+    (void)exterior_glass_wall_type;
+    (void)interior_glass_wall_type;
+    (void)concrete_core_wall_type;
     const auto floor_assembly = document.create_layered_assembly(tbe::core::LayeredAssemblyKind::Floor, "Residential Floor", {
         tbe::core::WallAssemblyLayer{.material_id = concrete, .thickness_meters = 0.18, .function = tbe::core::WallLayerFunction::Core},
         tbe::core::WallAssemblyLayer{.material_id = screed, .thickness_meters = 0.05, .function = tbe::core::WallLayerFunction::Core},
@@ -1532,6 +1550,37 @@ RenderSceneDTO build_render_scene(
         });
     }
 
+    for (const auto& [wall_type_id, wall_type] : document.wall_types()) {
+        RenderSceneWallTypeDTO dto{
+            .id = to_id(wall_type_id),
+            .name = wall_type.name,
+            .category = to_api_wall_type_category(wall_type.category),
+            .total_thickness_meters = std::accumulate(
+                wall_type.layers.begin(),
+                wall_type.layers.end(),
+                0.0,
+                [](double total, const auto& layer) {
+                    return total + layer.thickness_meters;
+                }),
+            .core_start_layer = wall_type.core_start_layer,
+            .core_end_layer = wall_type.core_end_layer,
+        };
+        dto.layers.reserve(wall_type.layers.size());
+        for (const auto& layer : wall_type.layers) {
+            dto.layers.push_back(RenderSceneWallLayerDTO{
+                .material_id = to_id(layer.material_id),
+                .thickness_meters = layer.thickness_meters,
+                .function = to_api_layer_function(layer.function),
+                .priority = layer.priority,
+                .structural = layer.structural,
+                .side = to_api_layer_side(layer.side),
+                .wraps_openings = layer.wraps_openings,
+                .wraps_ends = layer.wraps_ends,
+            });
+        }
+        scene.wall_types.push_back(std::move(dto));
+    }
+
     // Default template guidance: two perpendicular cuts through the model
     // center are visible immediately in plan. The actual section scene is
     // generated only when the user requests one.
@@ -1862,6 +1911,37 @@ std::string render_scene_to_json(const RenderSceneDTO& scene) {
             << ",\"name\":\"" << escape_json(material.name) << "\""
             << ",\"category\":\"" << static_cast<int>(material.category) << "\""
             << ",\"display_color\":\"" << escape_json(material.display_color) << "\"}";
+    }
+    out << "],\"wall_types\":[";
+    for (std::size_t index = 0; index < scene.wall_types.size(); ++index) {
+        if (index != 0) out << ',';
+        const auto& wall_type = scene.wall_types[index];
+        out << "{\"id\":" << wall_type.id.value
+            << ",\"name\":\"" << escape_json(wall_type.name) << "\""
+            << ",\"category\":\"" << wall_type_category_name(
+                wall_type.category == ApiWallTypeCategory::Interior
+                    ? tbe::core::WallTypeCategory::Interior
+                    : wall_type.category == ApiWallTypeCategory::Exterior
+                        ? tbe::core::WallTypeCategory::Exterior
+                        : tbe::core::WallTypeCategory::Generic) << "\""
+            << ",\"total_thickness_meters\":" << safe_value(wall_type.total_thickness_meters)
+            << ",\"core_start_layer\":" << wall_type.core_start_layer
+            << ",\"core_end_layer\":" << wall_type.core_end_layer
+            << ",\"layers\":[";
+        for (std::size_t layer_index = 0; layer_index < wall_type.layers.size(); ++layer_index) {
+            if (layer_index != 0) out << ',';
+            const auto& layer = wall_type.layers[layer_index];
+            out << "{\"material_id\":" << layer.material_id.value
+                << ",\"thickness_meters\":" << safe_value(layer.thickness_meters)
+                << ",\"function\":" << static_cast<int>(layer.function)
+                << ",\"priority\":" << layer.priority
+                << ",\"structural\":" << (layer.structural ? "true" : "false")
+                << ",\"side\":" << static_cast<int>(layer.side)
+                << ",\"wraps_openings\":" << (layer.wraps_openings ? "true" : "false")
+                << ",\"wraps_ends\":" << (layer.wraps_ends ? "true" : "false")
+                << "}";
+        }
+        out << "]}";
     }
     out << "],\"sections\":[";
     for (std::size_t index = 0; index < scene.sections.size(); ++index) {
@@ -3618,6 +3698,12 @@ ApiResult<ElementIdDTO> EngineSession::create_wall(std::string name, Vec2 start,
     ElementIdDTO created{};
     return apply_mutation_with_value(*impl_, "create_wall", created, [&](Document& document, ElementIdDTO& out) {
         out = to_id(document.create_wall(std::move(name), Line2{.start = to_point(start), .end = to_point(end)}, thickness_meters, height_meters, level_id));
+    });
+}
+
+ApiVoidResult EngineSession::set_wall_type(std::uint64_t wall_id, std::uint64_t wall_type_id) {
+    return apply_mutation(*impl_, "set_wall_type", [&](Document& document) {
+        document.set_wall_type(wall_id, wall_type_id);
     });
 }
 

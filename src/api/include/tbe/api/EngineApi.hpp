@@ -261,6 +261,27 @@ struct RenderSceneMaterialDTO {
     std::string display_color{"#B0B7C3"};
 };
 
+struct RenderSceneWallLayerDTO {
+    ElementIdDTO material_id{};
+    double thickness_meters{};
+    ApiWallLayerFunction function{ApiWallLayerFunction::Generic};
+    int priority{};
+    bool structural{};
+    ApiWallLayerSide side{ApiWallLayerSide::Unspecified};
+    bool wraps_openings{true};
+    bool wraps_ends{true};
+};
+
+struct RenderSceneWallTypeDTO {
+    ElementIdDTO id{};
+    std::string name{};
+    ApiWallTypeCategory category{ApiWallTypeCategory::Generic};
+    double total_thickness_meters{};
+    std::vector<RenderSceneWallLayerDTO> layers{};
+    int core_start_layer{-1};
+    int core_end_layer{-1};
+};
+
 struct RenderSceneSectionDTO {
     std::string name{};
     Vec2 start{};
@@ -293,6 +314,7 @@ struct RenderSceneDTO {
     std::string coordinate_system{"X/Y plan, Z up"};
     std::vector<RenderSceneLevelDTO> levels{};
     std::vector<RenderSceneMaterialDTO> materials{};
+    std::vector<RenderSceneWallTypeDTO> wall_types{};
     std::vector<RenderSceneSectionDTO> sections{};
     std::vector<RenderSceneObjectDTO> objects{};
     std::size_t object_count{};
@@ -737,6 +759,7 @@ public:
     );
     ApiVoidResult move_level_elevation(std::uint64_t level_id, double elevation_meters);
     ApiResult<ElementIdDTO> create_wall(std::string name, Vec2 start, Vec2 end, double thickness_meters, double height_meters, std::uint64_t level_id = 0);
+    ApiVoidResult set_wall_type(std::uint64_t wall_id, std::uint64_t wall_type_id);
     ApiResult<ElementIdDTO> create_wall_type(
         ApiWallTypeCategory category,
         std::string name,

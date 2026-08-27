@@ -1801,6 +1801,12 @@ void Document::set_wall_type(ElementId wall_id, ElementId wall_type_id) {
     if (wall_type_id != 0 && get_wall_type(wall_type_id) == nullptr) {
         throw std::invalid_argument("wall type does not exist");
     }
+    // A wall uses exactly one layered source at a time. Selecting a wall
+    // type must detach a previous compound assembly; otherwise the renderer
+    // would correctly receive the new type ID but still resolve old layers.
+    if (wall_type_id != 0) {
+        wall->assembly_id = 0;
+    }
     wall->wall_type_id = wall_type_id;
     if (const auto* wall_type = get_wall_type(wall_type_id)) {
         wall->thickness_meters = total_wall_type_thickness(*wall_type);

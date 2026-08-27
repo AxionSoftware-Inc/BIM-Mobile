@@ -74,6 +74,9 @@ class TbeViewerApi {
                 'tbe_update_level'),
         _moveLevelElevation = library.lookupFunction<_MoveLevelElevationNative,
             _MoveLevelElevationDart>('tbe_move_level_elevation'),
+        _setWallType =
+            library.lookupFunction<_SetWallTypeNative, _SetWallTypeDart>(
+                'tbe_set_wall_type'),
         _setWallLevelConstraints = library.lookupFunction<
             _SetWallLevelConstraintsNative,
             _SetWallLevelConstraintsDart>('tbe_set_wall_level_constraints'),
@@ -212,6 +215,7 @@ class TbeViewerApi {
   final _CreateLevelDart _createLevel;
   final _UpdateLevelDart _updateLevel;
   final _MoveLevelElevationDart _moveLevelElevation;
+  final _SetWallTypeDart _setWallType;
   final _SetWallLevelConstraintsDart _setWallLevelConstraints;
   final _SetWallAxisDart _setWallAxis;
   final _AutoJoinWallsDart _autoJoinWalls;

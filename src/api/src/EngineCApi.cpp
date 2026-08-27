@@ -336,6 +336,17 @@ TbeApiStatusCode tbe_create_wall(
     return apply_result(handle, result);
 }
 
+TbeApiStatusCode tbe_set_wall_type(
+    TbeEngineHandle* handle,
+    uint64_t wall_id,
+    uint64_t wall_type_id
+) {
+    if (handle == nullptr || handle->session == nullptr) {
+        return null_handle_error(handle);
+    }
+    return apply_result(handle, handle->session->set_wall_type(wall_id, wall_type_id));
+}
+
 TbeApiStatusCode tbe_set_wall_level_constraints(
     TbeEngineHandle* handle,
     uint64_t wall_id,

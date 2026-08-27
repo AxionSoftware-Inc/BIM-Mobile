@@ -16,10 +16,12 @@ void registerEngineIntegrationTests() {
     expect(result.scene!.objects, isNotEmpty);
   });
 
-  test('global engine history is exposed through the project session', () async {
+  test('global engine history is exposed through the project session',
+      () async {
     final repository = ViewerRepository(TbeViewerApi.load());
     addTearDown(repository.dispose);
-    final blank = await repository.createBlankProject(projectName: 'History test');
+    final blank =
+        await repository.createBlankProject(projectName: 'History test');
     final levelId = blank.scene!.levels.first.levelId;
     final before = await repository.historyCounts();
     final created = await repository.createWall(
@@ -30,7 +32,8 @@ void registerEngineIntegrationTests() {
       thicknessMeters: 0.2,
       heightMeters: 3.2,
     );
-    expect((await repository.historyCounts()).undoCount, greaterThan(before.undoCount));
+    expect((await repository.historyCounts()).undoCount,
+        greaterThan(before.undoCount));
     expect(created.scene!.kindCounts['wall'], greaterThanOrEqualTo(1));
 
     final undone = await repository.undo();
@@ -63,6 +66,58 @@ void registerEngineIntegrationTests() {
     expect(saved, contains('source_wall_ids'));
     await repository.reloadCurrent();
     expect((await repository.currentRenderScene()).scene, isNotNull);
+  });
+
+  test('engine residential template exposes and applies wall types safely',
+      () async {
+    final repository = ViewerRepository(TbeViewerApi.load());
+    addTearDown(repository.dispose);
+
+    final result = await repository.createResidentialTemplate(
+      buildingCount: 1,
+      storyCount: 3,
+    );
+    final initial = result.scene!;
+    expect(
+        initial.wallTypes.map((type) => type.name),
+        containsAll(<String>[
+          'Exterior Wall',
+          'Interior Wall',
+          'Generic Wall',
+          'Exterior Glass Wall',
+          'Interior Glass Partition',
+          'Concrete Core Wall',
+        ]));
+    expect(
+      initial.materials.any((material) => material.name == 'Template Glass'),
+      isTrue,
+    );
+
+    final opening = initial.objects.firstWhere(
+      (object) => object.kindKey == 'door' || object.kindKey == 'window',
+    );
+    final hostWallId = int.parse(opening.metadata['host_wall_id'].toString());
+    final wall = initial.objectById(hostWallId)!;
+    final glassType = initial.wallTypes.firstWhere(
+      (type) => type.name == 'Exterior Glass Wall',
+    );
+    final changed = await repository.setWallType(
+      wallId: wall.elementId!,
+      wallTypeId: glassType.id,
+    );
+    final changedScene = changed.scene!;
+    final changedWall = changedScene.objectById(wall.elementId)!;
+    expect(changedWall.metadata['wall_type_id'], glassType.id.toString());
+    expect(changedWall.metadata['layer_profile'], contains(':0.12'));
+    expect(changedScene.objects.length, initial.objects.length);
+    expect(changedScene.objectById(opening.elementId)?.metadata['host_wall_id'],
+        hostWallId.toString());
+    expect(changedScene.wallTypes, hasLength(initial.wallTypes.length));
+    expect(
+      changedScene.materials
+          .any((material) => material.name == 'Template Glass'),
+      isTrue,
+    );
   });
 
   test('engine residential campus template creates six 9-storey buildings',
@@ -491,6 +546,4 @@ void registerEngineIntegrationTests() {
     expect(wall.metadata['base_level_id']?.toString(), equals('1'));
     expect(wall.metadata['top_level_id']?.toString(), equals('2'));
   });
-
-
 }
