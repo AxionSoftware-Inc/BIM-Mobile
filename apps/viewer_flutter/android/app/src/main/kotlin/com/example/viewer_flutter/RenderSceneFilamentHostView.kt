@@ -375,6 +375,21 @@ private data class NativeVisualEdge(
   val sharp: Boolean,
 )
 
+/** Opening rectangle used to interrupt the Solid-only exterior brick pass. */
+private data class BrickOpeningProfile(
+  val startFraction: Double,
+  val endFraction: Double,
+  val bottom: Double,
+  val top: Double,
+)
+
+private data class BrickOpeningInterval(
+  val start: Double,
+  val end: Double,
+  val bottom: Double,
+  val top: Double,
+)
+
 /** A convex clipping volume shared by the interactive box and section views. */
 private data class ClipPlane(
   val normal: ScenePoint,
@@ -3370,7 +3385,7 @@ internal class RenderSceneFilamentHostView(
     }
     val points = geometry.points.toMutableList()
     val edges = mutableListOf<NativeVisualEdge>()
-    appendSolidBrickJointEdges(points, edges)
+    appendSolidBrickJointEdges(points, edges, wallBrickOpeningProfiles(objectData))
     if (edges.isEmpty()) return null
     // Generate the same readable 3D line weight even if a view transition
     // starts while the native projection is still top-down. The batch is
@@ -3388,6 +3403,7 @@ internal class RenderSceneFilamentHostView(
   private fun appendSolidBrickJointEdges(
     points: MutableList<ScenePoint>,
     edges: MutableList<NativeVisualEdge>,
+    openingProfiles: List<BrickOpeningProfile>,
   ) {
     val bounds = boundsForPoints(points)
     val height = bounds.max.y - bounds.min.y
@@ -3406,6 +3422,23 @@ internal class RenderSceneFilamentHostView(
     }
     val rowSpacing = 0.18
     val brickWidth = 0.48
+    val axisSpan = longMax - longMin
+    val lineLengthMinimum = 0.03
+    val epsilon = 1.0e-5
+    val openingIntervals = openingProfiles.mapNotNull { opening ->
+      val start = longMin + opening.startFraction.coerceIn(0.0, 1.0) * axisSpan
+      val end = longMin + opening.endFraction.coerceIn(0.0, 1.0) * axisSpan
+      if (end - start <= epsilon || opening.top - opening.bottom <= epsilon) {
+        null
+      } else {
+        BrickOpeningInterval(
+          start = min(start, end),
+          end = max(start, end),
+          bottom = bounds.min.y + opening.bottom,
+          top = bounds.min.y + opening.top,
+        )
+      }
+    }.sortedBy { it.start }
 
     fun addLine(first: ScenePoint, second: ScenePoint) {
       val firstIndex = points.size
@@ -3421,6 +3454,57 @@ internal class RenderSceneFilamentHostView(
       )
     }
 
+    fun addHorizontalLine(offset: Double, y: Double) {
+      var cursor = longMin
+      for (opening in openingIntervals) {
+        if (y <= opening.bottom + epsilon || y >= opening.top - epsilon) continue
+        val start = max(cursor, opening.start)
+        val end = min(longMax, opening.end)
+        if (end - cursor >= lineLengthMinimum) {
+          if (alongX) {
+            addLine(ScenePoint(cursor, y, offset), ScenePoint(start, y, offset))
+          } else {
+            addLine(ScenePoint(offset, y, cursor), ScenePoint(offset, y, start))
+          }
+        }
+        cursor = max(cursor, end)
+        if (cursor >= longMax - epsilon) return
+      }
+      if (longMax - cursor >= lineLengthMinimum) {
+        if (alongX) {
+          addLine(ScenePoint(cursor, y, offset), ScenePoint(longMax, y, offset))
+        } else {
+          addLine(ScenePoint(offset, y, cursor), ScenePoint(offset, y, longMax))
+        }
+      }
+    }
+
+    fun addVerticalLine(offset: Double, longCoordinate: Double, bottom: Double, top: Double) {
+      var cursor = bottom
+      for (opening in openingIntervals) {
+        if (longCoordinate <= opening.start + epsilon || longCoordinate >= opening.end - epsilon) continue
+        if (opening.top <= bottom + epsilon || opening.bottom >= top - epsilon) continue
+        val start = max(bottom, opening.bottom)
+        val end = min(top, opening.top)
+        if (start - cursor >= lineLengthMinimum) {
+          if (alongX) {
+            addLine(ScenePoint(longCoordinate, cursor, offset), ScenePoint(longCoordinate, start, offset))
+          } else {
+            addLine(ScenePoint(offset, cursor, longCoordinate), ScenePoint(offset, start, longCoordinate))
+          }
+        }
+        cursor = max(cursor, end)
+        if (cursor >= top - epsilon) return
+      }
+      if (top - cursor >= lineLengthMinimum) {
+        if (alongX) {
+          addLine(ScenePoint(longCoordinate, cursor, offset), ScenePoint(longCoordinate, top, offset))
+        } else {
+          addLine(ScenePoint(offset, cursor, longCoordinate), ScenePoint(offset, top, longCoordinate))
+        }
+      }
+    }
+
     var row = 0
     while (bounds.min.y + row * rowSpacing < bounds.max.y - 0.02) {
       val rowBottom = bounds.min.y + row * rowSpacing
@@ -3429,17 +3513,7 @@ internal class RenderSceneFilamentHostView(
         // Horizontal course joints run across the two long faces.
         if (rowTop < bounds.max.y - 0.02) {
           for (offset in faceOffsets) {
-            if (alongX) {
-              addLine(
-                ScenePoint(longMin, rowTop, offset),
-                ScenePoint(longMax, rowTop, offset),
-              )
-            } else {
-              addLine(
-                ScenePoint(offset, rowTop, longMin),
-                ScenePoint(offset, rowTop, longMax),
-              )
-            }
+            addHorizontalLine(offset, rowTop)
           }
         }
 
@@ -3451,22 +3525,33 @@ internal class RenderSceneFilamentHostView(
         val verticalTop = rowTop - 0.025
         while (joint < longMax - 0.025 && verticalTop - verticalBottom >= 0.03) {
           for (offset in faceOffsets) {
-            if (alongX) {
-              addLine(
-                ScenePoint(joint, verticalBottom, offset),
-                ScenePoint(joint, verticalTop, offset),
-              )
-            } else {
-              addLine(
-                ScenePoint(offset, verticalBottom, joint),
-                ScenePoint(offset, verticalTop, joint),
-              )
-            }
+            addVerticalLine(offset, joint, verticalBottom, verticalTop)
           }
           joint += brickWidth
         }
       }
       row += 1
+    }
+  }
+
+  private fun wallBrickOpeningProfiles(objectData: SceneObject): List<BrickOpeningProfile> {
+    val liveProfile = objectData.metadata["opening_profile"]?.trim().orEmpty()
+    // Native BIM cache chunks carry the same compact profile after the wall
+    // semantic envelope because cache objects intentionally have no metadata
+    // map. Live metadata always wins when both representations are present.
+    val profile = if (liveProfile.isNotEmpty()) {
+      liveProfile
+    } else {
+      objectData.materialCategory.substringAfter("|openings=", "").trim()
+    }
+    if (profile.isEmpty()) return emptyList()
+    return profile.split(';').mapNotNull { entry ->
+      val values = entry.split(',').mapNotNull(String::toDoubleOrNull)
+      if (values.size != 4 || values.any { !it.isFinite() }) return@mapNotNull null
+      val start = values[0].coerceIn(0.0, 1.0)
+      val end = values[1].coerceIn(0.0, 1.0)
+      if (end <= start || values[3] <= values[2]) return@mapNotNull null
+      BrickOpeningProfile(start, end, values[2], values[3])
     }
   }
 

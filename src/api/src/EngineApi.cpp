@@ -1017,6 +1017,38 @@ std::string wall_profile_corners(const tbe::core::WallData& wall) {
     return profile.str();
 }
 
+// The Solid brick pass is a renderer-only overlay, so keep the authoritative
+// hosted opening rectangles beside the wall metadata.  Fractions along the
+// wall axis make this independent of the Android scene's world transform and
+// let the overlay clip the same openings on either long wall face.
+std::string wall_opening_profile(const tbe::core::WallData& wall) {
+    const auto dx = wall.axis.end.x - wall.axis.start.x;
+    const auto dy = wall.axis.end.y - wall.axis.start.y;
+    const auto length = std::sqrt((dx * dx) + (dy * dy));
+    if (length <= 1.0e-9 || wall.openings.empty()) {
+        return {};
+    }
+
+    std::ostringstream profile;
+    profile << std::setprecision(12);
+    bool first = true;
+    for (const auto& opening : wall.openings) {
+        const auto x_min = std::max(0.0, opening.offset_meters - (opening.width_meters * 0.5));
+        const auto x_max = std::min(length, opening.offset_meters + (opening.width_meters * 0.5));
+        const auto z_min = opening.vertical_offset_meters + opening.sill_height_meters;
+        const auto z_max = z_min + opening.height_meters;
+        if (x_max <= x_min || z_max <= z_min) {
+            continue;
+        }
+        if (!first) {
+            profile << ';';
+        }
+        first = false;
+        profile << (x_min / length) << ',' << (x_max / length) << ',' << z_min << ',' << z_max;
+    }
+    return profile.str();
+}
+
 std::string wall_type_category_name(tbe::core::WallTypeCategory category) {
     switch (category) {
     case tbe::core::WallTypeCategory::Interior: return "Interior";
@@ -1689,6 +1721,7 @@ RenderSceneDTO build_render_scene(
                     {"level_locked", "true"},
                     {"layer_profile", layer_profile},
                     {"profile_corners", wall_profile_corners(*wall)},
+                    {"opening_profile", wall_opening_profile(*wall)},
                 }
             ));
             for (const auto& opening : wall->openings) {

@@ -637,9 +637,17 @@ std::string cache_material_category(const RenderSceneObjectDTO& object) {
     if (object.kind == ApiElementKind::Wall) {
         const auto category = object.metadata.find("wall_type_category");
         const auto name = object.metadata.find("wall_type_name");
+        const auto openings = object.metadata.find("opening_profile");
         const std::string category_value = category == object.metadata.end() ? "Generic" : category->second;
         const std::string name_value = name == object.metadata.end() ? "Generic Wall" : name->second;
-        return "wall:" + category_value + "|" + name_value;
+        auto value = "wall:" + category_value + "|" + name_value;
+        if (openings != object.metadata.end() && !openings->second.empty()) {
+            // Native cache chunks have no metadata map. Keep this compact
+            // profile in their semantic material envelope so the tablet's
+            // Solid brick overlay can clip hosted openings there as well.
+            value += "|openings=" + openings->second;
+        }
+        return value;
     }
     return object.material_category.empty() ? "generic" : object.material_category;
 }
