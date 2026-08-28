@@ -158,7 +158,10 @@ extension _IfcImportCache on _ViewerHomePageState {
       '${stat.modified.millisecondsSinceEpoch}';
 
   String _nativeBimCacheSignature(String path, FileStat stat) =>
-      'tbe-bimcache-v2|${_ifcCacheSignature(path, stat)}';
+      // v3 invalidates device caches compiled before wall type semantics were
+      // carried into native chunks. Without this, Solid falls back to a
+      // plaster surface and loses the exterior brick joint cue.
+      'tbe-bimcache-v3|${_ifcCacheSignature(path, stat)}';
 }
 
 extension _ViewerProjectLifecycle on _ViewerHomePageState {

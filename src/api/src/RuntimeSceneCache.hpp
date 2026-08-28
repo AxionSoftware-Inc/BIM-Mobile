@@ -10,10 +10,10 @@
 namespace tbe::api::runtime_cache {
 
 inline constexpr std::uint32_t kBimCacheFormatVersion = 2;
-// Bumped when the interactive chunk partition or proxy visibility policy
-// changes. Existing device caches must be rebuilt so stale mixed-kind chunks
-// cannot survive an APK update and make the viewport look like wireframe.
-inline constexpr std::uint32_t kBimCacheSceneCompilerVersion = 7;
+// Bumped when the interactive chunk partition, proxy visibility policy, or
+// semantic surface data carried by a chunk changes. Existing device caches
+// must be rebuilt so stale chunks cannot lose renderer-visible wall types.
+inline constexpr std::uint32_t kBimCacheSceneCompilerVersion = 8;
 inline constexpr std::uint32_t kBimCacheObjectMappingVersion = 4;
 inline constexpr std::uint32_t kBimCacheFormatFlags = 0x00000001u;
 

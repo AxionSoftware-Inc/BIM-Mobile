@@ -629,6 +629,21 @@ BimCacheBvhNodeDTO read_bvh_node(std::istream& in) {
     };
 }
 
+std::string cache_material_category(const RenderSceneObjectDTO& object) {
+    // The interactive scene keeps wall type data in metadata because it is
+    // authoring semantics, not a physical material. Native cache chunks need
+    // the same small semantic hint so the renderer can choose the correct
+    // Solid/Shaded surface without sending the full scene back through JSON.
+    if (object.kind == ApiElementKind::Wall) {
+        const auto category = object.metadata.find("wall_type_category");
+        const auto name = object.metadata.find("wall_type_name");
+        const std::string category_value = category == object.metadata.end() ? "Generic" : category->second;
+        const std::string name_value = name == object.metadata.end() ? "Generic Wall" : name->second;
+        return "wall:" + category_value + "|" + name_value;
+    }
+    return object.material_category.empty() ? "generic" : object.material_category;
+}
+
 } // namespace
 
 BimCacheSourceDTO source_signature(const std::string& source_ifc_path) {
@@ -674,7 +689,7 @@ BimCacheSceneDTO compile(
         const ChunkKey key{
             .level_id = object.level_id.value,
             .kind = object.kind,
-            .material_category = object.material_category.empty() ? "generic" : object.material_category,
+            .material_category = cache_material_category(object),
             .tile_x = static_cast<std::int32_t>(std::floor(center.x / policy.seed_tile_size_meters)),
             .tile_y = static_cast<std::int32_t>(std::floor(center.y / policy.seed_tile_size_meters)),
         };

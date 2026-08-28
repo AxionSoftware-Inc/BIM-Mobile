@@ -144,10 +144,15 @@ void material(inout MaterialInputs material) {
     float concreteMask = step(1.5, variant) * (1.0 - step(2.5, variant));
     float glassMask = step(2.5, variant);
 
-    float row = floor(world.y / 0.075);
-    float jointY = step(fract(world.y / 0.075), 0.018);
-    float jointX = step(fract((world.x + mod(row, 2.0) * 0.12) / 0.24), 0.014);
-    float mortar = max(jointY, jointX) * 0.52;
+    // Solid keeps the wall achromatic, so its only semantic cue is the
+    // readable brick joint pattern. Use wider, slightly stronger joints in
+    // Solid; Shaded retains the finer light brick pattern used previously.
+    float brickRowSpacing = mix(0.18, 0.075, materialParams.displayShade);
+    float brickWidth = mix(0.48, 0.24, materialParams.displayShade);
+    float row = floor(world.y / brickRowSpacing);
+    float jointY = step(fract(world.y / brickRowSpacing), 0.022);
+    float jointX = step(fract((world.x + mod(row, 2.0) * brickWidth * 0.5) / brickWidth), 0.018);
+    float mortar = max(jointY, jointX) * mix(0.66, 0.52, materialParams.displayShade);
     float3 brick = materialParams.baseColor.rgb * (1.0 - mortar);
 
     float plasterVariation = 0.026 * sin(world.x * 31.0 + world.y * 17.0 + world.z * 23.0);
@@ -218,6 +223,7 @@ private data class EdgeBatchKey(
   val tileX: Int,
   val tileZ: Int,
   val nativeKindMask: Long? = null,
+  val solidBrickPattern: Boolean = false,
 )
 
 private data class FaceBatchKey(
@@ -1498,6 +1504,15 @@ internal class RenderSceneFilamentHostView(
     }
   }
 
+  private fun solidBrickLineColor(): FloatArray = if (viewportTheme == "light") {
+    // Brick joints are a semantic cue, not a second silhouette. Keep them
+    // softer than the architectural border so Solid remains a filled,
+    // Revit-like coordination view rather than reading as wireframe.
+    floatArrayOf(0.38f, 0.40f, 0.42f, 1.0f)
+  } else {
+    floatArrayOf(0.56f, 0.59f, 0.62f, 1.0f)
+  }
+
   private fun viewportGridColor(): FloatArray = if (viewportTheme == "light") {
     floatArrayOf(0.30f, 0.36f, 0.37f, 0.08f)
   } else {
@@ -2741,6 +2756,10 @@ internal class RenderSceneFilamentHostView(
         edgeGeometryFor(objectData, geometry, wallJunctionElevations)?.let { edge ->
           edgeChunks.getOrPut(edgeBatchKey(objectData, geometry.bounds)) { mutableListOf() }.add(edge)
         }
+        solidBrickJointGeometryFor(objectData, geometry)?.let { edge ->
+          edgeChunks.getOrPut(edgeBatchKey(objectData, geometry.bounds, solidBrickPattern = true)) { mutableListOf() }
+            .add(edge)
+        }
       } catch (error: Throwable) {
         failedObjects += 1
         Log.e(TAG, "Failed to create Filament renderable for ${objectData.kind}", error)
@@ -2812,6 +2831,10 @@ internal class RenderSceneFilamentHostView(
           edgeChunks.getOrPut(edgeBatchKey(objectData, geometry.bounds)) { mutableListOf() }
             .add(edge)
         }
+        solidBrickJointGeometryFor(objectData, geometry)?.let { edge ->
+          edgeChunks.getOrPut(edgeBatchKey(objectData, geometry.bounds, solidBrickPattern = true)) { mutableListOf() }
+            .add(edge)
+        }
       } catch (error: Throwable) {
         Log.w(TAG, "Failed to refresh edge geometry for ${objectData.kind}", error)
       }
@@ -2861,12 +2884,22 @@ internal class RenderSceneFilamentHostView(
   private fun wallSurfaceVariant(objectData: SceneObject): String {
     val typeName = objectData.metadata["wall_type_name"]?.trim()?.lowercase().orEmpty()
     val category = objectData.metadata["wall_type_category"]?.trim()?.lowercase().orEmpty()
+    // Native BIM cache chunks carry the compact wall semantic envelope in
+    // materialCategory (for example `wall:Exterior|Exterior Brick Wall`).
+    // Keep metadata as the authoritative path for live scenes, then use this
+    // cache hint so Solid preserves the same neutral brick-joint language.
+    val cacheSurface = objectData.materialCategory.trim().lowercase()
     return when {
       typeName.contains("glass") -> "glass"
       typeName.contains("concrete") -> "concrete"
       typeName.contains("brick") -> "brick"
       typeName.contains("interior") || category == "interior" -> "plaster"
       typeName.contains("exterior") || category == "exterior" -> "brick"
+      cacheSurface.contains("glass") -> "glass"
+      cacheSurface.contains("concrete") -> "concrete"
+      cacheSurface.contains("brick") -> "brick"
+      cacheSurface.contains("interior") -> "plaster"
+      cacheSurface.contains("exterior") -> "brick"
       else -> "plaster"
     }
   }
@@ -2970,6 +3003,7 @@ internal class RenderSceneFilamentHostView(
   // only for selection/feedback and must not become the Solid renderer.
   private fun edgeVisible(key: EdgeBatchKey): Boolean =
     (displayStyle == "wireframe" || displayStyle == "solid" || displayStyle == "shaded") &&
+      (!key.solidBrickPattern || (displayStyle == "solid" && projectionMode != "topDown")) &&
       (key.nativeKindMask?.let(::nativeCacheKindMaskVisible)
         ?: kindVisible(key.kind)) &&
       openingVisibleInPlan(key.kind)
@@ -3304,7 +3338,130 @@ internal class RenderSceneFilamentHostView(
     return generated
   }
 
-  private fun edgeBatchKey(objectData: SceneObject, bounds: SceneBounds): EdgeBatchKey {
+  /**
+   * Solid keeps wall faces achromatic, so exterior brick identity is carried
+   * by a lightweight line-only pass. Filament's unlit material is deliberately
+   * kept stable for the tablet; generating these few architectural course
+   * lines as depth-tested prisms avoids relying on procedural fragment
+   * coordinates that differ across mobile OpenGL drivers.
+   */
+  private fun solidBrickJointGeometryFor(
+    objectData: SceneObject,
+    geometry: GeometryData,
+  ): GeometryData? {
+    val variant = wallSurfaceVariant(objectData)
+    if (normalizeKind(objectData.kind) != "wall" ||
+      variant != "brick" || geometry.points.isEmpty()
+    ) {
+      return null
+    }
+    val points = geometry.points.toMutableList()
+    val edges = mutableListOf<NativeVisualEdge>()
+    appendSolidBrickJointEdges(points, edges)
+    if (edges.isEmpty()) return null
+    // Generate the same readable 3D line weight even if a view transition
+    // starts while the native projection is still top-down. The batch is
+    // hidden in top-down by edgeVisible() and becomes visible immediately
+    // when the native camera reaches isometric mode.
+    return edgeGeometry(
+      points,
+      edges,
+      emptyList(),
+      radiusScale = 1.0,
+      solidBrickPattern = true,
+    )
+  }
+
+  private fun appendSolidBrickJointEdges(
+    points: MutableList<ScenePoint>,
+    edges: MutableList<NativeVisualEdge>,
+  ) {
+    val bounds = boundsForPoints(points)
+    val height = bounds.max.y - bounds.min.y
+    if (height <= 0.30) return
+    val alongX = (bounds.max.x - bounds.min.x) >= (bounds.max.z - bounds.min.z)
+    val longMin = if (alongX) bounds.min.x else bounds.min.z
+    val longMax = if (alongX) bounds.max.x else bounds.max.z
+    // Put the line prisms just outside each long wall face. Their depth test
+    // stays enabled, but centering a synthetic edge exactly on the source
+    // face can make GLES keep the face fragment and discard the line.
+    val faceOffset = 0.018
+    val faceOffsets = if (alongX) {
+      listOf(bounds.min.z - faceOffset, bounds.max.z + faceOffset)
+    } else {
+      listOf(bounds.min.x - faceOffset, bounds.max.x + faceOffset)
+    }
+    val rowSpacing = 0.18
+    val brickWidth = 0.48
+
+    fun addLine(first: ScenePoint, second: ScenePoint) {
+      val firstIndex = points.size
+      points.add(first)
+      points.add(second)
+      edges.add(
+        NativeVisualEdge(
+          first = firstIndex,
+          second = firstIndex + 1,
+          triangleIndices = intArrayOf(),
+          sharp = true,
+        ),
+      )
+    }
+
+    var row = 0
+    while (bounds.min.y + row * rowSpacing < bounds.max.y - 0.02) {
+      val rowBottom = bounds.min.y + row * rowSpacing
+      val rowTop = min(rowBottom + rowSpacing, bounds.max.y)
+      if (rowTop - rowBottom >= 0.06) {
+        // Horizontal course joints run across the two long faces.
+        if (rowTop < bounds.max.y - 0.02) {
+          for (offset in faceOffsets) {
+            if (alongX) {
+              addLine(
+                ScenePoint(longMin, rowTop, offset),
+                ScenePoint(longMax, rowTop, offset),
+              )
+            } else {
+              addLine(
+                ScenePoint(offset, rowTop, longMin),
+                ScenePoint(offset, rowTop, longMax),
+              )
+            }
+          }
+        }
+
+        // Offset every other course so the pattern reads as masonry instead
+        // of a stack of horizontal bands at fit-to-view scale.
+        val start = longMin + brickWidth * if (row % 2 == 0) 1.0 else 0.5
+        var joint = start
+        val verticalBottom = rowBottom + 0.025
+        val verticalTop = rowTop - 0.025
+        while (joint < longMax - 0.025 && verticalTop - verticalBottom >= 0.03) {
+          for (offset in faceOffsets) {
+            if (alongX) {
+              addLine(
+                ScenePoint(joint, verticalBottom, offset),
+                ScenePoint(joint, verticalTop, offset),
+              )
+            } else {
+              addLine(
+                ScenePoint(offset, verticalBottom, joint),
+                ScenePoint(offset, verticalTop, joint),
+              )
+            }
+          }
+          joint += brickWidth
+        }
+      }
+      row += 1
+    }
+  }
+
+  private fun edgeBatchKey(
+    objectData: SceneObject,
+    bounds: SceneBounds,
+    solidBrickPattern: Boolean = false,
+  ): EdgeBatchKey {
     val tileSizeMeters = 24.0
     val centerX = (bounds.min.x + bounds.max.x) * 0.5
     val centerZ = (bounds.min.z + bounds.max.z) * 0.5
@@ -3313,6 +3470,7 @@ internal class RenderSceneFilamentHostView(
       levelId = objectData.levelId,
       tileX = kotlin.math.floor(centerX / tileSizeMeters).toInt(),
       tileZ = kotlin.math.floor(centerZ / tileSizeMeters).toInt(),
+      solidBrickPattern = solidBrickPattern,
     )
   }
 
@@ -3581,7 +3739,11 @@ internal class RenderSceneFilamentHostView(
       val entity = EntityManager.get().create()
       val materialInstance = edgeMaterial.createInstance().also { instance ->
         applyDisplayStyle(instance)
-        val edgeColor = viewportEdgeColor()
+        val edgeColor = if (key.solidBrickPattern) {
+          solidBrickLineColor()
+        } else {
+          viewportEdgeColor()
+        }
         instance.setParameter(
           "baseColor",
           Colors.RgbaType.LINEAR,
@@ -4410,6 +4572,7 @@ internal class RenderSceneFilamentHostView(
     wallJunctionEdges: Boolean = false,
     wallJunctionElevations: List<Double> = emptyList(),
     radiusScale: Double = 1.0,
+    solidBrickPattern: Boolean = false,
   ): GeometryData? {
     val validEdges = edges.filter { it.first in points.indices && it.second in points.indices }
     val isFloorPlan = projectionMode == "topDown"
@@ -4422,6 +4585,7 @@ internal class RenderSceneFilamentHostView(
     // 6 mm radius becomes sub-pixel on a tablet, so the edge can alternate
     // between covered and visible fragments as the camera moves.
     val normalRadius = when {
+      solidBrickPattern -> 0.0045
       isFloorPlan -> 0.004
       projectionMode != "isometric" -> 0.009
       else -> 0.010
@@ -4872,7 +5036,11 @@ internal class RenderSceneFilamentHostView(
     }
     for (batch in edgeBatches) {
       applyDisplayStyle(batch.materialInstance)
-      val edgeColor = viewportEdgeColor()
+      val edgeColor = if (batch.key.solidBrickPattern) {
+        solidBrickLineColor()
+      } else {
+        viewportEdgeColor()
+      }
       batch.materialInstance.setParameter(
         "baseColor",
         Colors.RgbaType.LINEAR,
