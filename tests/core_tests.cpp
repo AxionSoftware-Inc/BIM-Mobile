@@ -50,6 +50,58 @@ double max_y(const std::vector<tbe::core::Point2>& points) {
     })->y;
 }
 
+bool point_in_triangle_2d(
+    double point_x,
+    double point_z,
+    const tbe::core::Point3& first,
+    const tbe::core::Point3& second,
+    const tbe::core::Point3& third
+) {
+    const auto cross = [](double ax, double ay, double bx, double by) {
+        return (ax * by) - (ay * bx);
+    };
+    const auto first_sign = cross(
+        second.x - first.x,
+        second.z - first.z,
+        point_x - first.x,
+        point_z - first.z
+    );
+    const auto second_sign = cross(
+        third.x - second.x,
+        third.z - second.z,
+        point_x - second.x,
+        point_z - second.z
+    );
+    const auto third_sign = cross(
+        first.x - third.x,
+        first.z - third.z,
+        point_x - third.x,
+        point_z - third.z
+    );
+    constexpr auto epsilon = 1.0e-9;
+    const auto has_positive = first_sign > epsilon || second_sign > epsilon || third_sign > epsilon;
+    const auto has_negative = first_sign < -epsilon || second_sign < -epsilon || third_sign < -epsilon;
+    return !(has_positive && has_negative);
+}
+
+bool mesh_front_face_covers_point(
+    const tbe::core::MeshBuffer& mesh,
+    double face_y,
+    double point_x,
+    double point_z
+) {
+    for (std::size_t index = 0; index + 2 < mesh.indices.size(); index += 3) {
+        const auto& first = mesh.vertices[mesh.indices[index]];
+        const auto& second = mesh.vertices[mesh.indices[index + 1]];
+        const auto& third = mesh.vertices[mesh.indices[index + 2]];
+        if (near(first.y, face_y) && near(second.y, face_y) && near(third.y, face_y) &&
+            point_in_triangle_2d(point_x, point_z, first, second, third)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 std::vector<double> sorted_room_areas(const tbe::core::Document& document, const std::vector<tbe::core::ElementId>& room_ids) {
     std::vector<double> areas;
     for (const auto room_id : room_ids) {
@@ -168,10 +220,15 @@ int main() {
     wall_a_element = document.find_ptr(wall_a_id);
     wall_a = wall_a_element->wall();
     assert(!wall_a->geometry.dirty);
-    assert(wall_a->geometry.vertices == 24);
-    assert(wall_a->geometry.triangles == 28);
-    assert(wall_a->geometry.mesh.vertices.size() == 24);
-    assert(wall_a->geometry.mesh.indices.size() == 84);
+    assert(wall_a->geometry.vertices == 72);
+    assert(wall_a->geometry.triangles == 48);
+    assert(wall_a->geometry.mesh.vertices.size() == 72);
+    assert(wall_a->geometry.mesh.indices.size() == 144);
+    // The envelope mesh must leave the door and window centres empty on the
+    // visible wall face.  A reveal-only implementation would still report
+    // the opening metadata while this assertion would fail.
+    assert(!mesh_front_face_covers_point(wall_a->geometry.mesh, -0.1, 2.0, 1.0));
+    assert(!mesh_front_face_covers_point(wall_a->geometry.mesh, -0.1, 3.4, 1.4));
     assert(wall_a->geometry.profile.openings.size() == 2);
     assert(wall_a->geometry.openings_cut == 2);
     assert(wall_a->geometry.solid_volume_cubic_meters > 1.5);
@@ -287,8 +344,8 @@ int main() {
     const auto* original_wall = room_document.find_ptr(room_wall_a.created_id())->wall();
     const auto original_vertices = original_wall->geometry.mesh.vertices.size();
     const auto original_indices = original_wall->geometry.mesh.indices.size();
-    assert(original_vertices == 24);
-    assert(original_indices == 84);
+    assert(original_vertices == 72);
+    assert(original_indices == 144);
 
     tbe::core::Project room_project{"Room Project"};
     room_project.active_document() = room_document;

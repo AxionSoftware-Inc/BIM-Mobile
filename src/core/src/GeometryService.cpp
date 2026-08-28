@@ -309,7 +309,32 @@ MeshBuffer extrude_profile(const WallProfile2D& profile, double height_meters) {
         mesh.indices.push_back(static_cast<std::uint32_t>(vertex_count + index + 1));
     }
 
-    for (std::uint32_t index = 0; index < vertex_count; ++index) {
+    // The opening rectangles are not decorative metadata.  The two long wall
+    // faces must be tessellated around them; otherwise the reveal faces below
+    // merely sit inside an opaque wall and Solid mode still shows a filled
+    // surface behind every door/window.  The wall profile is a four-point
+    // envelope whose edges 0 and 2 are the two long faces (mitering changes
+    // their X extents, but not their Y planes).  End caps and the top/bottom
+    // caps remain intact because hosted openings are vertical cuts.
+    append_layer_face_with_openings(
+        mesh,
+        profile.polygon[0].y,
+        std::min(profile.polygon[0].x, profile.polygon[1].x),
+        std::max(profile.polygon[0].x, profile.polygon[1].x),
+        height_meters,
+        profile.openings,
+        0
+    );
+    append_layer_face_with_openings(
+        mesh,
+        profile.polygon[2].y,
+        std::min(profile.polygon[2].x, profile.polygon[3].x),
+        std::max(profile.polygon[2].x, profile.polygon[3].x),
+        height_meters,
+        profile.openings,
+        0
+    );
+    for (const auto index : {std::uint32_t{1}, std::uint32_t{3}}) {
         const auto next = (index + 1) % static_cast<std::uint32_t>(vertex_count);
         append_quad(
             mesh,
