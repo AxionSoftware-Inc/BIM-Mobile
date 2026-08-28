@@ -124,10 +124,15 @@ void material(inout MaterialInputs material) {
 }
 """
 
-// One wall shader serves every wall type.  The visual variant is a uniform,
-// so changing a type never changes geometry, edge batches, or the Solid/Shaded
-// display contract.  The texture signal is present in Solid as well; Shaded
-// adds only the stable directional value change supplied by the scene lights.
+// Viewport wall-display contract:
+//   * Solid is an achromatic coordination view.  It must never inherit wall
+//     type colors; only neutral face fill, brick joint lines, and glass alpha
+//     are allowed there.
+//   * Shaded is the only mode that owns light material colors, and those
+//     colors stay deliberately light so they do not overpower the model.
+//   * One shader serves every wall type.  The visual variant is a uniform, so
+//     changing a type never changes geometry, edge batches, or the
+//     Solid/Shaded display contract.
 private const val WALL_SURFACE_MAT = """
 void material(inout MaterialInputs material) {
     prepareMaterial(material);
@@ -152,7 +157,9 @@ void material(inout MaterialInputs material) {
     float3 concrete = materialParams.baseColor.rgb * (1.0 + (speckle - 0.5) * 0.08);
 
     float glassLine = step(0.965, fract((world.x + world.y + world.z) * 0.42));
-    float3 glass = mix(materialParams.baseColor.rgb, float3(0.22, 0.58, 0.72), 0.28);
+    // Keep Solid glass neutral; introduce the light cyan tint only in Shaded.
+    float3 glassTint = mix(float3(0.84, 0.84, 0.84), float3(0.38, 0.68, 0.76), materialParams.displayShade);
+    float3 glass = mix(materialParams.baseColor.rgb, glassTint, 0.28);
     glass *= 1.0 - glassLine * 0.18;
 
     float3 surface = brick * brickMask + plaster * plasterMask + concrete * concreteMask + glass * glassMask;
@@ -2349,6 +2356,34 @@ internal class RenderSceneFilamentHostView(
     return dx * dx + dy * dy + dz * dz
   }
 
+  private fun nativeCacheRepresentative(
+    chunk: NativeBimCacheChunk,
+    objects: List<SceneObject>,
+  ): SceneObject? {
+    val chunkKind = normalizeKind(chunk.kind)
+    val chunkCenterX = (chunk.sourceBounds.min.x + chunk.sourceBounds.max.x) * 0.5
+    val chunkCenterY = (chunk.sourceBounds.min.y + chunk.sourceBounds.max.y) * 0.5
+    val chunkCenterZ = (chunk.sourceBounds.min.z + chunk.sourceBounds.max.z) * 0.5
+    // Cache chunks are not one-to-one with scene objects.  Indexing the scene
+    // object list by chunk index can pick a roof or slab for a wall chunk and
+    // silently erase the wall's Shaded material.  Resolve a stable semantic
+    // representative instead; the nearest object of the same kind and level
+    // is sufficient because the cache already partitions by kind and tile.
+    return objects.asSequence()
+      .filter { objectData ->
+        normalizeKind(objectData.kind) == chunkKind && objectData.levelId == chunk.levelId
+      }
+      .minByOrNull { objectData ->
+        val centerX = (objectData.bounds.min.x + objectData.bounds.max.x) * 0.5
+        val centerY = (objectData.bounds.min.y + objectData.bounds.max.y) * 0.5
+        val centerZ = (objectData.bounds.min.z + objectData.bounds.max.z) * 0.5
+        val dx = centerX - chunkCenterX
+        val dy = centerY - chunkCenterY
+        val dz = centerZ - chunkCenterZ
+        dx * dx + dy * dy + dz * dz
+      }
+  }
+
   private fun uploadNativeBimCacheChunks(
     engine: Engine,
     scene: Scene,
@@ -2451,7 +2486,9 @@ internal class RenderSceneFilamentHostView(
   ): Boolean {
     val sceneState = currentScene ?: return false
     val chunk = cache.chunks.getOrNull(index) ?: return false
-    val representative = sceneState.objects.getOrNull(index) ?: return false
+    val representative = nativeCacheRepresentative(chunk, sceneState.objects)
+      ?: sceneState.objects.getOrNull(index)
+      ?: return false
     // Keep the cache's native memory ownership, but upload the small axis-remap
     // staging buffer in Filament coordinates.  Relying on a per-entity matrix
     // for this conversion made the Adreno/OpenGL driver validate the face AABB
@@ -2490,14 +2527,13 @@ internal class RenderSceneFilamentHostView(
         .also { buffer ->
           buffer.setBuffer(engine, chunk.indices.duplicate().apply { rewind() })
         }
-      // A native cache chunk contains several IFC elements and can therefore
-      // carry more than one material category.  Applying the first element's
-      // procedural wall/wood/floor shader to the whole chunk made its
-      // high-frequency pattern alias while orbiting on the tablet, which was
-      // perceived as white/black flicker.  Keep the complete cached geometry
-      // and use the low-frequency neutral material for the streamed path;
-      // material detail remains available in the compatibility renderer.
-      val sharedMaterial = if (displayStyle == "solid") {
+      // Cache chunks are already partitioned by element kind.  Keep the
+      // proven neutral path for non-wall chunks, but let wall chunks use the
+      // semantic wall family so Solid can draw neutral brick joints and
+      // Shaded can show the light type-specific material palette.
+      val sharedMaterial = if (normalizeKind(chunk.kind) == "wall") {
+        materialForObject(representative, fallbackMaterial)
+      } else if (displayStyle == "solid") {
         solidMaterial ?: fallbackMaterial
       } else {
         fallbackMaterial
@@ -2852,12 +2888,14 @@ internal class RenderSceneFilamentHostView(
     val kind = normalizeKind(objectData.kind)
     val isWindow = kind == "window"
     return if (displayStyle == "solid") {
+      // Viewport contract: Solid is deliberately monochrome.  Do not add
+      // semantic wall colors here: exterior brick is represented by neutral
+      // joint lines, while glass is represented only by a thinner neutral
+      // alpha.  Wall colors belong exclusively to the light Shaded view.
       if (kind == "wall") {
         return when (wallSurfaceVariant(objectData)) {
-          "brick" -> floatArrayOf(0.70f, 0.34f, 0.22f, 1.0f)
-          "concrete" -> floatArrayOf(0.57f, 0.61f, 0.65f, 1.0f)
-          "glass" -> floatArrayOf(0.25f, 0.62f, 0.76f, 0.36f)
-          else -> floatArrayOf(0.82f, 0.84f, 0.84f, 1.0f)
+          "glass" -> floatArrayOf(0.84f, 0.84f, 0.84f, 0.18f)
+          else -> floatArrayOf(0.82f, 0.82f, 0.82f, 1.0f)
         }
       }
       val surface = when (viewportTheme) {
@@ -2881,9 +2919,10 @@ internal class RenderSceneFilamentHostView(
 
   private fun revitShadedColor(kind: String, wallVariant: String?): FloatArray {
     val base = when {
-      kind == "wall" && wallVariant == "brick" -> floatArrayOf(0.72f, 0.30f, 0.18f, 1.0f)
-      kind == "wall" && wallVariant == "concrete" -> floatArrayOf(0.58f, 0.62f, 0.67f, 1.0f)
-      kind == "wall" && wallVariant == "glass" -> floatArrayOf(0.26f, 0.62f, 0.78f, 0.40f)
+      // Shaded owns the semantic palette, but it intentionally stays light.
+      kind == "wall" && wallVariant == "brick" -> floatArrayOf(0.76f, 0.56f, 0.48f, 1.0f)
+      kind == "wall" && wallVariant == "concrete" -> floatArrayOf(0.72f, 0.74f, 0.76f, 1.0f)
+      kind == "wall" && wallVariant == "glass" -> floatArrayOf(0.68f, 0.80f, 0.84f, 0.30f)
       kind == "wall" -> floatArrayOf(0.78f, 0.80f, 0.82f, 1.0f)
       kind == "door" -> floatArrayOf(0.34f, 0.36f, 0.39f, 1.0f)
       kind == "window" -> floatArrayOf(0.36f, 0.50f, 0.60f, 0.42f)
@@ -4789,8 +4828,10 @@ internal class RenderSceneFilamentHostView(
       val active = entry.objectData.elementId != null && entry.objectData.elementId == selectedElementId
       val highlighted = entry.objectData.elementId != null && entry.objectData.elementId == highlightedElementId
       val isWindow = normalizeKind(entry.objectData.kind) == "window"
-      // Keep the requested architectural colors in both Shaded and Solid.
-      // Windows use alpha 0.30, which is 70% transparent.
+      // Keep Solid achromatic for ordinary faces; blue/orange here is only
+      // transient selection feedback.  Semantic wall colors are produced by
+      // displayBaseColor exclusively when Shaded is active.  Windows and
+      // glass walls use alpha to remain visibly transparent on the tablet.
       val solidColor = displayBaseColor(entry.objectData)
       val color = when {
         active -> floatArrayOf(0.08f, 0.28f, 0.82f, if (isWindow) 0.30f else 1f)
