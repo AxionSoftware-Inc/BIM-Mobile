@@ -821,37 +821,87 @@ RenderSceneMeshDTO make_opening_mesh(const tbe::core::Line2& axis, const tbe::co
     const auto width = opening.width_meters;
     const auto height = opening.height_meters;
     const auto half_width = width / 2.0;
-    // Keep hosted doors/windows just proud of the wall face. The previous
-    // half-thickness put the opening mesh entirely behind the opaque wall,
-    // leaving only its edge batch visible in the Filament renderer.
-    const auto panel_thickness = std::max(0.05, wall_thickness * 1.05);
-    const auto half_thickness = panel_thickness / 2.0;
-    const auto bottom = sill;
-    const auto top = sill + height;
-    const auto corners = std::array<Vec3, 8>{
-        Vec3{.x = center_x - (ux * half_width) - (nx * half_thickness), .y = center_y - (uy * half_width) - (ny * half_thickness), .z = bottom},
-        Vec3{.x = center_x + (ux * half_width) - (nx * half_thickness), .y = center_y + (uy * half_width) - (ny * half_thickness), .z = bottom},
-        Vec3{.x = center_x + (ux * half_width) + (nx * half_thickness), .y = center_y + (uy * half_width) + (ny * half_thickness), .z = bottom},
-        Vec3{.x = center_x - (ux * half_width) + (nx * half_thickness), .y = center_y - (uy * half_width) + (ny * half_thickness), .z = bottom},
-        Vec3{.x = center_x - (ux * half_width) - (nx * half_thickness), .y = center_y - (uy * half_width) - (ny * half_thickness), .z = top},
-        Vec3{.x = center_x + (ux * half_width) - (nx * half_thickness), .y = center_y + (uy * half_width) - (ny * half_thickness), .z = top},
-        Vec3{.x = center_x + (ux * half_width) + (nx * half_thickness), .y = center_y + (uy * half_width) + (ny * half_thickness), .z = top},
-        Vec3{.x = center_x - (ux * half_width) + (nx * half_thickness), .y = center_y - (uy * half_width) + (ny * half_thickness), .z = top},
+
+    // Hosted openings intentionally stay a single selectable render object,
+    // but their mesh is no longer a featureless box. Four perimeter bars form
+    // a visible frame and the inset centre becomes either a door leaf or a
+    // thin window pane. This keeps the existing material/edge pipeline and
+    // therefore cannot change the frozen wall Solid/Shaded contract.
+    const auto frame = std::clamp(std::min(width, height) * 0.075, 0.045, 0.12);
+    // Project the frame a few centimetres beyond each wall face. At 0.90x the
+    // wall depth the Filament depth pass could hide the front of the bars,
+    // leaving only their edge batch visible in Solid mode.
+    const auto frame_depth = std::max(0.06, wall_thickness * 1.08);
+    const auto frame_half_depth = frame_depth / 2.0;
+    const auto inner_half_width = std::max(0.01, half_width - frame);
+    const auto inner_half_height = std::max(0.01, (height / 2.0) - frame);
+    const auto centre_z = sill + (height / 2.0);
+
+    const auto append_box = [&](double centre_u,
+                                double centre_n,
+                                double centre_v,
+                                double half_u,
+                                double half_n,
+                                double half_v) {
+        const auto base_index = static_cast<std::uint32_t>(dto.positions.size());
+        const auto point = [&](double u, double n, double v) {
+            return Vec3{
+                .x = center_x + (ux * u) + (nx * n),
+                .y = center_y + (uy * u) + (ny * n),
+                .z = z_offset + centre_z + v,
+            };
+        };
+        const auto corners = std::array<Vec3, 8>{
+            point(centre_u - half_u, centre_n - half_n, centre_v - half_v),
+            point(centre_u + half_u, centre_n - half_n, centre_v - half_v),
+            point(centre_u + half_u, centre_n + half_n, centre_v - half_v),
+            point(centre_u - half_u, centre_n + half_n, centre_v - half_v),
+            point(centre_u - half_u, centre_n - half_n, centre_v + half_v),
+            point(centre_u + half_u, centre_n - half_n, centre_v + half_v),
+            point(centre_u + half_u, centre_n + half_n, centre_v + half_v),
+            point(centre_u - half_u, centre_n + half_n, centre_v + half_v),
+        };
+        dto.positions.insert(dto.positions.end(), corners.begin(), corners.end());
+        const auto append_triangle = [&](std::uint32_t first,
+                                          std::uint32_t second,
+                                          std::uint32_t third) {
+            dto.indices.push_back(base_index + first);
+            dto.indices.push_back(base_index + second);
+            dto.indices.push_back(base_index + third);
+        };
+        append_triangle(0, 1, 2);
+        append_triangle(0, 2, 3);
+        append_triangle(4, 6, 5);
+        append_triangle(4, 7, 6);
+        append_triangle(0, 4, 5);
+        append_triangle(0, 5, 1);
+        append_triangle(1, 5, 6);
+        append_triangle(1, 6, 2);
+        append_triangle(2, 6, 7);
+        append_triangle(2, 7, 3);
+        append_triangle(3, 7, 4);
+        append_triangle(3, 4, 0);
     };
-    dto.positions.assign(corners.begin(), corners.end());
-    if (z_offset != 0.0) {
-        for (auto& point : dto.positions) {
-            point.z += z_offset;
-        }
+
+    // The frame runs almost through the host wall, so it remains readable
+    // from either side and does not disappear behind an opaque wall face.
+    append_box(-half_width + (frame / 2.0), 0.0, 0.0, frame / 2.0, frame_half_depth, height / 2.0);
+    append_box(half_width - (frame / 2.0), 0.0, 0.0, frame / 2.0, frame_half_depth, height / 2.0);
+    append_box(0.0, 0.0, -(height / 2.0) + (frame / 2.0), inner_half_width, frame_half_depth, frame / 2.0);
+    append_box(0.0, 0.0, (height / 2.0) - (frame / 2.0), inner_half_width, frame_half_depth, frame / 2.0);
+
+    if (opening.kind == tbe::core::OpeningKind::Window) {
+        // A thin pane sits between the perimeter bars. Window material is
+        // already transparent in both Solid and Shaded, so the centre reads
+        // as glass without introducing a second renderable or a new pipeline.
+        const auto glass_half_depth = std::max(0.012, wall_thickness * 0.045);
+        append_box(0.0, 0.0, 0.0, inner_half_width, glass_half_depth, inner_half_height);
+    } else {
+        // Doors remain opaque architectural leaves, with a shallow inset that
+        // reads as a panel inside the frame instead of the old plain block.
+        const auto panel_half_depth = std::max(0.025, wall_thickness * 0.28);
+        append_box(0.0, 0.0, 0.0, inner_half_width, panel_half_depth, inner_half_height);
     }
-    dto.indices = {
-        0, 1, 2, 0, 2, 3,
-        4, 6, 5, 4, 7, 6,
-        0, 4, 5, 0, 5, 1,
-        1, 5, 6, 1, 6, 2,
-        2, 6, 7, 2, 7, 3,
-        3, 7, 4, 3, 4, 0,
-    };
     return dto;
 }
 
