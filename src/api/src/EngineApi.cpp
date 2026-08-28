@@ -1029,6 +1029,12 @@ std::string wall_opening_profile(const tbe::core::WallData& wall) {
         return {};
     }
 
+    // SERIALIZATION CONTRACT with RenderSceneFilamentHostView.kt:
+    // `startFraction,endFraction,bottom,top;...`. The first two values are
+    // normalized along the wall axis; the last two are wall-base-relative
+    // elevations in meters. Keep this derived string renderer-only and do
+    // not persist it as authoring data. If the format changes, update the
+    // live metadata consumer and the native-cache envelope together.
     std::ostringstream profile;
     profile << std::setprecision(12);
     bool first = true;

@@ -2872,6 +2872,12 @@ internal class RenderSceneFilamentHostView(
 
   private fun materialForObject(objectData: SceneObject, fallback: Material): Material {
     val kind = normalizeKind(objectData.kind)
+    // DISPLAY-STYLE CONTRACT: Solid/Shaded changes the material family and
+    // displayBaseColor() together. Keep semantic colors in Shaded only;
+    // Solid relies on achromatic faces plus the separate native edge passes.
+    // A material swap here without the corresponding alpha/parameter update
+    // below is a common way to regress glass transparency or make Solid look
+    // like Wireframe on tablet GPUs.
     if (displayStyle == "solid") {
       return if (kind == "window") {
         solidWindowMaterial ?: fallback
@@ -2914,6 +2920,8 @@ internal class RenderSceneFilamentHostView(
     // materialCategory (for example `wall:Exterior|Exterior Brick Wall`).
     // Keep metadata as the authoritative path for live scenes, then use this
     // cache hint so Solid preserves the same neutral brick-joint language.
+    // Do not turn the full cache envelope into a color key: it may also carry
+    // `|openings=...`, which is geometry metadata rather than a new material.
     val cacheSurface = objectData.materialCategory.trim().lowercase()
     return when {
       typeName.contains("glass") -> "glass"
@@ -3030,6 +3038,10 @@ internal class RenderSceneFilamentHostView(
   // Filament edge batches enabled for Solid/Shaded; NativeSelectionOverlay is
   // only for selection/feedback and must not become the Solid renderer.
   private fun edgeVisible(key: EdgeBatchKey): Boolean =
+    // The brick pattern is deliberately a Solid-only 3D decoration. It must
+    // not leak into plan views or Wireframe, where the authored wall edges
+    // already provide the complete line language and duplicate strokes make
+    // openings look filled again.
     (displayStyle == "wireframe" || displayStyle == "solid" || displayStyle == "shaded") &&
       (!key.solidBrickPattern || (displayStyle == "solid" && projectionMode != "topDown")) &&
       (key.nativeKindMask?.let(::nativeCacheKindMaskVisible)
@@ -3383,6 +3395,11 @@ internal class RenderSceneFilamentHostView(
     ) {
       return null
     }
+    // This pass never owns the wall surface. The C++ wall mesh owns the real
+    // void; this pass only adds neutral course/joint prisms on the two long
+    // faces. Therefore its opening clipping must stay derived from the same
+    // host-wall rectangles and must never be inferred from door/window mesh
+    // bounds, which can be framed, transparent, or hidden by category filters.
     val points = geometry.points.toMutableList()
     val edges = mutableListOf<NativeVisualEdge>()
     appendSolidBrickJointEdges(points, edges, wallBrickOpeningProfiles(objectData))
@@ -3455,6 +3472,10 @@ internal class RenderSceneFilamentHostView(
     }
 
     fun addHorizontalLine(offset: Double, y: Double) {
+      // A horizontal course is split in the wall-axis direction whenever its
+      // elevation lies inside an opening. The jamb/head boundary itself is
+      // intentionally allowed to remain visible as a clean architectural
+      // edge; only the brick course inside the void is removed.
       var cursor = longMin
       for (opening in openingIntervals) {
         if (y <= opening.bottom + epsilon || y >= opening.top - epsilon) continue
@@ -3480,6 +3501,10 @@ internal class RenderSceneFilamentHostView(
     }
 
     fun addVerticalLine(offset: Double, longCoordinate: Double, bottom: Double, top: Double) {
+      // Vertical brick joints use the inverse split: a joint that crosses an
+      // opening is emitted above and below the void, never through its glass
+      // or door opening. This is why the opening interval includes both the
+      // plan-axis range and its wall-base-relative vertical range.
       var cursor = bottom
       for (opening in openingIntervals) {
         if (longCoordinate <= opening.start + epsilon || longCoordinate >= opening.end - epsilon) continue
@@ -3539,6 +3564,12 @@ internal class RenderSceneFilamentHostView(
     // Native BIM cache chunks carry the same compact profile after the wall
     // semantic envelope because cache objects intentionally have no metadata
     // map. Live metadata always wins when both representations are present.
+    // The native producer serializes this as
+    // `startFraction,endFraction,bottom,top;...`. The live scene uses a
+    // metadata map while a BIM cache has only materialCategory, so both paths
+    // must stay compatible. Treat malformed entries as absent decoration;
+    // the wall mesh remains authoritative and safe even if a future cache
+    // contains no renderer profile.
     val profile = if (liveProfile.isNotEmpty()) {
       liveProfile
     } else {

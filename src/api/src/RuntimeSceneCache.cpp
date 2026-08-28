@@ -645,6 +645,9 @@ std::string cache_material_category(const RenderSceneObjectDTO& object) {
             // Native cache chunks have no metadata map. Keep this compact
             // profile in their semantic material envelope so the tablet's
             // Solid brick overlay can clip hosted openings there as well.
+            // This is intentionally an envelope, not a real material name:
+            // changing its delimiter or omitting the profile requires a cache
+            // compiler-version bump and a matching Android parser update.
             value += "|openings=" + openings->second;
         }
         return value;

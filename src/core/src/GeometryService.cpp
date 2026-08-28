@@ -153,6 +153,14 @@ void append_layer_face_with_openings(
     const std::vector<OpeningRectangle>& openings,
     ElementId material_id
 ) {
+    // WALL OPENING CONTRACT: `openings` is already sorted along the local
+    // wall axis by build_wall_profile(). Its x coordinates are measured from
+    // the wall axis start and its z coordinates are measured from the wall's
+    // base. This routine is the authoritative filled-face cut; a later
+    // renderer overlay may decorate the face, but it must never reconstruct a
+    // solid quad across one of these intervals. If a new wall layer or
+    // material pass bypasses this helper, doors/windows can look correct in
+    // metadata while an opaque face remains behind them in Solid.
     auto cursor = x_min;
     for (const auto& opening : openings) {
         if (opening.x_min > cursor + epsilon) {
@@ -205,6 +213,11 @@ void append_layer_prism(
     bool wraps_openings,
     bool wraps_ends
 ) {
+    // Layered walls deliberately share the same analytical opening rectangles
+    // as the envelope wall. `wraps_openings` controls only the reveal/jamb
+    // faces for this physical layer; it must not disable the long-face cut
+    // above. Keep this distinction when adding insulation, finish or core
+    // layers, otherwise a decorative layer can silently cap a real opening.
     append_layer_face_with_openings(mesh, y_min, x_min_at_y_min, x_max_at_y_min, height, openings, material_id);
     append_layer_face_with_openings(mesh, y_max, x_min_at_y_max, x_max_at_y_max, height, openings, material_id);
 
