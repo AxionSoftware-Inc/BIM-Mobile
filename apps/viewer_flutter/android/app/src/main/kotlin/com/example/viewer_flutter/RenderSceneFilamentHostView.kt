@@ -176,6 +176,17 @@ void material(inout MaterialInputs material) {
 }
 """
 
+// Solid wall faces have their own unlit family. Keeping this separate from
+// the generic solid material prevents face-orientation shading from making a
+// white wall read as a dark slab; the architectural and brick-joint lines are
+// still rendered by their independent depth-tested edge batches.
+private const val SOLID_WALL_MAT = """
+void material(inout MaterialInputs material) {
+    prepareMaterial(material);
+    material.baseColor = materialParams.baseColor;
+}
+"""
+
 // The model uses Filament's real lit path. The previous unlit workaround
 // avoided black faces only because the scene had no environment light; with a
 // stable baked IBL, the normal/tangent data can now drive actual sun + ambient
@@ -1508,9 +1519,9 @@ internal class RenderSceneFilamentHostView(
     // Brick joints are a semantic cue, not a second silhouette. Keep them
     // softer than the architectural border so Solid remains a filled,
     // Revit-like coordination view rather than reading as wireframe.
-    floatArrayOf(0.38f, 0.40f, 0.42f, 1.0f)
+    floatArrayOf(0.06f, 0.07f, 0.08f, 1.0f)
   } else {
-    floatArrayOf(0.56f, 0.59f, 0.62f, 1.0f)
+    floatArrayOf(0.22f, 0.24f, 0.26f, 1.0f)
   }
 
   private fun viewportGridColor(): FloatArray = if (viewportTheme == "light") {
@@ -2226,7 +2237,7 @@ internal class RenderSceneFilamentHostView(
       // HDRI/Sun changes. Real lighting belongs to Shaded, where it can be
       // inspected without compromising the primary BIM coordination view.
       solidMaterial = buildMaterial(engine, "RenderSceneSolid", FLAT_COLOR_MAT, lit = false)
-      solidWallMaterial = buildMaterial(engine, "RenderSceneSolidWall", WALL_SURFACE_MAT, lit = false)
+      solidWallMaterial = buildMaterial(engine, "RenderSceneSolidWall", SOLID_WALL_MAT, lit = false)
       solidWallGlassMaterial = buildMaterial(
         engine,
         "RenderSceneSolidWallGlass",
@@ -2933,7 +2944,9 @@ internal class RenderSceneFilamentHostView(
           // Keep Solid glass visibly see-through even when several coplanar
           // faces overlap; the low neutral alpha avoids a dark glass slab.
           "glass" -> floatArrayOf(0.92f, 0.92f, 0.92f, 0.10f)
-          else -> floatArrayOf(0.82f, 0.82f, 0.82f, 1.0f)
+          // Exterior and interior wall faces use a soft white fill in Solid;
+          // their semantic difference remains in the independent edge pass.
+          else -> floatArrayOf(0.94f, 0.94f, 0.94f, 1.0f)
         }
       }
       val surface = when (viewportTheme) {
@@ -2941,7 +2954,7 @@ internal class RenderSceneFilamentHostView(
         "amoledBlack" -> 0.24f
         // Keep the light Revit-like solid appearance, but leave enough
         // neutral contrast against the paper background for filled faces to
-        // remain obvious on a tablet.  Pure white made a valid surface pass
+        // remain obvious on a tablet. Pure white made a valid surface pass
         // look empty and was easily mistaken for wireframe.
         else -> 0.82f
       }
