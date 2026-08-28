@@ -2828,7 +2828,10 @@ internal class RenderSceneFilamentHostView(
         solidWindowMaterial ?: fallback
       } else if (kind == "wall") {
         if (wallSurfaceVariant(objectData) == "glass") {
-          solidWallGlassMaterial ?: fallback
+          // Use the proven transparent Filament pipeline in Solid too.  The
+          // shader receives displayShade=0, so this stays achromatic while
+          // avoiding the dark slab produced by the separate unlit blend path.
+          wallGlassMaterial ?: solidWallGlassMaterial ?: fallback
         } else {
           solidWallMaterial ?: fallback
         }
@@ -2894,7 +2897,9 @@ internal class RenderSceneFilamentHostView(
       // alpha.  Wall colors belong exclusively to the light Shaded view.
       if (kind == "wall") {
         return when (wallSurfaceVariant(objectData)) {
-          "glass" -> floatArrayOf(0.84f, 0.84f, 0.84f, 0.18f)
+          // Keep Solid glass visibly see-through even when several coplanar
+          // faces overlap; the low neutral alpha avoids a dark glass slab.
+          "glass" -> floatArrayOf(0.92f, 0.92f, 0.92f, 0.10f)
           else -> floatArrayOf(0.82f, 0.82f, 0.82f, 1.0f)
         }
       }
