@@ -58,6 +58,7 @@ import 'package:viewer_flutter/src/viewer_viewport_scene_policy.dart';
 import 'package:viewer_flutter/src/workspace_chrome.dart';
 
 part 'widget_scene_geometry_tests.dart';
+part 'widget_golden_authoring_scenario_tests.dart';
 part 'widget_engine_integration_tests.dart';
 part 'widget_editor_projection_tests.dart';
 part 'widget_interaction_authoring_tests.dart';
@@ -261,6 +262,7 @@ class _RecordingSessionFactory
 
 void main() {
   registerSceneGeometryTests();
+  registerGoldenAuthoringScenarioTests();
   registerEngineIntegrationTests();
   registerEditorProjectionTests();
   registerInteractionAuthoringTests();

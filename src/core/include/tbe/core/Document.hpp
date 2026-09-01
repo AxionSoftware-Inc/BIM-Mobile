@@ -174,6 +174,16 @@ public:
     void move_hosted_opening(ElementId opening_id, double offset_meters);
     void resize_door(ElementId door_id, double width_meters, double height_meters);
     void resize_window(ElementId window_id, double width_meters, double height_meters, double sill_height_meters);
+    /// Validates and applies all horizontal/vertical opening edits as one
+    /// document mutation. The host wall is updated only after the complete
+    /// candidate opening has passed validation.
+    void update_hosted_opening(
+        ElementId opening_id,
+        double offset_meters,
+        double width_meters,
+        double height_meters,
+        double sill_height_meters
+    );
 
     void auto_join_walls();
     /// Rebuilds deterministic host relations: beam-to-column joins, safe

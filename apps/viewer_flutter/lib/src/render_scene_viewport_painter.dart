@@ -320,6 +320,16 @@ class FallbackRenderScenePainter extends CustomPainter
     RenderSceneObject object,
     RenderSceneProjection projection,
   ) {
+    final authoritative = object.featureEdges
+        .where((edge) => edge.isFinite)
+        .map(
+          (edge) => _OutlineSegment(
+            a: projection.project(edge.start).screen,
+            b: projection.project(edge.end).screen,
+          ),
+        )
+        .toList(growable: false);
+    if (authoritative.isNotEmpty) return authoritative;
     if (projectionMode.useProjectedBoundsOutline) {
       return _buildProjectedBoundsRectOutlineSegments(
           object.bounds, projection);
@@ -471,6 +481,121 @@ class FallbackRenderScenePainter extends CustomPainter
         oldDelegate.showObjectLabels != showObjectLabels ||
         oldDelegate.showReferenceGrid != showReferenceGrid;
   }
+}
+
+/// Debug-only projection of semantic geometry supplied by the engine.
+///
+/// This deliberately reads only feature edges and wall axis metadata. It is a
+/// diagnosis overlay, not an alternate renderer or a geometry reconstruction
+/// path, so it can sit above both Flutter and Android/Filament viewports.
+class RenderSceneGeometryDiagnosticsPainter extends CustomPainter {
+  const RenderSceneGeometryDiagnosticsPainter({
+    required this.scene,
+    required this.visibleKinds,
+    required this.projectionMode,
+    required this.orbitProjectionStyle,
+    required this.camera,
+    required this.planCamera,
+  });
+
+  final RenderScene scene;
+  final Set<String> visibleKinds;
+  final RenderSceneProjectionMode projectionMode;
+  final RenderSceneOrbitProjectionStyle orbitProjectionStyle;
+  final RenderSceneCameraState camera;
+  final RenderScenePlanCameraState planCamera;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.width <= 1 || size.height <= 1) return;
+    final projection = RenderSceneProjection(
+      sceneBounds: scene.bounds,
+      canvasSize: size,
+      projectionMode: projectionMode,
+      orbitProjectionStyle: orbitProjectionStyle,
+      planCamera: planCamera,
+      camera: camera,
+      padding: FallbackRenderScenePainter.padding,
+    );
+    final axisPaint = Paint()
+      ..color = const Color(0xFF2563EB).withValues(alpha: 0.88)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.6;
+    final silhouettePaint = Paint()
+      ..color = const Color(0xFF9333EA).withValues(alpha: 0.78)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2;
+    final openingPaint = Paint()
+      ..color = const Color(0xFF06B6D4).withValues(alpha: 0.98)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.2;
+
+    for (final object in scene.objectsForKinds(visibleKinds)) {
+      for (final edge in object.featureEdges) {
+        if (!edge.isFinite) continue;
+        canvas.drawLine(
+          projection.project(edge.start).screen,
+          projection.project(edge.end).screen,
+          edge.role == 'opening_contour' ? openingPaint : silhouettePaint,
+        );
+      }
+
+      if (object.kindKey == 'wall') {
+        final start = RenderSceneEditor.wallStartPoint(object);
+        final end = RenderSceneEditor.wallEndPoint(object);
+        if (start != null && end != null) {
+          final a = projection.project(start).screen;
+          final b = projection.project(end).screen;
+          canvas.drawLine(a, b, axisPaint);
+          canvas.drawCircle(a, 3.4, Paint()..color = const Color(0xFF2563EB));
+          canvas.drawCircle(b, 3.4, Paint()..color = const Color(0xFF2563EB));
+        }
+      }
+
+      final id = object.elementId;
+      if (id != null) {
+        final anchor = projection.project(object.bounds.center).screen;
+        final label = TextPainter(
+          text: TextSpan(
+            text: '${object.kindKey} #$id',
+            style: const TextStyle(
+              color: Color(0xFF0F172A),
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+              backgroundColor: Color(0xDDF8FAFC),
+            ),
+          ),
+          textDirection: TextDirection.ltr,
+          maxLines: 1,
+        )..layout(maxWidth: 130);
+        label.paint(canvas, anchor + const Offset(5, 5));
+      }
+    }
+
+    final legend = TextPainter(
+      text: const TextSpan(
+        text: 'Blue: wall axis  Purple: silhouette  Cyan: opening contour',
+        style: TextStyle(
+          color: Color(0xFF0F172A),
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+          backgroundColor: Color(0xDDF8FAFC),
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+      maxLines: 1,
+    )..layout(maxWidth: math.max(0, size.width - 24));
+    legend.paint(canvas, Offset(12, math.max(12, size.height - 24)));
+  }
+
+  @override
+  bool shouldRepaint(RenderSceneGeometryDiagnosticsPainter oldDelegate) =>
+      scene != oldDelegate.scene ||
+      visibleKinds != oldDelegate.visibleKinds ||
+      projectionMode != oldDelegate.projectionMode ||
+      orbitProjectionStyle != oldDelegate.orbitProjectionStyle ||
+      camera != oldDelegate.camera ||
+      planCamera != oldDelegate.planCamera;
 }
 
 class _LayerProfileEntry {

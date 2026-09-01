@@ -393,10 +393,21 @@ RenderSceneLoadResult parseRenderSceneJson(
   final rawIndexCount = _toNullableInt(decoded['index_count']) ??
       _toNullableInt(decoded['indexCount']) ??
       indexCount;
-  final units = toSceneString(decoded['units'], fallback: 'meters');
+  final units = toSceneString(
+    decoded['units'],
+    fallback: RenderSceneCoordinateContract.units,
+  );
   final coordinateSystem = toSceneString(
     decoded['coordinate_system'] ?? decoded['coordinateSystem'],
-    fallback: 'X/Y plan, Z up',
+    fallback: RenderSceneCoordinateContract.coordinateSystem,
+  );
+
+  errors.addAll(
+    RenderSceneCoordinateContract.issuesFor(
+      sceneVersion: sceneVersion,
+      sceneUnits: units,
+      sceneCoordinateSystem: coordinateSystem,
+    ),
   );
 
   if (objectCount != objects.length) {
@@ -472,8 +483,9 @@ List<RenderSceneLevel> _inferLevelsFromObjects(
           ? explicitElevation
           : object.bounds.min.z;
       if (candidate.isFinite) {
-        elevationCandidates.putIfAbsent(object.levelId!, () => <double>[])
-          ..add(candidate);
+        elevationCandidates.putIfAbsent(object.levelId!, () => <double>[]).add(
+              candidate,
+            );
       }
     }
   }

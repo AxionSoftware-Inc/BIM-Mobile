@@ -145,13 +145,13 @@ extension _ViewerViewportWallEditing on _ViewerHomePageState {
         referenceStart: originalEnd,
         excludeWallId: wall.elementId,
       );
-        nextStart = WallAuthoringGeometry.snapMovedWallPoint(
-          scene,
-          wall,
-          nextStart,
-          originalStart,
-          snapIndex: wallSnapIndex,
-        );
+      nextStart = WallAuthoringGeometry.snapMovedWallPoint(
+        scene,
+        wall,
+        nextStart,
+        originalStart,
+        snapIndex: wallSnapIndex,
+      );
       nextEnd = originalEnd;
     } else {
       nextStart = originalStart;

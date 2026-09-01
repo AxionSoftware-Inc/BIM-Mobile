@@ -68,7 +68,8 @@ class _MaterialLayerEditorState extends State<MaterialLayerEditor> {
     return 'Missing material';
   }
 
-  int? _asInt(Object? value) => value is num ? value.toInt() : int.tryParse('$value');
+  int? _asInt(Object? value) =>
+      value is num ? value.toInt() : int.tryParse('$value');
 
   bool _asBool(Object? value, {bool fallback = false}) {
     if (value is bool) return value;
@@ -94,23 +95,34 @@ class _MaterialLayerEditorState extends State<MaterialLayerEditor> {
 
   int _coreStart(Map<String, dynamic> assembly, List<dynamic> layers) {
     final explicit = _asInt(assembly['core_start_layer']);
-    if (explicit != null && explicit >= 0 && explicit < layers.length) return explicit;
+    if (explicit != null && explicit >= 0 && explicit < layers.length) {
+      return explicit;
+    }
     for (var index = 0; index < layers.length; index += 1) {
-      if (layers[index] is Map && layers[index]['function']?.toString() == 'Core') return index;
+      if (layers[index] is Map &&
+          layers[index]['function']?.toString() == 'Core') {
+        return index;
+      }
     }
     return -1;
   }
 
   int _coreEnd(Map<String, dynamic> assembly, List<dynamic> layers) {
     final explicit = _asInt(assembly['core_end_layer']);
-    if (explicit != null && explicit >= 0 && explicit < layers.length) return explicit;
+    if (explicit != null && explicit >= 0 && explicit < layers.length) {
+      return explicit;
+    }
     for (var index = layers.length - 1; index >= 0; index -= 1) {
-      if (layers[index] is Map && layers[index]['function']?.toString() == 'Core') return index;
+      if (layers[index] is Map &&
+          layers[index]['function']?.toString() == 'Core') {
+        return index;
+      }
     }
     return -1;
   }
 
-  void _setCoreRange(Map<String, dynamic> assembly, List<dynamic> layers, int start, int end) {
+  void _setCoreRange(
+      Map<String, dynamic> assembly, List<dynamic> layers, int start, int end) {
     if (start < 0 || end < 0) {
       for (final rawLayer in layers) {
         if (rawLayer is Map && rawLayer['function']?.toString() == 'Core') {
@@ -138,7 +150,8 @@ class _MaterialLayerEditorState extends State<MaterialLayerEditor> {
     setState(() {});
   }
 
-  void _setLayerFunction(Map<String, dynamic> assembly, List<dynamic> layers, int index, String value) {
+  void _setLayerFunction(Map<String, dynamic> assembly, List<dynamic> layers,
+      int index, String value) {
     final layer = layers[index];
     if (layer is! Map) return;
     layer['function'] = value;
@@ -272,7 +285,8 @@ class _MaterialLayerEditorState extends State<MaterialLayerEditor> {
         height: 560,
         child: ListView(
           children: <Widget>[
-            const Text('Material catalog', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text('Material catalog',
+                style: TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             ..._materials.whereType<Map>().map((material) {
               return ListTile(
@@ -291,7 +305,8 @@ class _MaterialLayerEditorState extends State<MaterialLayerEditor> {
               ),
             ),
             const Divider(height: 24),
-            const Text('Layered assemblies', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text('Layered assemblies',
+                style: TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             ..._assemblies.whereType<Map>().map((rawAssembly) {
               final assembly = rawAssembly.cast<String, dynamic>();
@@ -299,11 +314,14 @@ class _MaterialLayerEditorState extends State<MaterialLayerEditor> {
               return Card(
                 child: ExpansionTile(
                   initiallyExpanded: true,
+                  backgroundColor: Colors.transparent,
+                  collapsedBackgroundColor: Colors.transparent,
                   title: Text(assembly['name']?.toString() ?? 'Assembly'),
                   subtitle: Text(assembly['kind']?.toString() ?? 'Floor'),
                   children: <Widget>[
                     Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 4),
                       child: Row(
                         children: <Widget>[
                           const Expanded(
@@ -316,17 +334,20 @@ class _MaterialLayerEditorState extends State<MaterialLayerEditor> {
                             value: _coreStart(assembly, layers),
                             items: <int>[
                               -1,
-                              ...List<int>.generate(layers.length, (index) => index),
+                              ...List<int>.generate(
+                                  layers.length, (index) => index),
                             ].map((value) {
                               return DropdownMenuItem<int>(
                                 value: value,
-                                child: Text(value < 0 ? 'None' : '${value + 1}'),
+                                child:
+                                    Text(value < 0 ? 'None' : '${value + 1}'),
                               );
                             }).toList(),
                             onChanged: (value) {
                               if (value == null) return;
                               final end = _coreEnd(assembly, layers);
-                              _setCoreRange(assembly, layers, value, value < 0 ? -1 : (end < 0 ? value : end));
+                              _setCoreRange(assembly, layers, value,
+                                  value < 0 ? -1 : (end < 0 ? value : end));
                             },
                           ),
                           const Padding(
@@ -337,17 +358,23 @@ class _MaterialLayerEditorState extends State<MaterialLayerEditor> {
                             value: _coreEnd(assembly, layers),
                             items: <int>[
                               -1,
-                              ...List<int>.generate(layers.length, (index) => index),
+                              ...List<int>.generate(
+                                  layers.length, (index) => index),
                             ].map((value) {
                               return DropdownMenuItem<int>(
                                 value: value,
-                                child: Text(value < 0 ? 'None' : '${value + 1}'),
+                                child:
+                                    Text(value < 0 ? 'None' : '${value + 1}'),
                               );
                             }).toList(),
                             onChanged: (value) {
                               if (value == null) return;
                               final start = _coreStart(assembly, layers);
-                              _setCoreRange(assembly, layers, value < 0 ? -1 : (start < 0 ? value : start), value);
+                              _setCoreRange(
+                                  assembly,
+                                  layers,
+                                  value < 0 ? -1 : (start < 0 ? value : start),
+                                  value);
                             },
                           ),
                         ],
@@ -358,12 +385,14 @@ class _MaterialLayerEditorState extends State<MaterialLayerEditor> {
                         Builder(
                           builder: (context) {
                             final layer = layers[index].cast<String, dynamic>();
-                            final function = _layerFunctions.contains(layer['function']?.toString())
+                            final function = _layerFunctions
+                                    .contains(layer['function']?.toString())
                                 ? layer['function'].toString()
                                 : 'Generic';
-                            final side = _layerSides.contains(layer['side']?.toString())
-                                ? layer['side'].toString()
-                                : 'Unspecified';
+                            final side =
+                                _layerSides.contains(layer['side']?.toString())
+                                    ? layer['side'].toString()
+                                    : 'Unspecified';
                             return ListTile(
                               dense: true,
                               leading: CircleAvatar(
@@ -372,23 +401,37 @@ class _MaterialLayerEditorState extends State<MaterialLayerEditor> {
                               ),
                               title: Row(
                                 children: <Widget>[
-                                  Expanded(child: Text(_materialName(layer['material_id']))),
+                                  Expanded(
+                                      child: Text(
+                                          _materialName(layer['material_id']))),
                                   DropdownButton<int>(
                                     value: _materials
-                                            .map((material) => material is Map ? _asInt(material['material_id']) : null)
+                                            .map((material) => material is Map
+                                                ? _asInt(
+                                                    material['material_id'])
+                                                : null)
                                             .whereType<int>()
-                                            .contains(_asInt(layer['material_id']))
+                                            .contains(
+                                                _asInt(layer['material_id']))
                                         ? _asInt(layer['material_id'])
                                         : null,
-                                    items: _materials.whereType<Map>().map((material) {
-                                      final id = _asInt(material['material_id']);
+                                    items: _materials
+                                        .whereType<Map>()
+                                        .map((material) {
+                                      final id =
+                                          _asInt(material['material_id']);
                                       return DropdownMenuItem<int>(
                                         value: id,
-                                        child: Text(material['name']?.toString() ?? 'Material'),
+                                        child: Text(
+                                            material['name']?.toString() ??
+                                                'Material'),
                                       );
                                     }).toList(),
                                     onChanged: (value) {
-                                      if (value != null) _setLayerValue(layer, 'material_id', value);
+                                      if (value != null) {
+                                        _setLayerValue(
+                                            layer, 'material_id', value);
+                                      }
                                     },
                                   ),
                                 ],
@@ -400,38 +443,52 @@ class _MaterialLayerEditorState extends State<MaterialLayerEditor> {
                                   Wrap(
                                     spacing: 12,
                                     runSpacing: 6,
-                                    crossAxisAlignment: WrapCrossAlignment.center,
+                                    crossAxisAlignment:
+                                        WrapCrossAlignment.center,
                                     children: <Widget>[
                                       SizedBox(
                                         width: 88,
                                         child: TextFormField(
-                                          initialValue: layer['thickness']?.toString() ?? '0.01',
+                                          initialValue:
+                                              layer['thickness']?.toString() ??
+                                                  '0.01',
                                           decoration: const InputDecoration(
                                             labelText: 'Thickness (m)',
                                             isDense: true,
                                           ),
-                                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                          keyboardType: const TextInputType
+                                              .numberWithOptions(decimal: true),
                                           onChanged: (value) {
-                                            layer['thickness'] = double.tryParse(value) ?? layer['thickness'];
+                                            layer['thickness'] =
+                                                double.tryParse(value) ??
+                                                    layer['thickness'];
                                           },
                                         ),
                                       ),
                                       DropdownButton<String>(
                                         value: function,
                                         items: _layerFunctions.map((value) {
-                                          return DropdownMenuItem<String>(value: value, child: Text(value));
+                                          return DropdownMenuItem<String>(
+                                              value: value, child: Text(value));
                                         }).toList(),
                                         onChanged: (value) {
-                                          if (value != null) _setLayerFunction(assembly, layers, index, value);
+                                          if (value != null) {
+                                            _setLayerFunction(
+                                                assembly, layers, index, value);
+                                          }
                                         },
                                       ),
                                       DropdownButton<String>(
                                         value: side,
                                         items: _layerSides.map((value) {
-                                          return DropdownMenuItem<String>(value: value, child: Text(value));
+                                          return DropdownMenuItem<String>(
+                                              value: value, child: Text(value));
                                         }).toList(),
                                         onChanged: (value) {
-                                          if (value != null) _setLayerValue(layer, 'side', value);
+                                          if (value != null) {
+                                            _setLayerValue(
+                                                layer, 'side', value);
+                                          }
                                         },
                                       ),
                                     ],
@@ -443,17 +500,22 @@ class _MaterialLayerEditorState extends State<MaterialLayerEditor> {
                                       _toggle(
                                         'Structural',
                                         _asBool(layer['structural']),
-                                        (value) => _setLayerValue(layer, 'structural', value),
+                                        (value) => _setLayerValue(
+                                            layer, 'structural', value),
                                       ),
                                       _toggle(
                                         'Wrap openings',
-                                        _asBool(layer['wraps_openings'], fallback: true),
-                                        (value) => _setLayerValue(layer, 'wraps_openings', value),
+                                        _asBool(layer['wraps_openings'],
+                                            fallback: true),
+                                        (value) => _setLayerValue(
+                                            layer, 'wraps_openings', value),
                                       ),
                                       _toggle(
                                         'Wrap ends',
-                                        _asBool(layer['wraps_ends'], fallback: true),
-                                        (value) => _setLayerValue(layer, 'wraps_ends', value),
+                                        _asBool(layer['wraps_ends'],
+                                            fallback: true),
+                                        (value) => _setLayerValue(
+                                            layer, 'wraps_ends', value),
                                       ),
                                     ],
                                   ),
@@ -463,18 +525,27 @@ class _MaterialLayerEditorState extends State<MaterialLayerEditor> {
                                 children: <Widget>[
                                   IconButton(
                                     tooltip: 'Move layer up',
-                                    onPressed: index == 0 ? null : () => _moveLayer(assembly, index, -1),
-                                    icon: const Icon(Icons.arrow_upward, size: 18),
+                                    onPressed: index == 0
+                                        ? null
+                                        : () => _moveLayer(assembly, index, -1),
+                                    icon: const Icon(Icons.arrow_upward,
+                                        size: 18),
                                   ),
                                   IconButton(
                                     tooltip: 'Move layer down',
-                                    onPressed: index == layers.length - 1 ? null : () => _moveLayer(assembly, index, 1),
-                                    icon: const Icon(Icons.arrow_downward, size: 18),
+                                    onPressed: index == layers.length - 1
+                                        ? null
+                                        : () => _moveLayer(assembly, index, 1),
+                                    icon: const Icon(Icons.arrow_downward,
+                                        size: 18),
                                   ),
                                   IconButton(
                                     tooltip: 'Remove layer',
-                                    onPressed: layers.length <= 1 ? null : () => _removeLayer(assembly, index),
-                                    icon: const Icon(Icons.delete_outline, size: 18),
+                                    onPressed: layers.length <= 1
+                                        ? null
+                                        : () => _removeLayer(assembly, index),
+                                    icon: const Icon(Icons.delete_outline,
+                                        size: 18),
                                   ),
                                 ],
                               ),
@@ -501,7 +572,10 @@ class _MaterialLayerEditorState extends State<MaterialLayerEditor> {
         FilledButton.icon(
           onPressed: _busy ? null : _apply,
           icon: _busy
-              ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+              ? const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2))
               : const Icon(Icons.check),
           label: const Text('Apply'),
         ),

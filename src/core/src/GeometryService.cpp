@@ -531,7 +531,11 @@ GeneratedGeometry GeometryService::build_wall_geometry(
         layer_profiles.reserve(layers.size());
         for (const auto& layer : layers) {
             auto layer_wall = wall;
-            layer_wall.thickness_meters = layer.thickness_meters;
+            // A layer is extruded between its two assembly faces below, so
+            // the profile solver must use the full face-to-face offset when
+            // resolving an endpoint mitre.  Passing the layer thickness as
+            // the wall thickness would halve the mitre extension again.
+            layer_wall.thickness_meters = layer.thickness_meters * 2.0;
             layer_profiles.push_back(build_wall_profile(layer_wall));
         }
     }

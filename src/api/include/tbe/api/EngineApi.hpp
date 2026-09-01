@@ -254,6 +254,20 @@ struct RenderSceneMeshDTO {
     std::optional<std::vector<Vec3>> normals{};
 };
 
+// Visual linework is authored by the engine, not inferred by a viewport from
+// tessellation.  This keeps a real opening cut and its readable outline on
+// the same contract even when the render mesh is re-triangulated or cached.
+enum class RenderSceneFeatureEdgeRole : std::uint8_t {
+    Silhouette,
+    OpeningContour,
+};
+
+struct RenderSceneFeatureEdgeDTO {
+    Vec3 start{};
+    Vec3 end{};
+    RenderSceneFeatureEdgeRole role{RenderSceneFeatureEdgeRole::Silhouette};
+};
+
 struct RenderSceneMaterialDTO {
     ElementIdDTO id{};
     std::string name{};
@@ -297,6 +311,7 @@ struct RenderSceneObjectDTO {
     std::uint64_t revision{};
     AABB3D bounds{};
     RenderSceneMeshDTO mesh{};
+    std::vector<RenderSceneFeatureEdgeDTO> feature_edges{};
     std::string material_category{};
     std::map<std::string, std::string> metadata{};
 };
@@ -309,7 +324,7 @@ struct RenderSceneLevelDTO {
 };
 
 struct RenderSceneDTO {
-    int scene_version{1};
+    int scene_version{2};
     std::string units{"meters"};
     std::string coordinate_system{"X/Y plan, Z up"};
     std::vector<RenderSceneLevelDTO> levels{};
@@ -343,9 +358,12 @@ struct BimCachePrimitiveDTO {
     std::uint32_t first_index{};
     std::uint32_t index_count{};
     AABB3D bounds{};
-    // Small semantic fields needed by the native viewport's architectural
-    // edge pass. Mesh bytes stay in the cache; this keeps opening contours
-    // deterministic without reconstructing wall intent from triangle shape.
+    // Engine-authored feature edges survive cache compilation. The renderer
+    // consumes them directly and must not reverse-engineer opening contours
+    // from arbitrary triangle topology.
+    std::vector<RenderSceneFeatureEdgeDTO> feature_edges{};
+    // Small authoring fields needed for non-visual wall operations. Viewport
+    // rendering must not derive visual contours from this metadata.
     std::map<std::string, std::string> metadata{};
 };
 
@@ -836,6 +854,13 @@ public:
     ApiVoidResult move_hosted_opening(std::uint64_t opening_id, double offset_meters);
     ApiVoidResult resize_door(std::uint64_t door_id, double width_meters, double height_meters);
     ApiVoidResult resize_window(std::uint64_t window_id, double width_meters, double height_meters, double sill_height_meters);
+    ApiVoidResult update_hosted_opening(
+        std::uint64_t opening_id,
+        double offset_meters,
+        double width_meters,
+        double height_meters,
+        double sill_height_meters
+    );
     ApiResult<ElementIdDTO> create_floor_system_for_room(std::uint64_t room_id, std::uint64_t assembly_id);
     ApiResult<ElementIdDTO> create_ceiling_system_for_room(std::uint64_t room_id, std::uint64_t assembly_id, double height_offset_meters = 0.0);
     ApiResult<ElementIdDTO> create_roof(

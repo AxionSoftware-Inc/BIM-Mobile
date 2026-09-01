@@ -416,5 +416,3 @@ RenderScene _addHorizontalSystemForPolygon({
   map['objects'] = objects;
   return _parseSceneMap(map, source: '${scene.source} + $kind polygon');
 }
-
-

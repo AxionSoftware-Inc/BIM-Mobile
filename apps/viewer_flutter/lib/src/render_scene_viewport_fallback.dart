@@ -789,6 +789,20 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                     ),
                   ),
                 if (kDebugMode && widget.showDiagnostics)
+                  IgnorePointer(
+                    child: CustomPaint(
+                      painter: RenderSceneGeometryDiagnosticsPainter(
+                        scene: scene,
+                        visibleKinds: controller.visibleKinds,
+                        projectionMode: controller.projectionMode,
+                        orbitProjectionStyle: controller.orbitProjectionStyle,
+                        camera: controller.camera,
+                        planCamera: controller.planCamera,
+                      ),
+                      size: Size.infinite,
+                    ),
+                  ),
+                if (kDebugMode && widget.showDiagnostics)
                   Positioned(
                     right: 12,
                     top: 12,

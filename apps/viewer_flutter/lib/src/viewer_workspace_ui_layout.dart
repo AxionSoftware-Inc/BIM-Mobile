@@ -771,6 +771,10 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
                             'inspector-active-tool-${_interactionMode.name}',
                           ),
                           initiallyExpanded: false,
+                          backgroundColor: Colors.transparent,
+                          collapsedBackgroundColor: Colors.transparent,
+                          shape: const Border(),
+                          collapsedShape: const Border(),
                           tilePadding:
                               const EdgeInsets.symmetric(horizontal: 12),
                           childrenPadding:

@@ -68,7 +68,8 @@ final class ProjectRecoveryStore {
             ) ??
             DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
         entries.add(ProjectRecoveryEntry(
-          projectName: decoded['project_name']?.toString() ?? 'Recovered project',
+          projectName:
+              decoded['project_name']?.toString() ?? 'Recovered project',
           jsonPath: path,
           updatedAt: updatedAt,
         ));

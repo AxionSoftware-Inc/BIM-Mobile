@@ -17,6 +17,11 @@ struct NativeBimCacheHandle {
     BimCacheSceneDTO scene{};
     std::vector<std::int64_t> primitive_data{};
     std::vector<double> primitive_bounds{};
+    std::vector<std::int64_t> primitive_feature_edge_counts{};
+    // Seven doubles per edge: role, start XYZ, end XYZ. This compact payload
+    // keeps the engine-authored visual contract out of the renderer's mesh
+    // topology heuristics.
+    std::vector<double> primitive_feature_edge_data{};
 };
 
 thread_local std::string last_error{};
@@ -93,6 +98,16 @@ Java_com_example_viewer_1flutter_NativeBimCacheBridge_nativeOpen(
                     bounds.min.x, bounds.min.y, bounds.min.z,
                     bounds.max.x, bounds.max.y, bounds.max.z,
                 });
+                handle->primitive_feature_edge_counts.push_back(
+                    static_cast<std::int64_t>(primitive.feature_edges.size())
+                );
+                for (const auto& edge : primitive.feature_edges) {
+                    handle->primitive_feature_edge_data.insert(handle->primitive_feature_edge_data.end(), {
+                        static_cast<double>(edge.role),
+                        edge.start.x, edge.start.y, edge.start.z,
+                        edge.end.x, edge.end.y, edge.end.z,
+                    });
+                }
             }
         }
         last_error.clear();
@@ -198,11 +213,11 @@ Java_com_example_viewer_1flutter_NativeBimCacheBridge_nativeChunkPrimitiveMetada
     }
     const auto& primitives = cache->scene.chunks[static_cast<std::size_t>(chunk_index)].primitives;
     // Keep this a fixed-width JNI payload. It avoids a JSON/map allocation for
-    // every streamed primitive while preserving the exact semantic fields used
-    // by the wall contour policy.
+    // every streamed primitive while preserving the wall-axis fields used by
+    // the renderer. Opening contours travel separately as geometry edges.
     static constexpr const char* keys[] = {
         "start_x", "start_y", "end_x", "end_y", "thickness_meters",
-        "height_meters", "opening_profile", "profile_corners", "layer_profile",
+        "height_meters", "profile_corners", "layer_profile",
     };
     constexpr std::size_t key_count = sizeof(keys) / sizeof(keys[0]);
     const auto item_count = primitives.size() * key_count;
@@ -291,6 +306,36 @@ Java_com_example_viewer_1flutter_NativeBimCacheBridge_nativePrimitiveBounds(JNIE
             0,
             static_cast<jsize>(cache->primitive_bounds.size()),
             cache->primitive_bounds.data()
+        );
+    }
+    return result;
+}
+
+JNIEXPORT jlongArray JNICALL
+Java_com_example_viewer_1flutter_NativeBimCacheBridge_nativePrimitiveFeatureEdgeCounts(
+    JNIEnv* environment,
+    jclass,
+    jlong handle
+) {
+    const auto* cache = to_handle(handle);
+    return cache == nullptr ? nullptr : make_long_array(environment, cache->primitive_feature_edge_counts);
+}
+
+JNIEXPORT jdoubleArray JNICALL
+Java_com_example_viewer_1flutter_NativeBimCacheBridge_nativePrimitiveFeatureEdgeData(
+    JNIEnv* environment,
+    jclass,
+    jlong handle
+) {
+    const auto* cache = to_handle(handle);
+    if (cache == nullptr) return nullptr;
+    auto* result = environment->NewDoubleArray(static_cast<jsize>(cache->primitive_feature_edge_data.size()));
+    if (result != nullptr && !cache->primitive_feature_edge_data.empty()) {
+        environment->SetDoubleArrayRegion(
+            result,
+            0,
+            static_cast<jsize>(cache->primitive_feature_edge_data.size()),
+            cache->primitive_feature_edge_data.data()
         );
     }
     return result;

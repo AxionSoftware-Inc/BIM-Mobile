@@ -135,12 +135,18 @@ void registerInteractionAuthoringTests() {
       levelId: level.levelId,
       levelOffsetMeters: 0.25,
     );
+    final historyBeforeOpeningEdit = await repository.historyCounts();
     await commands.updateOpening(
       object: door,
       offsetMeters: 1.15,
       widthMeters: 1.05,
       heightMeters: 2.2,
       sillHeightMeters: 0,
+    );
+    final historyAfterOpeningEdit = await repository.historyCounts();
+    expect(
+      historyAfterOpeningEdit.undoCount,
+      historyBeforeOpeningEdit.undoCount + 1,
     );
     final saved = await repository.saveProjectJson();
     expect(saved, contains('Ground authoring level'));

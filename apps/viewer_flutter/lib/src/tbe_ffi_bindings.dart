@@ -461,6 +461,22 @@ typedef _ResizeWindowNative = ffi.Int32 Function(
     ffi.Pointer<ffi.Void>, ffi.Uint64, ffi.Double, ffi.Double, ffi.Double);
 typedef _ResizeWindowDart = int Function(
     ffi.Pointer<ffi.Void>, int, double, double, double);
+typedef _UpdateHostedOpeningNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Uint64,
+  ffi.Double,
+  ffi.Double,
+  ffi.Double,
+  ffi.Double,
+);
+typedef _UpdateHostedOpeningDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  int,
+  double,
+  double,
+  double,
+  double,
+);
 typedef _CreateProfileNative = ffi.Int32 Function(
   ffi.Pointer<ffi.Void>,
   ffi.Int32,

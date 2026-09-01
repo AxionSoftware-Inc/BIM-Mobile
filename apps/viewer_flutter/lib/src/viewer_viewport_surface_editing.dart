@@ -522,13 +522,9 @@ extension _ViewerViewportSurfaceEditing on _ViewerHomePageState {
         if (_engineBackedMode &&
             repository != null &&
             opening.elementId != null) {
-          await _authoringCommands.moveOpening(
-            openingId: opening.elementId!,
+          final result = await _authoringCommands.updateOpening(
+            object: opening,
             offsetMeters: _draftOpeningOffsetMeters,
-          );
-          final result = await _authoringCommands.resizeHostedOpening(
-            openingId: opening.elementId!,
-            kind: opening.kindKey,
             widthMeters: _draftOpeningWidthMeters,
             heightMeters: _draftOpeningHeightMeters,
             sillHeightMeters: _draftOpeningSillHeightMeters,

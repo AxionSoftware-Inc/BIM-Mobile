@@ -320,20 +320,38 @@ private data class NativeCameraRay(
   val direction: ScenePoint,
 )
 
-/** Opening rectangle used to interrupt the Solid-only exterior brick pass. */
-private data class BrickOpeningProfile(
-  val startFraction: Double,
-  val endFraction: Double,
-  val bottom: Double,
-  val top: Double,
-)
-
 private data class BrickOpeningInterval(
   val start: Double,
   val end: Double,
   val bottom: Double,
   val top: Double,
 )
+
+/** A wall-local horizontal plane in Filament coordinates for brick courses. */
+private data class BrickWallPlane(
+  val origin: ScenePoint,
+  val directionX: Double,
+  val directionZ: Double,
+  val normalX: Double,
+  val normalZ: Double,
+  val longMin: Double,
+  val longMax: Double,
+  val normalMin: Double,
+  val normalMax: Double,
+) {
+  fun along(point: ScenePoint): Double =
+    (point.x - origin.x) * directionX + (point.z - origin.z) * directionZ
+
+  fun normalOffset(point: ScenePoint): Double =
+    (point.x - origin.x) * normalX + (point.z - origin.z) * normalZ
+
+  fun point(along: Double, elevation: Double, normalOffset: Double): ScenePoint =
+    ScenePoint(
+      x = origin.x + directionX * along + normalX * normalOffset,
+      y = elevation,
+      z = origin.z + directionZ * along + normalZ * normalOffset,
+    )
+}
 
 /** A convex clipping volume shared by the interactive box and section views. */
 private data class ClipPlane(
@@ -582,6 +600,7 @@ internal class RenderSceneFilamentHostView(
   private var solidWallGlassMaterial: Material? = null
   private var solidWindowMaterial: Material? = null
   private var edgeMaterial: Material? = null
+  private var planEdgeMaterial: Material? = null
   private var gridMaterial: Material? = null
   private var groundMaterial: Material? = null
   private var shadowMaterial: Material? = null
@@ -1090,6 +1109,7 @@ internal class RenderSceneFilamentHostView(
         revision = 1,
         bounds = chunk.sourceBounds,
         mesh = SceneMesh(emptyList(), emptyList()),
+        featureEdges = emptyList(),
         materialCategory = chunk.materialCategory,
         metadata = emptyMap(),
       )
@@ -1118,15 +1138,26 @@ internal class RenderSceneFilamentHostView(
     // still imported mesh payloads from the viewport's point of view and must
     // receive the same stable outline fallback as FBX/OBJ imports.
     val importedPart = sourceElementId != null || normalizeKind(primitive.kind) == "proxy"
-    val points = boxCorners(primitive.sourceBounds).map(::toFilamentPoint)
-    val triangles = listOf(
-      intArrayOf(0, 1, 2), intArrayOf(0, 2, 3),
-      intArrayOf(4, 6, 5), intArrayOf(4, 7, 6),
-      intArrayOf(0, 4, 5), intArrayOf(0, 5, 1),
-      intArrayOf(1, 5, 6), intArrayOf(1, 6, 2),
-      intArrayOf(2, 6, 7), intArrayOf(2, 7, 4),
-      intArrayOf(3, 7, 4), intArrayOf(3, 4, 0),
-    )
+    val authoritativeFeatureEdges = primitive.featureEdges
+    val points = if (authoritativeFeatureEdges.isNotEmpty()) {
+      authoritativeFeatureEdges.flatMap { edge ->
+        listOf(toFilamentPoint(edge.start), toFilamentPoint(edge.end))
+      }
+    } else {
+      boxCorners(primitive.sourceBounds).map(::toFilamentPoint)
+    }
+    val triangles = if (authoritativeFeatureEdges.isNotEmpty()) {
+      emptyList()
+    } else {
+      listOf(
+        intArrayOf(0, 1, 2), intArrayOf(0, 2, 3),
+        intArrayOf(4, 6, 5), intArrayOf(4, 7, 6),
+        intArrayOf(0, 4, 5), intArrayOf(0, 5, 1),
+        intArrayOf(1, 5, 6), intArrayOf(1, 6, 2),
+        intArrayOf(2, 6, 7), intArrayOf(2, 7, 4),
+        intArrayOf(3, 7, 4), intArrayOf(3, 4, 0),
+      )
+    }
     // Cache meshes stay in native DirectByteBuffers, so the overlay never
     // receives their full edges.  Keep just the twelve bounds edges as a
     // selection-only affordance: it makes a picked IFC element visibly blue
@@ -1142,6 +1173,19 @@ internal class RenderSceneFilamentHostView(
         triangleIndices = intArrayOf(),
         sharp = true,
       )
+    }
+    val featureEdges = if (authoritativeFeatureEdges.isNotEmpty()) {
+      authoritativeFeatureEdges.indices.map { index ->
+        NativeVisualEdge(
+          first = index * 2,
+          second = index * 2 + 1,
+          triangleIndices = intArrayOf(),
+          sharp = true,
+          wallAxis = wallAxisEndpoints(primitive.metadata),
+        )
+      }
+    } else {
+      selectionBoundsEdges
     }
     return NativeVisualObject(
       elementId = primitive.elementId,
@@ -1166,7 +1210,7 @@ internal class RenderSceneFilamentHostView(
       },
       points = points,
       triangles = triangles,
-      featureEdges = selectionBoundsEdges,
+      featureEdges = featureEdges,
     )
   }
 
@@ -2161,6 +2205,7 @@ internal class RenderSceneFilamentHostView(
     solidWallGlassMaterial?.let { material -> engine?.destroyMaterial(material) }
     solidWindowMaterial?.let { material -> engine?.destroyMaterial(material) }
     edgeMaterial?.let { material -> engine?.destroyMaterial(material) }
+    planEdgeMaterial?.let { material -> engine?.destroyMaterial(material) }
     gridMaterial?.let { material -> engine?.destroyMaterial(material) }
     groundMaterial?.let { material -> engine?.destroyMaterial(material) }
     shadowMaterial?.let { material -> engine?.destroyMaterial(material) }
@@ -2192,6 +2237,7 @@ internal class RenderSceneFilamentHostView(
     solidWallGlassMaterial = null
     solidWindowMaterial = null
     edgeMaterial = null
+    planEdgeMaterial = null
     gridMaterial = null
     groundMaterial = null
     shadowMaterial = null
@@ -2210,7 +2256,11 @@ internal class RenderSceneFilamentHostView(
         transparent = true,
         lit = true,
       )
-      windowMaterial = buildMaterial(engine, "RenderSceneWindowGlass", ARCHITECTURAL_LIT_MAT, transparent = true, lit = true)
+      // A window is a real, opaque BIM panel in the coordination viewport.
+      // The wall owns the void; making the panel transparent disables depth
+      // writes and lets it alternate with the jamb/reveal faces while moving
+      // the 3D camera.
+      windowMaterial = buildMaterial(engine, "RenderSceneWindow", ARCHITECTURAL_LIT_MAT, lit = true)
       plasterMaterial = buildMaterial(engine, "RenderScenePlaster", ARCHITECTURAL_LIT_MAT, lit = true)
       woodMaterial = buildMaterial(engine, "RenderSceneWood", ARCHITECTURAL_LIT_MAT, lit = true)
       floorMaterial = buildMaterial(engine, "RenderSceneFloor", ARCHITECTURAL_LIT_MAT, lit = true)
@@ -2235,6 +2285,18 @@ internal class RenderSceneFilamentHostView(
         lit = false,
       )
       edgeMaterial = buildMaterial(engine, "RenderSceneEdges", FLAT_COLOR_MAT, lit = false)
+      // A floor plan is an orthographic drawing, not an occlusion view. Draw
+      // its architectural contours after faces without depth testing so an
+      // edge ribbon can never fight a coplanar floor/slab surface on mobile
+      // GPUs. The regular edge material remains depth-tested for 3D views.
+      planEdgeMaterial = buildMaterial(
+        engine,
+        "RenderScenePlanEdges",
+        FLAT_COLOR_MAT,
+        lit = false,
+        depthCulling = false,
+        depthWrite = false,
+      )
       gridMaterial = buildMaterial(
         engine,
         "RenderSceneGrid",
@@ -2254,7 +2316,7 @@ internal class RenderSceneFilamentHostView(
       if (listOf(material, wallMaterial, wallGlassMaterial, windowMaterial, plasterMaterial,
           woodMaterial, floorMaterial, roofMaterial, concreteMaterial,
            solidMaterial, solidWallMaterial, solidWallGlassMaterial,
-           solidWindowMaterial, edgeMaterial, gridMaterial,
+           solidWindowMaterial, edgeMaterial, planEdgeMaterial, gridMaterial,
            groundMaterial, shadowMaterial).any { it == null }) {
         statusMessage = "Filament material build returned an invalid package."
         updateStatus()
@@ -2276,6 +2338,8 @@ internal class RenderSceneFilamentHostView(
     transparent: Boolean = false,
     lit: Boolean = false,
     grid: Boolean = false,
+    depthCulling: Boolean = true,
+    depthWrite: Boolean = true,
   ): Material? {
       val builder = MaterialBuilder()
         .name(name)
@@ -2300,6 +2364,7 @@ internal class RenderSceneFilamentHostView(
           .uniformParameter(MaterialBuilder.UniformType.FLOAT, "gridMajorStep")
       }
       builder.material(source)
+      builder.depthCulling(depthCulling).depthWrite(depthWrite)
       if (transparent) {
         builder
           .blending(MaterialBuilder.BlendingMode.TRANSPARENT)
@@ -2676,7 +2741,7 @@ internal class RenderSceneFilamentHostView(
     val sceneState = currentScene ?: return
     if ((material == null || wallMaterial == null || wallGlassMaterial == null || windowMaterial == null ||
         plasterMaterial == null || woodMaterial == null || floorMaterial == null ||
-         roofMaterial == null || concreteMaterial == null || edgeMaterial == null ||
+         roofMaterial == null || concreteMaterial == null || edgeMaterial == null || planEdgeMaterial == null ||
          gridMaterial == null ||
          groundMaterial == null || shadowMaterial == null || solidWallMaterial == null ||
          solidWallGlassMaterial == null) &&
@@ -2887,8 +2952,6 @@ internal class RenderSceneFilamentHostView(
     // materialCategory (for example `wall:Exterior|Exterior Brick Wall`).
     // Keep metadata as the authoritative path for live scenes, then use this
     // cache hint so Solid preserves the same neutral brick-joint language.
-    // Do not turn the full cache envelope into a color key: it may also carry
-    // `|openings=...`, which is geometry metadata rather than a new material.
     val cacheSurface = objectData.materialCategory.trim().lowercase()
     return when {
       typeName.contains("glass") -> "glass"
@@ -2965,7 +3028,7 @@ internal class RenderSceneFilamentHostView(
       kind == "wall" && wallVariant == "glass" -> floatArrayOf(0.68f, 0.80f, 0.84f, 0.30f)
       kind == "wall" -> floatArrayOf(0.78f, 0.80f, 0.82f, 1.0f)
       kind == "door" -> floatArrayOf(0.34f, 0.36f, 0.39f, 1.0f)
-      kind == "window" -> floatArrayOf(0.36f, 0.50f, 0.60f, 0.42f)
+      kind == "window" -> floatArrayOf(0.36f, 0.50f, 0.60f, 1.0f)
       kind == "slab" -> floatArrayOf(0.66f, 0.68f, 0.71f, 1.0f)
       kind == "floor" -> floatArrayOf(0.67f, 0.69f, 0.72f, 1.0f)
       kind == "ceiling" -> floatArrayOf(0.84f, 0.85f, 0.86f, 1.0f)
@@ -3147,6 +3210,30 @@ internal class RenderSceneFilamentHostView(
 
     fun appendPrimitiveRange(range: NativeBimCachePrimitiveRange) {
       if (nativeCacheEdgeBudgetRemaining <= 0) return
+      val rangeKind = normalizeKind(range.kind)
+      if (rangeKind == "wall" && range.featureEdges.isNotEmpty()) {
+        val points = range.featureEdges.flatMap { edge ->
+          listOf(toFilamentPoint(edge.start), toFilamentPoint(edge.end))
+        }
+        val axis = wallAxisEndpoints(range.metadata)
+        val directEdges = range.featureEdges.indices.map { edgeIndex ->
+          NativeVisualEdge(
+            first = edgeIndex * 2,
+            second = edgeIndex * 2 + 1,
+            triangleIndices = intArrayOf(),
+            sharp = true,
+            wallAxis = axis,
+          )
+        }
+        val boundedEdges = capNativeCacheEdges(directEdges)
+        if (boundedEdges.isEmpty()) return
+        val pointBase = edgePoints.size
+        edgePoints.addAll(points)
+        boundedEdges.forEach { edge ->
+          edges.add(edge.copy(first = edge.first + pointBase, second = edge.second + pointBase))
+        }
+        return
+      }
       val firstIndex = range.firstIndex.coerceAtLeast(0)
       if (firstIndex >= indexCount) return
       val requestedEnd = range.firstIndex.toLong() + range.indexCount.toLong()
@@ -3216,7 +3303,6 @@ internal class RenderSceneFilamentHostView(
         val isFeature = (!boundary && edge.sharp) || longBoundary
         isFeature
       }
-      val rangeKind = normalizeKind(range.kind)
       val rangeWallAxis = if (rangeKind == "wall" && projectionMode != "section") {
         wallAxisEndpoints(range.metadata)
       } else {
@@ -3228,7 +3314,6 @@ internal class RenderSceneFilamentHostView(
           localEdges,
           rangeWallAxis.start,
           rangeWallAxis.end,
-          range.metadata["opening_profile"],
         ).map { edge -> edge.copy(wallAxis = rangeWallAxis) }
       } else {
         localEdges
@@ -3269,7 +3354,7 @@ internal class RenderSceneFilamentHostView(
       if (nativeCacheEdgeBudgetRemaining <= 0) break
       appendPrimitiveRange(range)
     }
-    if (edgePoints.isEmpty() || edgeTriangles.isEmpty() || edges.isEmpty()) return null
+    if (edgePoints.isEmpty() || edges.isEmpty()) return null
     Log.i(
       TAG,
       "Native cache edge topology: kind=${chunk.kind} primitives=${ranges.size} " +
@@ -3326,6 +3411,8 @@ internal class RenderSceneFilamentHostView(
       }
     }
     val visual = toVisualObject(objectData)
+    val hasAuthoritativeFeatureEdges =
+      !clipVolume.active && objectData.featureEdges.isNotEmpty()
     val points = if (clipVolume.active) geometry.points else visual.points
     val triangles = if (clipVolume.active) geometry.triangles else visual.triangles
     val edges = if (clipVolume.active) clippedFeatureEdges(points, triangles) else visual.featureEdges
@@ -3356,14 +3443,13 @@ internal class RenderSceneFilamentHostView(
     // physical corners and opening reveals do.
     val architecturalWallEdges = stableColumnEdges
     val wallAxis = if (wallEdges) wallAxisEndpoints(objectData) else null
-    val wallFaceEdges = if (wallEdges && projectionMode != "section") {
+    val wallFaceEdges = if (wallEdges && projectionMode != "section" && !hasAuthoritativeFeatureEdges) {
       wallAxis?.let { (axisStart, axisEnd) ->
         RenderSceneEdgeTopology.wallFaceEdges(
           points,
           architecturalWallEdges,
           axisStart,
           axisEnd,
-          objectData.metadata["opening_profile"],
         )
       } ?: architecturalWallEdges
     } else {
@@ -3415,12 +3501,18 @@ internal class RenderSceneFilamentHostView(
     }
     // This pass never owns the wall surface. The C++ wall mesh owns the real
     // void; this pass only adds neutral course/joint prisms on the two long
-    // faces. Therefore its opening clipping must stay derived from the same
-    // host-wall rectangles and must never be inferred from door/window mesh
-    // bounds, which can be framed, transparent, or hidden by category filters.
+    // faces. Clip those prisms against the engine-authored opening contours,
+    // not a separately serialized texture/profile rectangle. That keeps the
+    // brick pattern locked to the same geometry when a hosted opening moves,
+    // resizes, joins a wall, or is regenerated from an IFC source.
     val points = geometry.points.toMutableList()
     val edges = mutableListOf<NativeVisualEdge>()
-    appendSolidBrickJointEdges(points, edges, wallBrickOpeningProfiles(objectData))
+    appendSolidBrickJointEdges(
+      objectData,
+      points,
+      edges,
+      brickOpeningIntervalsFromFeatureEdges(objectData, geometry),
+    )
     if (edges.isEmpty()) return null
     // Generate the same readable 3D line weight even if a view transition
     // starts while the native projection is still top-down. The batch is
@@ -3436,44 +3528,42 @@ internal class RenderSceneFilamentHostView(
   }
 
   private fun appendSolidBrickJointEdges(
+    objectData: SceneObject,
     points: MutableList<ScenePoint>,
     edges: MutableList<NativeVisualEdge>,
-    openingProfiles: List<BrickOpeningProfile>,
+    openingIntervals: List<BrickOpeningInterval>,
   ) {
     val bounds = boundsForPoints(points)
     val height = bounds.max.y - bounds.min.y
     if (height <= 0.30) return
-    val alongX = (bounds.max.x - bounds.min.x) >= (bounds.max.z - bounds.min.z)
-    val longMin = if (alongX) bounds.min.x else bounds.min.z
-    val longMax = if (alongX) bounds.max.x else bounds.max.z
+    val wallPlane = brickWallPlaneFor(objectData, points) ?: return
+    val longMin = wallPlane.longMin
+    val longMax = wallPlane.longMax
     // Put the line prisms just outside each long wall face. Their depth test
     // stays enabled, but centering a synthetic edge exactly on the source
     // face can make GLES keep the face fragment and discard the line.
     val faceOffset = 0.018
-    val faceOffsets = if (alongX) {
-      listOf(bounds.min.z - faceOffset, bounds.max.z + faceOffset)
-    } else {
-      listOf(bounds.min.x - faceOffset, bounds.max.x + faceOffset)
-    }
+    val faceOffsets = listOf(
+      wallPlane.normalMin - faceOffset,
+      wallPlane.normalMax + faceOffset,
+    )
     val rowSpacing = 0.18
     val brickWidth = 0.48
-    val axisSpan = longMax - longMin
     val lineLengthMinimum = 0.03
     val epsilon = 1.0e-5
-    val openingIntervals = openingProfiles.mapNotNull { opening ->
-      val start = longMin + opening.startFraction.coerceIn(0.0, 1.0) * axisSpan
-      val end = longMin + opening.endFraction.coerceIn(0.0, 1.0) * axisSpan
-      if (end - start <= epsilon || opening.top - opening.bottom <= epsilon) {
-        null
-      } else {
-        BrickOpeningInterval(
-          start = min(start, end),
-          end = max(start, end),
-          bottom = bounds.min.y + opening.bottom,
-          top = bounds.min.y + opening.top,
-        )
+    val clippedOpeningIntervals = openingIntervals
+      .mapNotNull { opening ->
+        val start = max(longMin, min(longMax, opening.start))
+        val end = max(longMin, min(longMax, opening.end))
+        val bottom = max(bounds.min.y, min(bounds.max.y, opening.bottom))
+        val top = max(bounds.min.y, min(bounds.max.y, opening.top))
+        if (end - start <= epsilon || top - bottom <= epsilon) {
+          null
+        } else {
+          BrickOpeningInterval(start = start, end = end, bottom = bottom, top = top)
+        }
       }
-    }.sortedBy { it.start }
+      .sortedBy { it.start }
 
     fun addLine(first: ScenePoint, second: ScenePoint) {
       val firstIndex = points.size
@@ -3495,26 +3585,18 @@ internal class RenderSceneFilamentHostView(
       // intentionally allowed to remain visible as a clean architectural
       // edge; only the brick course inside the void is removed.
       var cursor = longMin
-      for (opening in openingIntervals) {
+      for (opening in clippedOpeningIntervals) {
         if (y <= opening.bottom + epsilon || y >= opening.top - epsilon) continue
         val start = max(cursor, opening.start)
         val end = min(longMax, opening.end)
         if (end - cursor >= lineLengthMinimum) {
-          if (alongX) {
-            addLine(ScenePoint(cursor, y, offset), ScenePoint(start, y, offset))
-          } else {
-            addLine(ScenePoint(offset, y, cursor), ScenePoint(offset, y, start))
-          }
+          addLine(wallPlane.point(cursor, y, offset), wallPlane.point(start, y, offset))
         }
         cursor = max(cursor, end)
         if (cursor >= longMax - epsilon) return
       }
       if (longMax - cursor >= lineLengthMinimum) {
-        if (alongX) {
-          addLine(ScenePoint(cursor, y, offset), ScenePoint(longMax, y, offset))
-        } else {
-          addLine(ScenePoint(offset, y, cursor), ScenePoint(offset, y, longMax))
-        }
+        addLine(wallPlane.point(cursor, y, offset), wallPlane.point(longMax, y, offset))
       }
     }
 
@@ -3524,27 +3606,25 @@ internal class RenderSceneFilamentHostView(
       // or door opening. This is why the opening interval includes both the
       // plan-axis range and its wall-base-relative vertical range.
       var cursor = bottom
-      for (opening in openingIntervals) {
+      for (opening in clippedOpeningIntervals) {
         if (longCoordinate <= opening.start + epsilon || longCoordinate >= opening.end - epsilon) continue
         if (opening.top <= bottom + epsilon || opening.bottom >= top - epsilon) continue
         val start = max(bottom, opening.bottom)
         val end = min(top, opening.top)
         if (start - cursor >= lineLengthMinimum) {
-          if (alongX) {
-            addLine(ScenePoint(longCoordinate, cursor, offset), ScenePoint(longCoordinate, start, offset))
-          } else {
-            addLine(ScenePoint(offset, cursor, longCoordinate), ScenePoint(offset, start, longCoordinate))
-          }
+          addLine(
+            wallPlane.point(longCoordinate, cursor, offset),
+            wallPlane.point(longCoordinate, start, offset),
+          )
         }
         cursor = max(cursor, end)
         if (cursor >= top - epsilon) return
       }
       if (top - cursor >= lineLengthMinimum) {
-        if (alongX) {
-          addLine(ScenePoint(longCoordinate, cursor, offset), ScenePoint(longCoordinate, top, offset))
-        } else {
-          addLine(ScenePoint(offset, cursor, longCoordinate), ScenePoint(offset, top, longCoordinate))
-        }
+        addLine(
+          wallPlane.point(longCoordinate, cursor, offset),
+          wallPlane.point(longCoordinate, top, offset),
+        )
       }
     }
 
@@ -3577,31 +3657,145 @@ internal class RenderSceneFilamentHostView(
     }
   }
 
-  private fun wallBrickOpeningProfiles(objectData: SceneObject): List<BrickOpeningProfile> {
-    val liveProfile = objectData.metadata["opening_profile"]?.trim().orEmpty()
-    // Native BIM cache chunks carry the same compact profile after the wall
-    // semantic envelope because cache objects intentionally have no metadata
-    // map. Live metadata always wins when both representations are present.
-    // The native producer serializes this as
-    // `startFraction,endFraction,bottom,top;...`. The live scene uses a
-    // metadata map while a BIM cache has only materialCategory, so both paths
-    // must stay compatible. Treat malformed entries as absent decoration;
-    // the wall mesh remains authoritative and safe even if a future cache
-    // contains no renderer profile.
-    val profile = if (liveProfile.isNotEmpty()) {
-      liveProfile
+  /**
+   * Uses the model's wall axis when it is available, then projects the real
+   * mesh onto that axis to find the two exterior faces. The geometric fallback
+   * is deliberately derived from the mesh rather than from any opening data.
+   */
+  private fun brickWallPlaneFor(
+    objectData: SceneObject,
+    points: List<ScenePoint>,
+  ): BrickWallPlane? {
+    if (points.isEmpty()) return null
+    val axis = wallAxisEndpoints(objectData)
+    val fallbackBounds = boundsForPoints(points)
+    val origin: ScenePoint
+    val directionX: Double
+    val directionZ: Double
+    if (axis != null) {
+      val dx = axis.end.x - axis.start.x
+      val dz = axis.end.z - axis.start.z
+      val length = kotlin.math.sqrt(dx * dx + dz * dz)
+      if (length > 1.0e-9 && length.isFinite()) {
+        origin = axis.start
+        directionX = dx / length
+        directionZ = dz / length
+      } else {
+        return null
+      }
+    } else if ((fallbackBounds.max.x - fallbackBounds.min.x) >=
+      (fallbackBounds.max.z - fallbackBounds.min.z)
+    ) {
+      origin = ScenePoint(
+        fallbackBounds.min.x,
+        0.0,
+        (fallbackBounds.min.z + fallbackBounds.max.z) * 0.5,
+      )
+      directionX = 1.0
+      directionZ = 0.0
     } else {
-      objectData.materialCategory.substringAfter("|openings=", "").trim()
+      origin = ScenePoint(
+        (fallbackBounds.min.x + fallbackBounds.max.x) * 0.5,
+        0.0,
+        fallbackBounds.min.z,
+      )
+      directionX = 0.0
+      directionZ = 1.0
     }
-    if (profile.isEmpty()) return emptyList()
-    return profile.split(';').mapNotNull { entry ->
-      val values = entry.split(',').mapNotNull(String::toDoubleOrNull)
-      if (values.size != 4 || values.any { !it.isFinite() }) return@mapNotNull null
-      val start = values[0].coerceIn(0.0, 1.0)
-      val end = values[1].coerceIn(0.0, 1.0)
-      if (end <= start || values[3] <= values[2]) return@mapNotNull null
-      BrickOpeningProfile(start, end, values[2], values[3])
+    val normalX = -directionZ
+    val normalZ = directionX
+    val longCoordinates = points.map { point ->
+      (point.x - origin.x) * directionX + (point.z - origin.z) * directionZ
     }
+    val normalCoordinates = points.map { point ->
+      (point.x - origin.x) * normalX + (point.z - origin.z) * normalZ
+    }
+    val longMin = longCoordinates.minOrNull() ?: return null
+    val longMax = longCoordinates.maxOrNull() ?: return null
+    val normalMin = normalCoordinates.minOrNull() ?: return null
+    val normalMax = normalCoordinates.maxOrNull() ?: return null
+    if (longMax - longMin <= 1.0e-5 || normalMax - normalMin <= 1.0e-5) return null
+    return BrickWallPlane(
+      origin = origin,
+      directionX = directionX,
+      directionZ = directionZ,
+      normalX = normalX,
+      normalZ = normalZ,
+      longMin = longMin,
+      longMax = longMax,
+      normalMin = normalMin,
+      normalMax = normalMax,
+    )
+  }
+
+  /**
+   * Projects the engine's real opening-contour edges into the two dimensions
+   * used by the brick line pass. A contour is emitted once per wall face, so
+   * the two identical sill/head segments intentionally collapse into one
+   * opening interval here. No legacy visual profile participates in clipping.
+   */
+  private fun brickOpeningIntervalsFromFeatureEdges(
+    objectData: SceneObject,
+    geometry: GeometryData,
+  ): List<BrickOpeningInterval> {
+    if (objectData.featureEdges.isEmpty() || geometry.points.isEmpty()) return emptyList()
+    val wallPlane = brickWallPlaneFor(objectData, geometry.points) ?: return emptyList()
+    val tolerance = 1.0e-4
+    data class HorizontalContour(
+      val start: Double,
+      val end: Double,
+      val elevation: Double,
+    )
+
+    val contours = objectData.featureEdges.asSequence()
+      .filter { edge -> edge.role.equals("opening_contour", ignoreCase = true) }
+      .mapNotNull { edge ->
+        val first = toFilamentPoint(edge.start)
+        val second = toFilamentPoint(edge.end)
+        val firstAlong = wallPlane.along(first)
+        val secondAlong = wallPlane.along(second)
+        // Only the sill and head run along the wall. Jambs are vertical and
+        // merely complete the source contour; they do not define a clip band.
+        if (kotlin.math.abs(first.y - second.y) > tolerance ||
+          kotlin.math.abs(secondAlong - firstAlong) <= tolerance
+        ) {
+          null
+        } else {
+          HorizontalContour(
+            start = min(firstAlong, secondAlong),
+            end = max(firstAlong, secondAlong),
+            elevation = (first.y + second.y) * 0.5,
+          )
+        }
+      }
+      .toList()
+
+    val intervals = mutableListOf<BrickOpeningInterval>()
+    for (contour in contours) {
+      val matching = contours.asSequence()
+        .filter { candidate ->
+          candidate.elevation > contour.elevation + tolerance &&
+            kotlin.math.abs(candidate.start - contour.start) <= tolerance &&
+            kotlin.math.abs(candidate.end - contour.end) <= tolerance
+        }
+        .minByOrNull { candidate -> candidate.elevation }
+        ?: continue
+      val interval = BrickOpeningInterval(
+        start = contour.start,
+        end = contour.end,
+        bottom = contour.elevation,
+        top = matching.elevation,
+      )
+      if (intervals.none { existing ->
+          kotlin.math.abs(existing.start - interval.start) <= tolerance &&
+            kotlin.math.abs(existing.end - interval.end) <= tolerance &&
+            kotlin.math.abs(existing.bottom - interval.bottom) <= tolerance &&
+            kotlin.math.abs(existing.top - interval.top) <= tolerance
+        }) {
+        intervals.add(interval)
+      }
+    }
+    return intervals
   }
 
   private fun edgeBatchKey(
@@ -3871,7 +4065,11 @@ internal class RenderSceneFilamentHostView(
     scene: Scene,
     chunks: Map<EdgeBatchKey, List<GeometryData>>,
   ) {
-    val edgeMaterial = edgeMaterial ?: material ?: return
+    val activeEdgeMaterial = if (projectionMode == "topDown") {
+      planEdgeMaterial ?: edgeMaterial ?: material
+    } else {
+      edgeMaterial ?: material
+    } ?: return
     // Wall objects are often split at joins, levels, or spatial tiles. Keep a
     // single physical contour even when the same segment arrives in separate
     // edge batches. Dedup within each category so a door frame cannot suppress
@@ -3890,7 +4088,7 @@ internal class RenderSceneFilamentHostView(
         .bufferType(IndexBuffer.Builder.IndexType.UINT)
         .build(engine).also { it.setBuffer(engine, geometry.indexData) }
       val entity = EntityManager.get().create()
-      val materialInstance = edgeMaterial.createInstance().also { instance ->
+      val materialInstance = activeEdgeMaterial.createInstance().also { instance ->
         applyDisplayStyle(instance)
         val edgeColor = if (key.solidBrickPattern) {
           solidBrickLineColor()
@@ -5261,16 +5459,16 @@ internal class RenderSceneFilamentHostView(
       val selected = entry.objectData.elementId != null && selectedElementIds.contains(entry.objectData.elementId)
       val active = entry.objectData.elementId != null && entry.objectData.elementId == selectedElementId
       val highlighted = entry.objectData.elementId != null && entry.objectData.elementId == highlightedElementId
-      val isWindow = normalizeKind(entry.objectData.kind) == "window"
       // Keep Solid achromatic for ordinary faces; blue/orange here is only
       // transient selection feedback.  Semantic wall colors are produced by
-      // displayBaseColor exclusively when Shaded is active.  Windows and
-      // glass walls use alpha to remain visibly transparent on the tablet.
+      // displayBaseColor exclusively when Shaded is active. Windows stay
+      // opaque even while selected, so their panel keeps one stable depth
+      // relationship with the wall opening that hosts it.
       val solidColor = displayBaseColor(entry.objectData)
       val color = when {
-        active -> floatArrayOf(0.08f, 0.28f, 0.82f, if (isWindow) 0.30f else 1f)
-        selected -> floatArrayOf(0.18f, 0.45f, 0.95f, if (isWindow) 0.30f else 1f)
-        highlighted -> floatArrayOf(0.92f, 0.34f, 0.16f, if (isWindow) 0.30f else 1f)
+        active -> floatArrayOf(0.08f, 0.28f, 0.82f, 1f)
+        selected -> floatArrayOf(0.18f, 0.45f, 0.95f, 1f)
+        highlighted -> floatArrayOf(0.92f, 0.34f, 0.16f, 1f)
         else -> solidColor
       }
       applyDisplayStyle(entry.materialInstance)
@@ -6229,6 +6427,33 @@ internal class RenderSceneFilamentHostView(
         intArrayOf(2, 6, 7), intArrayOf(2, 7, 4), intArrayOf(3, 7, 4), intArrayOf(3, 4, 0),
       )
     }
+    if (objectData.featureEdges.isNotEmpty()) {
+      val points = objectData.featureEdges.flatMap { edge ->
+        listOf(toFilamentPoint(edge.start), toFilamentPoint(edge.end))
+      }
+      val wallAxis = if (normalizeKind(objectData.kind) == "wall") {
+        wallAxisEndpoints(objectData.metadata)
+      } else {
+        null
+      }
+      return NativeVisualObject(
+        elementId = objectData.elementId,
+        kind = normalizeKind(objectData.kind),
+        selectable = objectData.selectable,
+        metadata = objectData.metadata,
+        points = points,
+        triangles = emptyList(),
+        featureEdges = objectData.featureEdges.indices.map { index ->
+          NativeVisualEdge(
+            first = index * 2,
+            second = index * 2 + 1,
+            triangleIndices = intArrayOf(),
+            sharp = true,
+            wallAxis = wallAxis,
+          )
+        },
+      )
+    }
     var points = sourcePoints
     val triangles = sourceTriangles
     var featureEdges = RenderSceneEdgeTopology.featureEdges(
@@ -6273,7 +6498,6 @@ internal class RenderSceneFilamentHostView(
         featureEdges,
         wallAxis.start,
         wallAxis.end,
-        objectData.metadata["opening_profile"],
       )
     }
     val overlayEdges = if (isImportedMeshObject(objectData)) {

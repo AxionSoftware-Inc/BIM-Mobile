@@ -1,0 +1,76 @@
+name: Quality gates
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Configure native engine
+        run: >-
+          cmake -S . -B build/ci -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug
+          -DTBE_BUILD_TESTS=ON
+          -DTBE_BUILD_CLI=OFF
+          -DTBE_BUILD_EXAMPLES=OFF
+          -DTBE_ENABLE_OCCT=OFF
+
+      - name: Build native engine and C ABI
+        run: >-
+          cmake --build build/ci --parallel
+          --target tbe_capi_shared tbe_core_tests tbe_api_tests
+          tbe_ifc_fixture_tests
+
+      - name: Run native tests
+        run: ctest --test-dir build/ci --output-on-failure
+        env:
+          LD_LIBRARY_PATH: ${{ github.workspace }}/build/ci/src/api
+
+      - name: Run architecture guard
+        run: bash tools/check_architecture.sh
+
+      - name: Install Flutter dependencies
+        working-directory: apps/viewer_flutter
+        run: flutter pub get
+
+      - name: Check Dart formatting
+        working-directory: apps/viewer_flutter
+        run: dart format --output=none --set-exit-if-changed lib test
+
+      - name: Analyze Flutter app
+        working-directory: apps/viewer_flutter
+        run: flutter analyze
+
+      - name: Run Flutter regression suite with native engine
+        working-directory: apps/viewer_flutter
+        run: flutter test
+        env:
+          TBE_CAPI_PATH: ${{ github.workspace }}/build/ci/src/api/libtbe_capi.so
+          LD_LIBRARY_PATH: ${{ github.workspace }}/build/ci/src/api
+
+      - name: Run wall-opening golden smoke scenario
+        run: bash tools/run_wall_opening_smoke.sh
+        env:
+          TBE_CAPI_PATH: ${{ github.workspace }}/build/ci/src/api/libtbe_capi.so
+          LD_LIBRARY_PATH: ${{ github.workspace }}/build/ci/src/api
+
+      - name: Check diff hygiene
+        run: git diff --check

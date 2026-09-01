@@ -1,6 +1,67 @@
 part of 'widget_test.dart';
 
 void registerSceneGeometryTests() {
+  test('viewport rejects an incompatible coordinate contract before rendering',
+      () async {
+    final parsed = parseRenderSceneJson(
+      jsonEncode(<String, Object?>{
+        'scene_version': 3,
+        'units': 'millimeters',
+        'coordinate_system': 'X/Z plan, Y up',
+        'objects': const <Object?>[],
+      }),
+      source: 'incompatible coordinate contract',
+    );
+
+    expect(parsed.scene, isNotNull);
+    expect(parsed.errors, hasLength(3));
+    final controller = RenderSceneViewportController(
+      backend: RenderSceneViewportBackend.fallback,
+    );
+    addTearDown(controller.dispose);
+    await expectLater(
+      controller.loadRenderScene(parsed.scene!),
+      throwsA(isA<ArgumentError>()),
+    );
+  });
+
+  test('render-scene v2 preserves engine-authored opening feature edges', () {
+    final result = parseRenderSceneJson(
+      jsonEncode(<String, Object?>{
+        'scene_version': 2,
+        'objects': <Object?>[
+          <String, Object?>{
+            'element_id': 7,
+            'kind': 'Wall',
+            'mesh': <String, Object?>{
+              'positions': <Object?>[
+                <String, Object?>{'x': 0, 'y': 0, 'z': 0},
+                <String, Object?>{'x': 4, 'y': 0, 'z': 0},
+                <String, Object?>{'x': 0, 'y': 0, 'z': 3},
+              ],
+              'indices': <int>[0, 1, 2],
+            },
+            'feature_edges': <Object?>[
+              <String, Object?>{
+                'role': 'opening_contour',
+                'start': <String, Object?>{'x': 1, 'y': -0.1, 'z': 0.9},
+                'end': <String, Object?>{'x': 2.2, 'y': -0.1, 'z': 0.9},
+              },
+            ],
+          },
+        ],
+      }),
+      source: 'feature-edge contract test',
+    );
+
+    expect(result.errors, isEmpty);
+    final wall = result.scene!.objects.single;
+    expect(wall.featureEdges, hasLength(1));
+    expect(wall.featureEdges.single.role, 'opening_contour');
+    expect(wall.featureEdges.single.start.x, 1);
+    expect(wall.featureEdges.single.end.x, 2.2);
+  });
+
   test('RenderScene parser loads the bundled sample and keeps finite bounds',
       () {
     final json =
@@ -225,7 +286,8 @@ void registerSceneGeometryTests() {
     expect(result.errors, isNotEmpty);
   });
 
-  test('RenderScene parser rejects payloads above the memory geometry guard', () {
+  test('RenderScene parser rejects payloads above the memory geometry guard',
+      () {
     final result = parseRenderSceneJson(
       '{"objects": [], "index_count": ${kMaxRenderSceneIndices + 1}}',
       source: 'oversized.json',
@@ -381,6 +443,4 @@ void registerSceneGeometryTests() {
     expect(levelTwo.objectById(21), isNotNull);
     expect(levelTwo.objectById(11), isNull);
   });
-
-
 }

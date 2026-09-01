@@ -9,11 +9,11 @@
 
 namespace tbe::api::runtime_cache {
 
-inline constexpr std::uint32_t kBimCacheFormatVersion = 2;
+inline constexpr std::uint32_t kBimCacheFormatVersion = 3;
 // Bumped when cached render geometry or the interactive chunk/proxy policy
 // changes. Existing device caches must be rebuilt so stale wall/opening meshes
-// cannot survive an APK update and keep viewport artifacts alive.
-inline constexpr std::uint32_t kBimCacheSceneCompilerVersion = 10;
+// or legacy opening-profile texture hints cannot survive an APK update.
+inline constexpr std::uint32_t kBimCacheSceneCompilerVersion = 12;
 inline constexpr std::uint32_t kBimCacheObjectMappingVersion = 4;
 inline constexpr std::uint32_t kBimCacheFormatFlags = 0x00000001u;
 

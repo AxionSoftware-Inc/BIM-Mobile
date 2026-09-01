@@ -51,6 +51,41 @@ class RenderScenePoint {
   }
 }
 
+/// A semantic visual segment authored by the BIM engine. Viewports may project
+/// it, but must not recreate opening contours by inspecting mesh triangles.
+@immutable
+class RenderSceneFeatureEdge {
+  const RenderSceneFeatureEdge({
+    required this.start,
+    required this.end,
+    required this.role,
+  });
+
+  final RenderScenePoint start;
+  final RenderScenePoint end;
+  final String role;
+
+  bool get isFinite => start.isFinite && end.isFinite;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+        'role': role,
+        'start': start.toJson(),
+        'end': end.toJson(),
+      };
+
+  static RenderSceneFeatureEdge? fromJson(Object? value) {
+    if (value is! Map) return null;
+    final start = RenderScenePoint.fromJson(value['start']);
+    final end = RenderScenePoint.fromJson(value['end']);
+    if (start == null || end == null) return null;
+    return RenderSceneFeatureEdge(
+      start: start,
+      end: end,
+      role: toSceneString(value['role'], fallback: 'silhouette'),
+    );
+  }
+}
+
 @immutable
 class RenderSceneBounds {
   const RenderSceneBounds({

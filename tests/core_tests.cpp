@@ -560,6 +560,40 @@ int main() {
     }
     assert(rejected_outside_move);
 
+    const auto* atomic_door_before = editable_document.find_ptr(editable_door.created_id())->door();
+    assert(atomic_door_before != nullptr);
+    const auto atomic_offset_before = atomic_door_before->offset_meters;
+    const auto atomic_width_before = atomic_door_before->width_meters;
+    bool rejected_atomic_update = false;
+    try {
+        editable_document.update_hosted_opening(editable_door.created_id(), 7.0, 2.0, 2.1, 0.0);
+    } catch (const std::invalid_argument&) {
+        rejected_atomic_update = true;
+    }
+    assert(rejected_atomic_update);
+    const auto* atomic_door_after_rejection = editable_document.find_ptr(editable_door.created_id())->door();
+    assert(atomic_door_after_rejection != nullptr);
+    assert(near(atomic_door_after_rejection->offset_meters, atomic_offset_before));
+    assert(near(atomic_door_after_rejection->width_meters, atomic_width_before));
+
+    editable_document.update_hosted_opening(editable_door.created_id(), 2.5, 1.2, 2.0, 0.0);
+    const auto* atomically_updated_door = editable_document.find_ptr(editable_door.created_id())->door();
+    assert(atomically_updated_door != nullptr);
+    assert(near(atomically_updated_door->offset_meters, 2.5));
+    assert(near(atomically_updated_door->width_meters, 1.2));
+    const auto* atomically_updated_wall = editable_document.find_ptr(edit_bottom.created_id())->wall();
+    assert(atomically_updated_wall != nullptr);
+    const auto updated_hosted_opening = std::find_if(
+        atomically_updated_wall->openings.begin(),
+        atomically_updated_wall->openings.end(),
+        [opening_id = editable_door.created_id()](const auto& opening) {
+            return opening.element_id == opening_id;
+        }
+    );
+    assert(updated_hosted_opening != atomically_updated_wall->openings.end());
+    assert(near(updated_hosted_opening->offset_meters, 2.5));
+    assert(near(updated_hosted_opening->width_meters, 1.2));
+
     tbe::core::DeleteElementCommand delete_left{edit_left.created_id()};
     editable_processor.execute(editable_document, delete_left);
     assert(editable_document.detect_rooms().empty());
@@ -2205,15 +2239,23 @@ int main() {
     const auto invalid_wall_type_id = invalid_layer_document.create_wall_type("Temp", {
         tbe::core::WallAssemblyLayer{.material_id = valid_material, .thickness_meters = 0.1, .function = tbe::core::WallLayerFunction::Core},
     });
-    invalid_layer_document.update_wall_type(tbe::core::WallTypeData{
-        .wall_type_id = invalid_wall_type_id,
-        .name = "Temp",
-        .layers = {
-            tbe::core::WallAssemblyLayer{.material_id = valid_material, .thickness_meters = -0.1, .function = tbe::core::WallLayerFunction::Core},
-        },
-    });
-    const auto invalid_layer_report = invalid_layer_document.validate_document();
-    assert(invalid_layer_report.error_count() > 0);
+    bool rejected_invalid_layer = false;
+    try {
+        invalid_layer_document.update_wall_type(tbe::core::WallTypeData{
+            .wall_type_id = invalid_wall_type_id,
+            .name = "Temp",
+            .layers = {
+                tbe::core::WallAssemblyLayer{
+                    .material_id = valid_material,
+                    .thickness_meters = -0.1,
+                    .function = tbe::core::WallLayerFunction::Core,
+                },
+            },
+        });
+    } catch (const std::invalid_argument&) {
+        rejected_invalid_layer = true;
+    }
+    assert(rejected_invalid_layer);
 
     const auto invalid_floor_json =
         "{\"schema\":\"tbe.document.v1\",\"name\":\"Invalid Floor\",\"next_id\":10,"
@@ -2756,7 +2798,7 @@ int main() {
 
         bool inverted_move_rejected = false;
         try {
-            level_validation.move_level_elevation(level_2, 0.5);
+            level_validation.move_level_elevation(level_2, -0.5);
         } catch (const std::invalid_argument&) {
             inverted_move_rejected = true;
         }

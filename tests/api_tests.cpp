@@ -247,6 +247,16 @@ int main() {
         assert(wall_object != render_scene.value->objects.end());
         assert(wall_object->metadata.at("height_mode") == "TopLevel");
         assert(nearly_equal(wall_object->bounds.max.z - wall_object->bounds.min.z, 7.0, 1.0e-3));
+        // The engine, not the viewport, owns opening linework. Both wall
+        // faces receive an explicit contour so a window cut stays visible
+        // after mesh tessellation or renderer implementation changes.
+        assert(render_scene.value->scene_version == 2);
+        assert(std::count_if(
+                   wall_object->feature_edges.begin(),
+                   wall_object->feature_edges.end(),
+                   [](const auto& edge) {
+                       return edge.role == tbe::api::RenderSceneFeatureEdgeRole::OpeningContour;
+                   }) == 8);
 
         const auto door_object = std::find_if(render_scene.value->objects.begin(), render_scene.value->objects.end(), [&](const auto& object) {
             return object.element_id.value == door.value->value;
@@ -260,12 +270,12 @@ int main() {
         const auto primary_json =
             session->get_render_scene_json_primary(level_1.value->value);
         assert(primary_json.ok() && primary_json.value.has_value());
-        assert(primary_json.value->find("\"kind\":\"wall\"") != std::string::npos);
-        assert(primary_json.value->find("\"kind\":\"door\"") == std::string::npos);
+        assert(primary_json.value->find("\"kind\":\"Wall\"") != std::string::npos);
+        assert(primary_json.value->find("\"kind\":\"Door\"") == std::string::npos);
         const auto full_nearby_json =
             session->get_render_scene_json_near_level(level_1.value->value);
         assert(full_nearby_json.ok() && full_nearby_json.value.has_value());
-        assert(full_nearby_json.value->find("\"kind\":\"door\"") != std::string::npos);
+        assert(full_nearby_json.value->find("\"kind\":\"Door\"") != std::string::npos);
 
         // A section that crosses the hosted door must carry the opening cut
         // through every wall layer instead of showing a monolithic wall.
@@ -1042,7 +1052,7 @@ int main() {
         const auto render_scene = session->get_render_scene();
         assert(render_scene.ok());
         assert(render_scene.value.has_value());
-        assert(render_scene.value->scene_version == 1);
+        assert(render_scene.value->scene_version == 2);
         assert(render_scene.value->units == "meters");
         assert(render_scene.value->coordinate_system == "X/Y plan, Z up");
         assert(render_scene.value->object_count == render_scene.value->objects.size());
@@ -1408,6 +1418,7 @@ int main() {
         assert(std::string(scene_json).find("\"materials\"") != std::string::npos);
         assert(std::string(scene_json).find("\"triangle_material_ids\"") != std::string::npos);
         assert(std::string(scene_json).find("\"layer_profile\"") != std::string::npos);
+        assert(std::string(scene_json).find("\"role\":\"opening_contour\"") != std::string::npos);
         assert(std::string(scene_json).find("\"sections\"") != std::string::npos);
         tbe_free_string(scene_json);
         auto template_session_result = tbe::api::create_session("Template Render Regression");
@@ -1590,6 +1601,9 @@ int main() {
             cache_level.value->value
         );
         assert(cache_wall.ok() && cache_wall.value.has_value());
+        const auto cache_window = exchange->create_window(
+            "Cache Window", cache_wall.value->value, 3.0, 1.2, 1.0, 0.9);
+        assert(cache_window.ok() && cache_window.value.has_value());
         assert(exchange->set_unit_settings(tbe::api::UnitSettingsDTO{
             .system = "imperial",
             .length = "foot",
@@ -1631,6 +1645,21 @@ int main() {
         assert(cached_scene.source.source_fingerprint != 0);
         assert(!cached_scene.chunks.empty());
         assert(!cached_scene.chunks.front().primitives.empty());
+        assert(std::any_of(
+            cached_scene.chunks.begin(),
+            cached_scene.chunks.end(),
+            [](const auto& chunk) {
+                return std::any_of(chunk.primitives.begin(), chunk.primitives.end(), [](const auto& primitive) {
+                    return std::any_of(
+                        primitive.feature_edges.begin(),
+                        primitive.feature_edges.end(),
+                        [](const auto& edge) {
+                            return edge.role == tbe::api::RenderSceneFeatureEdgeRole::OpeningContour;
+                        }
+                    );
+                });
+            }
+        ));
         // Runtime selection stays native: this exercises the on-disk chunk
         // BVH plus exact cached triangles without going through JSON/Flutter.
         const auto cache_hit = tbe::api::runtime_cache::pick(
@@ -1639,7 +1668,15 @@ int main() {
             {.x = 0.0, .y = 1.0, .z = 0.0}
         );
         assert(cache_hit.has_value());
-        assert(cache_hit->value == cached_scene.chunks.front().primitives.front().element_id.value);
+        assert(std::any_of(
+            cached_scene.chunks.begin(),
+            cached_scene.chunks.end(),
+            [&](const auto& chunk) {
+                return std::any_of(chunk.primitives.begin(), chunk.primitives.end(), [&](const auto& primitive) {
+                    return primitive.element_id.value == cache_hit->value;
+                });
+            }
+        ));
         const auto hidden_cache_hit = tbe::api::runtime_cache::pick(
             cached_scene,
             {.x = 3.0, .y = -5.0, .z = 1.5},
@@ -1715,9 +1752,13 @@ int main() {
         // original timestamp after a same-size content change and ensure the
         // streamed source fingerprint still rejects the cache.
         auto changed_ifc_text = ifc_text;
-        const auto label_offset = changed_ifc_text.find("Cache Wall");
+        const auto label_offset = changed_ifc_text.find("43616368652057616c6c");
         assert(label_offset != std::string::npos);
-        changed_ifc_text.replace(label_offset, std::string("Cache Wall").size(), "Cache Mall");
+        changed_ifc_text.replace(
+            label_offset,
+            std::string("43616368652057616c6c").size(),
+            "4361636865204d616c6c"
+        );
         assert(changed_ifc_text.size() == ifc_text.size());
         {
             std::ofstream changed_ifc(ifc_path, std::ios::binary | std::ios::trunc);

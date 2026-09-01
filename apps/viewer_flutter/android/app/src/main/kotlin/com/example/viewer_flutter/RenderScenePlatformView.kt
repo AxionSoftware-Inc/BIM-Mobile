@@ -25,6 +25,11 @@ internal data class SceneMesh(
   val positions: List<ScenePoint>,
   val indices: List<Int>,
 )
+internal data class SceneFeatureEdge(
+  val start: ScenePoint,
+  val end: ScenePoint,
+  val role: String,
+)
 internal data class SceneLevel(
   val levelId: Long,
   val name: String,
@@ -40,6 +45,7 @@ internal data class SceneObject(
   val revision: Int,
   val bounds: SceneBounds,
   val mesh: SceneMesh,
+  val featureEdges: List<SceneFeatureEdge>,
   val materialCategory: String,
   val metadata: Map<String, String>,
 )
@@ -117,6 +123,7 @@ internal fun toSceneState(payload: Any?): SceneState? {
           revision = toInt(objectMap["revision"]) ?: 0,
           bounds = if (isFinite(bounds)) bounds else SceneBounds(ScenePoint(0.0, 0.0, 0.0), ScenePoint(0.0, 0.0, 0.0)),
           mesh = mesh,
+          featureEdges = parseFeatureEdges(objectMap["feature_edges"] ?: objectMap["featureEdges"]),
           materialCategory = toStringValue(objectMap["material_category"], "generic"),
           metadata = (objectMap["metadata"] as? Map<*, *>)
             ?.entries
@@ -150,6 +157,19 @@ internal fun toSceneState(payload: Any?): SceneState? {
     levels = levels.sortedBy { it.elevationMeters },
     objects = objects,
   )
+}
+
+internal fun parseFeatureEdges(payload: Any?): List<SceneFeatureEdge> {
+  val values = payload as? List<*> ?: return emptyList()
+  return values.mapNotNull { entry ->
+    val edge = entry as? Map<*, *> ?: return@mapNotNull null
+    val start = parsePoint(edge["start"]) ?: return@mapNotNull null
+    val end = parsePoint(edge["end"]) ?: return@mapNotNull null
+    if (!start.x.isFinite() || !start.y.isFinite() || !start.z.isFinite() ||
+      !end.x.isFinite() || !end.y.isFinite() || !end.z.isFinite()
+    ) return@mapNotNull null
+    SceneFeatureEdge(start, end, toStringValue(edge["role"], "silhouette"))
+  }
 }
 
 private fun normalizeScenePayload(payload: Any?): Map<String, Any?>? {

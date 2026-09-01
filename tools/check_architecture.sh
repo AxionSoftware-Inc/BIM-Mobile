@@ -47,3 +47,22 @@ fail_if_found \
   "Document.cpp contains analysis queries" \
   "Document::(validate_document|wall_room_adjacencies|generate_(wall|opening|room|slab|roof|column|beam|stair|floor_finish|ceiling|material_takeoff)_schedule|generate_material_takeoff)" \
   "src/core/src/Document.cpp"
+
+# Opening contours are engine-authored render data. The Flutter fallback may
+# project `featureEdges`, but it must never parse wall-opening metadata or
+# reconstruct an aperture from mesh triangles.
+fail_if_found \
+  "Flutter viewport reconstructs opening contours from wall metadata" \
+  "opening_profile|profile_corners" \
+  "$flutter_root/render_scene_viewport_painter.dart" \
+  "$flutter_root/render_scene_painter_render.dart"
+
+# A hosted opening is one semantic change. Presentation/UI code cannot fall
+# back to the old move-then-resize sequence, which could leave an invalid wall
+# if the second command failed.
+fail_if_found \
+  "viewport performs split hosted-opening mutations" \
+  "(moveHostedOpening|resizeOpening)" \
+  "$flutter_root/authoring_command_service.dart" \
+  "$flutter_root/viewer_viewport_surface_editing.dart" \
+  "$flutter_root/viewer_workspace_ui_interactions.dart"

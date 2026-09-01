@@ -2444,6 +2444,10 @@ ElementId Document::create_slab(
     // envelope level and defer the compound build until a detail consumer
     // explicitly asks for it.
     auto mesh = extrude_polygon_mesh(boundary_polygon, resolved_thickness, elevation_offset_meters);
+    const auto envelope_material_id = slab_assembly != nullptr && !slab_assembly->layers.empty()
+        ? slab_assembly->layers.front().material_id
+        : material_id;
+    assign_cache_material(mesh, envelope_material_id);
     SlabData slab{
         .level_id = level_id,
         .boundary_polygon = std::move(boundary_polygon),
@@ -2458,6 +2462,7 @@ ElementId Document::create_slab(
     };
     slab.envelope_geometry.dirty = false;
     slab.envelope_geometry.assembly_revision = cache_assembly_revision(slab_assembly);
+    slab.envelope_geometry.mesh = slab.mesh;
     elements_.emplace_back(id, ElementKind::Slab, "Slab", std::move(slab));
     invalidate_dependency_graph_cache();
     return id;
@@ -3056,6 +3061,77 @@ void Document::resize_window(ElementId window_id, double width_meters, double he
     window->sill_height_meters = sill_height_meters;
     window_element.touch();
     update_wall_opening(window->host_wall_id, updated);
+    invalidate_dependency_graph_cache();
+}
+
+void Document::update_hosted_opening(
+    ElementId opening_id,
+    double offset_meters,
+    double width_meters,
+    double height_meters,
+    double sill_height_meters
+) {
+    auto* opening_element = find_ptr(opening_id);
+    if (opening_element == nullptr) {
+        throw std::invalid_argument("opening does not exist");
+    }
+
+    ElementId host_wall_id{};
+    HostedOpening updated{};
+    if (const auto* door = opening_element->door(); door != nullptr) {
+        host_wall_id = door->host_wall_id;
+        updated = HostedOpening{
+            .element_id = opening_id,
+            .kind = OpeningKind::Door,
+            .offset_meters = offset_meters,
+            .width_meters = width_meters,
+            .height_meters = height_meters,
+            .sill_height_meters = 0.0,
+            .vertical_offset_meters = door->vertical_offset_meters,
+        };
+    } else if (const auto* window = opening_element->window(); window != nullptr) {
+        host_wall_id = window->host_wall_id;
+        updated = HostedOpening{
+            .element_id = opening_id,
+            .kind = OpeningKind::Window,
+            .offset_meters = offset_meters,
+            .width_meters = width_meters,
+            .height_meters = height_meters,
+            .sill_height_meters = sill_height_meters,
+            .vertical_offset_meters = window->vertical_offset_meters,
+        };
+    } else {
+        throw std::invalid_argument("element is not a hosted opening");
+    }
+
+    auto wall_copy = *require_wall(host_wall_id).wall();
+    auto found = false;
+    for (auto& opening : wall_copy.openings) {
+        if (opening.element_id == opening_id) {
+            opening = updated;
+            found = true;
+            break;
+        }
+    }
+    if (!found) {
+        throw std::invalid_argument("hosted opening does not exist on wall");
+    }
+    // Validate the entire resulting wall before touching either the opening
+    // element or its host. This makes the compound edit all-or-nothing.
+    validate_wall_openings(wall_copy);
+
+    if (auto* door = opening_element->door(); door != nullptr) {
+        door->offset_meters = offset_meters;
+        door->width_meters = width_meters;
+        door->height_meters = height_meters;
+    } else if (auto* window = opening_element->window(); window != nullptr) {
+        window->offset_meters = offset_meters;
+        window->width_meters = width_meters;
+        window->height_meters = height_meters;
+        window->sill_height_meters = sill_height_meters;
+    }
+    opening_element->touch();
+    update_wall_opening(host_wall_id, updated);
     invalidate_dependency_graph_cache();
 }
 

@@ -560,6 +560,29 @@ TbeApiStatusCode tbe_resize_window(TbeEngineHandle* handle, uint64_t window_id, 
     return apply_result(handle, handle->session->resize_window(window_id, width_meters, height_meters, sill_height_meters));
 }
 
+TbeApiStatusCode tbe_update_hosted_opening(
+    TbeEngineHandle* handle,
+    uint64_t opening_id,
+    double offset_meters,
+    double width_meters,
+    double height_meters,
+    double sill_height_meters
+) {
+    if (handle == nullptr || handle->session == nullptr) {
+        return null_handle_error(handle);
+    }
+    return apply_result(
+        handle,
+        handle->session->update_hosted_opening(
+            opening_id,
+            offset_meters,
+            width_meters,
+            height_meters,
+            sill_height_meters
+        )
+    );
+}
+
 TbeApiStatusCode tbe_create_profile(
     TbeEngineHandle* handle,
     int target_kind,

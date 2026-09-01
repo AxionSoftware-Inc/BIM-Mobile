@@ -164,42 +164,39 @@ class RenderSceneEstimator {
       if (hostWallId == null) {
         continue;
       }
-      openingsByWall.putIfAbsent(hostWallId, () => <RenderSceneObject>[]).add(object);
+      openingsByWall
+          .putIfAbsent(hostWallId, () => <RenderSceneObject>[])
+          .add(object);
     }
 
     for (final object in scene.objects) {
       switch (object.kindKey) {
         case 'room':
           roomCount += 1;
-          totalRoomArea +=
-              _metadataDouble(object, 'area_m2') ??
-                  (object.bounds.width * object.bounds.depth);
-          totalRoomPerimeter +=
-              _metadataDouble(object, 'perimeter_m') ??
-                  ((object.bounds.width + object.bounds.depth) * 2.0);
+          totalRoomArea += _metadataDouble(object, 'area_m2') ??
+              (object.bounds.width * object.bounds.depth);
+          totalRoomPerimeter += _metadataDouble(object, 'perimeter_m') ??
+              ((object.bounds.width + object.bounds.depth) * 2.0);
           break;
         case 'wall':
           wallCount += 1;
           final length =
               RenderSceneEditor.wallLength(object) ?? object.bounds.width;
-          final thickness =
-              RenderSceneEditor.wallThickness(object) ??
-                  math.min(object.bounds.width, object.bounds.depth);
+          final thickness = RenderSceneEditor.wallThickness(object) ??
+              math.min(object.bounds.width, object.bounds.depth);
           final height =
-              _metadataDouble(object, 'height_meters') ??
-                  object.bounds.height;
+              _metadataDouble(object, 'height_meters') ?? object.bounds.height;
           final grossVolume = length * thickness * height;
           final grossArea = length * height;
-          final attachedOpenings = openingsByWall[object.elementId] ?? const <RenderSceneObject>[];
+          final attachedOpenings =
+              openingsByWall[object.elementId] ?? const <RenderSceneObject>[];
           var wallOpeningVolume = 0.0;
           var wallOpeningArea = 0.0;
           for (final opening in attachedOpenings) {
-            final width =
-                _metadataDouble(opening, 'width_meters') ??
-                    opening.bounds.width;
-            final openingHeight =
-                _metadataDouble(opening, 'height_meters') ??
-                    opening.bounds.height;
+            final width = _metadataDouble(opening, 'width_meters') ??
+                opening.bounds.width;
+            final openingHeight = _metadataDouble(opening, 'height_meters') ??
+                opening.bounds.height;
             wallOpeningArea += width * openingHeight;
             wallOpeningVolume += width * openingHeight * thickness;
           }
@@ -211,9 +208,8 @@ class RenderSceneEstimator {
         case 'floor':
           floorCount += 1;
           final area = object.bounds.width * object.bounds.depth;
-          final thickness =
-              _metadataDouble(object, 'thickness_meters') ??
-                  object.bounds.height;
+          final thickness = _metadataDouble(object, 'thickness_meters') ??
+              object.bounds.height;
           floorArea += area;
           floorConcreteVolume += area * thickness;
           break;
@@ -224,16 +220,14 @@ class RenderSceneEstimator {
         case 'door':
           doorCount += 1;
           openingArea +=
-              (_metadataDouble(object, 'width_meters') ??
-                      object.bounds.width) *
+              (_metadataDouble(object, 'width_meters') ?? object.bounds.width) *
                   (_metadataDouble(object, 'height_meters') ??
                       object.bounds.height);
           break;
         case 'window':
           windowCount += 1;
           openingArea +=
-              (_metadataDouble(object, 'width_meters') ??
-                      object.bounds.width) *
+              (_metadataDouble(object, 'width_meters') ?? object.bounds.width) *
                   (_metadataDouble(object, 'height_meters') ??
                       object.bounds.height);
           break;
@@ -243,7 +237,8 @@ class RenderSceneEstimator {
     final brickCount =
         (wallNetVolume * catalog.bricksPerCubicMeter).round().clamp(0, 1 << 30);
     final brickCost = brickCount * catalog.brickUnitCost;
-    final concreteCost = floorConcreteVolume * catalog.concreteCostPerCubicMeter;
+    final concreteCost =
+        floorConcreteVolume * catalog.concreteCostPerCubicMeter;
     final floorFinishCost = floorArea * catalog.floorFinishCostPerSquareMeter;
     final ceilingCost = ceilingArea * catalog.ceilingCostPerSquareMeter;
     final doorCost = doorCount * catalog.doorUnitCost;

@@ -286,6 +286,14 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     bool resetView = false,
     bool preserveNativeGeometry = false,
   }) async {
+    final contractIssues = RenderSceneCoordinateContract.issuesForScene(scene);
+    if (contractIssues.isNotEmpty) {
+      throw ArgumentError.value(
+        scene,
+        'scene',
+        'RenderScene contract rejected: ${contractIssues.join(' ')}',
+      );
+    }
     if (!preserveNativeGeometry) {
       _nativeGeometryActive = false;
     }

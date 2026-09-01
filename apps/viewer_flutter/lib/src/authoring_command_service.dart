@@ -83,30 +83,6 @@ class AuthoringCommandService {
         elevationMeters: elevationMeters,
       );
 
-  Future<RenderSceneLoadResult> moveOpening({
-    required int openingId,
-    required double offsetMeters,
-  }) =>
-      _requireRepository().moveHostedOpening(
-        openingId: openingId,
-        offsetMeters: offsetMeters,
-      );
-
-  Future<RenderSceneLoadResult> resizeHostedOpening({
-    required int openingId,
-    required String kind,
-    required double widthMeters,
-    required double heightMeters,
-    required double sillHeightMeters,
-  }) =>
-      _requireRepository().resizeOpening(
-        openingId: openingId,
-        kind: kind,
-        widthMeters: widthMeters,
-        heightMeters: heightMeters,
-        sillHeightMeters: sillHeightMeters,
-      );
-
   Future<RenderSceneLoadResult> trimExtendWalls({
     required int firstWallId,
     required bool firstUsesStart,
@@ -129,10 +105,10 @@ class AuthoringCommandService {
   }) async {
     final id = object.elementId;
     if (id == null) throw TbeApiException('Opening has no stable element ID');
-    await moveOpening(openingId: id, offsetMeters: offsetMeters);
-    return resizeHostedOpening(
+    return _requireRepository().updateHostedOpening(
       openingId: id,
       kind: object.kindKey,
+      offsetMeters: offsetMeters,
       widthMeters: widthMeters,
       heightMeters: heightMeters,
       sillHeightMeters: sillHeightMeters,

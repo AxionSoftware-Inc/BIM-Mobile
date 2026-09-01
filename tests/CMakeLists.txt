@@ -30,5 +30,11 @@ add_test(
         "${CMAKE_SOURCE_DIR}/tests/fixtures/ifc/wall-with-opening-and-window.ifc"
         "${CMAKE_SOURCE_DIR}/tests/fixtures/ifc/Building-Architecture.ifc"
         "${CMAKE_SOURCE_DIR}/tests/fixtures/ifc/Building-Architecture-IFC4X3.ifc"
+)
+
+add_test(
+    NAME tbe_ifc_containment_tests
+    COMMAND tbe_ifc_fixture_tests
+        --allow-envelope
         "${CMAKE_SOURCE_DIR}/tests/fixtures/ifc/multi-storey-containment.ifc"
 )

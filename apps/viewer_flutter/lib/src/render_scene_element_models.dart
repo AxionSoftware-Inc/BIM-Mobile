@@ -94,6 +94,7 @@ class RenderSceneObject {
     required this.mesh,
     required this.materialCategory,
     this.metadata = const <String, Object?>{},
+    this.featureEdges = const <RenderSceneFeatureEdge>[],
   });
 
   final int? elementId;
@@ -106,6 +107,7 @@ class RenderSceneObject {
   final RenderSceneMesh mesh;
   final String materialCategory;
   final Map<String, Object?> metadata;
+  final List<RenderSceneFeatureEdge> featureEdges;
 
   String get kindKey => normalizeSceneKind(kind);
   String? get elementIdRaw => elementId?.toString();
@@ -121,6 +123,8 @@ class RenderSceneObject {
         'mesh': mesh.toJson(),
         'material_category': materialCategory,
         if (metadata.isNotEmpty) 'metadata': metadata,
+        if (featureEdges.isNotEmpty)
+          'feature_edges': featureEdges.map((edge) => edge.toJson()).toList(),
       };
 
   static RenderSceneObject fromJson(
@@ -144,6 +148,7 @@ class RenderSceneObject {
         mesh: RenderSceneMesh.empty(),
         materialCategory: 'generic',
         metadata: const <String, Object?>{},
+        featureEdges: const <RenderSceneFeatureEdge>[],
       );
     }
     final mesh = RenderSceneMesh.fromJson(value['mesh'], warnings);
@@ -167,16 +172,21 @@ class RenderSceneObject {
       revision: _toNullableInt(value['revision']) ?? 0,
       bounds: bounds.isFinite ? bounds : RenderSceneBounds.zero(),
       mesh: mesh,
-      materialCategory:
-          toSceneString(
-            value['material_category'] ?? value['materialCategory'],
-            fallback: 'generic',
-          ),
+      materialCategory: toSceneString(
+        value['material_category'] ?? value['materialCategory'],
+        fallback: 'generic',
+      ),
       metadata: value['metadata'] is Map
           ? Map<String, Object?>.from(
               (value['metadata'] as Map).cast<String, Object?>(),
             )
           : const <String, Object?>{},
+      featureEdges: value['feature_edges'] is List
+          ? (value['feature_edges'] as List)
+              .map(RenderSceneFeatureEdge.fromJson)
+              .whereType<RenderSceneFeatureEdge>()
+              .toList(growable: false)
+          : const <RenderSceneFeatureEdge>[],
     );
   }
 }

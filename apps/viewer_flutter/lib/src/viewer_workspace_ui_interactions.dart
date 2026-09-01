@@ -485,9 +485,12 @@ extension _ViewerWorkspaceInteractions on _ViewerHomePageState {
           final opening = _draftMoveTarget!;
           final repository = _engineRepository;
           if (_engineBackedMode && repository != null) {
-            final result = await _authoringCommands.moveOpening(
-              openingId: opening.elementId!,
+            final result = await _authoringCommands.updateOpening(
+              object: opening,
               offsetMeters: _draftOpeningOffsetMeters,
+              widthMeters: _draftOpeningWidthMeters,
+              heightMeters: _draftOpeningHeightMeters,
+              sillHeightMeters: _draftOpeningSillHeightMeters,
             );
             await _applyEngineSceneResult(
               result,

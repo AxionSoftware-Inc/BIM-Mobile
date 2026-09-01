@@ -220,6 +220,8 @@ class _EstimateCatalogEditorState extends State<_EstimateCatalogEditor> {
     return ExpansionTile(
       tilePadding: EdgeInsets.zero,
       childrenPadding: EdgeInsets.zero,
+      backgroundColor: Colors.transparent,
+      collapsedBackgroundColor: Colors.transparent,
       title: Text(
         'Unit prices',
         style: Theme.of(context).textTheme.labelLarge,

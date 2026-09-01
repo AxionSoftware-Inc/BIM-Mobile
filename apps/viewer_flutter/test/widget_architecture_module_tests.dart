@@ -81,7 +81,7 @@ void registerArchitectureModuleTests() {
               ),
             ),
           ),
-    );
+        );
 
     await tester.pumpWidget(editor(const InspectorTarget.level(level)));
     expect(find.text('Name'), findsOneWidget);

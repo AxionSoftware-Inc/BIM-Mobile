@@ -73,6 +73,32 @@ class WallSnapSegment {
       z: end.z,
     );
   }
+
+  /// Returns the two face points at one endpoint when this segment does not
+  /// yet carry the native joined profile. These are used only to construct a
+  /// conservative fallback corner for two walls that meet at the same point.
+  List<RenderScenePoint> endpointFaceCorners(RenderScenePoint endpoint) {
+    if (profileCorners.isNotEmpty || thicknessMeters.abs() <= 1e-9) {
+      return const <RenderScenePoint>[];
+    }
+    final length = math.sqrt(lengthSquared);
+    if (length <= 1e-9) return const <RenderScenePoint>[];
+    final halfThickness = thicknessMeters.abs() * 0.5;
+    final offsetX = -axisY / length * halfThickness;
+    final offsetY = axisX / length * halfThickness;
+    return <RenderScenePoint>[
+      RenderScenePoint(
+        x: endpoint.x + offsetX,
+        y: endpoint.y + offsetY,
+        z: endpoint.z,
+      ),
+      RenderScenePoint(
+        x: endpoint.x - offsetX,
+        y: endpoint.y - offsetY,
+        z: endpoint.z,
+      ),
+    ];
+  }
 }
 
 @immutable
@@ -95,7 +121,7 @@ class WallSnapIndex {
       final end = RenderSceneEditor.wallEndPoint(object);
       if (start == null || end == null) continue;
       final wallThickness = RenderSceneEditor.wallThickness(object);
-      final profileCorners = _parseWallProfileCorners(object.metadata);
+      final profileCorners = _wallProfileCorners(object);
       final segment = WallSnapSegment(
         elementId: object.elementId,
         levelId: object.levelId,
@@ -115,9 +141,23 @@ class WallSnapIndex {
   final List<WallSnapSegment> segments;
 }
 
-List<RenderScenePoint> _parseWallProfileCorners(
-  Map<String, Object?> metadata,
-) {
+List<RenderScenePoint> _wallProfileCorners(RenderSceneObject wall) {
+  final nativeCorners = <RenderScenePoint>[];
+  for (final edge in wall.featureEdges) {
+    if (edge.role != 'silhouette') continue;
+    final dx = edge.end.x - edge.start.x;
+    final dy = edge.end.y - edge.start.y;
+    final horizontalDistance = math.sqrt(dx * dx + dy * dy);
+    if (horizontalDistance <= 1e-8 &&
+        (edge.end.z - edge.start.z).abs() > 1e-8) {
+      nativeCorners
+          .add(RenderScenePoint(x: edge.start.x, y: edge.start.y, z: 0));
+    }
+  }
+  if (nativeCorners.isNotEmpty) {
+    return List<RenderScenePoint>.unmodifiable(nativeCorners);
+  }
+  final metadata = wall.metadata;
   final raw = metadata['profile_corners'] ?? metadata['profileCorners'];
   if (raw is String) {
     final corners = <RenderScenePoint>[];
@@ -288,7 +328,7 @@ final class WallAuthoringGeometry {
 
     final dx = rawPoint.x - start.x;
     final dy = rawPoint.y - start.y;
-    final dominance = PlanSketchGeometry.wallOrthogonalDominance;
+    const dominance = PlanSketchGeometry.wallOrthogonalDominance;
     final horizontal = dx.abs() > dy.abs() * dominance;
     final vertical = dy.abs() > dx.abs() * dominance;
 
@@ -413,15 +453,77 @@ final class WallAuthoringGeometry {
   }) {
     if (!point.isFinite || snapIndex.segments.isEmpty) return null;
 
+    final candidates = <RenderScenePoint>[];
+    for (final wall in snapIndex.segments) {
+      candidates.addAll(wall.faceCorners);
+    }
+
+    // Before the native scene has emitted profile_corners, combine the two
+    // face offsets at a shared endpoint. This gives the expected outer plan
+    // corner for an L/T authoring gesture without treating wall bodies as
+    // snap targets. Once native profile corners exist, they remain the sole
+    // authority and no fallback is synthesized for that wall pair.
+    for (var firstIndex = 0;
+        firstIndex < snapIndex.segments.length;
+        firstIndex += 1) {
+      final first = snapIndex.segments[firstIndex];
+      if (first.profileCorners.isNotEmpty) continue;
+      for (var secondIndex = firstIndex + 1;
+          secondIndex < snapIndex.segments.length;
+          secondIndex += 1) {
+        final second = snapIndex.segments[secondIndex];
+        if (second.profileCorners.isNotEmpty) continue;
+        for (final firstEndpoint in <RenderScenePoint>[
+          first.start,
+          first.end
+        ]) {
+          for (final secondEndpoint in <RenderScenePoint>[
+            second.start,
+            second.end
+          ]) {
+            if (PlanSketchGeometry.planDistance(firstEndpoint, secondEndpoint) >
+                1e-6) {
+              continue;
+            }
+            final joint = RenderScenePoint(
+              x: (firstEndpoint.x + secondEndpoint.x) * 0.5,
+              y: (firstEndpoint.y + secondEndpoint.y) * 0.5,
+              z: firstEndpoint.z,
+            );
+            final firstFaces = first.endpointFaceCorners(firstEndpoint);
+            final secondFaces = second.endpointFaceCorners(secondEndpoint);
+            for (final firstFace in firstFaces) {
+              for (final secondFace in secondFaces) {
+                candidates.add(
+                  RenderScenePoint(
+                    x: joint.x +
+                        (firstFace.x - joint.x) +
+                        (secondFace.x - joint.x),
+                    y: joint.y +
+                        (firstFace.y - joint.y) +
+                        (secondFace.y - joint.y),
+                    z: joint.z,
+                  ),
+                );
+              }
+            }
+          }
+        }
+      }
+    }
+
     RenderScenePoint? nearestCorner;
     var nearestCornerDistance = cornerToleranceMeters;
-    for (final wall in snapIndex.segments) {
-      for (final corner in wall.faceCorners) {
-        final distance = PlanSketchGeometry.planDistance(point, corner);
-        if (distance < nearestCornerDistance) {
-          nearestCornerDistance = distance;
-          nearestCorner = corner;
-        }
+    for (final corner in candidates) {
+      final distance = PlanSketchGeometry.planDistance(point, corner);
+      final isCloser = distance < nearestCornerDistance - 1e-9;
+      final isTie = (distance - nearestCornerDistance).abs() <= 1e-9;
+      final isBetterTie = isTie &&
+          nearestCorner != null &&
+          (point.y - corner.y).abs() < (point.y - nearestCorner.y).abs();
+      if (isCloser || isBetterTie) {
+        nearestCornerDistance = distance;
+        nearestCorner = corner;
       }
     }
     if (nearestCorner != null) {
@@ -529,7 +631,7 @@ final class WallAuthoringGeometry {
     final dy = point.y - start.y;
     final length = math.sqrt(dx * dx + dy * dy);
     if (length <= 1e-9) return point;
-    final step = wallFreehandPrecisionMeters;
+    const step = wallFreehandPrecisionMeters;
     final quantizedLength = (length / step).roundToDouble() * step;
     final scale = quantizedLength / length;
     return RenderScenePoint(

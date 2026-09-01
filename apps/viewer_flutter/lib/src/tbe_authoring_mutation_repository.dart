@@ -234,7 +234,7 @@ final class TbeAuthoringMutationRepository {
     required double widthMeters,
     required double heightMeters,
   }) async {
-    _api.createDoor(
+    final id = _api.createDoor(
       _requireHandle(),
       name,
       hostWallId,
@@ -242,6 +242,7 @@ final class TbeAuthoringMutationRepository {
       widthMeters,
       heightMeters,
     );
+    _setLastCreatedElementId(id);
     return _afterMutation();
   }
 
@@ -253,7 +254,7 @@ final class TbeAuthoringMutationRepository {
     required double heightMeters,
     required double sillHeightMeters,
   }) async {
-    _api.createWindow(
+    final id = _api.createWindow(
       _requireHandle(),
       name,
       hostWallId,
@@ -262,6 +263,7 @@ final class TbeAuthoringMutationRepository {
       heightMeters,
       sillHeightMeters,
     );
+    _setLastCreatedElementId(id);
     return _afterMutation();
   }
 
@@ -329,6 +331,28 @@ final class TbeAuthoringMutationRepository {
     } else {
       throw TbeApiException('Unsupported opening kind: $kind');
     }
+    return _afterMutation();
+  }
+
+  Future<RenderSceneLoadResult> updateHostedOpening({
+    required int openingId,
+    required String kind,
+    required double offsetMeters,
+    required double widthMeters,
+    required double heightMeters,
+    double sillHeightMeters = 0.0,
+  }) async {
+    if (kind != 'door' && kind != 'window') {
+      throw TbeApiException('Unsupported opening kind: $kind');
+    }
+    _api.updateHostedOpening(
+      _requireHandle(),
+      openingId: openingId,
+      offsetMeters: offsetMeters,
+      widthMeters: widthMeters,
+      heightMeters: heightMeters,
+      sillHeightMeters: sillHeightMeters,
+    );
     return _afterMutation();
   }
 

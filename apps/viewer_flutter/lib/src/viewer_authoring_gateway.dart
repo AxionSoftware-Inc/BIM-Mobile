@@ -85,6 +85,17 @@ abstract interface class ViewerAuthoringGateway {
     double sillHeightMeters = 0.0,
   });
 
+  /// Applies move and size fields together and refreshes one authoritative
+  /// snapshot only after the native transaction succeeds.
+  Future<RenderSceneLoadResult> updateHostedOpening({
+    required int openingId,
+    required String kind,
+    required double offsetMeters,
+    required double widthMeters,
+    required double heightMeters,
+    double sillHeightMeters = 0.0,
+  });
+
   Future<RenderSceneLoadResult> setOpeningLevelLock({
     required int openingId,
     required bool locked,

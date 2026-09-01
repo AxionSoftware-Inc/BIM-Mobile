@@ -106,8 +106,8 @@ void registerAuthoringToolModuleTests() {
   });
 
   test('wall drawing aligns distant corners on the active wall axis', () {
-    final index = WallSnapIndex(<WallSnapSegment>[
-      const WallSnapSegment(
+    const index = WallSnapIndex(<WallSnapSegment>[
+      WallSnapSegment(
         elementId: 10,
         levelId: 1,
         start: RenderScenePoint(x: 8, y: 4, z: 0),
@@ -131,15 +131,15 @@ void registerAuthoringToolModuleTests() {
   });
 
   test('surface boundary snapping prioritizes nearby wall corners', () {
-    final index = WallSnapIndex(<WallSnapSegment>[
-      const WallSnapSegment(
+    const index = WallSnapIndex(<WallSnapSegment>[
+      WallSnapSegment(
         elementId: 10,
         levelId: 1,
         start: RenderScenePoint(x: 0, y: 0, z: 0),
         end: RenderScenePoint(x: 4, y: 0, z: 0),
         thicknessMeters: 0.2,
       ),
-      const WallSnapSegment(
+      WallSnapSegment(
         elementId: 11,
         levelId: 1,
         start: RenderScenePoint(x: 4, y: 0, z: 0),
@@ -185,8 +185,8 @@ void registerAuthoringToolModuleTests() {
     // wall at (4, 0). The old independent face endpoint (4.1, 0.1) is not a
     // snap target after the join; the final inner/outer points are (3.9, 0.1)
     // and (4.1, -0.1).
-    final index = WallSnapIndex(<WallSnapSegment>[
-      const WallSnapSegment(
+    const index = WallSnapIndex(<WallSnapSegment>[
+      WallSnapSegment(
         elementId: 20,
         levelId: 1,
         start: RenderScenePoint(x: 0, y: 0, z: 0),
@@ -199,7 +199,7 @@ void registerAuthoringToolModuleTests() {
           RenderScenePoint(x: 0, y: 0.1, z: 0),
         ],
       ),
-      const WallSnapSegment(
+      WallSnapSegment(
         elementId: 21,
         levelId: 1,
         start: RenderScenePoint(x: 4, y: 0, z: 0),

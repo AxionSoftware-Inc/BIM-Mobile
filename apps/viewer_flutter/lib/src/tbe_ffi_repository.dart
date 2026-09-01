@@ -707,6 +707,26 @@ class ViewerRepository
       );
 
   @override
+  Future<RenderSceneLoadResult> updateHostedOpening({
+    required int openingId,
+    required String kind,
+    required double offsetMeters,
+    required double widthMeters,
+    required double heightMeters,
+    double sillHeightMeters = 0.0,
+  }) =>
+      _authoringQueue.run(
+        () => _mutations.updateHostedOpening(
+          openingId: openingId,
+          kind: kind,
+          offsetMeters: offsetMeters,
+          widthMeters: widthMeters,
+          heightMeters: heightMeters,
+          sillHeightMeters: sillHeightMeters,
+        ),
+      );
+
+  @override
   Future<RenderSceneLoadResult> createProfile({
     required int targetKind,
     required int draftMode,

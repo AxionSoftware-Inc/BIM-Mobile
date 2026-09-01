@@ -248,9 +248,9 @@ bool is_compound_ifc_proxy(const RenderSceneObjectDTO& object) {
 
 std::map<std::string, std::string> cache_primitive_metadata(const RenderSceneObjectDTO& object) {
     if (object.kind != ApiElementKind::Wall) return {};
-    static constexpr std::array<std::string_view, 9> keys{
+    static constexpr std::array<std::string_view, 8> keys{
         "start_x", "start_y", "end_x", "end_y", "thickness_meters",
-        "height_meters", "opening_profile", "profile_corners", "layer_profile",
+        "height_meters", "profile_corners", "layer_profile",
     };
     std::map<std::string, std::string> metadata;
     for (const auto key : keys) {
@@ -585,6 +585,12 @@ void write_primitive(std::ostream& out, const BimCachePrimitiveDTO& primitive) {
     write_scalar<std::uint32_t>(out, primitive.first_index);
     write_scalar<std::uint32_t>(out, primitive.index_count);
     write_bounds(out, primitive.bounds);
+    write_scalar<std::uint64_t>(out, primitive.feature_edges.size());
+    for (const auto& edge : primitive.feature_edges) {
+        write_vec3(out, edge.start);
+        write_vec3(out, edge.end);
+        write_scalar<std::uint8_t>(out, static_cast<std::uint8_t>(edge.role));
+    }
     write_scalar<std::uint64_t>(out, primitive.metadata.size());
     for (const auto& [key, value] : primitive.metadata) {
         write_string(out, key);
@@ -601,6 +607,15 @@ BimCachePrimitiveDTO read_primitive(std::istream& in) {
         .index_count = read_scalar<std::uint32_t>(in),
         .bounds = read_bounds(in),
     };
+    const auto feature_edge_count = checked_size(read_scalar<std::uint64_t>(in), "primitive feature edge");
+    primitive.feature_edges.reserve(feature_edge_count);
+    for (std::size_t index = 0; index < feature_edge_count; ++index) {
+        primitive.feature_edges.push_back(RenderSceneFeatureEdgeDTO{
+            .start = read_vec3(in),
+            .end = read_vec3(in),
+            .role = static_cast<RenderSceneFeatureEdgeRole>(read_scalar<std::uint8_t>(in)),
+        });
+    }
     const auto metadata_count = checked_size(read_scalar<std::uint64_t>(in), "primitive metadata");
     for (std::size_t index = 0; index < metadata_count; ++index) {
         primitive.metadata.emplace(read_string(in), read_string(in));
@@ -663,20 +678,9 @@ std::string cache_material_category(const RenderSceneObjectDTO& object) {
     if (object.kind == ApiElementKind::Wall) {
         const auto category = object.metadata.find("wall_type_category");
         const auto name = object.metadata.find("wall_type_name");
-        const auto openings = object.metadata.find("opening_profile");
         const std::string category_value = category == object.metadata.end() ? "Generic" : category->second;
         const std::string name_value = name == object.metadata.end() ? "Generic Wall" : name->second;
-        auto value = "wall:" + category_value + "|" + name_value;
-        if (openings != object.metadata.end() && !openings->second.empty()) {
-            // Native cache chunks have no metadata map. Keep this compact
-            // profile in their semantic material envelope so the tablet's
-            // Solid brick overlay can clip hosted openings there as well.
-            // This is intentionally an envelope, not a real material name:
-            // changing its delimiter or omitting the profile requires a cache
-            // compiler-version bump and a matching Android parser update.
-            value += "|openings=" + openings->second;
-        }
-        return value;
+        return "wall:" + category_value + "|" + name_value;
     }
     return object.material_category.empty() ? "generic" : object.material_category;
 }
@@ -773,6 +777,7 @@ BimCacheSceneDTO compile(
                 .first_index = static_cast<std::uint32_t>(first_index),
                 .index_count = static_cast<std::uint32_t>(object.mesh.indices.size()),
                 .bounds = object.bounds,
+                .feature_edges = object.feature_edges,
                 .metadata = cache_primitive_metadata(object),
             });
         } else {

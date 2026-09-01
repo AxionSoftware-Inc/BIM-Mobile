@@ -970,23 +970,64 @@ std::string wall_profile_corners(const tbe::core::WallData& wall) {
     return profile.str();
 }
 
-// Keep the host wall's opening rectangles in the render-scene contract. The
-// viewport edge pass uses these local axis coordinates to distinguish a real
-// sill/head/jamb border from a tessellation or wall-boundary fragment. Sending
-// the semantic rectangles is cheaper and more reliable than reverse-infering
-// opening ownership from a triangulated mesh on every rebuild.
-std::string wall_opening_profile(const tbe::core::WallData& wall) {
-    std::ostringstream profile;
-    profile << std::setprecision(12);
-    for (std::size_t index = 0; index < wall.geometry.profile.openings.size(); ++index) {
-        if (index != 0) {
-            profile << ';';
+Vec3 wall_feature_point(
+    const tbe::core::WallData& wall,
+    double local_x,
+    double local_y,
+    double local_z,
+    double base_elevation
+) {
+    const auto dx = wall.axis.end.x - wall.axis.start.x;
+    const auto dy = wall.axis.end.y - wall.axis.start.y;
+    const auto length = std::sqrt((dx * dx) + (dy * dy));
+    if (length <= 1.0e-9) return {};
+    const auto direction_x = dx / length;
+    const auto direction_y = dy / length;
+    const auto perpendicular_x = -direction_y;
+    const auto perpendicular_y = direction_x;
+    return Vec3{
+        .x = wall.axis.start.x + (local_x * direction_x) + (local_y * perpendicular_x),
+        .y = wall.axis.start.y + (local_x * direction_y) + (local_y * perpendicular_y),
+        .z = base_elevation + local_z,
+    };
+}
+
+std::vector<RenderSceneFeatureEdgeDTO> wall_feature_edges(
+    const tbe::core::WallData& wall,
+    double base_elevation
+) {
+    std::vector<RenderSceneFeatureEdgeDTO> edges;
+    const auto& profile = wall.geometry.profile;
+    if (profile.polygon.size() >= 2) {
+        edges.reserve(profile.polygon.size() * 2 + profile.openings.size() * 8);
+        for (std::size_t index = 0; index < profile.polygon.size(); ++index) {
+            const auto& first = profile.polygon[index];
+            const auto& second = profile.polygon[(index + 1) % profile.polygon.size()];
+            edges.push_back(RenderSceneFeatureEdgeDTO{
+                .start = wall_feature_point(wall, first.x, first.y, wall.height_meters, base_elevation),
+                .end = wall_feature_point(wall, second.x, second.y, wall.height_meters, base_elevation),
+                .role = RenderSceneFeatureEdgeRole::Silhouette,
+            });
+            edges.push_back(RenderSceneFeatureEdgeDTO{
+                .start = wall_feature_point(wall, first.x, first.y, 0.0, base_elevation),
+                .end = wall_feature_point(wall, first.x, first.y, wall.height_meters, base_elevation),
+                .role = RenderSceneFeatureEdgeRole::Silhouette,
+            });
         }
-        const auto& opening = wall.geometry.profile.openings[index];
-        profile << opening.x_min << ',' << opening.x_max << ','
-                << opening.z_min << ',' << opening.z_max;
     }
-    return profile.str();
+    for (const auto& opening : profile.openings) {
+        for (const auto y : {opening.y_min, opening.y_max}) {
+            const auto lower_left = wall_feature_point(wall, opening.x_min, y, opening.z_min, base_elevation);
+            const auto lower_right = wall_feature_point(wall, opening.x_max, y, opening.z_min, base_elevation);
+            const auto upper_right = wall_feature_point(wall, opening.x_max, y, opening.z_max, base_elevation);
+            const auto upper_left = wall_feature_point(wall, opening.x_min, y, opening.z_max, base_elevation);
+            edges.push_back({.start = lower_left, .end = lower_right, .role = RenderSceneFeatureEdgeRole::OpeningContour});
+            edges.push_back({.start = lower_right, .end = upper_right, .role = RenderSceneFeatureEdgeRole::OpeningContour});
+            edges.push_back({.start = upper_right, .end = upper_left, .role = RenderSceneFeatureEdgeRole::OpeningContour});
+            edges.push_back({.start = upper_left, .end = lower_left, .role = RenderSceneFeatureEdgeRole::OpeningContour});
+        }
+    }
+    return edges;
 }
 
 std::string wall_type_category_name(tbe::core::WallTypeCategory category) {
@@ -1120,7 +1161,7 @@ RenderSceneDTO build_section_scene(const Document& document, Vec2 start, Vec2 en
     const auto unit = Point2{.x = direction.x / section_length, .y = direction.y / section_length};
     const auto levels = level_elevation_map(document);
     RenderSceneDTO scene;
-    scene.scene_version = 1;
+    scene.scene_version = 2;
     scene.units = "meters";
     scene.coordinate_system = "Section distance X, Z elevation";
     // Keep the section definition in the returned scene as well. This lets
@@ -1503,7 +1544,7 @@ RenderSceneDTO build_render_scene(
     RenderSceneStage stage = RenderSceneStage::Full
 ) {
     RenderSceneDTO scene;
-    scene.scene_version = 1;
+    scene.scene_version = 2;
     scene.units = "meters";
     scene.coordinate_system = "X/Y plan, Z up";
 
@@ -1635,7 +1676,7 @@ RenderSceneDTO build_render_scene(
             const auto base_elevation = resolved_wall_base_elevation(*wall, elevations);
             const auto layer_profile = wall_layer_profile(document, *wall);
             const auto* wall_type = wall->wall_type_id == 0 ? nullptr : document.get_wall_type(wall->wall_type_id);
-            append_object(make_object_dto(
+            auto wall_object = make_object_dto(
                 element.id(),
                 ApiElementKind::Wall,
                 wall->level_id,
@@ -1661,9 +1702,10 @@ RenderSceneDTO build_render_scene(
                     {"level_locked", "true"},
                     {"layer_profile", layer_profile},
                     {"profile_corners", wall_profile_corners(*wall)},
-                    {"opening_profile", wall_opening_profile(*wall)},
                 }
-            ));
+            );
+            wall_object.feature_edges = wall_feature_edges(*wall, base_elevation);
+            append_object(std::move(wall_object));
             for (const auto& opening : wall->openings) {
                 // Structural voids cut the host wall geometry but the cutter
                 // (column/beam) is rendered once as its own authoritative
@@ -1988,6 +2030,21 @@ std::string render_scene_to_json(const RenderSceneDTO& scene) {
         out << "\"visible_by_default\":" << (object.visible_by_default ? "true" : "false") << ',';
         out << "\"revision\":" << object.revision << ',';
         out << "\"material_category\":\"" << escape_json(object.material_category) << "\",";
+        if (!object.feature_edges.empty()) {
+            out << "\"feature_edges\":[";
+            for (std::size_t index = 0; index < object.feature_edges.size(); ++index) {
+                if (index != 0) out << ',';
+                const auto& edge = object.feature_edges[index];
+                const auto role = edge.role == RenderSceneFeatureEdgeRole::OpeningContour
+                    ? "opening_contour" : "silhouette";
+                out << "{\"role\":\"" << role << "\",\"start\":{\"x\":"
+                    << safe_value(edge.start.x) << ",\"y\":" << safe_value(edge.start.y)
+                    << ",\"z\":" << safe_value(edge.start.z) << "},\"end\":{\"x\":"
+                    << safe_value(edge.end.x) << ",\"y\":" << safe_value(edge.end.y)
+                    << ",\"z\":" << safe_value(edge.end.z) << "}}";
+            }
+            out << "],";
+        }
         if (!object.metadata.empty()) {
             out << "\"metadata\":{";
             auto first_metadata = true;
@@ -2327,7 +2384,11 @@ JsonPatchResult ensure_project_schema_version(std::string_view json) {
     const auto schema_key = std::string_view{"\"schema\":\"tbe.project.v1\","};
     const auto schema_pos = result.json.find(schema_key);
     if (schema_pos != std::string::npos) {
-        result.json.insert(schema_pos + schema_key.size(), "\"schema_version\":1,\"engine_version\":\"mvp-level12\",");
+        result.json.insert(
+            schema_pos + schema_key.size(),
+            "\"schema_version\":" + std::to_string(tbe::core::TBE_SCHEMA_VERSION) +
+                ",\"engine_version\":\"" + std::string(tbe::core::TBE_ENGINE_VERSION) + "\","
+        );
         ++result.changes;
         result.messages.push_back("added missing schema_version for legacy project");
     }
@@ -4162,6 +4223,24 @@ ApiVoidResult EngineSession::resize_door(std::uint64_t door_id, double width_met
 ApiVoidResult EngineSession::resize_window(std::uint64_t window_id, double width_meters, double height_meters, double sill_height_meters) {
     return apply_mutation(*impl_, "resize_window", [&](Document& document) {
         document.resize_window(window_id, width_meters, height_meters, sill_height_meters);
+    });
+}
+
+ApiVoidResult EngineSession::update_hosted_opening(
+    std::uint64_t opening_id,
+    double offset_meters,
+    double width_meters,
+    double height_meters,
+    double sill_height_meters
+) {
+    return apply_mutation(*impl_, "update_hosted_opening", [&](Document& document) {
+        document.update_hosted_opening(
+            opening_id,
+            offset_meters,
+            width_meters,
+            height_meters,
+            sill_height_meters
+        );
     });
 }
 

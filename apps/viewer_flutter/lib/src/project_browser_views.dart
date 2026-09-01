@@ -252,6 +252,8 @@ class _ProjectBrowserGroup extends StatelessWidget {
           dense: true,
           visualDensity: VisualDensity.compact,
           initiallyExpanded: false,
+          backgroundColor: Colors.transparent,
+          collapsedBackgroundColor: Colors.transparent,
           leading: Icon(icon, size: 18),
           title: title,
           children: children,

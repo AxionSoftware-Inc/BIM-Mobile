@@ -17,7 +17,8 @@ It exists so the viewer can consume a predictable scene payload without dependin
   - `Z` is vertical up.
 - Render scene export:
   - Units are meters.
-  - `scene_version` starts at `1`.
+  - Current engine output uses `scene_version: 2`; reader compatibility is
+    explicit for version `1` snapshots.
   - `coordinate_system` is `X/Y plan, Z up`.
 - Flutter / Filament mapping:
   - Plan geometry can be treated as `X/Z` ground plane in the 3D viewport.

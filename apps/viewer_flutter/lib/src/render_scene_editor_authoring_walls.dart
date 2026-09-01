@@ -116,17 +116,54 @@ Map<String, Object?> _buildWallObject({
   };
 }
 
-String _openingProfileMetadata(List<_OpeningCutSpec> openings) {
-  return openings
-      .map(
-        (opening) => <double>[
-          opening.startOffset,
-          opening.endOffset,
-          opening.bottomZ,
-          opening.topZ,
-        ].map((value) => value.toStringAsFixed(12)).join(','),
-      )
-      .join(';');
+List<Map<String, Object?>> _openingContourFeatureEdges(
+  _WallGeometry geometry,
+  List<_OpeningCutSpec> openings,
+) {
+  final axis = geometry.end - geometry.start;
+  final planLength = math.sqrt((axis.x * axis.x) + (axis.y * axis.y));
+  if (!planLength.isFinite || planLength <= 1e-9) {
+    return const <Map<String, Object?>>[];
+  }
+  final direction = RenderScenePoint(
+    x: axis.x / planLength,
+    y: axis.y / planLength,
+    z: 0.0,
+  );
+  final normal = RenderScenePoint(x: -direction.y, y: direction.x, z: 0.0);
+  final baseZ = (geometry.start.z + geometry.end.z) * 0.5;
+  final halfThickness = geometry.thickness * 0.5;
+  final edges = <Map<String, Object?>>[];
+
+  Map<String, Object?> edge(RenderScenePoint start, RenderScenePoint end) =>
+      <String, Object?>{
+        'role': 'opening_contour',
+        'start': start.toJson(),
+        'end': end.toJson(),
+      };
+
+  for (final opening in openings) {
+    for (final faceSign in <double>[-1.0, 1.0]) {
+      RenderScenePoint pointAt(double offset, double elevation) {
+        final plan = geometry.start +
+            direction.scale(offset) +
+            normal.scale(halfThickness * faceSign);
+        return RenderScenePoint(x: plan.x, y: plan.y, z: baseZ + elevation);
+      }
+
+      final lowerLeft = pointAt(opening.startOffset, opening.bottomZ);
+      final lowerRight = pointAt(opening.endOffset, opening.bottomZ);
+      final upperRight = pointAt(opening.endOffset, opening.topZ);
+      final upperLeft = pointAt(opening.startOffset, opening.topZ);
+      edges.addAll(<Map<String, Object?>>[
+        edge(lowerLeft, lowerRight),
+        edge(lowerRight, upperRight),
+        edge(upperRight, upperLeft),
+        edge(upperLeft, lowerLeft),
+      ]);
+    }
+  }
+  return edges;
 }
 
 void _rebuildAllWallObjects(List<Map<String, Object?>> objects) {
@@ -218,8 +255,24 @@ void _rebuildAllWallObjects(List<Map<String, Object?>> objects) {
             (wall.objectMap['metadata'] as Map).cast<String, Object?>(),
           )
         : <String, Object?>{};
-    existingMetadata['opening_profile'] = _openingProfileMetadata(openings);
+    // Renderer decoration must consume the same geometry-derived contours as
+    // the wall mesh. Drop the old texture hint during an interactive edit.
+    existingMetadata.remove('opening_profile');
     wall.objectMap['metadata'] = existingMetadata;
+    final preservedEdges = wall.objectMap['feature_edges'] is List
+        ? (wall.objectMap['feature_edges'] as List)
+            .whereType<Map>()
+            .where(
+              (edge) =>
+                  edge['role']?.toString().toLowerCase() != 'opening_contour',
+            )
+            .map((edge) => Map<String, Object?>.from(edge))
+            .toList()
+        : <Map<String, Object?>>[];
+    wall.objectMap['feature_edges'] = <Map<String, Object?>>[
+      ...preservedEdges,
+      ..._openingContourFeatureEdges(wall.geometry, openings),
+    ];
   }
 
   for (final object in objects) {
@@ -254,5 +307,3 @@ void _rebuildAllWallObjects(List<Map<String, Object?>> objects) {
     };
   }
 }
-
-

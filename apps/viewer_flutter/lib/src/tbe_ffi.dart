@@ -126,6 +126,9 @@ class TbeViewerApi {
         _resizeWindow =
             library.lookupFunction<_ResizeWindowNative, _ResizeWindowDart>(
                 'tbe_resize_window'),
+        _updateHostedOpening = library.lookupFunction<
+            _UpdateHostedOpeningNative,
+            _UpdateHostedOpeningDart>('tbe_update_hosted_opening'),
         _createProfile =
             library.lookupFunction<_CreateProfileNative, _CreateProfileDart>(
                 'tbe_create_profile'),
@@ -234,6 +237,7 @@ class TbeViewerApi {
   final _MoveHostedOpeningDart _moveHostedOpening;
   final _ResizeDoorDart _resizeDoor;
   final _ResizeWindowDart _resizeWindow;
+  final _UpdateHostedOpeningDart _updateHostedOpening;
   final _CreateProfileDart _createProfile;
   final _CreateFloorSystemForRoomDart _createFloorSystemForRoom;
   final _CreateCeilingSystemForRoomDart _createCeilingSystemForRoom;

@@ -553,6 +553,28 @@ extension _TbeViewerApiMethods on TbeViewerApi {
     _check(handle, _moveHostedOpening(handle, openingId, offsetMeters));
   }
 
+  /// Applies the complete opening edit in one native session transaction.
+  void updateHostedOpening(
+    ffi.Pointer<ffi.Void> handle, {
+    required int openingId,
+    required double offsetMeters,
+    required double widthMeters,
+    required double heightMeters,
+    required double sillHeightMeters,
+  }) {
+    _check(
+      handle,
+      _updateHostedOpening(
+        handle,
+        openingId,
+        offsetMeters,
+        widthMeters,
+        heightMeters,
+        sillHeightMeters,
+      ),
+    );
+  }
+
   List<int> createProfile(
     ffi.Pointer<ffi.Void> handle, {
     required int targetKind,

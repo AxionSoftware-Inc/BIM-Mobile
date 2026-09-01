@@ -124,7 +124,6 @@ internal object RenderSceneEdgeTopology {
     edges: List<NativeVisualEdge>,
     axisStart: ScenePoint,
     axisEnd: ScenePoint,
-    openingProfile: String? = null,
   ): List<NativeVisualEdge> {
     val axisX = axisEnd.x - axisStart.x
     val axisZ = axisEnd.z - axisStart.z
@@ -132,19 +131,6 @@ internal object RenderSceneEdgeTopology {
     if (!axisLength.isFinite() || axisLength <= 1.0e-9) return edges
     val directionX = axisX / axisLength
     val directionZ = axisZ / axisLength
-    val openingBoundaries = openingProfile
-      ?.split(';')
-      ?.mapNotNull { token ->
-        val values = token.split(',').mapNotNull { it.trim().toDoubleOrNull() }
-        if (values.size < 4 || values.take(4).any { !it.isFinite() }) return@mapNotNull null
-        val start = min(values[0], values[1])
-        val end = max(values[0], values[1])
-        val bottom = min(values[2], values[3])
-        val top = max(values[2], values[3])
-        if (end - start <= 0.05 || top - bottom <= 0.05) return@mapNotNull null
-        OpeningBoundary(start, end, bottom, top)
-      }
-      .orEmpty()
     val boundaryTolerance = 0.03
     fun pointKey(point: ScenePoint): String =
       "${kotlin.math.round(point.x * 10000.0)}:${kotlin.math.round(point.y * 10000.0)}:${kotlin.math.round(point.z * 10000.0)}"
@@ -181,36 +167,16 @@ internal object RenderSceneEdgeTopology {
 
       // A layered wall can expose a horizontal side edge at every material
       // or storey break. Those are real mesh edges, but not architectural
-      // facade contours. Keep horizontal wall-axis edges only when the
-      // complete segment is a sill/head of a declared or inferred opening.
-      val firstAlongAxis = (first.x - axisStart.x) * directionX +
-        (first.z - axisStart.z) * directionZ
-      val secondAlongAxis = (second.x - axisStart.x) * directionX +
-        (second.z - axisStart.z) * directionZ
-      val segmentStart = min(firstAlongAxis, secondAlongAxis)
-      val segmentEnd = max(firstAlongAxis, secondAlongAxis)
-      val atOpeningBoundary = openingBoundaries.any { opening ->
-        val atSillOrHead =
-          abs(first.y - opening.bottom) <= boundaryTolerance ||
-            abs(first.y - opening.top) <= boundaryTolerance
-        atSillOrHead &&
-          segmentStart >= opening.start - boundaryTolerance &&
-          segmentEnd <= opening.end + boundaryTolerance
-      }
-      val inferredOpeningBoundary = openingBoundaries.isEmpty() &&
+      // facade contours. Without an external opening-profile hint, retain a
+      // sill/head only when both endpoints are attached to real vertical
+      // jambs from the same mesh.
+      val inferredOpeningBoundary =
         horizontalLength <= fallbackOpeningEdgeLength + boundaryTolerance &&
         pointKey(first) in verticalEdgePoints &&
         pointKey(second) in verticalEdgePoints
-      atOpeningBoundary || inferredOpeningBoundary
+      inferredOpeningBoundary
     }
   }
-
-  private data class OpeningBoundary(
-    val start: Double,
-    val end: Double,
-    val bottom: Double,
-    val top: Double,
-  )
 
   /** Remove small external-mesh tessellation seams from the edge stream. */
   fun cleanImportedEdges(

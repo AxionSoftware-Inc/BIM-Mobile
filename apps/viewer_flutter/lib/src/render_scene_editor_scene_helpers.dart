@@ -145,9 +145,9 @@ RenderScene _parseSceneMap(Map<String, Object?> map, {required String source}) {
   final result = parseRenderSceneJson(jsonEncode(map), source: source);
   return result.scene ??
       RenderScene(
-        sceneVersion: 1,
-        units: 'meters',
-        coordinateSystem: 'X/Y plan, Z up',
+        sceneVersion: RenderSceneCoordinateContract.currentSceneVersion,
+        units: RenderSceneCoordinateContract.units,
+        coordinateSystem: RenderSceneCoordinateContract.coordinateSystem,
         objectCount: 0,
         vertexCount: 0,
         indexCount: 0,
