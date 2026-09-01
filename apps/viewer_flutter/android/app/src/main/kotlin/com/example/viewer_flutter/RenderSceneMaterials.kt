@@ -146,17 +146,13 @@ void material(inout MaterialInputs material) {
 }
 """
 
-// The model uses Filament's real lit path. The previous unlit workaround
-// avoided black faces only because the scene had no environment light; with a
-// stable baked IBL, the normal/tangent data can now drive actual sun + ambient
-// shading without camera-dependent procedural patterns.
-internal const val ARCHITECTURAL_LIT_MAT = """
+// Stable mobile shaded face material. Keep this path deterministic on the
+// tablet OpenGL backend; procedural material cues and the scene palette provide
+// the shaded appearance without relying on driver-sensitive custom LIT inputs.
+internal const val ARCHITECTURAL_SHADED_MAT = """
 void material(inout MaterialInputs material) {
     prepareMaterial(material);
     material.baseColor = materialParams.baseColor;
-    material.metallic = 0.0;
-    material.roughness = 0.88;
-    material.reflectance = 0.35;
 }
 """
 

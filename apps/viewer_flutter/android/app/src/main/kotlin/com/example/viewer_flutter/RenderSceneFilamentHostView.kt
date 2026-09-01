@@ -100,7 +100,7 @@ private val EXTERNAL_MESH_KIND_ALIASES = setOf(
 //   * Solid is an achromatic coordination view.  It must never inherit wall
 //     type colors; only neutral face fill, brick joint lines, and glass alpha
 //     are allowed there.
-//   * Shaded is the only mode that owns light material colors, and those
+//   * Shaded is the only mode that owns semantic material colors, and those
 //     colors stay deliberately light so they do not overpower the model.
 //   * One shader serves every wall type.  The visual variant is a uniform, so
 //     changing a type never changes geometry, edge batches, or the
@@ -142,9 +142,6 @@ void material(inout MaterialInputs material) {
     float3 surface = brick * brickMask + plaster * plasterMask + concrete * concreteMask + glass * glassMask;
     float directionalShade = mix(1.0, 0.84 + 0.16 * sin(world.x * 0.45 + world.z * 0.31), materialParams.displayShade);
     material.baseColor = float4(surface * directionalShade, materialParams.baseColor.a);
-    material.metallic = 0.0;
-    material.roughness = mix(0.88, 0.16, glassMask);
-    material.reflectance = mix(0.35, 0.55, glassMask);
 }
 """
 
@@ -161,10 +158,8 @@ void material(inout MaterialInputs material) {
 }
 """
 
-// The model uses Filament's real lit path. The previous unlit workaround
-// avoided black faces only because the scene had no environment light; with a
-// stable baked IBL, the normal/tangent data can now drive actual sun + ambient
-// shading without camera-dependent procedural patterns.
+// Native face batches keep their material instances separate from edge and
+// selection geometry, so display-style changes cannot turn faces into lines.
 private data class FilamentRenderableEntry(
   val objectData: SceneObject,
   val entity: Int,
@@ -2255,28 +2250,32 @@ internal class RenderSceneFilamentHostView(
   private fun buildRuntimeMaterial(): Boolean {
     val engine = engine ?: return false
     return try {
-      material = buildMaterial(engine, "RenderSceneArchitectural", ARCHITECTURAL_LIT_MAT, lit = true)
-      wallMaterial = buildMaterial(engine, "RenderSceneWall", WALL_SURFACE_MAT, lit = true)
+      // Keep model faces on the deterministic mobile shaded path. Filament's
+      // custom LIT inputs are driver-sensitive on the tablet (and can leave
+      // only the independent edge pass visible); the shader still applies
+      // the BIM material palette and procedural texture cues below.
+      material = buildMaterial(engine, "RenderSceneArchitectural", ARCHITECTURAL_SHADED_MAT, lit = false)
+      wallMaterial = buildMaterial(engine, "RenderSceneWall", WALL_SURFACE_MAT, lit = false)
       wallGlassMaterial = buildMaterial(
         engine,
         "RenderSceneWallGlass",
         WALL_SURFACE_MAT,
         transparent = true,
-        lit = true,
+        lit = false,
       )
       // A window is a real, opaque BIM panel in the coordination viewport.
       // The wall owns the void; making the panel transparent disables depth
       // writes and lets it alternate with the jamb/reveal faces while moving
       // the 3D camera.
-      windowMaterial = buildMaterial(engine, "RenderSceneWindow", ARCHITECTURAL_LIT_MAT, lit = true)
-      plasterMaterial = buildMaterial(engine, "RenderScenePlaster", ARCHITECTURAL_LIT_MAT, lit = true)
-      woodMaterial = buildMaterial(engine, "RenderSceneWood", ARCHITECTURAL_LIT_MAT, lit = true)
-      floorMaterial = buildMaterial(engine, "RenderSceneFloor", FLOOR_MAT, lit = true)
-      roofMaterial = buildMaterial(engine, "RenderSceneRoof", ARCHITECTURAL_LIT_MAT, lit = true)
-      concreteMaterial = buildMaterial(engine, "RenderSceneConcrete", ARCHITECTURAL_LIT_MAT, lit = true)
-      // Solid is deliberately unlit: it stays clean white and does not inherit
-      // HDRI/Sun changes. Real lighting belongs to Shaded, where it can be
-      // inspected without compromising the primary BIM coordination view.
+      windowMaterial = buildMaterial(engine, "RenderSceneWindow", ARCHITECTURAL_SHADED_MAT, lit = false)
+      plasterMaterial = buildMaterial(engine, "RenderScenePlaster", ARCHITECTURAL_SHADED_MAT, lit = false)
+      woodMaterial = buildMaterial(engine, "RenderSceneWood", ARCHITECTURAL_SHADED_MAT, lit = false)
+      floorMaterial = buildMaterial(engine, "RenderSceneFloor", FLOOR_MAT, lit = false)
+      roofMaterial = buildMaterial(engine, "RenderSceneRoof", ARCHITECTURAL_SHADED_MAT, lit = false)
+      concreteMaterial = buildMaterial(engine, "RenderSceneConcrete", ARCHITECTURAL_SHADED_MAT, lit = false)
+      // Solid stays on its separate neutral face family. Shaded uses the
+      // deterministic material palette above; keeping the families separate
+      // prevents a style change from leaking blend state into opaque faces.
       solidMaterial = buildMaterial(engine, "RenderSceneSolid", FLAT_COLOR_MAT, lit = false)
       solidFloorMaterial = buildMaterial(engine, "RenderSceneSolidFloor", SOLID_FLOOR_MAT, lit = false)
       solidWallMaterial = buildMaterial(engine, "RenderSceneSolidWall", SOLID_WALL_MAT, lit = false)
