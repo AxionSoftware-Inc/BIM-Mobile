@@ -1143,25 +1143,24 @@ internal class RenderSceneFilamentHostView(
     // receive the same stable outline fallback as FBX/OBJ imports.
     val importedPart = sourceElementId != null || normalizeKind(primitive.kind) == "proxy"
     val authoritativeFeatureEdges = primitive.featureEdges
-    val points = if (authoritativeFeatureEdges.isNotEmpty()) {
-      authoritativeFeatureEdges.flatMap { edge ->
-        listOf(toFilamentPoint(edge.start), toFilamentPoint(edge.end))
-      }
-    } else {
-      boxCorners(primitive.sourceBounds).map(::toFilamentPoint)
+    // The native cache keeps the real triangle soup off the Kotlin heap, so
+    // its overlay uses a bounds box as the deterministic screen-space pick
+    // fallback.  Keep that box even when authoritative feature edges exist;
+    // edge-only overlay data cannot answer a 3D selection query.
+    val surfacePoints = boxCorners(primitive.sourceBounds).map(::toFilamentPoint)
+    val surfaceTriangles = listOf(
+      intArrayOf(0, 1, 2), intArrayOf(0, 2, 3),
+      intArrayOf(4, 6, 5), intArrayOf(4, 7, 6),
+      intArrayOf(0, 4, 5), intArrayOf(0, 5, 1),
+      intArrayOf(1, 5, 6), intArrayOf(1, 6, 2),
+      intArrayOf(2, 6, 7), intArrayOf(2, 7, 4),
+      intArrayOf(3, 7, 4), intArrayOf(3, 4, 0),
+    )
+    val edgePointBase = surfacePoints.size
+    val points = surfacePoints + authoritativeFeatureEdges.flatMap { edge ->
+      listOf(toFilamentPoint(edge.start), toFilamentPoint(edge.end))
     }
-    val triangles = if (authoritativeFeatureEdges.isNotEmpty()) {
-      emptyList()
-    } else {
-      listOf(
-        intArrayOf(0, 1, 2), intArrayOf(0, 2, 3),
-        intArrayOf(4, 6, 5), intArrayOf(4, 7, 6),
-        intArrayOf(0, 4, 5), intArrayOf(0, 5, 1),
-        intArrayOf(1, 5, 6), intArrayOf(1, 6, 2),
-        intArrayOf(2, 6, 7), intArrayOf(2, 7, 4),
-        intArrayOf(3, 7, 4), intArrayOf(3, 4, 0),
-      )
-    }
+    val triangles = surfaceTriangles
     // Cache meshes stay in native DirectByteBuffers, so the overlay never
     // receives their full edges.  Keep just the twelve bounds edges as a
     // selection-only affordance: it makes a picked IFC element visibly blue
@@ -1181,8 +1180,8 @@ internal class RenderSceneFilamentHostView(
     val featureEdges = if (authoritativeFeatureEdges.isNotEmpty()) {
       authoritativeFeatureEdges.indices.map { index ->
         NativeVisualEdge(
-          first = index * 2,
-          second = index * 2 + 1,
+          first = edgePointBase + index * 2,
+          second = edgePointBase + index * 2 + 1,
           triangleIndices = intArrayOf(),
           sharp = true,
           wallAxis = wallAxisEndpoints(primitive.metadata),
@@ -6514,7 +6513,15 @@ internal class RenderSceneFilamentHostView(
       )
     }
     if (objectData.featureEdges.isNotEmpty()) {
-      val points = objectData.featureEdges.flatMap { edge ->
+      // Feature edges are an authoritative linework overlay, not a replacement
+      // for the object's selectable surface.  The old fast path kept only the
+      // edge endpoints and returned no triangles; that made walls (which carry
+      // opening/junction contours) visible but impossible to hit in 3D.
+      // Keep the edge endpoints in a separate range after the pick mesh so the
+      // existing edge indices remain cheap and deterministic while ray picking
+      // still has real wall geometry to test against.
+      val edgePointBase = sourcePoints.size
+      val edgePoints = objectData.featureEdges.flatMap { edge ->
         listOf(toFilamentPoint(edge.start), toFilamentPoint(edge.end))
       }
       val wallAxis = if (normalizeKind(objectData.kind) == "wall") {
@@ -6522,17 +6529,18 @@ internal class RenderSceneFilamentHostView(
       } else {
         null
       }
+      val points = sourcePoints + edgePoints
       return NativeVisualObject(
         elementId = objectData.elementId,
         kind = normalizeKind(objectData.kind),
         selectable = objectData.selectable,
         metadata = objectData.metadata,
         points = points,
-        triangles = emptyList(),
+        triangles = sourceTriangles,
         featureEdges = objectData.featureEdges.indices.map { index ->
           NativeVisualEdge(
-            first = index * 2,
-            second = index * 2 + 1,
+            first = edgePointBase + index * 2,
+            second = edgePointBase + index * 2 + 1,
             triangleIndices = intArrayOf(),
             sharp = true,
             wallAxis = wallAxis,
