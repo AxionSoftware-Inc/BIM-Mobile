@@ -71,6 +71,11 @@ private const val NATIVE_CACHE_STEADY_UPLOAD_CHUNKS = 1
 private const val NATIVE_CACHE_UPLOAD_DELAY_MS = 8L
 private const val NATIVE_CACHE_REPRIORITIZE_DELAY_MS = 56L
 private const val NATIVE_CACHE_EDGE_SEGMENT_BUDGET = 60_000
+// Below this projected width the architectural edge ribbon is smaller than a
+// stable raster sample on mobile GPUs. Hysteresis prevents the detail pass
+// from repeatedly attaching/detaching while a pinch hovers at the boundary.
+private const val EDGE_DETAIL_HIDE_WIDTH_PIXELS = 0.48
+private const val EDGE_DETAIL_SHOW_WIDTH_PIXELS = 0.72
 
 // External mesh formats (FBX and equivalent payloads) do not carry BIM
 // semantics that can be used to select a small architectural edge subset.
@@ -619,6 +624,7 @@ internal class RenderSceneFilamentHostView(
   private var orbitYawRadians = Math.toRadians(45.0)
   private var orbitPitchRadians = Math.toRadians(22.0)
   private var orbitDistance = 12.0
+  private var isometricEdgeDetailVisible = true
   private var topDownZoom = 1.0
   private var projectionMode = "topDown"
   private var orbitProjectionStyle = "orthographic"
@@ -3113,7 +3119,8 @@ internal class RenderSceneFilamentHostView(
       (!key.solidBrickPattern || (displayStyle == "solid" && projectionMode != "topDown")) &&
       (key.nativeKindMask?.let(::nativeCacheKindMaskVisible)
         ?: kindVisible(key.kind)) &&
-      openingVisibleInPlan(key.kind)
+      openingVisibleInPlan(key.kind) &&
+      (displayStyle == "wireframe" || projectionMode != "isometric" || isometricEdgeDetailVisible)
 
   private fun baseColorForObject(objectData: SceneObject): FloatArray =
     kindColor(normalizeKind(objectData.kind))
@@ -6126,6 +6133,7 @@ internal class RenderSceneFilamentHostView(
         0.0,
         -1.0,
       )
+      if (updateIsometricEdgeDetailVisibility()) syncVisibility()
       syncVisualOverlay()
       scheduleNativeBimCacheReprioritization()
       return
@@ -6145,8 +6153,43 @@ internal class RenderSceneFilamentHostView(
       1.0,
       0.0,
     )
+    if (updateIsometricEdgeDetailVisibility()) syncVisibility()
     syncVisualOverlay()
     scheduleNativeBimCacheReprioritization()
+  }
+
+  /**
+   * Keeps the native edge pass temporally stable at city/model-fit scale.
+   * Filament's depth-tested ribbons are intentionally world-sized so they
+   * look natural when inspected closely. Once their projected width drops
+   * below one reliable mobile raster sample, however, antialiasing can make
+   * the same line alternate between visible and invisible during a pinch.
+   * Hiding that unresolved detail with hysteresis gives a clean LOD boundary
+   * and leaves all faces, selection, and Wireframe unaffected.
+   */
+  private fun updateIsometricEdgeDetailVisibility(): Boolean {
+    if (projectionMode != "isometric" || renderSurface.height <= 1) {
+      if (!isometricEdgeDetailVisible) {
+        isometricEdgeDetailVisible = true
+        return true
+      }
+      return false
+    }
+    val visibleHalfHeight = if (orbitProjectionStyle == "perspective") {
+      orbitDistance * tan(Math.toRadians(45.0) * 0.5)
+    } else {
+      max(orbitDistance * 0.6, 2.0)
+    }
+    val projectedWidth = 0.028 * renderSurface.height.toDouble() /
+      (2.0 * visibleHalfHeight)
+    val nextVisible = if (isometricEdgeDetailVisible) {
+      projectedWidth >= EDGE_DETAIL_HIDE_WIDTH_PIXELS
+    } else {
+      projectedWidth >= EDGE_DETAIL_SHOW_WIDTH_PIXELS
+    }
+    if (nextVisible == isometricEdgeDetailVisible) return false
+    isometricEdgeDetailVisible = nextVisible
+    return true
   }
 
   /// Every non-isometric view is an architectural planar view. A Fit must

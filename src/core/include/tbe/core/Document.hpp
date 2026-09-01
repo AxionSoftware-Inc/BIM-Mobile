@@ -250,6 +250,9 @@ private:
     [[nodiscard]] double wall_thickness(const WallData& wall) const;
     [[nodiscard]] std::string wall_type_name(ElementId wall_type_id) const;
     [[nodiscard]] double total_wall_type_thickness(const WallTypeData& wall_type) const;
+    [[nodiscard]] bool wall_type_uses_glass(const WallTypeData& wall_type) const;
+    [[nodiscard]] bool layered_assembly_uses_glass(const LayeredAssemblyData& assembly) const;
+    [[nodiscard]] bool wall_uses_glass(const WallData& wall) const;
     [[nodiscard]] std::string layered_assembly_name(ElementId assembly_id) const;
     [[nodiscard]] double level_elevation(ElementId level_id) const;
     [[nodiscard]] double resolved_wall_base_elevation(const WallData& wall) const;

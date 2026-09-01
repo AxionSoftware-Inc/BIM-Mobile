@@ -216,6 +216,28 @@ extension _ViewerViewportWallEditing on _ViewerHomePageState {
     required RenderScenePoint point,
     required bool announce,
   }) {
+    if (RenderSceneEditor.isGlassWall(scene, hostWall)) {
+      _updateViewportState(() {
+        _draftHostWall = hostWall;
+        _editStatusMessage = RenderSceneQueries.glassWallOpeningMessage;
+      });
+      _viewportController.setOpeningDraft(
+        RenderSceneOpeningDraft(
+          kind: _interactionMode == RenderSceneInteractionMode.addDoor
+              ? 'Door'
+              : 'Window',
+          hostWallId: hostWall.elementId,
+          offsetMeters: 0.0,
+          widthMeters: _draftOpeningWidthMeters,
+          heightMeters: _draftOpeningHeightMeters,
+          sillHeightMeters: _draftOpeningSillHeightMeters,
+          valid: false,
+          message: RenderSceneQueries.glassWallOpeningMessage,
+        ),
+      );
+      return;
+    }
+
     // Project onto the host axis before applying grid snapping. Global X/Y
     // snapping can otherwise move a touch to the opposite end of a wall.
     final placement = OpeningAuthoringGeometry.preview(

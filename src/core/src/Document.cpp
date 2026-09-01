@@ -1453,6 +1453,35 @@ void Document::update_material(MaterialDefinition material) {
     if (material.material_id == 0 || material.name.empty()) {
         throw std::invalid_argument("material definition is invalid");
     }
+    if (material.category == MaterialCategory::Glass) {
+        const auto uses_material = [&](const auto& layers) {
+            return std::any_of(layers.begin(), layers.end(), [&](const auto& layer) {
+                return layer.material_id == material.material_id;
+            });
+        };
+        const auto hosted_opening = std::find_if(elements_.begin(), elements_.end(), [&](const auto& element) {
+            const auto* wall = element.wall();
+            if (wall == nullptr || wall->openings.empty()) {
+                return false;
+            }
+            if (wall->wall_type_id != 0) {
+                const auto* wall_type = get_wall_type(wall->wall_type_id);
+                if (wall_type != nullptr && uses_material(wall_type->layers)) {
+                    return true;
+                }
+            }
+            if (wall->assembly_id != 0) {
+                const auto* assembly = get_layered_assembly(wall->assembly_id);
+                if (assembly != nullptr && assembly->kind == LayeredAssemblyKind::Wall && uses_material(assembly->layers)) {
+                    return true;
+                }
+            }
+            return false;
+        });
+        if (hosted_opening != elements_.end()) {
+            throw std::invalid_argument("a material used by a wall with hosted openings cannot be changed to glass");
+        }
+    }
     materials_[material.material_id] = std::move(material);
     invalidate_dependency_graph_cache();
 }
@@ -1513,6 +1542,15 @@ void Document::update_wall_type(WallTypeData wall_type) {
         throw std::invalid_argument("wall type core layer range is invalid");
     }
     const auto wall_type_id = wall_type.wall_type_id;
+    if (wall_type_uses_glass(wall_type)) {
+        const auto hosted_opening = std::find_if(elements_.begin(), elements_.end(), [&](const auto& element) {
+            const auto* wall = element.wall();
+            return wall != nullptr && wall->wall_type_id == wall_type_id && !wall->openings.empty();
+        });
+        if (hosted_opening != elements_.end()) {
+            throw std::invalid_argument("a glass wall type cannot be assigned while the wall has hosted openings");
+        }
+    }
     const auto previous = get_wall_type(wall_type_id);
     const auto previous_thickness = previous == nullptr ? -1.0 : total_wall_type_thickness(*previous);
     // The interactive envelope only depends on the total wall thickness.
@@ -1602,6 +1640,15 @@ void Document::update_layered_assembly(LayeredAssemblyData assembly) {
         throw std::invalid_argument("assembly core layer range is invalid");
     }
     const auto assembly_id = assembly.assembly_id;
+    if (assembly.kind == LayeredAssemblyKind::Wall && layered_assembly_uses_glass(assembly)) {
+        const auto hosted_opening = std::find_if(elements_.begin(), elements_.end(), [&](const auto& element) {
+            const auto* wall = element.wall();
+            return wall != nullptr && wall->assembly_id == assembly_id && !wall->openings.empty();
+        });
+        if (hosted_opening != elements_.end()) {
+            throw std::invalid_argument("a glass wall assembly cannot be assigned while the wall has hosted openings");
+        }
+    }
     const auto previous = get_layered_assembly(assembly_id);
     const auto previous_thickness = previous == nullptr ? -1.0 : layered_assembly_total_thickness(*previous);
     const auto next_thickness = layered_assembly_total_thickness(assembly);
@@ -1801,6 +1848,12 @@ void Document::set_wall_type(ElementId wall_id, ElementId wall_type_id) {
     if (wall_type_id != 0 && get_wall_type(wall_type_id) == nullptr) {
         throw std::invalid_argument("wall type does not exist");
     }
+    if (wall != nullptr && !wall->openings.empty() && wall_type_id != 0) {
+        const auto* wall_type = get_wall_type(wall_type_id);
+        if (wall_type != nullptr && wall_type_uses_glass(*wall_type)) {
+            throw std::invalid_argument("doors and windows cannot be hosted by glass walls");
+        }
+    }
     // A wall uses exactly one layered source at a time. Selecting a wall
     // type must detach a previous compound assembly; otherwise the renderer
     // would correctly receive the new type ID but still resolve old layers.
@@ -1838,6 +1891,9 @@ void Document::set_element_assembly(ElementId element_id, ElementId assembly_id)
     }
     if (auto* wall = element->wall()) {
         if (assembly->kind != LayeredAssemblyKind::Wall) throw std::invalid_argument("wall requires Wall assembly");
+        if (!wall->openings.empty() && layered_assembly_uses_glass(*assembly)) {
+            throw std::invalid_argument("doors and windows cannot be hosted by glass walls");
+        }
         wall->assembly_id = assembly_id;
         wall->wall_type_id = 0;
         wall->thickness_meters = layered_assembly_total_thickness(*assembly);
@@ -2352,6 +2408,9 @@ ElementId Document::create_door(std::string name, ElementId host_wall_id, double
     }
     auto& wall_element = require_wall(host_wall_id);
     const auto* wall = wall_element.wall();
+    if (wall_uses_glass(*wall)) {
+        throw std::invalid_argument("doors and windows cannot be hosted by glass walls");
+    }
     validate_opening(*wall, offset_meters, width_meters, height_meters);
 
     const auto id = allocate_id();
@@ -2398,6 +2457,9 @@ ElementId Document::create_window(
 
     auto& wall_element = require_wall(host_wall_id);
     const auto* wall = wall_element.wall();
+    if (wall_uses_glass(*wall)) {
+        throw std::invalid_argument("doors and windows cannot be hosted by glass walls");
+    }
     validate_opening(*wall, offset_meters, width_meters, height_meters + sill_height_meters);
 
     const auto id = allocate_id();
@@ -5676,6 +5738,36 @@ double Document::total_wall_type_thickness(const WallTypeData& wall_type) const 
     return total;
 }
 
+bool Document::wall_type_uses_glass(const WallTypeData& wall_type) const {
+    return std::any_of(wall_type.layers.begin(), wall_type.layers.end(), [&](const auto& layer) {
+        const auto* material = get_material(layer.material_id);
+        return material != nullptr && material->category == MaterialCategory::Glass;
+    });
+}
+
+bool Document::layered_assembly_uses_glass(const LayeredAssemblyData& assembly) const {
+    return std::any_of(assembly.layers.begin(), assembly.layers.end(), [&](const auto& layer) {
+        const auto* material = get_material(layer.material_id);
+        return material != nullptr && material->category == MaterialCategory::Glass;
+    });
+}
+
+bool Document::wall_uses_glass(const WallData& wall) const {
+    if (wall.wall_type_id != 0) {
+        const auto* wall_type = get_wall_type(wall.wall_type_id);
+        if (wall_type != nullptr && wall_type_uses_glass(*wall_type)) {
+            return true;
+        }
+    }
+    if (wall.assembly_id != 0) {
+        const auto* assembly = get_layered_assembly(wall.assembly_id);
+        if (assembly != nullptr && assembly->kind == LayeredAssemblyKind::Wall && layered_assembly_uses_glass(*assembly)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 std::string Document::layered_assembly_name(ElementId assembly_id) const {
     if (const auto* assembly = get_layered_assembly(assembly_id)) {
         return assembly->name;
@@ -5686,12 +5778,18 @@ std::string Document::layered_assembly_name(ElementId assembly_id) const {
 void Document::add_opening_to_wall(ElementId host_wall_id, HostedOpening opening) {
     auto& wall_element = require_wall(host_wall_id);
     auto* wall = wall_element.wall();
+    if (wall_uses_glass(*wall)) {
+        throw std::invalid_argument("doors and windows cannot be hosted by glass walls");
+    }
     wall->openings.push_back(opening);
     validate_wall_openings(*wall);
     mark_wall_dirty(wall_element);
 }
 
 void Document::validate_opening(const WallData& wall, double offset_meters, double width_meters, double height_meters) const {
+    if (wall_uses_glass(wall)) {
+        throw std::invalid_argument("doors and windows cannot be hosted by glass walls");
+    }
     if (offset_meters < 0.0 || width_meters <= 0.0 || height_meters <= 0.0) {
         throw std::invalid_argument("opening dimensions must be positive");
     }
@@ -5720,6 +5818,9 @@ void Document::validate_wall_axis(Line2 axis, double thickness_meters, double he
 }
 
 void Document::validate_wall_openings(const WallData& wall, std::optional<ElementId> ignored_opening_id) const {
+    if (!wall.openings.empty() && wall_uses_glass(wall)) {
+        throw std::invalid_argument("doors and windows cannot be hosted by glass walls");
+    }
     for (std::size_t index = 0; index < wall.openings.size(); ++index) {
         const auto& opening = wall.openings[index];
         if (ignored_opening_id.has_value() && opening.element_id == *ignored_opening_id) {

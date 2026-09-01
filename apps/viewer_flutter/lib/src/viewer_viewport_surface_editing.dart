@@ -780,6 +780,14 @@ extension _ViewerViewportSurfaceEditing on _ViewerHomePageState {
     RenderScene scene,
     RenderSceneObject hostWall,
   ) async {
+    if (RenderSceneEditor.isGlassWall(scene, hostWall)) {
+      _updateViewportState(() {
+        _editStatusMessage = RenderSceneQueries.glassWallOpeningMessage;
+      });
+      _viewportController.setOpeningDraft(null);
+      return;
+    }
+
     final openingDraft = _viewportController.draftOpening;
     if (openingDraft != null && !openingDraft.valid) {
       _updateViewportState(() {

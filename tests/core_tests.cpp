@@ -277,6 +277,62 @@ int main() {
     }
     assert(rejected_overlapping_opening);
 
+    tbe::core::Document glass_opening_document{"Glass Opening Host"};
+    const auto glass_host_material = glass_opening_document.create_material(
+        "Glass", tbe::core::MaterialCategory::Glass);
+    const auto glass_wall_type = glass_opening_document.create_wall_type(
+        "Curtain Glass", {
+            tbe::core::WallAssemblyLayer{
+                .material_id = glass_host_material,
+                .thickness_meters = 0.12,
+                .function = tbe::core::WallLayerFunction::Core,
+            },
+        });
+    const auto glass_wall = glass_opening_document.create_wall(
+        "Curtain Wall",
+        tbe::core::Line2{.start = {.x = 0.0, .y = 0.0}, .end = {.x = 6.0, .y = 0.0}},
+        0.12,
+        3.0);
+    glass_opening_document.set_wall_type(glass_wall, glass_wall_type);
+    bool rejected_glass_door = false;
+    try {
+        glass_opening_document.create_door("Glass Door", glass_wall, 2.0, 0.9, 2.1);
+    } catch (const std::invalid_argument&) {
+        rejected_glass_door = true;
+    }
+    assert(rejected_glass_door);
+    bool rejected_glass_window = false;
+    try {
+        glass_opening_document.create_window("Glass Window", glass_wall, 4.0, 1.0, 1.0, 0.9);
+    } catch (const std::invalid_argument&) {
+        rejected_glass_window = true;
+    }
+    assert(rejected_glass_window);
+
+    const auto solid_wall_type = glass_opening_document.create_wall_type(
+        "Solid Wall", {
+            tbe::core::WallAssemblyLayer{
+                .material_id = glass_opening_document.create_material(
+                    "Concrete", tbe::core::MaterialCategory::Structural),
+                .thickness_meters = 0.20,
+                .function = tbe::core::WallLayerFunction::Core,
+            },
+        });
+    const auto solid_wall = glass_opening_document.create_wall(
+        "Solid Host",
+        tbe::core::Line2{.start = {.x = 0.0, .y = 2.0}, .end = {.x = 6.0, .y = 2.0}},
+        0.20,
+        3.0);
+    glass_opening_document.set_wall_type(solid_wall, solid_wall_type);
+    glass_opening_document.create_door("Solid Door", solid_wall, 2.0, 0.9, 2.1);
+    bool rejected_glass_type_swap = false;
+    try {
+        glass_opening_document.set_wall_type(solid_wall, glass_wall_type);
+    } catch (const std::invalid_argument&) {
+        rejected_glass_type_swap = true;
+    }
+    assert(rejected_glass_type_swap);
+
     tbe::core::Document room_document{"Room Test"};
     tbe::core::CommandProcessor processor;
     tbe::core::CreateLevelCommand create_level{"Level 1", 0.0, 3.0};

@@ -589,6 +589,14 @@ extension _ViewerViewportInput on _ViewerHomePageState {
       });
       return;
     }
+    if (RenderSceneEditor.isGlassWall(scene, hostWall)) {
+      _updateViewportState(() {
+        _editStatusMessage = RenderSceneQueries.glassWallOpeningMessage;
+        _draftHostWall = null;
+      });
+      _viewportController.setOpeningDraft(null);
+      return;
+    }
 
     final point = modelPoint ?? RenderSceneEditor.wallCenterPoint(hostWall);
     if (point == null) {

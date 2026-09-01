@@ -37,6 +37,10 @@ class RenderSceneEditor {
         module.levelLockedByDefault;
   }
 
+  static bool isGlassWall(RenderScene scene, RenderSceneObject wall) {
+    return RenderSceneQueries.isGlassWall(scene, wall);
+  }
+
   static RenderScene setElementLevelLock({
     required RenderScene scene,
     required RenderSceneObject object,

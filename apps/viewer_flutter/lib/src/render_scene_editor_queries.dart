@@ -5,6 +5,48 @@ part of 'render_scene_editor.dart';
 /// [RenderSceneEditor] keeps compatibility forwarding methods, while this
 /// class is the actual query owner for wall, room and surface inspection.
 class RenderSceneQueries {
+  static const String glassWallOpeningMessage =
+      'Glass walls cannot host doors or windows. Select a solid wall.';
+
+  /// Returns the same semantic answer used by opening authoring and the
+  /// fallback renderer.  Native scenes expose a layer profile; older cached
+  /// scenes may only expose the wall/material metadata, so keep all of those
+  /// representations compatible here rather than duplicating the rule in
+  /// each tool.
+  static bool isGlassWall(RenderScene scene, RenderSceneObject wall) {
+    if (wall.kindKey != 'wall') {
+      return false;
+    }
+
+    final semanticValues = <String>[
+      wall.materialCategory,
+      wall.metadata['wall_type_name']?.toString() ?? '',
+      wall.metadata['wall_type_category']?.toString() ?? '',
+    ];
+    if (semanticValues.any((value) => value.toLowerCase().contains('glass'))) {
+      return true;
+    }
+
+    final profile = wall.metadata['layer_profile'];
+    if (profile is! String || profile.isEmpty) {
+      return false;
+    }
+    for (final layer in profile.split(';')) {
+      final parts = layer.split(':');
+      if (parts.length != 2) {
+        continue;
+      }
+      final material = scene.materialById(int.tryParse(parts.first));
+      if (material == null) {
+        continue;
+      }
+      if (material.category.toLowerCase().contains('glass')) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   static RenderSceneObject? objectByStableId(RenderScene scene, String? id) {
     if (id == null || id.isEmpty) {
       return null;

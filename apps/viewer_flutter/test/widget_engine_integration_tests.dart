@@ -105,21 +105,29 @@ void registerEngineIntegrationTests() {
     final glassType = initial.wallTypes.firstWhere(
       (type) => type.name == 'Exterior Glass Wall',
     );
-    final changed = await repository.setWallType(
-      wallId: wall.elementId!,
-      wallTypeId: glassType.id,
+    await expectLater(
+      repository.setWallType(
+        wallId: wall.elementId!,
+        wallTypeId: glassType.id,
+      ),
+      throwsA(
+        isA<TbeApiException>().having(
+          (error) => error.message,
+          'message',
+          contains('glass walls'),
+        ),
+      ),
     );
-    final changedScene = changed.scene!;
-    final changedWall = changedScene.objectById(wall.elementId)!;
-    expect(changedWall.metadata['wall_type_id'], glassType.id.toString());
-    expect(changedWall.metadata['layer_profile'], contains(':0.12'));
-    expect(changedScene.objects.length, initial.objects.length);
-    expect(changedScene.objectById(opening.elementId)?.metadata['host_wall_id'],
-        hostWallId.toString());
-    expect(changedScene.wallTypes, hasLength(initial.wallTypes.length));
+    final unchanged = (await repository.currentRenderScene()).scene!;
+    final unchangedWall = unchanged.objectById(wall.elementId)!;
     expect(
-      changedScene.materials
-          .any((material) => material.name == 'Template Glass'),
+        unchangedWall.metadata['wall_type_id'], wall.metadata['wall_type_id']);
+    expect(unchanged.objects.length, initial.objects.length);
+    expect(unchanged.objectById(opening.elementId)?.metadata['host_wall_id'],
+        hostWallId.toString());
+    expect(unchanged.wallTypes, hasLength(initial.wallTypes.length));
+    expect(
+      unchanged.materials.any((material) => material.name == 'Template Glass'),
       isTrue,
     );
   });

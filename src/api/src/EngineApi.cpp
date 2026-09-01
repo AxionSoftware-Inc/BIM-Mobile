@@ -537,7 +537,10 @@ Project make_showcase_template(int template_kind) {
                     0.24,
                     3.2,
                     level_id);
-                document.set_wall_type(wall_id, edge == 0 || edge == 2
+                // Keep the entrance and facade glazing on solid host walls.
+                // The long side elevations are uninterrupted curtain walls;
+                // they are intentionally not valid opening hosts.
+                document.set_wall_type(wall_id, edge == 1 || edge == 3
                     ? glass_wall_type
                     : structural_wall_type);
                 if (story + 1 < story_count) {
@@ -592,17 +595,17 @@ Project make_showcase_template(int template_kind) {
                 "Building " + std::to_string(building + 1) + " rear glazing",
                 perimeter[2], 4.20, 2.20, 1.45, 0.90);
             document.create_window(
-                "Building " + std::to_string(building + 1) + " side window A",
-                perimeter[1], 2.00, 1.60, 1.35, 1.00);
+                "Building " + std::to_string(building + 1) + " front window A",
+                perimeter.front(), 9.20, 1.60, 1.35, 1.00);
             document.create_window(
-                "Building " + std::to_string(building + 1) + " side window B",
-                perimeter[1], 6.20, 1.60, 1.35, 1.00);
+                "Building " + std::to_string(building + 1) + " front window B",
+                perimeter.front(), 11.40, 1.60, 1.35, 1.00);
             document.create_window(
-                "Building " + std::to_string(building + 1) + " side window C",
-                perimeter[3], 2.00, 1.60, 1.35, 1.00);
+                "Building " + std::to_string(building + 1) + " rear window A",
+                perimeter[2], 1.50, 1.60, 1.35, 1.00);
             document.create_window(
-                "Building " + std::to_string(building + 1) + " side window D",
-                perimeter[3], 6.20, 1.60, 1.35, 1.00);
+                "Building " + std::to_string(building + 1) + " rear window B",
+                perimeter[2], 7.60, 1.60, 1.35, 1.00);
 
             document.create_column(level_id, {.x = origin_x + 1.2, .y = origin_y + 1.2}, 0.28, 0.28, 3.2, concrete);
             document.create_column(level_id, {.x = origin_x + width - 1.2, .y = origin_y + 1.2}, 0.28, 0.28, 3.2, concrete);

@@ -339,18 +339,54 @@ class FallbackRenderScenePainter extends CustomPainter
           ),
         )
         .toList(growable: false);
-    if (authoritative.isNotEmpty) return authoritative;
+    if (authoritative.isNotEmpty) {
+      return _stabilizeOutlineSegments(authoritative);
+    }
     if (projectionMode.useProjectedBoundsOutline) {
-      return _buildProjectedBoundsRectOutlineSegments(
-          object.bounds, projection);
+      return _stabilizeOutlineSegments(
+        _buildProjectedBoundsRectOutlineSegments(object.bounds, projection),
+      );
     }
 
     final meshSegments = _buildVisibleMeshOutlineSegments(object, projection);
     if (meshSegments.isNotEmpty) {
-      return meshSegments;
+      return _stabilizeOutlineSegments(meshSegments);
     }
 
-    return _buildBoundsOutlineSegments(object.bounds, projection);
+    return _stabilizeOutlineSegments(
+      _buildBoundsOutlineSegments(object.bounds, projection),
+    );
+  }
+
+  /// A projected edge that is smaller than a pixel cannot be represented
+  /// consistently by the rasterizer: a tiny camera change makes it land on
+  /// alternating pixel samples and look like it is blinking.  Drop those
+  /// unresolved passive edges and deduplicate coincident projected segments;
+  /// selected geometry still remains readable through its highlight overlay.
+  List<_OutlineSegment> _stabilizeOutlineSegments(
+    Iterable<_OutlineSegment> source,
+  ) {
+    const minimumLengthPixels = 0.75;
+    final seen = <String>{};
+    final stable = <_OutlineSegment>[];
+    for (final segment in source) {
+      final dx = segment.b.dx - segment.a.dx;
+      final dy = segment.b.dy - segment.a.dy;
+      if (!dx.isFinite ||
+          !dy.isFinite ||
+          (dx * dx + dy * dy) < minimumLengthPixels * minimumLengthPixels) {
+        continue;
+      }
+      int quantize(double value) => (value * 4.0).round();
+      final first = '${quantize(segment.a.dx)}:${quantize(segment.a.dy)}';
+      final second = '${quantize(segment.b.dx)}:${quantize(segment.b.dy)}';
+      final key =
+          first.compareTo(second) <= 0 ? '$first|$second' : '$second|$first';
+      if (seen.add(key)) {
+        stable.add(segment);
+      }
+    }
+    return stable;
   }
 
   List<_OutlineSegment> _buildVisibleMeshOutlineSegments(

@@ -11,6 +11,10 @@ RenderScene _addOpening({
   required String kind,
   required String materialCategory,
 }) {
+  if (RenderSceneQueries.isGlassWall(scene, hostWall)) {
+    return scene;
+  }
+
   final geometry = _wallGeometry(hostWall);
   final resolvedLevelId = hostWall.levelId ?? levelId ?? _primaryLevelId(scene);
   if (geometry == null || resolvedLevelId == null || resolvedLevelId <= 0) {
