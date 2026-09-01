@@ -694,6 +694,17 @@ mixin _FallbackSceneOverlayMixin {
     if (value.contains('concrete') || value.contains('cement')) {
       return const Color(0xFF9CA3AF);
     }
+    if (value.contains('grass') ||
+        value.contains('lawn') ||
+        value.contains('landscape')) {
+      return const Color(0xFF6F9B62);
+    }
+    if (value.contains('paving') ||
+        value.contains('walkway') ||
+        value.contains('sidewalk') ||
+        value.contains('paver')) {
+      return const Color(0xFFB8B2A6);
+    }
     return const Color(0xFFD1BFA3);
   }
 

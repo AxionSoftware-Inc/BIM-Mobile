@@ -216,6 +216,7 @@ class _RecordingProjectSession extends _RecordingProjectGateway
     implements ViewerProjectSession {
   int? buildingCount;
   int? storyCount;
+  int? showcaseKind;
   bool disposed = false;
 
   @override
@@ -236,6 +237,18 @@ class _RecordingProjectSession extends _RecordingProjectGateway
   }) async {
     this.buildingCount = buildingCount;
     this.storyCount = storyCount;
+    return const RenderSceneLoadResult(
+      scene: null,
+      warnings: <String>[],
+      errors: <String>[],
+    );
+  }
+
+  @override
+  Future<RenderSceneLoadResult> createShowcaseTemplate({
+    required int templateKind,
+  }) async {
+    showcaseKind = templateKind;
     return const RenderSceneLoadResult(
       scene: null,
       warnings: <String>[],
@@ -300,4 +313,18 @@ void main() {
       );
     },
   );
+
+  test('showcase template lifecycle reaches the native session seam', () async {
+    final session = _RecordingProjectSession();
+    final service = ProjectLifecycleService<_RecordingProjectSession>(
+      sessionFactory: _RecordingSessionFactory(session),
+    );
+    final result = await service.createShowcaseTemplate(
+      existingSession: session,
+      templateKind: 2,
+    );
+    expect(result.session, same(session));
+    expect(session.showcaseKind, 2);
+    expect(result.createdSession, isFalse);
+  });
 }

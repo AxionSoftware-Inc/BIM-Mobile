@@ -136,6 +136,22 @@ extension _TbeViewerApiMethods on TbeViewerApi {
     }
   }
 
+  int createShowcaseTemplate(
+    ffi.Pointer<ffi.Void> handle, {
+    required int templateKind,
+  }) {
+    final out = calloc<ffi.Uint64>();
+    try {
+      _check(
+        handle,
+        _createShowcaseTemplate(handle, templateKind, out),
+      );
+      return out.value;
+    } finally {
+      calloc.free(out);
+    }
+  }
+
   int getSchemaVersion(ffi.Pointer<ffi.Void> handle) {
     final out = calloc<ffi.Int32>();
     try {

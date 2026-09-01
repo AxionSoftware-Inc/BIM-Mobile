@@ -146,6 +146,29 @@ class ViewerRepository
   }
 
   @override
+  Future<RenderSceneLoadResult> createShowcaseTemplate({
+    required int templateKind,
+  }) async {
+    _handle ??= _api.createSession();
+    final handle = _handle!;
+    _api.configureInteractiveSession(handle);
+    _activeLevelId = _api.createShowcaseTemplate(
+      handle,
+      templateKind: templateKind,
+    );
+    _projectName = switch (templateKind) {
+      0 => 'Modern Glass Courtyard House',
+      1 => 'Modern Glass Residential Tower',
+      _ => 'Modern Glass Courtyard Campus',
+    };
+    _currentJson = null;
+    _currentJsonPath = null;
+    _currentPackagePath = null;
+    await _buildSnapshot(handle, _projectName!);
+    return currentRenderScene();
+  }
+
+  @override
   Future<ViewerLoadResult> reloadCurrent() async {
     final jsonPath = _currentJsonPath;
     if (jsonPath != null) {

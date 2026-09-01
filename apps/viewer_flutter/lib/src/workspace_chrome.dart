@@ -237,7 +237,14 @@ class WorkspaceAppBar extends StatelessWidget implements PreferredSizeWidget {
   }
 }
 
-enum WorkspaceTemplate { default3, tower9, campus6x9 }
+enum WorkspaceTemplate {
+  default3,
+  tower9,
+  campus6x9,
+  modern3,
+  glassTower9,
+  glassCampus6x9,
+}
 
 /// The right-hand workspace slot hosts one contextual surface at a time.
 /// Keeping the tab state explicit prevents Browser and Inspector from

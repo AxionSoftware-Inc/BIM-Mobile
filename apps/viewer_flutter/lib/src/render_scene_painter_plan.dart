@@ -32,6 +32,13 @@ mixin _FallbackScenePlanPainterMixin {
           key.contains('laminate') ||
           key.contains('parquet');
       final isAsphalt = key.contains('asphalt') || key.contains('bitumen');
+      final isGrass = key.contains('grass') ||
+          key.contains('lawn') ||
+          key.contains('landscape');
+      final isPaving = key.contains('paving') ||
+          key.contains('walkway') ||
+          key.contains('sidewalk') ||
+          key.contains('paver');
       final lineColor = displayStyle == RenderSceneDisplayStyle.solid
           ? const Color(0x66515B66)
           : _floorSurfaceColor(floor).withValues(alpha: 0.34);
@@ -66,6 +73,25 @@ mixin _FallbackScenePlanPainterMixin {
             Offset(x + rect.height, rect.top),
             paint,
           );
+        }
+      } else if (isGrass) {
+        final spacing = math.max(8.0, math.min(18.0, rect.shortestSide / 7.0));
+        for (var x = rect.left - rect.height;
+            x <= rect.right + rect.height;
+            x += spacing) {
+          canvas.drawLine(
+            Offset(x, rect.bottom),
+            Offset(x + rect.height * 0.28, rect.top),
+            paint,
+          );
+        }
+      } else if (isPaving) {
+        final spacing = math.max(8.0, math.min(24.0, rect.shortestSide / 5.0));
+        for (var x = rect.left; x <= rect.right; x += spacing) {
+          canvas.drawLine(Offset(x, rect.top), Offset(x, rect.bottom), paint);
+        }
+        for (var y = rect.top; y <= rect.bottom; y += spacing) {
+          canvas.drawLine(Offset(rect.left, y), Offset(rect.right, y), paint);
         }
       } else {
         final spacing = math.max(10.0, math.min(34.0, rect.shortestSide / 6.0));

@@ -3001,6 +3001,10 @@ internal class RenderSceneFilamentHostView(
       value.contains("asphalt") || value.contains("bitumen") -> 0.0f
       value.contains("wood") || value.contains("timber") ||
         value.contains("laminate") || value.contains("parquet") -> 2.0f
+      value.contains("grass") || value.contains("lawn") ||
+        value.contains("landscape") -> 3.0f
+      value.contains("paving") || value.contains("walkway") ||
+        value.contains("sidewalk") || value.contains("paver") -> 4.0f
       else -> 1.0f
     }
   }
@@ -3066,6 +3070,8 @@ internal class RenderSceneFilamentHostView(
       kind == "window" -> floatArrayOf(0.36f, 0.50f, 0.60f, 1.0f)
       (kind == "slab" || kind == "floor") && floorKind == 0.0f -> floatArrayOf(0.31f, 0.33f, 0.35f, 1.0f)
       (kind == "slab" || kind == "floor") && floorKind == 2.0f -> floatArrayOf(0.66f, 0.47f, 0.29f, 1.0f)
+      (kind == "slab" || kind == "floor") && floorKind == 3.0f -> floatArrayOf(0.36f, 0.55f, 0.31f, 1.0f)
+      (kind == "slab" || kind == "floor") && floorKind == 4.0f -> floatArrayOf(0.62f, 0.60f, 0.55f, 1.0f)
       kind == "slab" || kind == "floor" -> floatArrayOf(0.66f, 0.68f, 0.71f, 1.0f)
       kind == "ceiling" -> floatArrayOf(0.84f, 0.85f, 0.86f, 1.0f)
       kind == "roof" -> floatArrayOf(0.78f, 0.79f, 0.81f, 1.0f)

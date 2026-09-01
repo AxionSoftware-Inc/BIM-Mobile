@@ -399,6 +399,12 @@ class _ViewerHomePageState extends State<ViewerHomePage>
         return _ResidentialTemplateKind.tower9;
       case WorkspaceTemplate.campus6x9:
         return _ResidentialTemplateKind.campus6x9;
+      case WorkspaceTemplate.modern3:
+        return _ResidentialTemplateKind.modern3;
+      case WorkspaceTemplate.glassTower9:
+        return _ResidentialTemplateKind.glassTower9;
+      case WorkspaceTemplate.glassCampus6x9:
+        return _ResidentialTemplateKind.glassCampus6x9;
     }
   }
 

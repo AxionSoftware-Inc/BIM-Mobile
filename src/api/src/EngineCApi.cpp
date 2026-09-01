@@ -1180,6 +1180,17 @@ TbeApiStatusCode tbe_create_residential_template(TbeEngineHandle* handle, int bu
     return apply_result(handle, result);
 }
 
+TbeApiStatusCode tbe_create_showcase_template(TbeEngineHandle* handle, int template_kind, uint64_t* out_primary_level_id) {
+    if (handle == nullptr || handle->session == nullptr || out_primary_level_id == nullptr) {
+        return null_handle_error(handle);
+    }
+    const auto result = handle->session->create_showcase_template(template_kind);
+    if (result.ok() && result.value.has_value()) {
+        *out_primary_level_id = result.value->value;
+    }
+    return apply_result(handle, result);
+}
+
 const char* tbe_get_last_error(const TbeEngineHandle* handle) {
     if (handle == nullptr) {
         return "engine handle is null";

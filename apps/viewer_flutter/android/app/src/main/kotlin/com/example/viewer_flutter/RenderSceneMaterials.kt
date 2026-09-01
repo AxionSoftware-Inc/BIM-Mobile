@@ -75,12 +75,22 @@ void material(inout MaterialInputs material) {
         ? asphaltJoint * 0.12
         : floorKind < 1.5
             ? max(concreteJointX, concreteJointZ) * 0.16
-            : woodJoint * 0.25;
+            : floorKind < 2.5
+                ? woodJoint * 0.25
+                : floorKind < 3.5
+                    ? step(0.94, fract((world.x - world.z) / 0.31)) * 0.10
+                    : max(step(0.965, fract(world.x / 0.45)), step(0.965, fract(world.z / 0.45))) * 0.18;
     float speckle = fract(sin(dot(world.xz, float2(12.9898, 78.233))) * 43758.5453);
     float3 asphalt = materialParams.baseColor.rgb * (0.78 + speckle * 0.10 - line);
     float3 concrete = materialParams.baseColor.rgb * (0.96 + (speckle - 0.5) * 0.12 - line);
     float3 wood = materialParams.baseColor.rgb * (1.0 + woodGrain - line);
-    float3 textured = floorKind < 0.5 ? asphalt : floorKind < 1.5 ? concrete : wood;
+    float3 grass = materialParams.baseColor.rgb * (0.88 + speckle * 0.18 - line);
+    float3 paving = materialParams.baseColor.rgb * (0.98 + (speckle - 0.5) * 0.08 - line);
+    float3 textured = floorKind < 0.5 ? asphalt
+        : floorKind < 1.5 ? concrete
+        : floorKind < 2.5 ? wood
+        : floorKind < 3.5 ? grass
+        : paving;
     float shade = mix(1.0, 0.82 + 0.18 * sin(world.x * 0.45 + world.z * 0.31), materialParams.displayShade);
     material.baseColor = float4(textured * shade, materialParams.baseColor.a);
 }
@@ -99,7 +109,11 @@ void material(inout MaterialInputs material) {
         ? asphaltJoint * 0.22
         : floorKind < 1.5
             ? max(concreteJointX, concreteJointZ) * 0.24
-            : woodJoint * 0.30;
+            : floorKind < 2.5
+                ? woodJoint * 0.30
+                : floorKind < 3.5
+                    ? step(0.94, fract((world.x - world.z) / 0.31)) * 0.14
+                    : max(step(0.965, fract(world.x / 0.45)), step(0.965, fract(world.z / 0.45))) * 0.24;
     float3 neutral = materialParams.baseColor.rgb * (1.0 - line);
     material.baseColor = float4(neutral, materialParams.baseColor.a);
 }

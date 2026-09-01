@@ -10,6 +10,8 @@ enum FloorSurfaceKind {
   concrete,
   wood,
   generic,
+  grass,
+  paving,
 }
 
 extension FloorSurfaceKindLabel on FloorSurfaceKind {
@@ -23,6 +25,10 @@ extension FloorSurfaceKindLabel on FloorSurfaceKind {
         return 'wood';
       case FloorSurfaceKind.generic:
         return 'generic';
+      case FloorSurfaceKind.grass:
+        return 'grass';
+      case FloorSurfaceKind.paving:
+        return 'paving';
     }
   }
 
@@ -36,6 +42,10 @@ extension FloorSurfaceKindLabel on FloorSurfaceKind {
         return 'Wood';
       case FloorSurfaceKind.generic:
         return 'Generic';
+      case FloorSurfaceKind.grass:
+        return 'Grass';
+      case FloorSurfaceKind.paving:
+        return 'Paving';
     }
   }
 }
@@ -127,6 +137,17 @@ FloorSurfaceKind _floorSurfaceKind(Object? value) {
   }
   if (normalized.contains('concrete') || normalized.contains('cement')) {
     return FloorSurfaceKind.concrete;
+  }
+  if (normalized.contains('grass') ||
+      normalized.contains('lawn') ||
+      normalized.contains('landscape')) {
+    return FloorSurfaceKind.grass;
+  }
+  if (normalized.contains('paving') ||
+      normalized.contains('walkway') ||
+      normalized.contains('sidewalk') ||
+      normalized.contains('paver')) {
+    return FloorSurfaceKind.paving;
   }
   return FloorSurfaceKind.generic;
 }

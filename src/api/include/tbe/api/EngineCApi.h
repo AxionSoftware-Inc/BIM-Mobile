@@ -185,6 +185,7 @@ TbeApiStatusCode tbe_set_performance_profile(TbeEngineHandle* handle, int profil
 TbeApiStatusCode tbe_set_compute_mode(TbeEngineHandle* handle, int mode);
 TbeApiStatusCode tbe_get_history_counts(TbeEngineHandle* handle, uint64_t* out_undo_count, uint64_t* out_redo_count);
 TbeApiStatusCode tbe_create_residential_template(TbeEngineHandle* handle, int building_count, int story_count, uint64_t* out_primary_level_id);
+TbeApiStatusCode tbe_create_showcase_template(TbeEngineHandle* handle, int template_kind, uint64_t* out_primary_level_id);
 TbeApiStatusCode tbe_create_level(
     TbeEngineHandle* handle,
     const char* name,

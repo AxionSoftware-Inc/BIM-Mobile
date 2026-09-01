@@ -349,6 +349,296 @@ Project make_residential_template(int building_count, int story_count) {
     return project;
 }
 
+Project make_showcase_template(int template_kind) {
+    if (template_kind < 0 || template_kind > 2) {
+        throw std::invalid_argument("showcase template kind must be 0, 1 or 2");
+    }
+
+    const auto is_campus = template_kind == 2;
+    const auto building_count = is_campus ? 6 : 1;
+    const auto story_count = template_kind == 0 ? 3 : 9;
+    const auto project_name = template_kind == 0
+        ? "Modern Glass Courtyard House"
+        : template_kind == 1
+            ? "Modern Glass Residential Tower"
+            : "Modern Glass Courtyard Campus";
+    Project project{project_name};
+    auto& document = project.active_document();
+    // The showcase fixture is intentionally authored as one deterministic
+    // transaction. Joins and room discovery run once after all buildings and
+    // site elements exist, so each building remains easy to edit afterwards.
+    document.set_automatic_wall_join_enabled(false);
+
+    const auto concrete = document.create_material(
+        "Showcase Concrete", tbe::core::MaterialCategory::Structural,
+        2400.0, 110.0, {}, "#7B8794");
+    const auto glass = document.create_material(
+        "Showcase Glass", tbe::core::MaterialCategory::Glass,
+        2500.0, 80.0, {}, "#83C5D1");
+    const auto aluminum = document.create_material(
+        "Showcase Aluminum", tbe::core::MaterialCategory::Structural,
+        2700.0, 95.0, {}, "#B9C6D2");
+    const auto insulation = document.create_material(
+        "Showcase Insulation", tbe::core::MaterialCategory::Insulation,
+        35.0, 18.0, {}, "#E8C46A");
+    const auto gypsum = document.create_material(
+        "Showcase Gypsum", tbe::core::MaterialCategory::Finish,
+        850.0, 28.0, {}, "#F1F3F5");
+    const auto wood = document.create_material(
+        "Showcase Timber Floor", tbe::core::MaterialCategory::Finish,
+        700.0, 42.0, {}, "#B57A45");
+    const auto tile = document.create_material(
+        "Showcase Stair Tile", tbe::core::MaterialCategory::Finish,
+        2100.0, 36.0, {}, "#D7B56D");
+    const auto asphalt = document.create_material(
+        "Asphalt Surface", tbe::core::MaterialCategory::Structural,
+        2300.0, 32.0, {}, "#3E4652");
+    const auto paving = document.create_material(
+        "Paving Stone", tbe::core::MaterialCategory::Finish,
+        2200.0, 45.0, {}, "#B8B2A6");
+    const auto grass = document.create_material(
+        "Landscape Grass", tbe::core::MaterialCategory::Finish,
+        450.0, 12.0, {}, "#6F9B62");
+
+    const auto glass_wall_type = document.create_wall_type("Exterior Glass Wall", {
+        tbe::core::WallAssemblyLayer{.material_id = glass, .thickness_meters = 0.12, .function = tbe::core::WallLayerFunction::Core, .priority = 100},
+        tbe::core::WallAssemblyLayer{.material_id = aluminum, .thickness_meters = 0.04, .function = tbe::core::WallLayerFunction::ExteriorFinish, .priority = 10},
+        tbe::core::WallAssemblyLayer{.material_id = gypsum, .thickness_meters = 0.015, .function = tbe::core::WallLayerFunction::InteriorFinish, .priority = 5},
+    }, tbe::core::WallTypeCategory::Exterior);
+    const auto structural_wall_type = document.create_wall_type("Showcase Structural Wall", {
+        tbe::core::WallAssemblyLayer{.material_id = concrete, .thickness_meters = 0.22, .function = tbe::core::WallLayerFunction::Core, .priority = 100, .structural = true},
+    }, tbe::core::WallTypeCategory::Generic);
+    const auto glass_partition_type = document.create_wall_type("Interior Glass Partition", {
+        tbe::core::WallAssemblyLayer{.material_id = glass, .thickness_meters = 0.10, .function = tbe::core::WallLayerFunction::Core, .priority = 100},
+    }, tbe::core::WallTypeCategory::Interior);
+
+    const auto interior_floor_assembly = document.create_layered_assembly(
+        tbe::core::LayeredAssemblyKind::Floor, "Showcase Wood Floor", {
+            tbe::core::WallAssemblyLayer{.material_id = concrete, .thickness_meters = 0.18, .function = tbe::core::WallLayerFunction::Core},
+            tbe::core::WallAssemblyLayer{.material_id = wood, .thickness_meters = 0.018, .function = tbe::core::WallLayerFunction::InteriorFinish},
+        });
+    const auto asphalt_assembly = document.create_layered_assembly(
+        tbe::core::LayeredAssemblyKind::Floor, "Asphalt Drive", {
+            tbe::core::WallAssemblyLayer{.material_id = asphalt, .thickness_meters = 0.08, .function = tbe::core::WallLayerFunction::ExteriorFinish},
+        });
+    const auto paving_assembly = document.create_layered_assembly(
+        tbe::core::LayeredAssemblyKind::Floor, "Paved Walkway", {
+            tbe::core::WallAssemblyLayer{.material_id = paving, .thickness_meters = 0.06, .function = tbe::core::WallLayerFunction::ExteriorFinish},
+        });
+    const auto lawn_assembly = document.create_layered_assembly(
+        tbe::core::LayeredAssemblyKind::Floor, "Landscape Lawn Ground", {
+            tbe::core::WallAssemblyLayer{.material_id = grass, .thickness_meters = 0.12, .function = tbe::core::WallLayerFunction::ExteriorFinish},
+        });
+    const auto concrete_floor_assembly = document.create_layered_assembly(
+        tbe::core::LayeredAssemblyKind::Floor, "Showcase Concrete Plaza", {
+            tbe::core::WallAssemblyLayer{.material_id = concrete, .thickness_meters = 0.16, .function = tbe::core::WallLayerFunction::Core, .structural = true},
+        });
+    const auto ceiling_assembly = document.create_layered_assembly(
+        tbe::core::LayeredAssemblyKind::Ceiling, "Showcase Ceiling", {
+            tbe::core::WallAssemblyLayer{.material_id = gypsum, .thickness_meters = 0.015, .function = tbe::core::WallLayerFunction::InteriorFinish},
+            tbe::core::WallAssemblyLayer{.material_id = insulation, .thickness_meters = 0.04, .function = tbe::core::WallLayerFunction::Insulation},
+        });
+    const auto roof_assembly = document.create_layered_assembly(
+        tbe::core::LayeredAssemblyKind::Roof, "Showcase Flat Roof", {
+            tbe::core::WallAssemblyLayer{.material_id = concrete, .thickness_meters = 0.20, .function = tbe::core::WallLayerFunction::Core, .priority = 100, .structural = true},
+            tbe::core::WallAssemblyLayer{.material_id = insulation, .thickness_meters = 0.10, .function = tbe::core::WallLayerFunction::Insulation, .priority = 70},
+        });
+    const auto stair_assembly = document.create_layered_assembly(
+        tbe::core::LayeredAssemblyKind::Stair, "Showcase Stair", {
+            tbe::core::WallAssemblyLayer{.material_id = concrete, .thickness_meters = 0.16, .function = tbe::core::WallLayerFunction::Core, .priority = 100, .structural = true},
+            tbe::core::WallAssemblyLayer{.material_id = tile, .thickness_meters = 0.02, .function = tbe::core::WallLayerFunction::InteriorFinish, .priority = 10},
+        });
+
+    std::vector<ElementId> levels;
+    levels.reserve(static_cast<std::size_t>(story_count + 1));
+    for (int story = 0; story < story_count; ++story) {
+        levels.push_back(document.create_level(
+            "Showcase Level " + std::to_string(story + 1),
+            story * 3.2,
+            3.2));
+    }
+    const auto roof_level_id = document.create_level(
+        "Showcase Roof",
+        story_count * 3.2,
+        3.2);
+
+    constexpr double width = 14.0;
+    constexpr double depth = 10.0;
+    constexpr double pitch_x = 24.0;
+    constexpr double pitch_y = 20.0;
+    constexpr double margin_x = 4.0;
+    constexpr double margin_y = 5.0;
+    const auto columns = is_campus ? 3 : 1;
+    const auto rows = is_campus ? 2 : 1;
+    const auto site_min_x = -margin_x;
+    const auto site_min_y = -margin_y;
+    const auto site_max_x = is_campus
+        ? 5.0 + (columns - 1) * pitch_x + width + margin_x
+        : 5.0 + width + margin_x;
+    const auto site_max_y = is_campus
+        ? (rows - 1) * pitch_y + depth + margin_y
+        : depth + margin_y;
+    const auto rectangle = [](double min_x, double min_y, double max_x, double max_y) {
+        return std::vector<Point2>{
+            {.x = min_x, .y = min_y},
+            {.x = max_x, .y = min_y},
+            {.x = max_x, .y = max_y},
+            {.x = min_x, .y = max_y},
+        };
+    };
+
+    // A continuous lawn gives the building collection a readable site datum.
+    document.create_slab(
+        levels.front(), rectangle(site_min_x, site_min_y, site_max_x, site_max_y),
+        0.12, grass, lawn_assembly, -0.12);
+    // Asphalt is kept in simple, non-overlapping bands so it reads as a road
+    // and parking surface in both solid and shaded viewport modes.
+    document.create_slab(
+        levels.front(), rectangle(site_min_x, 0.8, site_max_x, 3.5),
+        0.08, asphalt, asphalt_assembly, -0.08);
+    if (is_campus) {
+        document.create_slab(
+            levels.front(), rectangle(site_min_x, 18.2, site_max_x, 22.0),
+            0.08, asphalt, asphalt_assembly, -0.08);
+    }
+    for (int building = 0; building < building_count; ++building) {
+        const auto column = building % columns;
+        const auto row = building / columns;
+        const auto origin_x = 5.0 + static_cast<double>(column) * pitch_x;
+        const auto origin_y = 5.0 + static_cast<double>(row) * pitch_y;
+        const std::vector<Point2> footprint = rectangle(
+            origin_x, origin_y, origin_x + width, origin_y + depth);
+
+        // Each entrance gets a short paving apron. The walk stays outside the
+        // footprint, so the site never fights the building's floor slabs.
+        document.create_slab(
+            levels.front(), rectangle(origin_x + width * 0.5 - 2.0, origin_y - 3.0,
+                                      origin_x + width * 0.5 + 2.0, origin_y - 1.1),
+            0.06, paving, paving_assembly, -0.06);
+        document.create_slab(
+            levels.front(), rectangle(origin_x - 1.0, origin_y - 1.1,
+                                      origin_x + width + 1.0, origin_y),
+            0.06, paving, paving_assembly, -0.06);
+
+        document.create_slab(
+            levels.front(), footprint, 0.34, concrete, concrete_floor_assembly, -0.34);
+        std::vector<ElementId> top_perimeter;
+        for (int story = 0; story < story_count; ++story) {
+            const auto level_id = levels[static_cast<std::size_t>(story)];
+            std::vector<ElementId> perimeter;
+            perimeter.reserve(4);
+            for (std::size_t edge = 0; edge < footprint.size(); ++edge) {
+                const auto wall_id = document.create_wall(
+                    "Building " + std::to_string(building + 1) + " curtain wall",
+                    Line2{.start = footprint[edge], .end = footprint[(edge + 1) % footprint.size()]},
+                    0.24,
+                    3.2,
+                    level_id);
+                document.set_wall_type(wall_id, edge == 0 || edge == 2
+                    ? glass_wall_type
+                    : structural_wall_type);
+                if (story + 1 < story_count) {
+                    document.set_wall_level_constraints(
+                        wall_id, level_id, levels[static_cast<std::size_t>(story + 1)],
+                        0.0, 0.0, tbe::core::WallHeightMode::TopLevel);
+                }
+                perimeter.push_back(wall_id);
+            }
+
+            // The core is deliberately centered and fully inside the footprint:
+            // the stair and core door can never land on a facade corner.
+            const auto core_min_x = origin_x + 5.2;
+            const auto core_max_x = origin_x + 8.8;
+            const auto core_min_y = origin_y + 2.3;
+            const auto core_max_y = origin_y + 7.7;
+            const std::vector<Line2> core_axes{
+                Line2{.start = {.x = core_min_x, .y = core_min_y}, .end = {.x = core_max_x, .y = core_min_y}},
+                Line2{.start = {.x = core_max_x, .y = core_min_y}, .end = {.x = core_max_x, .y = core_max_y}},
+                Line2{.start = {.x = core_max_x, .y = core_max_y}, .end = {.x = core_min_x, .y = core_max_y}},
+                Line2{.start = {.x = core_min_x, .y = core_max_y}, .end = {.x = core_min_x, .y = core_min_y}},
+            };
+            ElementId front_core_wall_id{};
+            for (std::size_t edge = 0; edge < core_axes.size(); ++edge) {
+                const auto core_wall = document.create_wall(
+                    "Building " + std::to_string(building + 1) + " service core",
+                    core_axes[edge], 0.18, 3.2, level_id);
+                if (edge == 0) {
+                    front_core_wall_id = core_wall;
+                }
+                document.set_wall_type(
+                    core_wall, edge == 1 ? glass_partition_type : structural_wall_type);
+                if (story + 1 < story_count) {
+                    document.set_wall_level_constraints(
+                        core_wall, level_id, levels[static_cast<std::size_t>(story + 1)],
+                        0.0, 0.0, tbe::core::WallHeightMode::TopLevel);
+                }
+            }
+            // Both door and window offsets have a 0.80 m corner clearance.
+            document.create_door(
+                "Building " + std::to_string(building + 1) + " core door",
+                front_core_wall_id,
+                1.30, 1.0, 2.1);
+
+            document.create_door(
+                "Building " + std::to_string(building + 1) + " main entry",
+                perimeter.front(), width * 0.5 - 0.65, 1.30, 2.20);
+            document.create_window(
+                "Building " + std::to_string(building + 1) + " front glazing",
+                perimeter.front(), 2.40, 1.80, 1.45, 0.90);
+            document.create_window(
+                "Building " + std::to_string(building + 1) + " rear glazing",
+                perimeter[2], 4.20, 2.20, 1.45, 0.90);
+            document.create_window(
+                "Building " + std::to_string(building + 1) + " side window A",
+                perimeter[1], 2.00, 1.60, 1.35, 1.00);
+            document.create_window(
+                "Building " + std::to_string(building + 1) + " side window B",
+                perimeter[1], 6.20, 1.60, 1.35, 1.00);
+            document.create_window(
+                "Building " + std::to_string(building + 1) + " side window C",
+                perimeter[3], 2.00, 1.60, 1.35, 1.00);
+            document.create_window(
+                "Building " + std::to_string(building + 1) + " side window D",
+                perimeter[3], 6.20, 1.60, 1.35, 1.00);
+
+            document.create_column(level_id, {.x = origin_x + 1.2, .y = origin_y + 1.2}, 0.28, 0.28, 3.2, concrete);
+            document.create_column(level_id, {.x = origin_x + width - 1.2, .y = origin_y + 1.2}, 0.28, 0.28, 3.2, concrete);
+            document.create_column(level_id, {.x = origin_x + 1.2, .y = origin_y + depth - 1.2}, 0.28, 0.28, 3.2, concrete);
+            document.create_column(level_id, {.x = origin_x + width - 1.2, .y = origin_y + depth - 1.2}, 0.28, 0.28, 3.2, concrete);
+            document.create_beam(level_id, {.x = origin_x + 1.0, .y = origin_y + 5.0}, {.x = origin_x + width - 1.0, .y = origin_y + 5.0}, 0.24, 0.42, concrete);
+            document.create_beam(level_id, {.x = origin_x + 7.0, .y = origin_y + 1.0}, {.x = origin_x + 7.0, .y = origin_y + depth - 1.0}, 0.24, 0.42, concrete);
+
+            if (story + 1 < story_count) {
+                document.create_stair(
+                    level_id, levels[static_cast<std::size_t>(story + 1)],
+                    {.x = core_min_x + 0.40, .y = core_min_y + 0.50},
+                    {.x = 0.0, .y = 1.0}, 1.20, 3.2, 3.8, 18, 17,
+                    concrete, stair_assembly);
+            }
+            document.create_slab(level_id, footprint, 0.198, concrete, interior_floor_assembly, 0.0);
+            document.create_ceiling_system_from_profile(level_id, footprint, ceiling_assembly, 2.85);
+            if (story + 1 == story_count) {
+                top_perimeter = perimeter;
+            }
+        }
+        document.create_roof(
+            roof_level_id, footprint, tbe::core::RoofType::Flat, 0.20,
+            concrete, roof_assembly, std::nullopt, 0.35, std::move(top_perimeter));
+    }
+
+    document.auto_join_walls();
+    document.set_automatic_wall_join_enabled(true);
+    // Room-derived systems exercise the same authoring path users will use
+    // after opening a template, while manual slabs remain visible as the
+    // structural floor plates.
+    (void)document.detect_rooms();
+    (void)document.generate_floor_systems_for_all_rooms(interior_floor_assembly);
+    (void)document.generate_ceiling_systems_for_all_rooms(ceiling_assembly, 2.85);
+    document.clear_dirty_room_requests();
+    document.regenerate_dirty_geometry(tbe::core::GeometryDetail::Envelope);
+    return project;
+}
+
 double distance(Point2 left, Point2 right) {
     const auto dx = left.x - right.x;
     const auto dy = left.y - right.y;
@@ -614,6 +904,17 @@ std::string floor_surface_key(
     std::transform(searchable.begin(), searchable.end(), searchable.begin(), [](unsigned char character) {
         return static_cast<char>(std::tolower(character));
     });
+    if (searchable.find("grass") != std::string::npos ||
+        searchable.find("lawn") != std::string::npos ||
+        searchable.find("landscape") != std::string::npos) {
+        return "grass";
+    }
+    if (searchable.find("paving") != std::string::npos ||
+        searchable.find("walkway") != std::string::npos ||
+        searchable.find("sidewalk") != std::string::npos ||
+        searchable.find("paver") != std::string::npos) {
+        return "paving";
+    }
     if (searchable.find("asphalt") != std::string::npos ||
         searchable.find("bitumen") != std::string::npos) {
         return "asphalt";
@@ -3787,6 +4088,33 @@ ApiResult<ElementIdDTO> EngineSession::create_residential_template(int building_
         }
         if (primary_level.value == 0) {
             return error_result<ElementIdDTO>(ApiStatus::InternalError, "residential template did not create a level");
+        }
+        impl_->undo_stack.clear();
+        impl_->redo_stack.clear();
+        impl_->clear_caches();
+        impl_->freshness = FreshnessSummaryDTO{};
+        impl_->mark_all_derived_dirty();
+        (void)recompute_impl(*impl_, ComputeMode::InteractivePreview);
+        rebuild_spatial_index_impl(*impl_);
+        return success_result(primary_level);
+    } catch (const std::exception& error) {
+        return error_result<ElementIdDTO>(status_from_exception(error), error.what());
+    }
+}
+
+ApiResult<ElementIdDTO> EngineSession::create_showcase_template(int template_kind) {
+    ElementIdDTO primary_level{};
+    try {
+        auto template_project = make_showcase_template(template_kind);
+        impl_->project = std::move(template_project);
+        for (const auto& element : impl_->document().elements()) {
+            if (element.level() != nullptr) {
+                primary_level.value = element.id();
+                break;
+            }
+        }
+        if (primary_level.value == 0) {
+            return error_result<ElementIdDTO>(ApiStatus::InternalError, "showcase template did not create a level");
         }
         impl_->undo_stack.clear();
         impl_->redo_stack.clear();

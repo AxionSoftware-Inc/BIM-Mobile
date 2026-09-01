@@ -406,6 +406,12 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
   ) async {
     if (_isBusy) return;
     ++_sceneLoadGeneration;
+    final showcaseKind = switch (template) {
+      _ResidentialTemplateKind.modern3 => 0,
+      _ResidentialTemplateKind.glassTower9 => 1,
+      _ResidentialTemplateKind.glassCampus6x9 => 2,
+      _ => null,
+    };
     final buildingCount =
         template == _ResidentialTemplateKind.campus6x9 ? 6 : 1;
     final storyCount = template == _ResidentialTemplateKind.default3 ? 3 : 9;
@@ -414,6 +420,12 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
       _ResidentialTemplateKind.tower9 => '9-storey residential building',
       _ResidentialTemplateKind.campus6x9 =>
         'Residential campus with six 9-storey buildings',
+      _ResidentialTemplateKind.modern3 =>
+        'Modern glass courtyard house with site landscape',
+      _ResidentialTemplateKind.glassTower9 =>
+        'Modern glass residential tower with central core',
+      _ResidentialTemplateKind.glassCampus6x9 =>
+        'Modern glass campus with six ordered buildings',
     };
     _currentProjectName = label;
     _updateViewportState(() {
@@ -425,11 +437,16 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
 
     try {
       final previousRepository = _engineRepository;
-      final launch = await _projectLifecycle.createResidentialTemplate(
-        existingSession: previousRepository,
-        buildingCount: buildingCount,
-        storyCount: storyCount,
-      );
+      final launch = showcaseKind == null
+          ? await _projectLifecycle.createResidentialTemplate(
+              existingSession: previousRepository,
+              buildingCount: buildingCount,
+              storyCount: storyCount,
+            )
+          : await _projectLifecycle.createShowcaseTemplate(
+              existingSession: previousRepository,
+              templateKind: showcaseKind,
+            );
       if (!mounted) {
         if (launch.createdSession) launch.session.dispose();
         return;
@@ -441,7 +458,7 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
         sourceLabel: '$label template',
         resetProjectChanges: true,
       );
-      if (buildingCount == 1) {
+      if (buildingCount == 1 || showcaseKind != null) {
         // A tower is most useful as a whole-building visual test on first
         // open. Switching back to plan re-enables nearby-level streaming.
         await _setProjectionMode(RenderSceneProjectionMode.isometric);

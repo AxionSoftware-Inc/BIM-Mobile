@@ -1557,6 +1557,50 @@ int main() {
         tbe_engine_destroy(template_handle);
     }
 
+    // Modern showcase fixtures keep the original templates intact while
+    // proving the new ordered site/building path through the same C API used
+    // by Flutter. Each preset must expose real landscape surfaces, glass
+    // walls, centered openings and an interior stair/core.
+    for (const auto showcase_kind : {0, 1, 2}) {
+        auto showcase_result = tbe::api::create_session("Showcase Template Test");
+        assert(showcase_result.ok() && showcase_result.value.has_value());
+        auto showcase = std::move(*showcase_result.value);
+        const auto created = showcase->create_showcase_template(showcase_kind);
+        assert(created.ok() && created.value.has_value());
+        const auto scene = showcase->get_render_scene();
+        assert(scene.ok() && scene.value.has_value());
+        assert(scene.value->levels.size() == (showcase_kind == 0 ? 4u : 10u));
+        assert(std::any_of(scene.value->wall_types.begin(), scene.value->wall_types.end(), [](const auto& type) {
+            return type.name == "Exterior Glass Wall";
+        }));
+        assert(std::any_of(scene.value->floor_types.begin(), scene.value->floor_types.end(), [](const auto& type) {
+            return type.surface_key == "grass";
+        }));
+        assert(std::any_of(scene.value->floor_types.begin(), scene.value->floor_types.end(), [](const auto& type) {
+            return type.surface_key == "paving";
+        }));
+        assert(std::any_of(scene.value->floor_types.begin(), scene.value->floor_types.end(), [](const auto& type) {
+            return type.surface_key == "asphalt";
+        }));
+        const auto glass_wall_count = std::count_if(
+            scene.value->objects.begin(), scene.value->objects.end(), [](const auto& object) {
+                const auto type = object.metadata.find("wall_type_name");
+                return object.kind == tbe::api::ApiElementKind::Wall &&
+                       type != object.metadata.end() && type->second == "Exterior Glass Wall";
+            });
+        const auto stair_count = std::count_if(
+            scene.value->objects.begin(), scene.value->objects.end(), [](const auto& object) {
+                return object.kind == tbe::api::ApiElementKind::Stair;
+            });
+        assert(glass_wall_count >= (showcase_kind == 2 ? 6u : 1u));
+        assert(stair_count >= (showcase_kind == 0 ? 2u : 8u));
+        assert(std::any_of(scene.value->objects.begin(), scene.value->objects.end(), [](const auto& object) {
+            return object.kind == tbe::api::ApiElementKind::Slab &&
+                   object.metadata.find("floor_type") != object.metadata.end() &&
+                   object.metadata.at("floor_type") == "grass";
+        }));
+    }
+
     // Large-project gate: every engine change must keep both the single tower
     // and the six-building campus on the native authoring/snapshot path. This
     // is intentionally a correctness/crash gate, not a machine-dependent

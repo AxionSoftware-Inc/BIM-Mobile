@@ -15,6 +15,10 @@ abstract interface class ViewerTemplateGateway {
     required int buildingCount,
     required int storyCount,
   });
+
+  Future<RenderSceneLoadResult> createShowcaseTemplate({
+    required int templateKind,
+  });
 }
 
 /// A live, disposable native project session owned above the FFI adapter.

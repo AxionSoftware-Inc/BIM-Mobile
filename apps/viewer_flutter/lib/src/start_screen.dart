@@ -149,6 +149,45 @@ class StartScreen extends StatelessWidget {
                                       WorkspaceTemplate.campus6x9,
                                     ),
                           ),
+                          _TemplateCard(
+                            width: cardWidth,
+                            template: WorkspaceTemplate.modern3,
+                            title: 'Modern glass house',
+                            subtitle: 'Courtyard house with ordered site layout',
+                            meta: '3 levels · lawn · asphalt · paving',
+                            icon: Icons.house_siding_outlined,
+                            onPressed: busy
+                                ? null
+                                : () => onSelectTemplate(
+                                      WorkspaceTemplate.modern3,
+                                    ),
+                          ),
+                          _TemplateCard(
+                            width: cardWidth,
+                            template: WorkspaceTemplate.glassTower9,
+                            title: 'Glass residential tower',
+                            subtitle: 'Central service core and curtain facade',
+                            meta: '9 levels · glass wall · core stair',
+                            icon: Icons.business_outlined,
+                            onPressed: busy
+                                ? null
+                                : () => onSelectTemplate(
+                                      WorkspaceTemplate.glassTower9,
+                                    ),
+                          ),
+                          _TemplateCard(
+                            width: cardWidth,
+                            template: WorkspaceTemplate.glassCampus6x9,
+                            title: 'Glass courtyard campus',
+                            subtitle: 'Six ordered towers around a shared road',
+                            meta: '54 levels · road · plaza · walkways',
+                            icon: Icons.account_balance_outlined,
+                            onPressed: busy
+                                ? null
+                                : () => onSelectTemplate(
+                                      WorkspaceTemplate.glassCampus6x9,
+                                    ),
+                          ),
                         ],
                       ),
                       const SizedBox(height: 30),
@@ -632,7 +671,9 @@ class _TemplateCard extends StatelessWidget {
     final enabled = onPressed != null;
     return SizedBox(
       width: width,
-      height: 316,
+      // Six templates now share the same responsive grid; keep enough room
+      // for a two-line modern title on compact tablet widths.
+      height: 332,
       child: Card(
         clipBehavior: Clip.antiAlias,
         elevation: enabled ? 1.5 : 0,
@@ -804,7 +845,43 @@ class _TemplatePreviewPainter extends CustomPainter {
             offsetY: offset.dy,
           );
         }
+      case WorkspaceTemplate.modern3:
+        _drawModernGround(canvas, size);
+        _drawBuilding(canvas, size, floors: 3, scale: 0.90, offsetX: 0.0,
+            modern: true);
+      case WorkspaceTemplate.glassTower9:
+        _drawModernGround(canvas, size);
+        _drawBuilding(canvas, size, floors: 9, scale: 0.78, offsetX: 0.0,
+            modern: true);
+      case WorkspaceTemplate.glassCampus6x9:
+        _drawCampusGround(canvas, size);
+        for (final offset in <Offset>[
+          const Offset(-0.28, -0.10),
+          const Offset(0.00, -0.16),
+          const Offset(0.28, -0.10),
+          const Offset(-0.28, 0.13),
+          const Offset(0.00, 0.19),
+          const Offset(0.28, 0.13),
+        ]) {
+          _drawBuilding(canvas, size, floors: 9, scale: 0.43,
+              offsetX: offset.dx, offsetY: offset.dy, modern: true);
+        }
     }
+  }
+
+  void _drawModernGround(Canvas canvas, Size size) {
+    final rect = Rect.fromLTWH(size.width * 0.14, size.height * 0.64,
+        size.width * 0.72, size.height * 0.18);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(rect, const Radius.circular(12)),
+      Paint()..color = secondary.withValues(alpha: 0.13),
+    );
+    final pathPaint = Paint()
+      ..color = primary.withValues(alpha: 0.18)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2;
+    canvas.drawLine(Offset(size.width * 0.16, size.height * 0.73),
+        Offset(size.width * 0.84, size.height * 0.73), pathPaint);
   }
 
   void _drawCampusGround(Canvas canvas, Size size) {
@@ -848,13 +925,12 @@ class _TemplatePreviewPainter extends CustomPainter {
     required double scale,
     required double offsetX,
     double offsetY = 0,
+    bool modern = false,
   }) {
     const footprint = <Offset>[
       Offset(0.00, 0.00),
       Offset(1.00, 0.00),
-      Offset(1.00, 0.50),
-      Offset(0.58, 0.50),
-      Offset(0.58, 1.00),
+      Offset(1.00, 1.00),
       Offset(0.00, 1.00),
     ];
     final center = Offset(
@@ -889,7 +965,9 @@ class _TemplatePreviewPainter extends CustomPainter {
         ..lineTo(top[next].dx, top[next].dy)
         ..lineTo(top[edge].dx, top[edge].dy)
         ..close();
-      final faceColor = edge == 0 || edge == 1 || edge == 2
+      final faceColor = modern && (edge == 0 || edge == 2)
+          ? secondary.withValues(alpha: 0.28)
+          : edge == 0 || edge == 1 || edge == 2
           ? primary.withValues(alpha: 0.19)
           : secondary.withValues(alpha: 0.16);
       canvas.drawPath(face, Paint()..color = faceColor);

@@ -55,6 +55,9 @@ class TbeViewerApi {
         _createResidentialTemplate = library.lookupFunction<
             _CreateResidentialTemplateNative,
             _CreateResidentialTemplateDart>('tbe_create_residential_template'),
+        _createShowcaseTemplate = library.lookupFunction<
+            _CreateShowcaseTemplateNative,
+            _CreateShowcaseTemplateDart>('tbe_create_showcase_template'),
         _getSchemaVersion =
             library.lookupFunction<_SchemaVersionNative, _SchemaVersionDart>(
                 'tbe_get_schema_version'),
@@ -211,6 +214,7 @@ class TbeViewerApi {
   final _SetIntOptionDart _setPerformanceProfile;
   final _SetIntOptionDart _setComputeMode;
   final _CreateResidentialTemplateDart _createResidentialTemplate;
+  final _CreateShowcaseTemplateDart _createShowcaseTemplate;
   final _SchemaVersionDart _getSchemaVersion;
   final _ProjectLoadJsonDart _projectLoadJson;
   final _ProjectNewDart _projectNew;

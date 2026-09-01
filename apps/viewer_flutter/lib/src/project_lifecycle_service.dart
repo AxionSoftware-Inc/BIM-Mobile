@@ -71,6 +71,27 @@ class ProjectLifecycleService<T extends ViewerProjectSession> {
     }
   }
 
+  Future<ProjectSessionResult<T>> createShowcaseTemplate({
+    T? existingSession,
+    required int templateKind,
+  }) async {
+    final createdSession = existingSession == null;
+    final session = existingSession ?? await _sessionFactory.create();
+    try {
+      final renderScene = await session.createShowcaseTemplate(
+        templateKind: templateKind,
+      );
+      return ProjectSessionResult<T>(
+        session: session,
+        createdSession: createdSession,
+        renderScene: renderScene,
+      );
+    } catch (_) {
+      if (createdSession) session.dispose();
+      rethrow;
+    }
+  }
+
   Future<ProjectSessionResult<T>> loadJson({
     required String projectName,
     required String json,

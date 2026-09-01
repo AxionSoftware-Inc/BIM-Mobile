@@ -773,6 +773,9 @@ public:
     // is intentionally one transaction: UI templates never assemble a large
     // semantic model through local RenderScene mutations.
     ApiResult<ElementIdDTO> create_residential_template(int building_count, int story_count);
+    // Modern glass/site showcase presets are kept separate from the original
+    // residential fixture so old projects remain reproducible.
+    ApiResult<ElementIdDTO> create_showcase_template(int template_kind);
     ApiResult<DirtySummaryDTO> get_dirty_summary() const;
     ApiResult<HistorySummaryDTO> get_history_summary() const;
     ApiResult<FreshnessSummaryDTO> get_freshness_summary() const;

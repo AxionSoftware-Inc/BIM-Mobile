@@ -140,6 +140,35 @@ void registerEngineIntegrationTests() {
     expect(saved, contains('source_wall_ids'));
   });
 
+  test('engine showcase template exposes ordered site and glass facade',
+      () async {
+    final repository = ViewerRepository(TbeViewerApi.load());
+    addTearDown(repository.dispose);
+
+    final result = await repository.createShowcaseTemplate(templateKind: 0);
+    final scene = result.scene!;
+    expect(result.errors, isEmpty);
+    expect(scene.levels, hasLength(4));
+    expect(
+      scene.wallTypes.map((type) => type.name),
+      contains('Exterior Glass Wall'),
+    );
+    expect(
+      scene.floorTypes.map((type) => type.surfaceKind),
+      containsAll(<FloorSurfaceKind>[
+        FloorSurfaceKind.grass,
+        FloorSurfaceKind.paving,
+        FloorSurfaceKind.asphalt,
+        FloorSurfaceKind.wood,
+      ]),
+    );
+    expect(scene.kindCounts['stair'], greaterThanOrEqualTo(2));
+    expect(scene.kindCounts['window'], greaterThanOrEqualTo(4));
+    final saved = await repository.saveProjectJson();
+    expect(saved, contains('Modern Glass Courtyard House'));
+    expect(saved, contains('Landscape Lawn Ground'));
+  });
+
   test('engine authoring creates a picked-wall floor in the render scene',
       () async {
     final repository = ViewerRepository(TbeViewerApi.load());

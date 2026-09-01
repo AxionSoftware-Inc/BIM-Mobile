@@ -159,6 +159,16 @@ typedef _CreateResidentialTemplateDart = int Function(
   int,
   ffi.Pointer<ffi.Uint64>,
 );
+typedef _CreateShowcaseTemplateNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Int32,
+  ffi.Pointer<ffi.Uint64>,
+);
+typedef _CreateShowcaseTemplateDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  int,
+  ffi.Pointer<ffi.Uint64>,
+);
 typedef _ProjectLoadJsonNative = ffi.Int32 Function(
   ffi.Pointer<ffi.Void>,
   ffi.Pointer<Utf8>,
