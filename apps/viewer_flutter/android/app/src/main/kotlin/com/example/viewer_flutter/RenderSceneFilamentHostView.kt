@@ -155,7 +155,9 @@ void material(inout MaterialInputs material) {
 private const val SOLID_WALL_MAT = """
 void material(inout MaterialInputs material) {
     prepareMaterial(material);
-    material.baseColor = materialParams.baseColor;
+    // Solid walls are opaque by contract. Glass walls are routed to the
+    // separate transparent wall material in materialForObject().
+    material.baseColor = float4(materialParams.baseColor.rgb, 1.0);
 }
 """
 
@@ -2608,17 +2610,11 @@ internal class RenderSceneFilamentHostView(
         .also { buffer ->
           buffer.setBuffer(engine, chunk.indices.duplicate().apply { rewind() })
         }
-      // Cache chunks are already partitioned by element kind.  Keep the
-      // proven neutral path for non-wall chunks, but let wall chunks use the
-      // semantic wall family so Solid can draw neutral brick joints and
-      // Shaded can show the light type-specific material palette.
-      val sharedMaterial = if (normalizeKind(chunk.kind) == "wall") {
-        materialForObject(representative, fallbackMaterial)
-      } else if (displayStyle == "solid") {
-        solidMaterial ?: fallbackMaterial
-      } else {
-        fallbackMaterial
-      }
+      // Cache chunks are already partitioned by element kind, but the same
+      // semantic material contract must apply to cached and live faces. In
+      // particular, Solid floors/walls must stay opaque while glass walls
+      // alone use the transparent pipeline.
+      val sharedMaterial = materialForObject(representative, fallbackMaterial)
       val baseColor = displayBaseColor(representative)
       val materialInstance = sharedMaterial.createInstance().also { instance ->
         applySectionBoxState(instance)
@@ -2926,10 +2922,11 @@ internal class RenderSceneFilamentHostView(
         solidFloorMaterial ?: solidMaterial ?: fallback
       } else if (kind == "wall") {
         if (wallSurfaceVariant(objectData) == "glass") {
-          // Use the proven transparent Filament pipeline in Solid too.  The
-          // shader receives displayShade=0, so this stays achromatic while
-          // avoiding the dark slab produced by the separate unlit blend path.
-          wallGlassMaterial ?: solidWallGlassMaterial ?: fallback
+          // Solid glass still uses a transparent material, but it must not
+          // borrow the lit Shaded material. Keeping the family explicit
+          // prevents a display-style change from leaking blend state into
+          // opaque walls and floors.
+          solidWallGlassMaterial ?: wallGlassMaterial ?: fallback
         } else {
           solidWallMaterial ?: fallback
         }

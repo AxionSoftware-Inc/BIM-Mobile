@@ -115,7 +115,10 @@ void material(inout MaterialInputs material) {
                     ? step(0.94, fract((world.x - world.z) / 0.31)) * 0.14
                     : max(step(0.965, fract(world.x / 0.45)), step(0.965, fract(world.z / 0.45))) * 0.24;
     float3 neutral = materialParams.baseColor.rgb * (1.0 - line);
-    material.baseColor = float4(neutral, materialParams.baseColor.a);
+    // Solid floor faces are always opaque. Transparency is reserved for the
+    // dedicated glass-wall material, otherwise imported alpha can make slabs
+    // look like ghost geometry.
+    material.baseColor = float4(neutral, 1.0);
 }
 """
 

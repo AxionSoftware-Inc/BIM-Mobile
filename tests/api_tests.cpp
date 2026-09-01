@@ -1599,6 +1599,25 @@ int main() {
                    object.metadata.find("floor_type") != object.metadata.end() &&
                    object.metadata.at("floor_type") == "grass";
         }));
+        const auto find_slab_by_name = [&](const std::string& name) {
+            return std::find_if(scene.value->objects.begin(), scene.value->objects.end(), [&](const auto& object) {
+                const auto type_name = object.metadata.find("floor_type_name");
+                return object.kind == tbe::api::ApiElementKind::Slab &&
+                       type_name != object.metadata.end() && type_name->second == name;
+            });
+        };
+        const auto lawn = find_slab_by_name("Landscape Lawn Ground");
+        const auto asphalt_drive = find_slab_by_name("Asphalt Drive");
+        const auto paved_walk = find_slab_by_name("Paved Walkway");
+        const auto foundation = find_slab_by_name("Showcase Foundation");
+        assert(lawn != scene.value->objects.end());
+        assert(asphalt_drive != scene.value->objects.end());
+        assert(paved_walk != scene.value->objects.end());
+        assert(foundation != scene.value->objects.end());
+        assert(lawn->bounds.max.z < asphalt_drive->bounds.max.z);
+        assert(asphalt_drive->bounds.max.z < paved_walk->bounds.max.z);
+        assert(paved_walk->bounds.max.z < foundation->bounds.max.z);
+        assert(nearly_equal(foundation->bounds.max.z, 0.0, 1.0e-6));
     }
 
     // Large-project gate: every engine change must keep both the single tower

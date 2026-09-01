@@ -183,6 +183,7 @@ class FallbackRenderScenePainter extends CustomPainter
       final fillAlpha = displayStyle == RenderSceneDisplayStyle.wireframe
           ? 0.0
           : _fillAlphaForObject(
+              object: object,
               kind: object.kindKey,
               isSelected: isSelected,
               isHighlighted: isHighlighted,

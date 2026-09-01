@@ -429,9 +429,10 @@ Project make_showcase_template(int template_kind) {
         tbe::core::LayeredAssemblyKind::Floor, "Landscape Lawn Ground", {
             tbe::core::WallAssemblyLayer{.material_id = grass, .thickness_meters = 0.12, .function = tbe::core::WallLayerFunction::ExteriorFinish},
         });
-    const auto concrete_floor_assembly = document.create_layered_assembly(
-        tbe::core::LayeredAssemblyKind::Floor, "Showcase Concrete Plaza", {
-            tbe::core::WallAssemblyLayer{.material_id = concrete, .thickness_meters = 0.16, .function = tbe::core::WallLayerFunction::Core, .structural = true},
+    const auto foundation_assembly = document.create_layered_assembly(
+        tbe::core::LayeredAssemblyKind::Floor, "Showcase Foundation", {
+            tbe::core::WallAssemblyLayer{.material_id = concrete, .thickness_meters = 0.26, .function = tbe::core::WallLayerFunction::Core, .structural = true},
+            tbe::core::WallAssemblyLayer{.material_id = insulation, .thickness_meters = 0.08, .function = tbe::core::WallLayerFunction::Insulation},
         });
     const auto ceiling_assembly = document.create_layered_assembly(
         tbe::core::LayeredAssemblyKind::Ceiling, "Showcase Ceiling", {
@@ -487,19 +488,21 @@ Project make_showcase_template(int template_kind) {
         };
     };
 
-    // A continuous lawn gives the building collection a readable site datum.
+    // Site vertical datum: building floors finish at z=0. The lawn, road and
+    // paving are stepped below that datum so their coplanar borders never
+    // compete in the depth buffer on mobile GPUs.
     document.create_slab(
         levels.front(), rectangle(site_min_x, site_min_y, site_max_x, site_max_y),
-        0.12, grass, lawn_assembly, -0.12);
+        0.12, grass, lawn_assembly, -0.46);
     // Asphalt is kept in simple, non-overlapping bands so it reads as a road
     // and parking surface in both solid and shaded viewport modes.
     document.create_slab(
-        levels.front(), rectangle(site_min_x, 0.8, site_max_x, 3.5),
-        0.08, asphalt, asphalt_assembly, -0.08);
+        levels.front(), rectangle(site_min_x, 0.8, site_max_x, 2.0),
+        0.08, asphalt, asphalt_assembly, -0.34);
     if (is_campus) {
         document.create_slab(
             levels.front(), rectangle(site_min_x, 18.2, site_max_x, 22.0),
-            0.08, asphalt, asphalt_assembly, -0.08);
+            0.08, asphalt, asphalt_assembly, -0.34);
     }
     for (int building = 0; building < building_count; ++building) {
         const auto column = building % columns;
@@ -514,14 +517,14 @@ Project make_showcase_template(int template_kind) {
         document.create_slab(
             levels.front(), rectangle(origin_x + width * 0.5 - 2.0, origin_y - 3.0,
                                       origin_x + width * 0.5 + 2.0, origin_y - 1.1),
-            0.06, paving, paving_assembly, -0.06);
+            0.06, paving, paving_assembly, -0.26);
         document.create_slab(
             levels.front(), rectangle(origin_x - 1.0, origin_y - 1.1,
                                       origin_x + width + 1.0, origin_y),
-            0.06, paving, paving_assembly, -0.06);
+            0.06, paving, paving_assembly, -0.26);
 
         document.create_slab(
-            levels.front(), footprint, 0.34, concrete, concrete_floor_assembly, -0.34);
+            levels.front(), footprint, 0.34, concrete, foundation_assembly, -0.34);
         std::vector<ElementId> top_perimeter;
         for (int story = 0; story < story_count; ++story) {
             const auto level_id = levels[static_cast<std::size_t>(story)];

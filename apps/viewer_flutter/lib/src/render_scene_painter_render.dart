@@ -138,12 +138,24 @@ mixin _FallbackSceneRenderMixin {
   }
 
   double _fillAlphaForObject({
+    required RenderSceneObject object,
     required String kind,
     required bool isSelected,
     required bool isHighlighted,
   }) {
     if (isSelected || isHighlighted) {
       return 0.84;
+    }
+
+    // Solid is a coordination view: faces must occlude one another so the
+    // fallback renderer follows the native Filament contract. Preserve the
+    // glass exception when metadata is available; every other solid face is
+    // opaque so floors and internal walls cannot show through one another.
+    if (displayStyle == RenderSceneDisplayStyle.solid) {
+      if (kind == 'wall' && _isGlassWall(object)) {
+        return 0.10;
+      }
+      return kind == 'room' ? 0.22 : 1.0;
     }
 
     if (projectionMode.isElevation) {
@@ -192,6 +204,18 @@ mixin _FallbackSceneRenderMixin {
       default:
         return 0.92;
     }
+  }
+
+  bool _isGlassWall(RenderSceneObject object) {
+    if (object.kindKey != 'wall') {
+      return false;
+    }
+    final values = <String>[
+      object.metadata['wall_type_name']?.toString() ?? '',
+      object.metadata['wall_type_category']?.toString() ?? '',
+      object.materialCategory,
+    ];
+    return values.any((value) => value.toLowerCase().contains('glass'));
   }
 
   double _triangleStrokeWidth({
