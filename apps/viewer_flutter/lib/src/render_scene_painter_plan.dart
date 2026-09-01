@@ -280,11 +280,14 @@ mixin _FallbackScenePlanPainterMixin {
       footprints.map((footprint) => footprint.path),
     );
     const wallColor = Color(0xFF334155);
+    final wallFillAlpha = displayStyle == RenderSceneDisplayStyle.solid
+        ? 1.0
+        : 0.28;
     canvas.drawPath(
       joinedWallPath,
       Paint()
         ..style = PaintingStyle.fill
-        ..color = wallColor.withValues(alpha: 0.28),
+        ..color = wallColor.withValues(alpha: wallFillAlpha),
     );
 
     // Keep assembly geometry semantic and lightweight. Layer strips from
