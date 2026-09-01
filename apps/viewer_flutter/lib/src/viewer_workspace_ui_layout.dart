@@ -454,11 +454,15 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
     required bool selected,
     required VoidCallback? onPressed,
   }) {
-    return ChoiceChip(
-      label: Text(label),
-      selected: selected,
-      onSelected: onPressed == null ? null : (_) => onPressed(),
-      visualDensity: VisualDensity.compact,
+    return Tooltip(
+      message: label,
+      child: ChoiceChip(
+        avatar: Icon(_toolbarIcon(label), size: 17),
+        label: Text(label),
+        selected: selected,
+        onSelected: onPressed == null ? null : (_) => onPressed(),
+        visualDensity: VisualDensity.compact,
+      ),
     );
   }
 
@@ -912,3 +916,27 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
     );
   }
 }
+
+IconData _toolbarIcon(String label) => switch (label) {
+      '3D' || '3D View' => Icons.view_in_ar_outlined,
+      'Shaded' => Icons.gradient_outlined,
+      'Solid' => Icons.circle_outlined,
+      'Wire' || 'Wireframe' => Icons.grid_4x4_outlined,
+      'Ortho' => Icons.crop_square_outlined,
+      'Persp' => Icons.threed_rotation,
+      'Section Box' || 'Section Box on' => Icons.crop_free_outlined,
+      'Fit' => Icons.fit_screen_outlined,
+      'Delete' || 'Delete (2)' => Icons.delete_outline,
+      'Select' => Icons.ads_click_outlined,
+      'Wall' => Icons.architecture_outlined,
+      'Level' || 'Move level' => Icons.height_outlined,
+      'Move wall' => Icons.open_with_outlined,
+      'Door' => Icons.door_front_door_outlined,
+      'Window' => Icons.window_outlined,
+      'Move opening' => Icons.compare_arrows_outlined,
+      'Floor' => Icons.layers_outlined,
+      'Ceiling' => Icons.space_dashboard_outlined,
+      'Roof' => Icons.roofing_outlined,
+      'Stair' => Icons.stairs_outlined,
+      _ => Icons.tune_outlined,
+    };

@@ -229,23 +229,30 @@ void append_layer_prism(
         mesh.vertices.push_back(d);
         append_quad(mesh, base + 0, base + 1, base + 2, base + 3, material_id);
     };
-    append_rect(
-        {x_min_at_y_min, y_min, 0.0}, {x_min_at_y_max, y_max, 0.0},
-        {x_min_at_y_max, y_max, height}, {x_min_at_y_min, y_min, height}
-    );
     if (wraps_ends) {
+        // End caps are only present on layers that wrap the wall endpoints.
+        // The long y_min/y_max faces above already own the two wall faces;
+        // duplicating either of them here creates coplanar polygons and
+        // produces z-fighting bands while the camera orbits on mobile GPUs.
+        append_rect(
+            {x_min_at_y_min, y_min, 0.0}, {x_min_at_y_max, y_max, 0.0},
+            {x_min_at_y_max, y_max, height}, {x_min_at_y_min, y_min, height}
+        );
         append_rect(
             {x_max_at_y_min, y_min, 0.0}, {x_max_at_y_min, y_min, height},
             {x_max_at_y_max, y_max, height}, {x_max_at_y_max, y_max, 0.0}
         );
-        append_rect(
-            {x_min_at_y_min, y_min, 0.0}, {x_min_at_y_min, y_min, height},
-            {x_max_at_y_min, y_min, height}, {x_max_at_y_min, y_min, 0.0}
-        );
     }
+    // Close the actual bottom and top of the layered prism. These used to be
+    // emitted as a second copy of the y_min/y_max faces, which both sealed
+    // hosted openings and left two coincident wall surfaces in every layer.
     append_rect(
-        {x_min_at_y_max, y_max, 0.0}, {x_max_at_y_max, y_max, 0.0},
-        {x_max_at_y_max, y_max, height}, {x_min_at_y_max, y_max, height}
+        {x_min_at_y_min, y_min, 0.0}, {x_max_at_y_min, y_min, 0.0},
+        {x_max_at_y_max, y_max, 0.0}, {x_min_at_y_max, y_max, 0.0}
+    );
+    append_rect(
+        {x_min_at_y_min, y_min, height}, {x_min_at_y_max, y_max, height},
+        {x_max_at_y_max, y_max, height}, {x_max_at_y_min, y_min, height}
     );
 
     // Only layers configured to wrap openings receive jamb/head/sill return
@@ -322,13 +329,10 @@ MeshBuffer extrude_profile(const WallProfile2D& profile, double height_meters) {
         mesh.indices.push_back(static_cast<std::uint32_t>(vertex_count + index + 1));
     }
 
-    // The opening rectangles are not decorative metadata.  The two long wall
-    // faces must be tessellated around them; otherwise the reveal faces below
-    // merely sit inside an opaque wall and Solid mode still shows a filled
-    // surface behind every door/window.  The wall profile is a four-point
-    // envelope whose edges 0 and 2 are the two long faces (mitering changes
-    // their X extents, but not their Y planes).  End caps and the top/bottom
-    // caps remain intact because hosted openings are vertical cuts.
+    // Hosted openings are real voids, not decorative reveal geometry. The two
+    // long wall faces must be tessellated around them; otherwise an opaque
+    // wall face remains behind every door/window and can depth-fight with the
+    // hosted element in the viewport.
     append_layer_face_with_openings(
         mesh,
         profile.polygon[0].y,
@@ -347,6 +351,8 @@ MeshBuffer extrude_profile(const WallProfile2D& profile, double height_meters) {
         profile.openings,
         0
     );
+    // End caps and the top/bottom caps remain intact because hosted openings
+    // are vertical cuts through the two long faces.
     for (const auto index : {std::uint32_t{1}, std::uint32_t{3}}) {
         const auto next = (index + 1) % static_cast<std::uint32_t>(vertex_count);
         append_quad(

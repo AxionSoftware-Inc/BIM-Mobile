@@ -342,7 +342,8 @@ enum _WorkspaceMoreAction {
   toggleBrowser,
 }
 
-/// Icon-first authoring palette. Rare editing commands remain in the overflow.
+/// Touch-first authoring palette. The short labels keep the tools discoverable
+/// without requiring the user to remember what an abstract icon means.
 class AuthoringToolPalette extends StatelessWidget {
   const AuthoringToolPalette({
     super.key,
@@ -363,7 +364,7 @@ class AuthoringToolPalette extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.only(top: 28),
         child: SizedBox(
-          width: 64,
+          width: 88,
           child: Material(
             elevation: 3,
             color: theme.colorScheme.surface.withValues(alpha: 0.90),
@@ -382,9 +383,9 @@ class AuthoringToolPalette extends StatelessWidget {
                     ),
                   const Divider(height: 20),
                   PopupMenuButton<RenderSceneInteractionMode>(
-                    tooltip: 'Edit tools · Trim / Extend',
+                    tooltip: 'More editing tools',
                     enabled: enabled,
-                    icon: const Icon(Icons.construction_outlined),
+                    icon: const Icon(Icons.edit_note_outlined),
                     onSelected: onModeChanged,
                     itemBuilder: (context) =>
                         <PopupMenuEntry<RenderSceneInteractionMode>>[
@@ -834,12 +835,37 @@ class _PaletteToolButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 2),
-        child: IconButton.filledTonal(
-          isSelected: selected,
-          tooltip: tool.label,
-          onPressed: enabled ? onPressed : null,
-          icon: Icon(tool.icon),
+        padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 4),
+        child: Tooltip(
+          message: tool.label,
+          child: InkWell(
+            onTap: enabled ? onPressed : null,
+            borderRadius: BorderRadius.circular(10),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 160),
+              padding: const EdgeInsets.symmetric(vertical: 7, horizontal: 4),
+              decoration: BoxDecoration(
+                color: selected
+                    ? Theme.of(context).colorScheme.secondaryContainer
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Icon(tool.icon, size: 21),
+                  const SizedBox(height: 2),
+                  Text(
+                    tool.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.labelSmall,
+                  ),
+                ],
+              ),
+            ),
+          ),
         ),
       );
 }
@@ -878,9 +904,9 @@ class _AuthoringTool {
 
 const List<_AuthoringTool> _primaryTools = <_AuthoringTool>[
   _AuthoringTool(
-      RenderSceneInteractionMode.select, Icons.near_me_outlined, 'Select'),
+      RenderSceneInteractionMode.select, Icons.ads_click_outlined, 'Select'),
   _AuthoringTool(
-      RenderSceneInteractionMode.addWall, Icons.view_week_outlined, 'Wall'),
+      RenderSceneInteractionMode.addWall, Icons.architecture_outlined, 'Wall'),
   _AuthoringTool(RenderSceneInteractionMode.addDoor,
       Icons.door_front_door_outlined, 'Door'),
   _AuthoringTool(

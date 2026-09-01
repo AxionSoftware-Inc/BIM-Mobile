@@ -246,6 +246,22 @@ bool is_compound_ifc_proxy(const RenderSceneObjectDTO& object) {
     return entity != object.metadata.end() && entity->second == "IFCBUILDINGELEMENTPROXY";
 }
 
+std::map<std::string, std::string> cache_primitive_metadata(const RenderSceneObjectDTO& object) {
+    if (object.kind != ApiElementKind::Wall) return {};
+    static constexpr std::array<std::string_view, 9> keys{
+        "start_x", "start_y", "end_x", "end_y", "thickness_meters",
+        "height_meters", "opening_profile", "profile_corners", "layer_profile",
+    };
+    std::map<std::string, std::string> metadata;
+    for (const auto key : keys) {
+        const auto found = object.metadata.find(std::string(key));
+        if (found != object.metadata.end() && !found->second.empty()) {
+            metadata.emplace(found->first, found->second);
+        }
+    }
+    return metadata;
+}
+
 std::optional<WeldedPositionKey> welded_position_key(const Vec3& point) {
     if (!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z)) {
         return std::nullopt;
@@ -569,10 +585,15 @@ void write_primitive(std::ostream& out, const BimCachePrimitiveDTO& primitive) {
     write_scalar<std::uint32_t>(out, primitive.first_index);
     write_scalar<std::uint32_t>(out, primitive.index_count);
     write_bounds(out, primitive.bounds);
+    write_scalar<std::uint64_t>(out, primitive.metadata.size());
+    for (const auto& [key, value] : primitive.metadata) {
+        write_string(out, key);
+        write_string(out, value);
+    }
 }
 
 BimCachePrimitiveDTO read_primitive(std::istream& in) {
-    return BimCachePrimitiveDTO{
+    BimCachePrimitiveDTO primitive{
         .element_id = {.value = read_scalar<std::uint64_t>(in)},
         .kind = static_cast<ApiElementKind>(read_scalar<std::int32_t>(in)),
         .revision = read_scalar<std::uint64_t>(in),
@@ -580,6 +601,11 @@ BimCachePrimitiveDTO read_primitive(std::istream& in) {
         .index_count = read_scalar<std::uint32_t>(in),
         .bounds = read_bounds(in),
     };
+    const auto metadata_count = checked_size(read_scalar<std::uint64_t>(in), "primitive metadata");
+    for (std::size_t index = 0; index < metadata_count; ++index) {
+        primitive.metadata.emplace(read_string(in), read_string(in));
+    }
+    return primitive;
 }
 
 void write_chunk(std::ostream& out, const BimCacheChunkDTO& chunk) {
@@ -747,6 +773,7 @@ BimCacheSceneDTO compile(
                 .first_index = static_cast<std::uint32_t>(first_index),
                 .index_count = static_cast<std::uint32_t>(object.mesh.indices.size()),
                 .bounds = object.bounds,
+                .metadata = cache_primitive_metadata(object),
             });
         } else {
             for (std::size_t part_index = 0; part_index < parts.size(); ++part_index) {

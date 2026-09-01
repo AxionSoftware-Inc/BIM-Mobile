@@ -10,11 +10,10 @@
 namespace tbe::api::runtime_cache {
 
 inline constexpr std::uint32_t kBimCacheFormatVersion = 2;
-// Bumped when the interactive chunk partition, proxy visibility policy, or
-// semantic surface data carried by a chunk changes. Existing device caches
-// must be rebuilt so stale chunks cannot lose renderer-visible wall types or
-// the hosted-opening profile used by the Solid brick overlay.
-inline constexpr std::uint32_t kBimCacheSceneCompilerVersion = 9;
+// Bumped when cached render geometry or the interactive chunk/proxy policy
+// changes. Existing device caches must be rebuilt so stale wall/opening meshes
+// cannot survive an APK update and keep viewport artifacts alive.
+inline constexpr std::uint32_t kBimCacheSceneCompilerVersion = 10;
 inline constexpr std::uint32_t kBimCacheObjectMappingVersion = 4;
 inline constexpr std::uint32_t kBimCacheFormatFlags = 0x00000001u;
 

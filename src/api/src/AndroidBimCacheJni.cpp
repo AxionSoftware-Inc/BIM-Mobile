@@ -4,6 +4,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
@@ -182,6 +183,49 @@ Java_com_example_viewer_1flutter_NativeBimCacheBridge_nativeChunkPrimitiveRanges
         ranges.push_back(static_cast<std::int64_t>(primitive.kind));
     }
     return make_long_array(environment, ranges);
+}
+
+JNIEXPORT jobjectArray JNICALL
+Java_com_example_viewer_1flutter_NativeBimCacheBridge_nativeChunkPrimitiveMetadata(
+    JNIEnv* environment,
+    jclass,
+    jlong handle,
+    jint chunk_index
+) {
+    const auto* cache = to_handle(handle);
+    if (cache == nullptr || chunk_index < 0 || static_cast<std::size_t>(chunk_index) >= cache->scene.chunks.size()) {
+        return nullptr;
+    }
+    const auto& primitives = cache->scene.chunks[static_cast<std::size_t>(chunk_index)].primitives;
+    // Keep this a fixed-width JNI payload. It avoids a JSON/map allocation for
+    // every streamed primitive while preserving the exact semantic fields used
+    // by the wall contour policy.
+    static constexpr const char* keys[] = {
+        "start_x", "start_y", "end_x", "end_y", "thickness_meters",
+        "height_meters", "opening_profile", "profile_corners", "layer_profile",
+    };
+    constexpr std::size_t key_count = sizeof(keys) / sizeof(keys[0]);
+    const auto item_count = primitives.size() * key_count;
+    if (item_count > static_cast<std::size_t>(std::numeric_limits<jsize>::max())) return nullptr;
+    const auto string_class = environment->FindClass("java/lang/String");
+    if (string_class == nullptr) return nullptr;
+    auto* result = environment->NewObjectArray(static_cast<jsize>(item_count), string_class, nullptr);
+    if (result == nullptr) return nullptr;
+    for (std::size_t primitive_index = 0; primitive_index < primitives.size(); ++primitive_index) {
+        for (std::size_t key_index = 0; key_index < key_count; ++key_index) {
+            const auto found = primitives[primitive_index].metadata.find(keys[key_index]);
+            const auto& value = found == primitives[primitive_index].metadata.end() ? std::string{} : found->second;
+            auto* string_value = environment->NewStringUTF(value.c_str());
+            if (string_value == nullptr) return nullptr;
+            environment->SetObjectArrayElement(
+                result,
+                static_cast<jsize>(primitive_index * key_count + key_index),
+                string_value
+            );
+            environment->DeleteLocalRef(string_value);
+        }
+    }
+    return result;
 }
 
 JNIEXPORT jdoubleArray JNICALL

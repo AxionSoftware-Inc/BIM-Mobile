@@ -96,34 +96,6 @@ private val EXTERNAL_MESH_KIND_ALIASES = setOf(
   "foreignmesh",
 )
 
-// BIM sun preset: a strong directional source with restrained environment
-// fill. This keeps the sun-facing facade bright while preserving a readable
-// light/shadow boundary on the opposite facade and on the receiver plane.
-private const val BIM_SUN_INTENSITY = 65000.0f
-// Keep the environment restrained for the lit Shaded view. Solid is unlit and
-// therefore independent of scene lighting, matching a clean coordination view.
-private const val BIM_IBL_INTENSITY = 6000.0f
-private const val BIM_SUN_ANGULAR_RADIUS = 0.018f
-
-private const val FLAT_COLOR_MAT = """
-void material(inout MaterialInputs material) {
-    prepareMaterial(material);
-    float3 world = getWorldPosition();
-    float3 normal = normalize(cross(dFdx(world), dFdy(world)));
-    material.normal = normal;
-    // Solid is intentionally not a wireframe substitute.  Keep the neutral
-    // Revit-like surface, but give differently oriented faces a stable,
-    // low-frequency value difference so a large imported building reads as a
-    // filled model at fit-to-view scale.  This is deterministic (no
-    // camera-dependent noise or procedural texture) and therefore does not
-    // sparkle while orbiting on mobile GPUs.
-    float3 lightDirection = normalize(float3(-0.35, 0.82, 0.42));
-    float faceShade = 0.78 + 0.22 * abs(dot(normal, lightDirection));
-    float shade = faceShade;
-    material.baseColor = float4(materialParams.baseColor.rgb * shade, materialParams.baseColor.a);
-}
-"""
-
 // Viewport wall-display contract:
 //   * Solid is an achromatic coordination view.  It must never inherit wall
 //     type colors; only neutral face fill, brick joint lines, and glass alpha
@@ -191,31 +163,6 @@ void material(inout MaterialInputs material) {
 // avoided black faces only because the scene had no environment light; with a
 // stable baked IBL, the normal/tangent data can now drive actual sun + ambient
 // shading without camera-dependent procedural patterns.
-private const val ARCHITECTURAL_LIT_MAT = """
-void material(inout MaterialInputs material) {
-    prepareMaterial(material);
-    material.baseColor = materialParams.baseColor;
-    material.metallic = 0.0;
-    material.roughness = 0.88;
-    material.reflectance = 0.35;
-}
-"""
-
-private const val GRID_MAT = """
-void material(inout MaterialInputs material) {
-    prepareMaterial(material);
-    float3 world = getWorldPosition();
-    float2 relative = world.xz - materialParams.gridCenter.xz;
-    float distanceFromCenter = length(relative);
-    float fade = 1.0 - smoothstep(materialParams.gridFadeStart, materialParams.gridRadius, distanceFromCenter);
-    float majorX = 1.0 - smoothstep(0.0, 0.06, abs(fract(relative.x / 5.0 + 0.5) - 0.5));
-    float majorZ = 1.0 - smoothstep(0.0, 0.06, abs(fract(relative.y / 5.0 + 0.5) - 0.5));
-    float major = max(majorX, majorZ);
-    float strength = mix(0.68, 1.0, major);
-    material.baseColor = float4(materialParams.baseColor.rgb, materialParams.baseColor.a * fade * strength);
-}
-"""
-
 private data class FilamentRenderableEntry(
   val objectData: SceneObject,
   val entity: Int,
@@ -235,6 +182,13 @@ private data class EdgeBatchKey(
   val tileZ: Int,
   val nativeKindMask: Long? = null,
   val solidBrickPattern: Boolean = false,
+)
+
+private data class EdgePointKey(val x: Long, val y: Long, val z: Long)
+
+private data class EdgeSegmentKey(
+  val first: EdgePointKey,
+  val second: EdgePointKey,
 )
 
 private data class FaceBatchKey(
@@ -364,19 +318,6 @@ private data class NativeVisualObject(
 private data class NativeCameraRay(
   val origin: ScenePoint,
   val direction: ScenePoint,
-)
-
-private data class NativeVisualEdge(
-  val first: Int,
-  val second: Int,
-  val triangleIndices: IntArray,
-  // A true architectural corner (roughly 70 degrees or sharper), not a
-  // tessellation seam. Solid can retain these after silhouette filtering.
-  val sharp: Boolean,
-  // Native cache chunks contain many independent primitives. Keep the local
-  // primitive centre with the edge so winding correction never uses the
-  // centre of the whole streamed chunk.
-  val primitiveCenter: ScenePoint? = null,
 )
 
 /** Opening rectangle used to interrupt the Solid-only exterior brick pass. */
@@ -763,8 +704,10 @@ internal class RenderSceneFilamentHostView(
       scene = filamentEngine.createScene()
       filamentView = filamentEngine.createView()
       filamentView?.isFrustumCullingEnabled = true
-      // Windows use a transparent shaded material; include them in GPU picks
-      // so tapping glass selects the window rather than the wall behind it.
+      // Windows use an opaque shaded material; include them in GPU picks so
+      // tapping the panel selects the window rather than the wall behind it.
+      // Transparency here caused the window faces to fight the wall/opening
+      // depth on the tablet while zooming and orbiting.
       filamentView?.isTransparentPickingEnabled = true
       camera = filamentEngine.createCamera(EntityManager.get().create())
       filamentView?.scene = scene
@@ -966,53 +909,73 @@ internal class RenderSceneFilamentHostView(
     nativeCacheLoadRevision = requestRevision
     Thread {
       val loaded = NativeBimCacheBridge.open(cachePath, sourceIfcPath)
-      post {
-        if (disposed || requestRevision != nativeCacheLoadRevision) {
-          loaded?.close()
-          return@post
-        }
-        if (loaded == null || loaded.chunks.isEmpty()) {
-          statusMessage = "Native BIM cache unavailable; using compatibility scene."
-          updateStatus()
-          return@post
-        }
-        closeNativeBimCache()
-        nativeBimCache = loaded
-        nativeCacheFullBounds = nativeCacheBounds(loaded)
-        resetClipVolumeState()
-        currentScene = nativeCacheSceneState(loaded)
-        currentSceneFingerprint = null
-        rendererBenchmark?.takeIf { it.mode == "NEW_BIMCACHE" }?.let { benchmark ->
-          benchmark.cacheAppliedNanos = SystemClock.elapsedRealtimeNanos()
-        }
-        // Fit against the complete cached model before submitting its first
-        // GPU tile.  Otherwise a near-first stream would fit to a façade
-        // fragment and make the camera jump as later chunks arrive.
-        updateMetrics()
-        fitCamera()
-        rebuildScene()
-        selectionOverlay.setVisualScene(
-          loaded.primitives.map(::nativeCacheVisualObject).also { visualObjects ->
-            val importedCount = visualObjects.count { it.metadata["external_mesh"] == "true" }
-            val edgeCount = visualObjects.sumOf { it.featureEdges.size }
-            Log.i(TAG, "Native cache overlay: primitives=${visualObjects.size}, imported=$importedCount, boundsEdges=$edgeCount")
-          },
-          currentScene?.levels?.map { level -> level.name to level.elevationMeters } ?: emptyList(),
-          sceneMetrics.bounds,
-        )
-        selectionOverlay.setDisplayStyle(displayStyle)
-        syncVisibility()
-        refreshTintState()
-        statusMessage = "Streaming ${loaded.chunks.size} native BIM chunks."
-        Log.i(TAG, statusMessage)
-        updateStatus()
-        invalidate()
-      }
+      post { installNativeBimCache(loaded, sourceIfcPath, requestRevision) }
     }.apply {
       name = "tbe-bim-cache-open"
       isDaemon = true
       start()
     }
+  }
+
+  /**
+   * Installs a cache that was opened by the preparation handshake.  Ownership
+   * moves to this view only after the revision/disposal check succeeds.
+   */
+  fun loadNativeBimCache(
+    loaded: NativeBimCacheBridge.NativeBimCache,
+    sourceIfcPath: String,
+  ) {
+    val requestRevision = nativeCacheLoadRevision + 1L
+    nativeCacheLoadRevision = requestRevision
+    post { installNativeBimCache(loaded, sourceIfcPath, requestRevision) }
+  }
+
+  private fun installNativeBimCache(
+    loaded: NativeBimCacheBridge.NativeBimCache?,
+    sourceIfcPath: String,
+    requestRevision: Long,
+  ) {
+    if (disposed || requestRevision != nativeCacheLoadRevision) {
+      loaded?.close()
+      return
+    }
+    if (loaded == null || loaded.chunks.isEmpty()) {
+      loaded?.close()
+      statusMessage = "Native BIM cache unavailable; using compatibility scene."
+      updateStatus()
+      return
+    }
+    closeNativeBimCache()
+    nativeBimCache = loaded
+    nativeCacheFullBounds = nativeCacheBounds(loaded)
+    resetClipVolumeState()
+    currentScene = nativeCacheSceneState(loaded)
+    currentSceneFingerprint = null
+    rendererBenchmark?.takeIf { it.mode == "NEW_BIMCACHE" }?.let { benchmark ->
+      benchmark.cacheAppliedNanos = SystemClock.elapsedRealtimeNanos()
+    }
+    // Fit against the complete cached model before submitting its first
+    // GPU tile.  Otherwise a near-first stream would fit to a façade
+    // fragment and make the camera jump as later chunks arrive.
+    updateMetrics()
+    fitCamera()
+    rebuildScene()
+    selectionOverlay.setVisualScene(
+      loaded.primitives.map(::nativeCacheVisualObject).also { visualObjects ->
+        val importedCount = visualObjects.count { it.metadata["external_mesh"] == "true" }
+        val edgeCount = visualObjects.sumOf { it.featureEdges.size }
+        Log.i(TAG, "Native cache overlay: primitives=${visualObjects.size}, imported=$importedCount, boundsEdges=$edgeCount")
+      },
+      currentScene?.levels?.map { level -> level.name to level.elevationMeters } ?: emptyList(),
+      sceneMetrics.bounds,
+    )
+    selectionOverlay.setDisplayStyle(displayStyle)
+    syncVisibility()
+    refreshTintState()
+    statusMessage = "Streaming ${loaded.chunks.size} native BIM chunks."
+    Log.i(TAG, "$statusMessage source=$sourceIfcPath")
+    updateStatus()
+    invalidate()
   }
 
   private fun closeNativeBimCache() {
@@ -1187,6 +1150,7 @@ internal class RenderSceneFilamentHostView(
       metadata = buildMap {
         put("native_cache", "true")
         put("level_id", primitive.levelId.toString())
+        putAll(primitive.metadata)
         if (importedPart) {
           // Native cache primitives for collapsed IFC/CAD payloads are the
           // same semantic class as an imported FBX part. Their mesh stays in
@@ -2268,7 +2232,6 @@ internal class RenderSceneFilamentHostView(
         engine,
         "RenderSceneSolidWindow",
         FLAT_COLOR_MAT,
-        transparent = true,
         lit = false,
       )
       edgeMaterial = buildMaterial(engine, "RenderSceneEdges", FLAT_COLOR_MAT, lit = false)
@@ -2960,7 +2923,6 @@ internal class RenderSceneFilamentHostView(
 
   private fun displayBaseColor(objectData: SceneObject): FloatArray {
     val kind = normalizeKind(objectData.kind)
-    val isWindow = kind == "window"
     return if (displayStyle == "solid") {
       // Viewport contract: Solid is deliberately monochrome.  Do not add
       // semantic wall colors here: exterior brick is represented by neutral
@@ -2985,7 +2947,7 @@ internal class RenderSceneFilamentHostView(
         // look empty and was easily mistaken for wireframe.
         else -> 0.82f
       }
-      floatArrayOf(surface, surface, surface, if (isWindow) 0.30f else 1.0f)
+      floatArrayOf(surface, surface, surface, 1.0f)
     } else {
       // Revit-like Lighting/Shaded view: neutral architectural surfaces let
       // the sun establish the form, instead of dark category colors masking
@@ -3127,67 +3089,9 @@ internal class RenderSceneFilamentHostView(
     }
     val allowed = min(perObjectLimit, importedMeshEdgeBudgetRemaining)
     if (allowed <= 0) return emptyList()
-    val capped = if (edges.size <= allowed) {
-      edges
-    } else {
-      // Sharp edges are the useful architectural/model contours. Keep them
-      // first, then fill the remainder with boundary edges in source order.
-      (edges.filter { it.sharp } + edges.filterNot { it.sharp })
-        .take(allowed)
-    }
+    val capped = RenderSceneEdgeTopology.capEdges(edges, allowed)
     importedMeshEdgeBudgetRemaining -= capped.size
     return capped
-  }
-
-  /**
-   * Removes tessellation seams from an external mesh before either renderer
-   * consumes its edges. FBX/OBJ/GLB exports commonly contain thousands of
-   * one-use triangle edges (or split vertices) that are not useful model
-   * linework. Keeping this policy here means the Filament prism pass and the
-   * Android interaction overlay cannot disagree about which edges exist.
-   *
-   * The source faces are never changed. This only controls the lightweight
-   * edge representation used for Solid/Shaded display and selection feedback.
-   */
-  private fun cleanImportedMeshEdges(
-    points: List<ScenePoint>,
-    edges: List<NativeVisualEdge>,
-  ): List<NativeVisualEdge> {
-    if (points.isEmpty() || edges.isEmpty()) return edges
-    val bounds = boundsForPoints(points)
-    val span = max(
-      max(bounds.max.x - bounds.min.x, bounds.max.y - bounds.min.y),
-      bounds.max.z - bounds.min.z,
-    ).coerceAtLeast(0.1)
-    // Keep small architectural details on normal-sized objects, while
-    // removing millimetre-scale decorative/tessellation fragments from a
-    // building-sized imported mesh.
-    val minimumLength = max(0.01, min(0.10, span * 0.001))
-    val minimumBoundaryLength = max(
-      minimumLength * 2.5,
-      min(0.75, span * 0.015),
-    )
-    return edges.filter { edge ->
-      // Envelope fallback edges have no source triangle association. They are
-      // deliberately retained when a smooth imported mesh has no topology
-      // edge that can be rendered reliably.
-      if (edge.triangleIndices.isEmpty()) return@filter edge.sharp
-      val first = points.getOrNull(edge.first) ?: return@filter false
-      val second = points.getOrNull(edge.second) ?: return@filter false
-      val dx = second.x - first.x
-      val dy = second.y - first.y
-      val dz = second.z - first.z
-      val length = kotlin.math.sqrt(dx * dx + dy * dy + dz * dz)
-      if (!length.isFinite() || length < minimumLength) return@filter false
-      val boundary = edge.triangleIndices.size == 1
-      if (boundary) {
-        // A one-use edge is often just a tessellation boundary. Only retain
-        // long silhouette/opening boundaries; real creases are handled below.
-        length >= minimumBoundaryLength
-      } else {
-        edge.sharp
-      }
-    }
   }
 
   private fun capNativeCacheEdges(edges: List<NativeVisualEdge>): List<NativeVisualEdge> {
@@ -3197,11 +3101,7 @@ internal class RenderSceneFilamentHostView(
     // through selection and the source mesh itself.
     val allowed = min(96, nativeCacheEdgeBudgetRemaining)
     if (allowed <= 0) return emptyList()
-    val capped = if (edges.size <= allowed) {
-      edges
-    } else {
-      (edges.filter { it.sharp } + edges.filterNot { it.sharp }).take(allowed)
-    }
+    val capped = RenderSceneEdgeTopology.capEdges(edges, allowed)
     nativeCacheEdgeBudgetRemaining -= capped.size
     return capped
   }
@@ -3213,6 +3113,10 @@ internal class RenderSceneFilamentHostView(
    * separate, already-transformed edge mesh.
    */
   private fun nativeCacheEdgeGeometry(chunk: NativeBimCacheChunk): GeometryData? {
+    // A window is rendered as a single opaque panel. Its separate contour
+    // pass only adds coplanar edges over that panel and can reintroduce the
+    // tablet flicker we are deliberately removing from the window material.
+    if (normalizeKind(chunk.kind) == "window") return null
     if (nativeCacheEdgeBudgetRemaining <= 0) return null
     val vertexCount = chunk.positions.capacity() / 12
     val indexCount = chunk.indices.capacity()
@@ -3293,11 +3197,11 @@ internal class RenderSceneFilamentHostView(
         "stair" -> 0.08
         else -> 0.12
       }
-      val localEdges = meshFeatureEdges(
+      val localEdges = RenderSceneEdgeTopology.featureEdges(
         points,
         triangles,
-        creaseDotThreshold = 0.55,
-        includeBoundaryEdges = true,
+        creaseDotThreshold = if (normalizeKind(range.kind) == "roof") 0.995 else 0.90,
+        includeBoundaryEdges = normalizeKind(range.kind) != "wall",
       ).filter { edge ->
         val first = points.getOrNull(edge.first) ?: return@filter false
         val second = points.getOrNull(edge.second) ?: return@filter false
@@ -3309,11 +3213,29 @@ internal class RenderSceneFilamentHostView(
         val boundary = edge.triangleIndices.size == 1
         val longBoundary = boundary && lengthSquared >=
           max(minimumLength * minimumLength * 6.25, 0.45 * 0.45)
-        (!boundary && edge.sharp) || longBoundary
+        val isFeature = (!boundary && edge.sharp) || longBoundary
+        isFeature
       }
-      val boundedEdges = capNativeCacheEdges(localEdges)
-      if (boundedEdges.isEmpty()) return
+      val rangeKind = normalizeKind(range.kind)
+      val rangeWallAxis = if (rangeKind == "wall" && projectionMode != "section") {
+        wallAxisEndpoints(range.metadata)
+      } else {
+        null
+      }
+      val wallFaceEdges = if (rangeKind == "wall" && rangeWallAxis != null) {
+        RenderSceneEdgeTopology.wallFaceEdges(
+          points,
+          localEdges,
+          rangeWallAxis.start,
+          rangeWallAxis.end,
+          range.metadata["opening_profile"],
+        ).map { edge -> edge.copy(wallAxis = rangeWallAxis) }
+      } else {
+        localEdges
+      }
       val localBounds = boundsForPoints(points)
+      val boundedEdges = capNativeCacheEdges(wallFaceEdges)
+      if (boundedEdges.isEmpty()) return
       val localCenter = ScenePoint(
         (localBounds.min.x + localBounds.max.x) * 0.5,
         (localBounds.min.y + localBounds.max.y) * 0.5,
@@ -3337,6 +3259,7 @@ internal class RenderSceneFilamentHostView(
             triangleIndices = edge.triangleIndices.map { it + triangleBase }.toIntArray(),
             sharp = edge.sharp,
             primitiveCenter = localCenter,
+            wallAxis = edge.wallAxis,
           ),
         )
       }
@@ -3352,66 +3275,13 @@ internal class RenderSceneFilamentHostView(
       "Native cache edge topology: kind=${chunk.kind} primitives=${ranges.size} " +
         "edges=${edges.size} vertices=${edgePoints.size} triangles=${edgeTriangles.size}",
     )
-    return edgeGeometry(edgePoints, edges, edgeTriangles, radiusScale = 2.2)
-  }
-
-  private fun edgeSurfaceOffset(
-    first: ScenePoint,
-    second: ScenePoint,
-    triangleIndices: IntArray,
-    points: List<ScenePoint>,
-    triangles: List<IntArray>,
-    primitiveCenter: ScenePoint,
-  ): ScenePoint {
-    if (triangleIndices.isEmpty()) return ScenePoint(0.0, 0.0, 0.0)
-    var reference: DoubleArray? = null
-    var normalX = 0.0
-    var normalY = 0.0
-    var normalZ = 0.0
-    var count = 0
-    for (triangleIndex in triangleIndices) {
-      val triangle = triangles.getOrNull(triangleIndex) ?: continue
-      if (triangle.size != 3 || triangle.any { it !in points.indices }) continue
-      val normal = triangleNormal(points[triangle[0]], points[triangle[1]], points[triangle[2]])
-      if (normal.all { kotlin.math.abs(it) <= 1.0e-9 }) continue
-      if (reference == null) reference = normal
-      val currentReference: DoubleArray? = reference
-      val direction = currentReference ?: continue
-      val sign = if (normalDot(normal, direction) < 0.0) -1.0 else 1.0
-      normalX += normal[0] * sign
-      normalY += normal[1] * sign
-      normalZ += normal[2] * sign
-      count += 1
-    }
-    if (count == 0) return ScenePoint(0.0, 0.0, 0.0)
-    val length = kotlin.math.sqrt(normalX * normalX + normalY * normalY + normalZ * normalZ)
-    if (length <= 1.0e-9) return ScenePoint(0.0, 0.0, 0.0)
-    // Imported meshes are not guaranteed to have consistent winding. Orient
-    // the offset away from the local primitive centre so a front-face edge is
-    // lifted out of the source surface instead of being pushed into it and
-    // depth-fighting on mobile GPUs.
-    val midpoint = ScenePoint(
-      (first.x + second.x) * 0.5,
-      (first.y + second.y) * 0.5,
-      (first.z + second.z) * 0.5,
-    )
-    val fromCenterX = midpoint.x - primitiveCenter.x
-    val fromCenterY = midpoint.y - primitiveCenter.y
-    val fromCenterZ = midpoint.z - primitiveCenter.z
-    if (normalX * fromCenterX + normalY * fromCenterY + normalZ * fromCenterZ < 0.0) {
-      normalX = -normalX
-      normalY = -normalY
-      normalZ = -normalZ
-    }
-    val offset = when {
-      projectionMode == "topDown" -> 0.006
-      projectionMode == "isometric" -> 0.040
-      else -> 0.018
-    }
-    return ScenePoint(
-      normalX / length * offset,
-      normalY / length * offset,
-      normalZ / length * offset,
+    return RenderSceneEdgeGeometry.build(
+      projectionMode,
+      edgePoints,
+      edges,
+      edgeTriangles,
+      wallEdgePass = normalizeKind(chunk.kind) == "wall",
+      radiusScale = 2.2,
     )
   }
 
@@ -3433,6 +3303,10 @@ internal class RenderSceneFilamentHostView(
       return null
     }
     val wallEdges = kind == "wall"
+    // The window panel is intentionally a plain filled box. Do not generate a
+    // second edge mesh for it: the overlay around a coplanar box was the last
+    // remaining window-specific source of flashing during orbit/zoom.
+    if (kind == "window") return null
     val isSectionLike = projectionMode != "topDown" && projectionMode != "isometric"
     val relevantJunctions = if (wallEdges) {
       wallJunctionElevations.filter { elevation ->
@@ -3477,18 +3351,40 @@ internal class RenderSceneFilamentHostView(
     } else {
       stableSectionEdges
     }
-    val importedEdges = if (isImportedMeshObject(objectData)) {
-      cleanImportedMeshEdges(points, stableColumnEdges)
+    // Walls use welded crease topology only. A flat facade split into
+    // triangles has identical adjacent normals, so it contributes no edge;
+    // physical corners and opening reveals do.
+    val architecturalWallEdges = stableColumnEdges
+    val wallAxis = if (wallEdges) wallAxisEndpoints(objectData) else null
+    val wallFaceEdges = if (wallEdges && projectionMode != "section") {
+      wallAxis?.let { (axisStart, axisEnd) ->
+        RenderSceneEdgeTopology.wallFaceEdges(
+          points,
+          architecturalWallEdges,
+          axisStart,
+          axisEnd,
+          objectData.metadata["opening_profile"],
+        )
+      } ?: architecturalWallEdges
     } else {
-      stableColumnEdges
+      architecturalWallEdges
+    }
+    val importedEdges = if (isImportedMeshObject(objectData)) {
+      RenderSceneEdgeTopology.cleanImportedEdges(points, wallFaceEdges)
+    } else {
+      wallFaceEdges
     }
     val boundedEdges = capGenericMeshEdges(objectData, importedEdges)
-    val generated = edgeGeometry(
+    val generated = RenderSceneEdgeGeometry.build(
+      projectionMode,
       points,
       boundedEdges,
       triangles,
+      wallEdgePass = wallEdges,
       wallJunctionEdges = wallEdges && isSectionLike,
       wallJunctionElevations = relevantJunctions,
+      wallAxisStart = wallAxis?.start,
+      wallAxisEnd = wallAxis?.end,
     ) ?: return null
     if (!clipVolume.active && elementId != null) {
       edgeGeometryCache[elementId] = CachedEdgeGeometry(
@@ -3976,8 +3872,14 @@ internal class RenderSceneFilamentHostView(
     chunks: Map<EdgeBatchKey, List<GeometryData>>,
   ) {
     val edgeMaterial = edgeMaterial ?: material ?: return
+    // Wall objects are often split at joins, levels, or spatial tiles. Keep a
+    // single physical contour even when the same segment arrives in separate
+    // edge batches. Dedup within each category so a door frame cannot suppress
+    // a coincident wall contour (or vice versa).
+    val emittedSegmentsByKind = linkedMapOf<String, MutableSet<EdgeSegmentKey>>()
     for ((key, geometries) in chunks) {
-      val geometry = combineGeometry(geometries) ?: continue
+      val emittedSegments = emittedSegmentsByKind.getOrPut(key.kind) { linkedSetOf() }
+      val geometry = combineEdgeGeometry(geometries, emittedSegments) ?: continue
       val vertexBuffer = VertexBuffer.Builder()
         .bufferCount(1)
         .vertexCount(geometry.vertexCount)
@@ -4004,7 +3906,12 @@ internal class RenderSceneFilamentHostView(
       }
       RenderableManager.Builder(1)
         .boundingBox(filamentBox(geometry.bounds))
-        .culling(true)
+        // Edge prisms are generated from the source topology and can extend
+        // slightly beyond the combined source AABB after their surface
+        // offset. Frustum-culling this auxiliary pass caused imported
+        // contours to disappear while orbiting on the tablet. Faces remain
+        // fully culled; the edge pass is small and safe to keep resident.
+        .culling(false)
         .priority(7)
         .geometry(0, PrimitiveType.TRIANGLES, vertexBuffer, indexBuffer, 0, geometry.indexCount)
         .material(0, materialInstance)
@@ -4423,6 +4330,91 @@ internal class RenderSceneFilamentHostView(
   }
 
   /**
+   * Combines ribbon edge meshes while suppressing repeated physical segments.
+   * Edge geometry is emitted as four position vertices and two triangles per
+   * source edge, so the centerline can be recovered without retaining source
+   * object identity. A 0.1 mm key tolerance absorbs importer rounding while
+   * preserving genuinely parallel wall faces.
+   */
+  private fun combineEdgeGeometry(
+    geometries: List<GeometryData>,
+    emittedSegments: MutableSet<EdgeSegmentKey>,
+  ): GeometryData? {
+    if (geometries.isEmpty()) return null
+    if (geometries.any { it.vertexCount % 4 != 0 || it.indexCount != (it.vertexCount / 4) * 6 }) {
+      return combineGeometry(geometries)
+    }
+
+    fun pointKey(x: Double, y: Double, z: Double) = EdgePointKey(
+      kotlin.math.round(x * 10000.0).toLong(),
+      kotlin.math.round(y * 10000.0).toLong(),
+      kotlin.math.round(z * 10000.0).toLong(),
+    )
+
+    fun comesBefore(first: EdgePointKey, second: EdgePointKey): Boolean = when {
+      first.x != second.x -> first.x < second.x
+      first.y != second.y -> first.y < second.y
+      else -> first.z < second.z
+    }
+
+    val ribbons = linkedMapOf<EdgeSegmentKey, FloatArray>()
+    for (geometry in geometries) {
+      val source = geometry.vertexData.duplicate()
+        .order(ByteOrder.nativeOrder())
+        .apply { rewind() }
+        .asFloatBuffer()
+      repeat(geometry.vertexCount / 4) {
+        val ribbon = FloatArray(12)
+        source.get(ribbon)
+        val first = pointKey(
+          (ribbon[0] + ribbon[3]) * 0.5,
+          (ribbon[1] + ribbon[4]) * 0.5,
+          (ribbon[2] + ribbon[5]) * 0.5,
+        )
+        val second = pointKey(
+          (ribbon[6] + ribbon[9]) * 0.5,
+          (ribbon[7] + ribbon[10]) * 0.5,
+          (ribbon[8] + ribbon[11]) * 0.5,
+        )
+        if (first == second) return@repeat
+        val key = if (comesBefore(first, second)) {
+          EdgeSegmentKey(first, second)
+        } else {
+          EdgeSegmentKey(second, first)
+        }
+        if (key !in emittedSegments) {
+          ribbons.putIfAbsent(key, ribbon)
+        }
+      }
+    }
+    if (ribbons.isEmpty()) return null
+    emittedSegments += ribbons.keys
+
+    val vertexCount = ribbons.size * 4
+    val indexCount = ribbons.size * 6
+    val vertexData = ByteBuffer.allocateDirect(vertexCount * 12)
+      .order(ByteOrder.nativeOrder())
+    val indexData = ByteBuffer.allocateDirect(indexCount * Int.SIZE_BYTES)
+      .order(ByteOrder.nativeOrder())
+      .asIntBuffer()
+    var vertexOffset = 0
+    for (ribbon in ribbons.values) {
+      for (value in ribbon) vertexData.putFloat(value)
+      indexData.put(vertexOffset)
+      indexData.put(vertexOffset + 1)
+      indexData.put(vertexOffset + 2)
+      indexData.put(vertexOffset + 2)
+      indexData.put(vertexOffset + 1)
+      indexData.put(vertexOffset + 3)
+      vertexOffset += 4
+    }
+    vertexData.flip()
+    indexData.flip()
+    val bounds = geometries.map { it.bounds }.reduce(::unionBounds)
+    return GeometryData(vertexCount, indexCount, vertexData, indexData, bounds)
+  }
+
+  /**
    * Filament's lit materials consume a tangent-frame quaternion rather than a
    * standalone normal attribute. The imported BIM meshes carry positions and
    * indices, so derive an area-weighted normal per vertex once while building
@@ -4797,10 +4789,10 @@ internal class RenderSceneFilamentHostView(
       }
       val sharp = use.normals.indices.any { left ->
         (left + 1 until use.normals.size).any { right ->
-          normalDot(use.normals[left], use.normals[right]) < 0.82
+          kotlin.math.abs(normalDot(use.normals[left], use.normals[right])) < 0.82
         }
       }
-      if (use.triangleIndices.size == 1 || onCutPlane || sharp) {
+      if (onCutPlane || sharp) {
         NativeVisualEdge(
           first = use.first,
           second = use.second,
@@ -5043,7 +5035,8 @@ internal class RenderSceneFilamentHostView(
       // as disappearing/dotted lines while orbiting.  Move it a tiny amount
       // along the average adjacent face normal; it remains depth-tested and
       // is still hidden by genuinely occluding geometry.
-      val surfaceOffset = edgeSurfaceOffset(
+      val surfaceOffset = RenderSceneEdgeGeometry.edgeSurfaceOffset(
+        projectionMode,
         edge.first,
         edge.second,
         edge.triangleIndices,
@@ -6106,15 +6099,9 @@ internal class RenderSceneFilamentHostView(
   }
 
   private fun minimumOrbitDistance(): Double {
-    val bounds = sceneMetrics.bounds
-    val span = max(
-      bounds.max.x - bounds.min.x,
-      max(bounds.max.y - bounds.min.y, bounds.max.z - bounds.min.z),
-    )
-    // Keep an orbit camera outside dense multi-storey geometry. This avoids
-    // near-plane crossings and depth flicker while direct selection remains
-    // available for close inspection.
-    return max(span * 0.50, 1.75)
+    // Close inspection is allowed. This is only a numerical guard against a
+    // zero-distance camera; the Dart orbit scale applies the same policy.
+    return 0.01
   }
 
   private fun minimumPlanarOrbitDistance(): Double = 0.5
@@ -6151,6 +6138,26 @@ internal class RenderSceneFilamentHostView(
 
   private fun toFilamentPoint(point: ScenePoint): ScenePoint {
     return ScenePoint(point.x, point.z, -point.y)
+  }
+
+  private fun wallAxisEndpoints(objectData: SceneObject): WallAxis? {
+    return wallAxisEndpoints(objectData.metadata)
+  }
+
+  private fun wallAxisEndpoints(metadata: Map<String, String>): WallAxis? {
+    fun coordinate(key: String): Double? = metadata[key]
+      ?.toDoubleOrNull()
+      ?.takeIf { it.isFinite() }
+    val startX = coordinate("start_x") ?: return null
+    val startZ = coordinate("start_y") ?: return null
+    val endX = coordinate("end_x") ?: return null
+    val endZ = coordinate("end_y") ?: return null
+    // ScenePoint is already in Filament coordinates here: source X/Y plan is
+    // represented as Filament X/-Z, while the source elevation is Filament Y.
+    return WallAxis(
+      ScenePoint(startX, 0.0, -startZ),
+      ScenePoint(endX, 0.0, -endZ),
+    )
   }
 
   private fun fromFilamentPoint(point: ScenePoint): ScenePoint {
@@ -6224,13 +6231,14 @@ internal class RenderSceneFilamentHostView(
     }
     var points = sourcePoints
     val triangles = sourceTriangles
-    var featureEdges = meshFeatureEdges(
+    var featureEdges = RenderSceneEdgeTopology.featureEdges(
       sourcePoints,
       sourceTriangles,
       creaseDotThreshold = if (normalizeKind(objectData.kind) == "roof") 0.995 else 0.90,
+      includeBoundaryEdges = normalizeKind(objectData.kind) != "wall",
     )
     if (isImportedMeshObject(objectData)) {
-      featureEdges = cleanImportedMeshEdges(sourcePoints, featureEdges)
+      featureEdges = RenderSceneEdgeTopology.cleanImportedEdges(sourcePoints, featureEdges)
     }
     // Some FBX exporters mark every surface smooth, leaving no boundary or
     // crease in the geometric topology even though the model is valid. Keep
@@ -6253,6 +6261,20 @@ internal class RenderSceneFilamentHostView(
         )
       }
       featureEdges = envelopeEdges
+    }
+    val wallAxis = if (normalizeKind(objectData.kind) == "wall" && projectionMode != "section") {
+      wallAxisEndpoints(objectData.metadata)
+    } else {
+      null
+    }
+    if (wallAxis != null) {
+      featureEdges = RenderSceneEdgeTopology.wallFaceEdges(
+        points,
+        featureEdges,
+        wallAxis.start,
+        wallAxis.end,
+        objectData.metadata["opening_profile"],
+      )
     }
     val overlayEdges = if (isImportedMeshObject(objectData)) {
       // The Filament edge prism remains the primary path. This bounded copy
@@ -6278,64 +6300,6 @@ internal class RenderSceneFilamentHostView(
     )
   }
 
-  private fun meshFeatureEdges(
-    points: List<ScenePoint>,
-    triangles: List<IntArray>,
-    creaseDotThreshold: Double = 0.90,
-    includeBoundaryEdges: Boolean = true,
-  ): List<NativeVisualEdge> {
-    data class PointKey(val x: Long, val y: Long, val z: Long)
-    data class Edge(val first: Int, val second: Int)
-    data class EdgeUse(
-      val normal: DoubleArray,
-      val firstRaw: Int,
-      val secondRaw: Int,
-      val triangleIndex: Int,
-    )
-    // Engine meshes intentionally duplicate vertices across face boundaries
-    // for simple, robust generation. For visual topology those duplicates are
-    // one vertex; without this weld every triangle diagonal becomes an edge
-    // and Solid degenerates into Wire.
-    fun key(point: ScenePoint) = PointKey(
-      kotlin.math.round(point.x * 100000.0).toLong(),
-      kotlin.math.round(point.y * 100000.0).toLong(),
-      kotlin.math.round(point.z * 100000.0).toLong(),
-    )
-    val canonicalByPoint = linkedMapOf<PointKey, Int>()
-    val canonicalIndices = IntArray(points.size)
-    points.forEachIndexed { index, point ->
-      canonicalIndices[index] = canonicalByPoint.getOrPut(key(point)) { canonicalByPoint.size }
-    }
-    val usesByEdge = linkedMapOf<Edge, MutableList<EdgeUse>>()
-    for ((triangleIndex, triangle) in triangles.withIndex()) {
-      val normal = triangleNormal(points[triangle[0]], points[triangle[1]], points[triangle[2]])
-      for ((first, second) in arrayOf(triangle[0] to triangle[1], triangle[1] to triangle[2], triangle[2] to triangle[0])) {
-        val canonicalFirst = canonicalIndices[first]
-        val canonicalSecond = canonicalIndices[second]
-        if (canonicalFirst == canonicalSecond) continue
-        val edge = if (canonicalFirst < canonicalSecond) Edge(canonicalFirst, canonicalSecond) else Edge(canonicalSecond, canonicalFirst)
-        usesByEdge.getOrPut(edge) { mutableListOf() }.add(EdgeUse(normal, first, second, triangleIndex))
-      }
-    }
-    return usesByEdge.values.mapNotNull { uses ->
-      // A crease must be visually meaningful. This suppresses triangulation
-      // seams and tiny tessellation changes while retaining real BIM corners.
-      val feature = (includeBoundaryEdges && uses.size == 1) || uses.zipWithNext().any { (first, second) ->
-        normalDot(first.normal, second.normal) < creaseDotThreshold
-      }
-      if (!feature) return@mapNotNull null
-      val sharp = (includeBoundaryEdges && uses.size == 1) || uses.zipWithNext().any { (first, second) ->
-        normalDot(first.normal, second.normal) < 0.35
-      }
-      NativeVisualEdge(
-        first = uses.first().firstRaw,
-        second = uses.first().secondRaw,
-        triangleIndices = uses.map { it.triangleIndex }.distinct().toIntArray(),
-        sharp = sharp,
-      )
-    }
-  }
-
   private fun triangleNormal(a: ScenePoint, b: ScenePoint, c: ScenePoint): DoubleArray {
     val abX = b.x - a.x; val abY = b.y - a.y; val abZ = b.z - a.z
     val acX = c.x - a.x; val acY = c.y - a.y; val acZ = c.z - a.z
@@ -6349,15 +6313,6 @@ internal class RenderSceneFilamentHostView(
   private fun normalDot(first: DoubleArray, second: DoubleArray): Double =
     first[0] * second[0] + first[1] * second[1] + first[2] * second[2]
 
-  private data class GeometryData(
-    val vertexCount: Int,
-    val indexCount: Int,
-    val vertexData: ByteBuffer,
-    val indexData: IntBuffer,
-    val bounds: SceneBounds,
-    val points: List<ScenePoint> = emptyList(),
-    val triangles: List<IntArray> = emptyList(),
-  )
 }
 
 private class NativeSelectionOverlay(context: Context) : android.view.View(context) {

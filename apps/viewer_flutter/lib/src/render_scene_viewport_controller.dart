@@ -677,20 +677,10 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
       return;
     }
 
-    // Zooming an orbit camera through its target makes an entire storey
-    // disappear behind the near clip plane. Keep a model-relative stand-off
-    // distance instead; direct object inspection remains available through
-    // selection/Inspector and later section tools.
-    final maxExtent = math.max(
-      _sceneBounds.width,
-      math.max(_sceneBounds.depth, _sceneBounds.height),
-    );
-    // Keep enough stand-off for a stable depth buffer, while still allowing a
-    // normal house/storey to fill the viewport for authoring.
-    final minimumDistance = math.max(maxExtent * 0.30, 1.75);
-    final maximumZoom = _orbitDistance / minimumDistance;
-    _orbitZoomScale =
-        (_orbitZoomScale * scaleDelta).clamp(0.005, math.max(maximumZoom, 1.0));
+    // Close inspection is intentional. Keep only a tiny positive lower bound
+    // so the camera scale never reaches zero; native camera code applies the
+    // matching epsilon to the orbit distance.
+    _orbitZoomScale = math.max(_orbitZoomScale * scaleDelta, 0.005);
     notifyListeners();
     _scheduleNativeCameraSync();
   }

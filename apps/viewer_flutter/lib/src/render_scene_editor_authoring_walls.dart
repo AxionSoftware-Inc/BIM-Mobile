@@ -116,6 +116,19 @@ Map<String, Object?> _buildWallObject({
   };
 }
 
+String _openingProfileMetadata(List<_OpeningCutSpec> openings) {
+  return openings
+      .map(
+        (opening) => <double>[
+          opening.startOffset,
+          opening.endOffset,
+          opening.bottomZ,
+          opening.topZ,
+        ].map((value) => value.toStringAsFixed(12)).join(','),
+      )
+      .join(';');
+}
+
 void _rebuildAllWallObjects(List<Map<String, Object?>> objects) {
   final wallEntries = <_WallEntry>[];
   for (final object in objects) {
@@ -200,6 +213,13 @@ void _rebuildAllWallObjects(List<Map<String, Object?>> objects) {
     );
     wall.objectMap['mesh'] = rebuilt.mesh;
     wall.objectMap['bounds'] = rebuilt.bounds.toJson();
+    final existingMetadata = wall.objectMap['metadata'] is Map
+        ? Map<String, Object?>.from(
+            (wall.objectMap['metadata'] as Map).cast<String, Object?>(),
+          )
+        : <String, Object?>{};
+    existingMetadata['opening_profile'] = _openingProfileMetadata(openings);
+    wall.objectMap['metadata'] = existingMetadata;
   }
 
   for (final object in objects) {

@@ -343,6 +343,10 @@ struct BimCachePrimitiveDTO {
     std::uint32_t first_index{};
     std::uint32_t index_count{};
     AABB3D bounds{};
+    // Small semantic fields needed by the native viewport's architectural
+    // edge pass. Mesh bytes stay in the cache; this keeps opening contours
+    // deterministic without reconstructing wall intent from triangle shape.
+    std::map<std::string, std::string> metadata{};
 };
 
 struct BimCacheChunkDTO {

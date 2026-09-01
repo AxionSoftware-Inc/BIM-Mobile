@@ -219,6 +219,8 @@ int main() {
         assert(moved_door_object->metadata.at("level_locked") == "true");
         assert(nearly_equal(std::stod(moved_door_object->metadata.at("level_offset_meters")), 0.3));
         assert(nearly_equal(std::stod(moved_door_object->metadata.at("vertical_offset_meters")), 4.3));
+        assert(nearly_equal(moved_door_object->bounds.min.z, 4.3, 1.0e-6));
+        assert(nearly_equal(moved_door_object->bounds.max.z, 6.4, 1.0e-6));
         assert(session->move_level_elevation(level_2.value->value, 4.5).ok());
         const auto moved_with_level_scene = session->get_render_scene();
         assert(moved_with_level_scene.ok() && moved_with_level_scene.value.has_value());

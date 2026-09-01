@@ -30,6 +30,7 @@ internal object NativeBimCacheBridge {
   private external fun nativeChunkMaterial(handle: Long, index: Int): String
   private external fun nativeChunkKindMask(handle: Long, index: Int): Long
   private external fun nativeChunkPrimitiveRanges(handle: Long, index: Int): LongArray?
+  private external fun nativeChunkPrimitiveMetadata(handle: Long, index: Int): Array<String>?
   private external fun nativeChunkBounds(handle: Long, index: Int): DoubleArray?
   private external fun nativeChunkPositions(handle: Long, index: Int): ByteBuffer?
   private external fun nativeChunkIndices(handle: Long, index: Int): ByteBuffer?
@@ -60,14 +61,21 @@ internal object NativeBimCacheBridge {
           val positions = nativeChunkPositions(handle, index) ?: return@repeat
           val indices = nativeChunkIndices(handle, index) ?: return@repeat
           val primitiveRanges = nativeChunkPrimitiveRanges(handle, index)
+          val primitiveMetadata = nativeChunkPrimitiveMetadata(handle, index)
+            ?.toList()
+            ?.chunked(9)
+            ?.map { values -> wallMetadata(values) }
+            ?: emptyList()
+          val ranges = primitiveRanges
             ?.asList()
             ?.chunked(3)
-            ?.mapNotNull { values ->
-              if (values.size != 3) return@mapNotNull null
+            ?.mapIndexedNotNull { primitiveIndex, values ->
+              if (values.size != 3) return@mapIndexedNotNull null
               NativeBimCachePrimitiveRange(
                 firstIndex = values[0].toInt(),
                 indexCount = values[1].toInt(),
                 kind = kindFromNativeValue(values[2]),
+                metadata = primitiveMetadata.getOrNull(primitiveIndex) ?: emptyMap(),
               )
             }
             ?: emptyList()
@@ -82,17 +90,18 @@ internal object NativeBimCacheBridge {
               sourceBounds = sceneBounds(bounds),
               positions = positions.duplicate().order(ByteOrder.nativeOrder()).apply { rewind() },
               indices = indices.duplicate().order(ByteOrder.nativeOrder()).asIntBuffer().apply { rewind() },
-              primitiveRanges = primitiveRanges,
+              primitiveRanges = ranges,
             ),
           )
         }
       }
       val primitiveData = nativePrimitiveData(handle) ?: LongArray(0)
       val primitiveBounds = nativePrimitiveBounds(handle) ?: DoubleArray(0)
+      val primitiveMetadata = cachePrimitiveMetadata(chunks)
       NativeBimCache(
         handle = handle,
         chunks = chunks,
-        primitives = buildPrimitives(primitiveData, primitiveBounds),
+        primitives = buildPrimitives(primitiveData, primitiveBounds, primitiveMetadata),
       )
     } catch (_: Throwable) {
       nativeClose(handle)
@@ -165,6 +174,7 @@ internal object NativeBimCacheBridge {
         "objects" to cache.primitives.map { primitive ->
           val sourceElementId = virtualIfcPartSourceId(primitive.elementId)
           val metadata = linkedMapOf<String, Any?>("native_cache" to true)
+          metadata.putAll(primitive.metadata)
           if (sourceElementId != null) {
             metadata["source_element_id"] = sourceElementId
             metadata["selection_scope"] = "imported_mesh_part"
@@ -196,7 +206,11 @@ internal object NativeBimCacheBridge {
     }
   }
 
-  private fun buildPrimitives(data: LongArray, bounds: DoubleArray): List<NativeBimCachePrimitive> {
+  private fun buildPrimitives(
+    data: LongArray,
+    bounds: DoubleArray,
+    metadata: List<Map<String, String>>,
+  ): List<NativeBimCachePrimitive> {
     val primitiveCount = minOf(data.size / 4, bounds.size / 6)
     return List(primitiveCount) { index ->
       NativeBimCachePrimitive(
@@ -204,8 +218,21 @@ internal object NativeBimCacheBridge {
         kind = kindFromNativeValue(data[index * 4 + 1]),
         levelId = data[index * 4 + 3],
         sourceBounds = sceneBounds(bounds, index * 6),
+        metadata = metadata.getOrNull(index) ?: emptyMap(),
       )
     }
+  }
+
+  private fun cachePrimitiveMetadata(chunks: List<NativeBimCacheChunk>): List<Map<String, String>> =
+    chunks.flatMap { chunk -> chunk.primitiveRanges.map { it.metadata } }
+
+  private fun wallMetadata(values: List<String>): Map<String, String> {
+    if (values.size != 9 || values.all(String::isEmpty)) return emptyMap()
+    val keys = listOf(
+      "start_x", "start_y", "end_x", "end_y", "thickness_meters",
+      "height_meters", "opening_profile", "profile_corners", "layer_profile",
+    )
+    return keys.zip(values).filter { (_, value) -> value.isNotEmpty() }.toMap()
   }
 
   internal fun virtualIfcPartSourceId(elementId: Long): Long? {
@@ -354,6 +381,7 @@ internal data class NativeBimCachePrimitiveRange(
   val firstIndex: Int,
   val indexCount: Int,
   val kind: String,
+  val metadata: Map<String, String> = emptyMap(),
 )
 
 internal data class NativeBimCachePrimitive(
@@ -361,6 +389,7 @@ internal data class NativeBimCachePrimitive(
   val kind: String,
   val levelId: Long,
   val sourceBounds: SceneBounds,
+  val metadata: Map<String, String> = emptyMap(),
 )
 
 internal data class NativeBimCacheCompileStats(

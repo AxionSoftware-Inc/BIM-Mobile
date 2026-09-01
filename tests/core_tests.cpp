@@ -229,6 +229,8 @@ int main() {
     // the opening metadata while this assertion would fail.
     assert(!mesh_front_face_covers_point(wall_a->geometry.mesh, -0.1, 2.0, 1.0));
     assert(!mesh_front_face_covers_point(wall_a->geometry.mesh, -0.1, 3.4, 1.4));
+    assert(!mesh_front_face_covers_point(wall_a->geometry.mesh, 0.1, 2.0, 1.0));
+    assert(!mesh_front_face_covers_point(wall_a->geometry.mesh, 0.1, 3.4, 1.4));
     assert(wall_a->geometry.profile.openings.size() == 2);
     assert(wall_a->geometry.openings_cut == 2);
     assert(wall_a->geometry.solid_volume_cubic_meters > 1.5);
