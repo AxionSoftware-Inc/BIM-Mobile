@@ -19,11 +19,16 @@ class _NumericField extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 8),
       child: TextField(
         controller: controller,
+        maxLines: 1,
+        textInputAction: TextInputAction.done,
         keyboardType: const TextInputType.numberWithOptions(decimal: true),
         decoration: InputDecoration(
           labelText: label,
+          labelStyle: const TextStyle(fontSize: 13),
           isDense: true,
-          border: const OutlineInputBorder(),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
         ),
         onChanged: onChanged,
       ),

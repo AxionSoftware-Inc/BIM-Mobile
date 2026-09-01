@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 
 import 'authoring_command_service.dart';
 import 'elements/bim_element_registry.dart';
-import 'elements/wall_type_catalog.dart';
 import 'inspector_controller.dart';
 import 'render_scene_models.dart';
 
@@ -44,8 +43,7 @@ class PropertyEditor extends StatelessWidget {
           title: 'Select an element',
           icon: Icons.touch_app_outlined,
           children: <Widget>[
-            Text(
-                'Tap a wall, door, level, or another model element to inspect it.'),
+            Text('Tap an element to inspect its properties.'),
           ],
         ),
       InspectorTargetKind.multiple => _InspectorCard(
@@ -53,13 +51,17 @@ class PropertyEditor extends StatelessWidget {
           icon: Icons.select_all,
           children: <Widget>[
             Text('${target.objects.length} object(s) selected.'),
-            const SizedBox(height: 8),
-            const Text(
-                'Batch edit will be added for shared, safe properties in a later layer.'),
-            TextButton.icon(
-              onPressed: onClearSelection,
-              icon: const Icon(Icons.clear),
-              label: const Text('Clear selection'),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: onClearSelection,
+                icon: const Icon(Icons.clear, size: 18),
+                label: const Text('Clear selection'),
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                ),
+              ),
             ),
           ],
         ),
@@ -161,12 +163,9 @@ class _PlanViewRangeSectionState extends State<_PlanViewRangeSection> {
 
   @override
   Widget build(BuildContext context) => _InspectorCard(
-        title: 'Plan view range',
+        title: 'View range · ${widget.level?.name ?? 'Active level'}',
         icon: Icons.height,
         children: <Widget>[
-          Text(
-              '${widget.level?.name ?? 'Active level'}: level elevationdan yuqoriga.'),
-          const SizedBox(height: 8),
           _field('Cut height (m)', _controller, numeric: true),
           _applyButton(_busy, _apply),
         ],
@@ -253,8 +252,13 @@ class _LevelPropertiesSectionState extends State<_LevelPropertiesSection> {
         icon: Icons.straighten,
         children: <Widget>[
           _field('Name', _name),
-          _field('Elevation (m)', _elevation, numeric: true),
-          _field('Default wall height (m)', _height, numeric: true),
+          _fieldPair(
+            'Elevation (m)',
+            _elevation,
+            'Default wall height (m)',
+            _height,
+            numeric: true,
+          ),
           _field('Plan view range / cut height (m)', _viewRange, numeric: true),
           _applyButton(_busy, _apply),
         ],
@@ -296,11 +300,10 @@ class _ObjectPropertiesSection extends StatelessWidget {
               'Base level': _meta(object, 'base_level_id'),
               'Top level': _meta(object, 'top_level_id'),
               'Width (m)': _meta(object, 'width_meters'),
-              'Run (m)': _meta(object, 'total_run_meters'),
-              'Rise (m)': _meta(object, 'total_rise_meters'),
+              'Run / rise (m)':
+                  '${_meta(object, 'total_run_meters')} / ${_meta(object, 'total_rise_meters')}',
               'Treads / risers':
                   '${_meta(object, 'tread_count')} / ${_meta(object, 'riser_count')}',
-              'Assembly': _meta(object, 'assembly_id'),
             }),
       'roof' => _RoofPropertiesSection(
           object: object, commands: commands, onApplied: onApplied),
@@ -312,7 +315,6 @@ class _ObjectPropertiesSection extends StatelessWidget {
               'Area (m²)': _meta(object, 'area_m2'),
               'Thickness (m)': _meta(object, 'thickness_meters'),
               'Vertical offset (m)': _meta(object, 'vertical_offset_meters'),
-              'Assembly': _meta(object, 'assembly_id'),
             }),
       'column' || 'beam' => _ReadOnlyObjectSection(
             object: object,
@@ -413,44 +415,42 @@ class _WallPropertiesSectionState extends State<_WallPropertiesSection> {
 
   @override
   Widget build(BuildContext context) => _InspectorCard(
-          title: 'Wall properties',
-          icon: Icons.view_week_outlined,
-          children: <Widget>[
-            if (widget.scene.wallTypes.isNotEmpty)
-              _wallTypeDrop()
-            else ...<Widget>[
-              _row('Wall type', _meta(widget.object, 'wall_type_category')),
-              _row('Wall type ID', _meta(widget.object, 'wall_type_id')),
-            ],
-            if (widget.scene.wallTypes.isNotEmpty) ...<Widget>[
-              _wallAssemblyPreview(),
-              _applyButton(_busy, _applyWallType, label: 'Apply wall type'),
-            ],
-            _row(
-                'Layer count',
-                widget.object.metadata['layer_profile']
-                        ?.toString()
-                        .split(';')
-                        .where((value) => value.isNotEmpty)
-                        .length
-                        .toString() ??
-                    '0'),
-            _row('Thickness', '${_meta(widget.object, 'thickness_meters')} m'),
-            _row('Length', '${_meta(widget.object, 'length_meters')} m'),
+        title: 'Wall properties',
+        icon: Icons.view_week_outlined,
+        children: <Widget>[
+          if (widget.scene.wallTypes.isNotEmpty) ...<Widget>[
+            _wallTypeDrop(),
+            _wallAssemblySummary(),
+            _applyButton(_busy, _applyWallType, label: 'Apply type'),
+          ] else
+            _row('Wall type', _meta(widget.object, 'wall_type_category')),
+          _row('Layer count', '${_layerCount()} layers'),
+          _sectionLabel('Geometry'),
+          _row(
+            'Size',
+            '${_meta(widget.object, 'thickness_meters')} m thick · '
+                '${_meta(widget.object, 'length_meters')} m long',
+          ),
+          _sectionLabel('Constraints'),
+          _levelDrop(
+            'Base level',
+            _base,
+            (value) => setState(() => _base = value),
+          ),
+          _compactSwitch(
+            label: 'Top level constraint',
+            value: _connected,
+            onChanged: (value) => setState(() => _connected = value),
+          ),
+          if (_connected)
             _levelDrop(
-                'Base level', _base, (value) => setState(() => _base = value)),
-            SwitchListTile.adaptive(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Top level constraint'),
-                value: _connected,
-                onChanged: (value) => setState(() => _connected = value)),
-            if (_connected)
-              _levelDrop(
-                  'Top level',
-                  _top == 0 ? widget.levels.last.levelId : _top,
-                  (value) => setState(() => _top = value)),
-            _applyButton(_busy, _apply, label: 'Apply wall levels'),
-          ]);
+              'Top level',
+              _top == 0 ? widget.levels.last.levelId : _top,
+              (value) => setState(() => _top = value),
+            ),
+          _applyButton(_busy, _apply, label: 'Apply constraints'),
+        ],
+      );
 
   Widget _wallTypeDrop() {
     final value = widget.scene.wallTypes.any(
@@ -486,69 +486,25 @@ class _WallPropertiesSectionState extends State<_WallPropertiesSection> {
     );
   }
 
-  Widget _wallAssemblyPreview() {
+  Widget _wallAssemblySummary() {
     final wallType = widget.scene.wallTypes
         .where((candidate) => candidate.id == _wallTypeId)
         .firstOrNull;
     if (wallType == null) return const SizedBox.shrink();
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.only(top: 8),
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Text(
-            'Assembly · ${_number(wallType.totalThicknessMeters)} m · ${wallType.layers.length} layers',
-            style: const TextStyle(fontWeight: FontWeight.w600),
-          ),
-          const SizedBox(height: 6),
-          for (final layer in wallType.layers)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 2),
-              child: Row(
-                children: <Widget>[
-                  _materialSwatch(widget.scene.materialById(layer.materialId)),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      '${widget.scene.materialById(layer.materialId)?.name ?? 'Material ${layer.materialId}'} · ${layer.function.label}',
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  Text('${_number(layer.thicknessMeters)} m'),
-                ],
-              ),
-            ),
-        ],
-      ),
-    );
+    return _row('Assembly', '${_number(wallType.totalThicknessMeters)} m');
   }
 
-  Widget _materialSwatch(RenderSceneMaterial? material) {
-    return Container(
-      width: 12,
-      height: 12,
-      decoration: BoxDecoration(
-        color: _safeColor(material?.displayColor),
-        borderRadius: BorderRadius.circular(3),
-        border: Border.all(color: Colors.black26),
-      ),
-    );
-  }
-
-  Color _safeColor(String? value) {
-    final hex = value?.replaceFirst('#', '');
-    if (hex == null || (hex.length != 6 && hex.length != 8)) {
-      return Colors.blueGrey.shade200;
+  int _layerCount() {
+    final profile = widget.object.metadata['layer_profile']?.toString();
+    if (profile != null && profile.isNotEmpty) {
+      return profile.split(';').where((layer) => layer.isNotEmpty).length;
     }
-    final parsed = int.tryParse(hex, radix: 16);
-    if (parsed == null) return Colors.blueGrey.shade200;
-    return Color(hex.length == 6 ? 0xFF000000 | parsed : parsed);
+    return widget.scene.wallTypes
+            .where((wallType) => wallType.id == _wallTypeId)
+            .firstOrNull
+            ?.layers
+            .length ??
+        0;
   }
 
   Widget _levelDrop(String label, int value, ValueChanged<int> onChanged) =>
@@ -557,10 +513,7 @@ class _WallPropertiesSectionState extends State<_WallPropertiesSection> {
           initialValue: widget.levels.any((level) => level.levelId == value)
               ? value
               : widget.levels.first.levelId,
-          decoration: InputDecoration(
-              labelText: label,
-              isDense: true,
-              border: const OutlineInputBorder()),
+          decoration: _dropdownDecoration(label),
           items: [
             for (final level in widget.levels)
               DropdownMenuItem(
@@ -660,46 +613,57 @@ class _OpeningPropertiesSectionState extends State<_OpeningPropertiesSection> {
 
   @override
   Widget build(BuildContext context) => _InspectorCard(
-          title: '${_label(widget.object)} properties',
+          title: _label(widget.object),
           icon: widget.object.kindKey == 'door'
               ? Icons.door_front_door_outlined
               : Icons.window_outlined,
           children: <Widget>[
             _row('Host wall', _meta(widget.object, 'host_wall_id')),
-            DropdownButtonFormField<int>(
-              initialValue: _levelId,
-              decoration: const InputDecoration(
-                  labelText: 'Base level',
-                  isDense: true,
-                  border: OutlineInputBorder()),
-              items: <DropdownMenuItem<int>>[
-                for (final level in widget.levels)
-                  DropdownMenuItem<int>(
-                    value: level.levelId,
-                    child: Text(
-                        '${level.name} (${_number(level.elevationMeters)} m)'),
-                  ),
-              ],
-              onChanged: (value) {
-                if (value != null) {
-                  setState(() => _levelId = value);
-                }
-              },
+            _sectionLabel('Placement & size'),
+            _openingLevelDrop(),
+            _fieldPair(
+              'Offset (m)',
+              _offset,
+              'Level offset (m)',
+              _levelOffset,
+              numeric: true,
             ),
-            const SizedBox(height: 8),
-            _field('Level offset (m)', _levelOffset, numeric: true),
-            _field('Offset (m)', _offset, numeric: true),
-            _field('Width (m)', _width, numeric: true),
-            _field('Height (m)', _height, numeric: true),
+            _fieldPair(
+              'Width (m)',
+              _width,
+              'Height (m)',
+              _height,
+              numeric: true,
+            ),
             if (widget.object.kindKey == 'window')
               _field('Sill height (m)', _sill, numeric: true),
-            SwitchListTile.adaptive(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Lock to level'),
-                value: _locked,
-                onChanged: (value) => setState(() => _locked = value)),
+            _compactSwitch(
+              label: 'Lock to level',
+              value: _locked,
+              onChanged: (value) => setState(() => _locked = value),
+            ),
             _applyButton(_busy, _apply),
           ]);
+
+  Widget _openingLevelDrop() => DropdownButtonFormField<int>(
+        isExpanded: true,
+        initialValue: widget.levels.any((level) => level.levelId == _levelId)
+            ? _levelId
+            : widget.levels.first.levelId,
+        decoration: _dropdownDecoration('Base level'),
+        items: <DropdownMenuItem<int>>[
+          for (final level in widget.levels)
+            DropdownMenuItem<int>(
+              value: level.levelId,
+              child: Text(
+                '${level.name} (${_number(level.elevationMeters)} m)',
+              ),
+            ),
+        ],
+        onChanged: (value) {
+          if (value != null) setState(() => _levelId = value);
+        },
+      );
 }
 
 class _RoofPropertiesSection extends StatefulWidget {
@@ -776,10 +740,9 @@ class _RoofPropertiesSectionState extends State<_RoofPropertiesSection> {
         title: 'Roof properties',
         icon: Icons.roofing_outlined,
         children: <Widget>[
-          _row('Assembly', _meta(widget.object, 'assembly_id')),
           DropdownButtonFormField<int>(
             initialValue: _roofType,
-            decoration: const InputDecoration(labelText: 'Roof shape'),
+            decoration: _dropdownDecoration('Roof shape'),
             items: const <DropdownMenuItem<int>>[
               DropdownMenuItem(value: 0, child: Text('Flat')),
               DropdownMenuItem(value: 1, child: Text('Simple gable')),
@@ -789,8 +752,16 @@ class _RoofPropertiesSectionState extends State<_RoofPropertiesSection> {
               if (value != null) setState(() => _roofType = value);
             },
           ),
-          if (_roofType != 0) _field('Slope (degrees)', _slope, numeric: true),
-          _field('Overhang (m)', _overhang, numeric: true),
+          if (_roofType != 0)
+            _fieldPair(
+              'Slope (degrees)',
+              _slope,
+              'Overhang (m)',
+              _overhang,
+              numeric: true,
+            )
+          else
+            _field('Overhang (m)', _overhang, numeric: true),
           _applyButton(_busy, _apply),
         ],
       );
@@ -808,8 +779,6 @@ class _ReadOnlyObjectSection extends StatelessWidget {
           icon: _icon(object.kindKey),
           children: <Widget>[
             for (final entry in rows.entries) _row(entry.key, entry.value),
-            const SizedBox(height: 4),
-            const Text('Read-only engine data.'),
           ]);
 }
 
@@ -846,7 +815,10 @@ class _DeleteElementButtonState extends State<_DeleteElementButton> {
   @override
   Widget build(BuildContext context) => OutlinedButton.icon(
         style: OutlinedButton.styleFrom(
-            foregroundColor: Theme.of(context).colorScheme.error),
+          foregroundColor: Theme.of(context).colorScheme.error,
+          minimumSize: const Size.fromHeight(38),
+          visualDensity: VisualDensity.compact,
+        ),
         onPressed: _busy ? null : _delete,
         icon: _busy
             ? const SizedBox.square(
@@ -864,20 +836,30 @@ class _InspectorCard extends StatelessWidget {
   final List<Widget> children;
   @override
   Widget build(BuildContext context) => Card(
+      margin: EdgeInsets.zero,
       elevation: 0,
+      color: Theme.of(context)
+          .colorScheme
+          .surfaceContainerHighest
+          .withValues(alpha: 0.52),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: Padding(
-          padding: const EdgeInsets.all(14),
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
           child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: <Widget>[
                 Row(children: <Widget>[
-                  Icon(icon, size: 20),
+                  Icon(
+                    icon,
+                    size: 18,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
                   const SizedBox(width: 8),
                   Expanded(
                       child: Text(title,
                           style: Theme.of(context).textTheme.titleSmall))
                 ]),
-                const SizedBox(height: 12),
+                const SizedBox(height: 10),
                 ...children
               ])));
 }
@@ -885,26 +867,106 @@ class _InspectorCard extends StatelessWidget {
 Widget _field(String label, TextEditingController controller,
         {bool numeric = false}) =>
     Padding(
-        padding: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.only(bottom: 6),
         child: TextField(
             controller: controller,
+            maxLines: 1,
+            textInputAction: TextInputAction.done,
             keyboardType: numeric
                 ? const TextInputType.numberWithOptions(
                     decimal: true, signed: true)
                 : TextInputType.text,
             decoration: InputDecoration(
                 labelText: label,
+                labelStyle: const TextStyle(fontSize: 13),
                 isDense: true,
-                border: const OutlineInputBorder())));
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8)))));
+
+Widget _fieldPair(
+  String firstLabel,
+  TextEditingController firstController,
+  String secondLabel,
+  TextEditingController secondController, {
+  bool numeric = false,
+}) =>
+    Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Expanded(child: _field(firstLabel, firstController, numeric: numeric)),
+        const SizedBox(width: 8),
+        Expanded(
+            child: _field(secondLabel, secondController, numeric: numeric)),
+      ],
+    );
+
+Widget _sectionLabel(String label) => Padding(
+      padding: const EdgeInsets.only(top: 4, bottom: 6),
+      child: Text(
+        label,
+        style: const TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.5,
+          textBaseline: TextBaseline.alphabetic,
+        ),
+      ),
+    );
+
+Widget _compactSwitch({
+  required String label,
+  required bool value,
+  required ValueChanged<bool> onChanged,
+}) =>
+    SizedBox(
+      height: 40,
+      child: Row(
+        children: <Widget>[
+          Expanded(child: Text(label)),
+          Switch.adaptive(
+            value: value,
+            onChanged: onChanged,
+            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+        ],
+      ),
+    );
+
+InputDecoration _dropdownDecoration(String label) => InputDecoration(
+      labelText: label,
+      labelStyle: const TextStyle(fontSize: 13),
+      isDense: true,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+    );
+
 Widget _row(String label, String value) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 3),
+    padding: const EdgeInsets.symmetric(vertical: 2),
     child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: <Widget>[
-      Expanded(child: Text(label)),
-      Text(value, style: const TextStyle(fontWeight: FontWeight.w600))
+      Expanded(
+        child: Text(
+          label,
+          style: const TextStyle(fontSize: 12),
+        ),
+      ),
+      Flexible(
+        child: Text(
+          value,
+          textAlign: TextAlign.right,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+        ),
+      )
     ]));
 Widget _applyButton(bool busy, VoidCallback onPressed,
         {String label = 'Apply'}) =>
     FilledButton.icon(
+        style: FilledButton.styleFrom(
+          minimumSize: const Size.fromHeight(38),
+          visualDensity: VisualDensity.compact,
+        ),
         onPressed: busy ? null : onPressed,
         icon: busy
             ? const SizedBox.square(
