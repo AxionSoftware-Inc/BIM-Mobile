@@ -1,6 +1,36 @@
 part of 'widget_test.dart';
 
 void registerWallTypeTests() {
+  test('floor type catalog preserves surface key and layered thickness', () {
+    final result = parseRenderSceneJson(
+      jsonEncode(<String, Object?>{
+        'scene_version': 2,
+        'floor_types': <Object?>[
+          <String, Object?>{
+            'id': 24,
+            'name': 'Asphalt Floor',
+            'surface_key': 'asphalt',
+            'total_thickness_meters': 0.20,
+            'layers': <Object?>[
+              <String, Object?>{
+                'material_id': 7,
+                'thickness_meters': 0.20,
+                'function': 0,
+              },
+            ],
+          },
+        ],
+        'objects': <Object?>[],
+      }),
+      source: 'floor type catalog test',
+    );
+    final scene = result.scene!;
+    expect(scene.floorTypes, hasLength(1));
+    expect(scene.floorTypes.single.surfaceKind, FloorSurfaceKind.asphalt);
+    expect(scene.floorTypes.single.totalThicknessMeters, 0.20);
+    expect(scene.floorTypes.single.layers, hasLength(1));
+  });
+
   test('wall type catalog preserves native layers and material references', () {
     final result = parseRenderSceneJson(
       jsonEncode(<String, Object?>{

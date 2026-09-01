@@ -676,6 +676,27 @@ mixin _FallbackSceneOverlayMixin {
     return const Color(0xFFB0B7C3);
   }
 
+  Color _floorSurfaceColor(RenderSceneObject object) {
+    final value = (object.metadata['floor_type'] ??
+            object.metadata['floor_type_name'] ??
+            object.materialCategory)
+        .toString()
+        .toLowerCase();
+    if (value.contains('asphalt') || value.contains('bitumen')) {
+      return const Color(0xFF4B5563);
+    }
+    if (value.contains('wood') ||
+        value.contains('timber') ||
+        value.contains('laminate') ||
+        value.contains('parquet')) {
+      return const Color(0xFFB77945);
+    }
+    if (value.contains('concrete') || value.contains('cement')) {
+      return const Color(0xFF9CA3AF);
+    }
+    return const Color(0xFFD1BFA3);
+  }
+
   Color _kindColor(String kind) {
     switch (kind) {
       case 'wall':

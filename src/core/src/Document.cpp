@@ -1819,7 +1819,23 @@ void Document::set_element_assembly(ElementId element_id, ElementId assembly_id)
     const auto* assembly = get_layered_assembly(assembly_id);
     if (assembly == nullptr) throw std::invalid_argument("compound assembly does not exist");
     auto* element = find_ptr(element_id);
-    if (element == nullptr) throw std::invalid_argument("element does not exist");
+    if (element == nullptr) {
+        // Floor systems are document-owned authoring records rather than
+        // Element variants, but their stable IDs are exposed by the same
+        // render-scene selection contract. Keep one assembly command for both
+        // slab elements and generated/manual floor systems.
+        const auto system = floor_systems_.find(element_id);
+        if (system == floor_systems_.end()) {
+            throw std::invalid_argument("element does not exist");
+        }
+        if (assembly->kind != LayeredAssemblyKind::Floor) {
+            throw std::invalid_argument("floor system requires Floor assembly");
+        }
+        system->second.assembly_id = assembly_id;
+        system->second.dirty = true;
+        invalidate_dependency_graph_cache();
+        return;
+    }
     if (auto* wall = element->wall()) {
         if (assembly->kind != LayeredAssemblyKind::Wall) throw std::invalid_argument("wall requires Wall assembly");
         wall->assembly_id = assembly_id;

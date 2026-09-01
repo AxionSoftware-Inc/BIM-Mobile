@@ -92,7 +92,11 @@ void registerEngineIntegrationTests() {
       initial.materials.any((material) => material.name == 'Template Glass'),
       isTrue,
     );
-
+    expect(
+      initial.floorTypes.map((type) => type.name),
+      containsAll(
+          <String>['Asphalt Floor', 'Concrete Floor', 'Residential Floor']),
+    );
     final opening = initial.objects.firstWhere(
       (object) => object.kindKey == 'door' || object.kindKey == 'window',
     );
@@ -167,6 +171,17 @@ void registerEngineIntegrationTests() {
     final createdId = repository.lastCreatedElementId;
     expect(createdId, isNotNull);
     expect(created.scene!.objectById(createdId)!.kindKey, 'floor');
+    final createdScene = created.scene!;
+    final asphaltFloor = createdScene.floorTypes.firstWhere(
+      (type) => type.surfaceKind == FloorSurfaceKind.asphalt,
+    );
+    final changedResult = await repository.setElementAssembly(
+      elementId: createdId!,
+      assemblyId: asphaltFloor.id,
+    );
+    final changedFloor = changedResult.scene!.objectById(createdId)!;
+    expect(changedFloor.metadata['assembly_id'], asphaltFloor.id.toString());
+    expect(changedFloor.metadata['floor_type'], 'asphalt');
   });
 
   test('blank project creates picked-wall floor and ceiling without assemblies',

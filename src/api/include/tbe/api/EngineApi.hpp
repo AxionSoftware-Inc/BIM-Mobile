@@ -296,6 +296,16 @@ struct RenderSceneWallTypeDTO {
     int core_end_layer{-1};
 };
 
+struct RenderSceneFloorTypeDTO {
+    ElementIdDTO id{};
+    std::string name{};
+    std::string surface_key{"generic"};
+    double total_thickness_meters{};
+    std::vector<RenderSceneWallLayerDTO> layers{};
+    int core_start_layer{-1};
+    int core_end_layer{-1};
+};
+
 struct RenderSceneSectionDTO {
     std::string name{};
     Vec2 start{};
@@ -330,6 +340,7 @@ struct RenderSceneDTO {
     std::vector<RenderSceneLevelDTO> levels{};
     std::vector<RenderSceneMaterialDTO> materials{};
     std::vector<RenderSceneWallTypeDTO> wall_types{};
+    std::vector<RenderSceneFloorTypeDTO> floor_types{};
     std::vector<RenderSceneSectionDTO> sections{};
     std::vector<RenderSceneObjectDTO> objects{};
     std::size_t object_count{};

@@ -34,6 +34,11 @@ abstract interface class ViewerAuthoringGateway {
     required int wallTypeId,
   });
 
+  Future<RenderSceneLoadResult> setElementAssembly({
+    required int elementId,
+    required int assemblyId,
+  });
+
   /// Creates a wall and applies its level constraint/interactive join as one
   /// native-session transaction. The resulting snapshot is refreshed only
   /// after the complete wall state is valid.

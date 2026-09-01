@@ -155,7 +155,13 @@ class FallbackRenderScenePainter extends CustomPainter
           elementId != null && selectedElementIds.contains(elementId);
       final isHighlighted =
           elementId == highlightedElementId && highlightedElementId != null;
-      final baseColor = _kindColor(object.kindKey);
+      final isFloorSurface =
+          object.kindKey == 'floor' || object.kindKey == 'slab';
+      final baseColor = isFloorSurface
+          ? displayStyle == RenderSceneDisplayStyle.solid
+              ? const Color(0xFFE5E7EB)
+              : _floorSurfaceColor(object)
+          : _kindColor(object.kindKey);
       final objectColor = isSelected
           ? const Color(0xFF2563EB)
           : isHighlighted
@@ -205,6 +211,7 @@ class FallbackRenderScenePainter extends CustomPainter
             // the lightweight layer hatch renderer below.
             honorMaterialColors: !isSelected &&
                 !isHighlighted &&
+                !isFloorSurface &&
                 object.kindKey != 'wall' &&
                 object.kindKey != 'door' &&
                 object.kindKey != 'window',
@@ -277,6 +284,8 @@ class FallbackRenderScenePainter extends CustomPainter
         }
       }
     }
+
+    _drawFloorSurfacePatterns(canvas, projection, filteredObjects);
 
     if (projectionMode == RenderSceneProjectionMode.topDown) {
       _drawPlanOpeningSymbols(canvas, projection, filteredObjects);

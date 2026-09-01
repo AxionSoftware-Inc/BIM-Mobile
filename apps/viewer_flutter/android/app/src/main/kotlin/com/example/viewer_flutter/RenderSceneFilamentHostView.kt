@@ -596,6 +596,7 @@ internal class RenderSceneFilamentHostView(
   private var roofMaterial: Material? = null
   private var concreteMaterial: Material? = null
   private var solidMaterial: Material? = null
+  private var solidFloorMaterial: Material? = null
   private var solidWallMaterial: Material? = null
   private var solidWallGlassMaterial: Material? = null
   private var solidWindowMaterial: Material? = null
@@ -1617,6 +1618,7 @@ internal class RenderSceneFilamentHostView(
       applySectionBoxState(replacement)
       applyDisplayStyle(replacement)
       applyWallSurfaceKind(replacement, entry.objectData)
+      applyFloorSurfaceKind(replacement, entry.objectData)
       val instance = manager.getInstance(entry.entity)
       if (instance != 0) manager.setMaterialInstanceAt(instance, 0, replacement)
       engine.destroyMaterialInstance(entry.materialInstance)
@@ -1630,6 +1632,7 @@ internal class RenderSceneFilamentHostView(
       applySectionBoxState(replacement)
       applyDisplayStyle(replacement)
       applyWallSurfaceKind(replacement, batch.representative)
+      applyFloorSurfaceKind(replacement, batch.representative)
       val instance = manager.getInstance(batch.entity)
       if (instance != 0) manager.setMaterialInstanceAt(instance, 0, replacement)
       engine.destroyMaterialInstance(batch.materialInstance)
@@ -1643,6 +1646,7 @@ internal class RenderSceneFilamentHostView(
         applySectionBoxState(instance)
         applyDisplayStyle(instance)
         applyWallSurfaceKind(instance, group.representative)
+        applyFloorSurfaceKind(instance, group.representative)
         instance.setParameter(
           "baseColor", Colors.RgbaType.LINEAR,
           group.baseColor[0], group.baseColor[1], group.baseColor[2], group.baseColor[3],
@@ -2201,6 +2205,7 @@ internal class RenderSceneFilamentHostView(
     roofMaterial?.let { material -> engine?.destroyMaterial(material) }
     concreteMaterial?.let { material -> engine?.destroyMaterial(material) }
     solidMaterial?.let { material -> engine?.destroyMaterial(material) }
+    solidFloorMaterial?.let { material -> engine?.destroyMaterial(material) }
     solidWallMaterial?.let { material -> engine?.destroyMaterial(material) }
     solidWallGlassMaterial?.let { material -> engine?.destroyMaterial(material) }
     solidWindowMaterial?.let { material -> engine?.destroyMaterial(material) }
@@ -2233,6 +2238,7 @@ internal class RenderSceneFilamentHostView(
     roofMaterial = null
     concreteMaterial = null
     solidMaterial = null
+    solidFloorMaterial = null
     solidWallMaterial = null
     solidWallGlassMaterial = null
     solidWindowMaterial = null
@@ -2263,13 +2269,14 @@ internal class RenderSceneFilamentHostView(
       windowMaterial = buildMaterial(engine, "RenderSceneWindow", ARCHITECTURAL_LIT_MAT, lit = true)
       plasterMaterial = buildMaterial(engine, "RenderScenePlaster", ARCHITECTURAL_LIT_MAT, lit = true)
       woodMaterial = buildMaterial(engine, "RenderSceneWood", ARCHITECTURAL_LIT_MAT, lit = true)
-      floorMaterial = buildMaterial(engine, "RenderSceneFloor", ARCHITECTURAL_LIT_MAT, lit = true)
+      floorMaterial = buildMaterial(engine, "RenderSceneFloor", FLOOR_MAT, lit = true)
       roofMaterial = buildMaterial(engine, "RenderSceneRoof", ARCHITECTURAL_LIT_MAT, lit = true)
       concreteMaterial = buildMaterial(engine, "RenderSceneConcrete", ARCHITECTURAL_LIT_MAT, lit = true)
       // Solid is deliberately unlit: it stays clean white and does not inherit
       // HDRI/Sun changes. Real lighting belongs to Shaded, where it can be
       // inspected without compromising the primary BIM coordination view.
       solidMaterial = buildMaterial(engine, "RenderSceneSolid", FLAT_COLOR_MAT, lit = false)
+      solidFloorMaterial = buildMaterial(engine, "RenderSceneSolidFloor", SOLID_FLOOR_MAT, lit = false)
       solidWallMaterial = buildMaterial(engine, "RenderSceneSolidWall", SOLID_WALL_MAT, lit = false)
       solidWallGlassMaterial = buildMaterial(
         engine,
@@ -2315,7 +2322,7 @@ internal class RenderSceneFilamentHostView(
       )
       if (listOf(material, wallMaterial, wallGlassMaterial, windowMaterial, plasterMaterial,
           woodMaterial, floorMaterial, roofMaterial, concreteMaterial,
-           solidMaterial, solidWallMaterial, solidWallGlassMaterial,
+           solidMaterial, solidFloorMaterial, solidWallMaterial, solidWallGlassMaterial,
            solidWindowMaterial, edgeMaterial, planEdgeMaterial, gridMaterial,
            groundMaterial, shadowMaterial).any { it == null }) {
         statusMessage = "Filament material build returned an invalid package."
@@ -2349,6 +2356,7 @@ internal class RenderSceneFilamentHostView(
       .uniformParameter(MaterialBuilder.UniformType.FLOAT4, "baseColor")
         .uniformParameter(MaterialBuilder.UniformType.FLOAT, "displayShade")
         .uniformParameter(MaterialBuilder.UniformType.FLOAT, "surfaceKind")
+        .uniformParameter(MaterialBuilder.UniformType.FLOAT, "floorKind")
         .uniformParameter(MaterialBuilder.UniformType.FLOAT, "sectionBoxEnabled")
         .uniformParameter(MaterialBuilder.UniformType.FLOAT4, "sectionBoxMin")
         .uniformParameter(MaterialBuilder.UniformType.FLOAT4, "sectionBoxMax")
@@ -2616,6 +2624,7 @@ internal class RenderSceneFilamentHostView(
         applySectionBoxState(instance)
         applyDisplayStyle(instance)
         applyWallSurfaceKind(instance, representative)
+        applyFloorSurfaceKind(instance, representative)
         instance.setParameter(
           "baseColor",
           Colors.RgbaType.LINEAR,
@@ -2913,6 +2922,8 @@ internal class RenderSceneFilamentHostView(
     if (displayStyle == "solid") {
       return if (kind == "window") {
         solidWindowMaterial ?: fallback
+      } else if (kind == "floor" || kind == "slab") {
+        solidFloorMaterial ?: solidMaterial ?: fallback
       } else if (kind == "wall") {
         if (wallSurfaceVariant(objectData) == "glass") {
           // Use the proven transparent Filament pipeline in Solid too.  The
@@ -2936,9 +2947,9 @@ internal class RenderSceneFilamentHostView(
       "door" -> woodMaterial ?: fallback
       // IFC categories use the same small set of real Filament materials so
       // the view stays consistent across imported and native scene objects.
-      "floor" -> floorMaterial ?: fallback
+      "floor", "slab" -> floorMaterial ?: fallback
       "roof" -> roofMaterial ?: fallback
-      "slab", "column", "beam", "stair", "proxy" -> concreteMaterial ?: fallback
+      "column", "beam", "stair", "proxy" -> concreteMaterial ?: fallback
       "ceiling" -> plasterMaterial ?: fallback
       else -> if (displayStyle == "solid") fallback else fallback
     }
@@ -2980,6 +2991,26 @@ internal class RenderSceneFilamentHostView(
     instance.setParameter("surfaceKind", wallSurfaceKind(objectData))
   }
 
+  private fun floorSurfaceKind(objectData: SceneObject): Float {
+    val value = (
+      objectData.metadata["floor_type"]
+        ?: objectData.metadata["floor_type_name"]
+        ?: objectData.materialCategory
+      ).trim().lowercase()
+    return when {
+      value.contains("asphalt") || value.contains("bitumen") -> 0.0f
+      value.contains("wood") || value.contains("timber") ||
+        value.contains("laminate") || value.contains("parquet") -> 2.0f
+      else -> 1.0f
+    }
+  }
+
+  private fun applyFloorSurfaceKind(instance: MaterialInstance, objectData: SceneObject) {
+    if (normalizeKind(objectData.kind) == "floor" || normalizeKind(objectData.kind) == "slab") {
+      instance.setParameter("floorKind", floorSurfaceKind(objectData))
+    }
+  }
+
   private fun applyDisplayStyle(instance: MaterialInstance) {
     instance.setParameter("displayShade", if (displayStyle == "shaded") 1.0f else 0.0f)
   }
@@ -3016,11 +3047,15 @@ internal class RenderSceneFilamentHostView(
       // the sun establish the form, instead of dark category colors masking
       // the light/shadow boundary. Dark viewport themes keep the same palette
       // but scale it down so the model remains comfortable to read.
-      revitShadedColor(kind, if (kind == "wall") wallSurfaceVariant(objectData) else null)
+      revitShadedColor(
+        kind,
+        if (kind == "wall") wallSurfaceVariant(objectData) else null,
+        if (kind == "floor" || kind == "slab") floorSurfaceKind(objectData) else null,
+      )
     }
   }
 
-  private fun revitShadedColor(kind: String, wallVariant: String?): FloatArray {
+  private fun revitShadedColor(kind: String, wallVariant: String?, floorKind: Float?): FloatArray {
     val base = when {
       // Shaded owns the semantic palette, but it intentionally stays light.
       kind == "wall" && wallVariant == "brick" -> floatArrayOf(0.76f, 0.56f, 0.48f, 1.0f)
@@ -3029,8 +3064,9 @@ internal class RenderSceneFilamentHostView(
       kind == "wall" -> floatArrayOf(0.78f, 0.80f, 0.82f, 1.0f)
       kind == "door" -> floatArrayOf(0.34f, 0.36f, 0.39f, 1.0f)
       kind == "window" -> floatArrayOf(0.36f, 0.50f, 0.60f, 1.0f)
-      kind == "slab" -> floatArrayOf(0.66f, 0.68f, 0.71f, 1.0f)
-      kind == "floor" -> floatArrayOf(0.67f, 0.69f, 0.72f, 1.0f)
+      (kind == "slab" || kind == "floor") && floorKind == 0.0f -> floatArrayOf(0.31f, 0.33f, 0.35f, 1.0f)
+      (kind == "slab" || kind == "floor") && floorKind == 2.0f -> floatArrayOf(0.66f, 0.47f, 0.29f, 1.0f)
+      kind == "slab" || kind == "floor" -> floatArrayOf(0.66f, 0.68f, 0.71f, 1.0f)
       kind == "ceiling" -> floatArrayOf(0.84f, 0.85f, 0.86f, 1.0f)
       kind == "roof" -> floatArrayOf(0.78f, 0.79f, 0.81f, 1.0f)
       kind == "column" -> floatArrayOf(0.62f, 0.65f, 0.69f, 1.0f)
@@ -3834,6 +3870,8 @@ internal class RenderSceneFilamentHostView(
     val kind = normalizeKind(objectData.kind)
     return if (kind == "wall") {
       wallSurfaceVariant(objectData)
+    } else if (kind == "floor" || kind == "slab") {
+      "floor:${floorSurfaceKind(objectData)}"
     } else {
       objectData.materialCategory
     }
@@ -3945,6 +3983,7 @@ internal class RenderSceneFilamentHostView(
       applySectionBoxState(instance)
       applyDisplayStyle(instance)
       applyWallSurfaceKind(instance, representative)
+      applyFloorSurfaceKind(instance, representative)
       instance.setParameter(
         "baseColor", Colors.RgbaType.LINEAR,
         baseColor[0], baseColor[1], baseColor[2], baseColor[3],
@@ -4025,6 +4064,7 @@ internal class RenderSceneFilamentHostView(
         applySectionBoxState(instance)
         applyDisplayStyle(instance)
         applyWallSurfaceKind(instance, representative)
+        applyFloorSurfaceKind(instance, representative)
         instance.setParameter(
           "baseColor", Colors.RgbaType.LINEAR,
           baseColor[0], baseColor[1], baseColor[2], baseColor[3],
@@ -4729,6 +4769,7 @@ internal class RenderSceneFilamentHostView(
     applySectionBoxState(materialInstance)
     applyDisplayStyle(materialInstance)
     applyWallSurfaceKind(materialInstance, objectData)
+    applyFloorSurfaceKind(materialInstance, objectData)
     val baseColor = displayBaseColor(objectData)
     materialInstance.setParameter(
       "baseColor",

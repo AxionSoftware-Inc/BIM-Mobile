@@ -307,7 +307,13 @@ class _ObjectPropertiesSection extends StatelessWidget {
             }),
       'roof' => _RoofPropertiesSection(
           object: object, commands: commands, onApplied: onApplied),
-      'floor' || 'ceiling' || 'slab' => _ReadOnlyObjectSection(
+      'floor' || 'slab' => _FloorPropertiesSection(
+          object: object,
+          scene: scene,
+          onApplied: onApplied,
+          commands: commands,
+        ),
+      'ceiling' => _ReadOnlyObjectSection(
             object: object,
             title: '${_label(object)} properties',
             rows: <String, String>{
@@ -333,6 +339,113 @@ class _ObjectPropertiesSection extends StatelessWidget {
               'Material': object.materialCategory,
             }),
     };
+  }
+}
+
+class _FloorPropertiesSection extends StatefulWidget {
+  const _FloorPropertiesSection({
+    required this.object,
+    required this.scene,
+    required this.commands,
+    required this.onApplied,
+  });
+
+  final RenderSceneObject object;
+  final RenderScene scene;
+  final AuthoringCommandService commands;
+  final ApplyInspectorResult onApplied;
+
+  @override
+  State<_FloorPropertiesSection> createState() =>
+      _FloorPropertiesSectionState();
+}
+
+class _FloorPropertiesSectionState extends State<_FloorPropertiesSection> {
+  late int _assemblyId;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _assemblyId = _metaInt(widget.object, 'assembly_id') ?? 0;
+  }
+
+  @override
+  void didUpdateWidget(covariant _FloorPropertiesSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.object.elementId != widget.object.elementId) {
+      _assemblyId = _metaInt(widget.object, 'assembly_id') ?? 0;
+    }
+  }
+
+  Future<void> _apply() async {
+    final elementId = widget.object.elementId;
+    if (elementId == null || _assemblyId == 0) return;
+    setState(() => _busy = true);
+    try {
+      final selected = widget.scene.floorTypes
+          .where((floorType) => floorType.id == _assemblyId)
+          .firstOrNull;
+      final result = await widget.commands.setElementAssembly(
+        elementId: elementId,
+        assemblyId: _assemblyId,
+      );
+      await widget.onApplied(
+        result,
+        selected == null ? 'Floor type applied.' : '${selected.name} applied.',
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final current = widget.scene.floorTypes
+        .where((floorType) => floorType.id == _assemblyId)
+        .firstOrNull;
+    return _InspectorCard(
+      title: '${_label(widget.object)} properties',
+      icon: Icons.layers_outlined,
+      children: <Widget>[
+        if (widget.scene.floorTypes.isNotEmpty) ...<Widget>[
+          DropdownButtonFormField<int>(
+            isExpanded: true,
+            initialValue: widget.scene.floorTypes.any(
+              (floorType) => floorType.id == _assemblyId,
+            )
+                ? _assemblyId
+                : null,
+            decoration: _dropdownDecoration('Floor type'),
+            hint: const Text('Select floor type'),
+            items: [
+              for (final floorType in widget.scene.floorTypes)
+                DropdownMenuItem<int>(
+                  value: floorType.id,
+                  child: Text(
+                    '${floorType.name} · ${floorType.surfaceLabel}',
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+            ],
+            onChanged: (next) {
+              if (next != null) setState(() => _assemblyId = next);
+            },
+          ),
+          if (current != null)
+            _row(
+              'Assembly',
+              '${current.surfaceLabel} · ${_number(current.totalThicknessMeters)} m · ${current.layers.length} layers',
+            ),
+          _applyButton(_busy, _apply, label: 'Apply floor type'),
+        ] else
+          _row('Floor type', _meta(widget.object, 'floor_type_name')),
+        _row('Level', widget.object.levelId?.toString() ?? '-'),
+        _row('Area (m²)', _meta(widget.object, 'area_m2')),
+        _row('Vertical offset (m)',
+            _meta(widget.object, 'vertical_offset_meters')),
+      ],
+    );
   }
 }
 

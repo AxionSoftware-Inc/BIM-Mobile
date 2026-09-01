@@ -5,11 +5,80 @@ mixin _FallbackScenePlanPainterMixin {
   Set<String> get selectedElementIds;
   String? get highlightedElementId;
   int? get selectedLevelId;
+  RenderSceneDisplayStyle get displayStyle;
   List<_OutlineSegment> _buildProjectedBoundsRectOutlineSegments(
     RenderSceneBounds bounds,
     RenderSceneProjection projection,
   );
   Color _materialColor(String value);
+  Color _floorSurfaceColor(RenderSceneObject object);
+
+  void _drawFloorSurfacePatterns(
+    Canvas canvas,
+    RenderSceneProjection projection,
+    Iterable<RenderSceneObject> objects,
+  ) {
+    if (displayStyle == RenderSceneDisplayStyle.wireframe) return;
+    for (final floor in objects.where(
+      (object) => object.kindKey == 'floor' || object.kindKey == 'slab',
+    )) {
+      final rect = projectBoundsRect(floor.bounds, projection);
+      if (rect.width <= 1.0 || rect.height <= 1.0) continue;
+      final key =
+          '${floor.metadata['floor_type'] ?? ''} ${floor.metadata['floor_type_name'] ?? ''}'
+              .toLowerCase();
+      final isWood = key.contains('wood') ||
+          key.contains('timber') ||
+          key.contains('laminate') ||
+          key.contains('parquet');
+      final isAsphalt = key.contains('asphalt') || key.contains('bitumen');
+      final lineColor = displayStyle == RenderSceneDisplayStyle.solid
+          ? const Color(0x66515B66)
+          : _floorSurfaceColor(floor).withValues(alpha: 0.34);
+      final paint = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth =
+            displayStyle == RenderSceneDisplayStyle.solid ? 0.75 : 0.9
+        ..color = lineColor;
+      final clip = Path()..addRect(rect);
+      canvas.save();
+      canvas.clipPath(clip);
+      if (isWood) {
+        final plankSpacing = math.max(7.0, math.min(22.0, rect.height / 8.0));
+        for (var y = rect.top; y <= rect.bottom; y += plankSpacing) {
+          canvas.drawLine(Offset(rect.left, y), Offset(rect.right, y), paint);
+          final seamOffset = ((y - rect.top) / plankSpacing).floor().isEven
+              ? rect.left + rect.width * 0.36
+              : rect.left + rect.width * 0.68;
+          canvas.drawLine(
+            Offset(seamOffset, y),
+            Offset(seamOffset, y + plankSpacing),
+            paint,
+          );
+        }
+      } else if (isAsphalt) {
+        final spacing = math.max(9.0, math.min(28.0, rect.shortestSide / 7.0));
+        for (var x = rect.left - rect.height;
+            x <= rect.right + rect.height;
+            x += spacing) {
+          canvas.drawLine(
+            Offset(x, rect.bottom),
+            Offset(x + rect.height, rect.top),
+            paint,
+          );
+        }
+      } else {
+        final spacing = math.max(10.0, math.min(34.0, rect.shortestSide / 6.0));
+        for (var x = rect.left; x <= rect.right; x += spacing) {
+          canvas.drawLine(Offset(x, rect.top), Offset(x, rect.bottom), paint);
+        }
+        for (var y = rect.top; y <= rect.bottom; y += spacing) {
+          canvas.drawLine(Offset(rect.left, y), Offset(rect.right, y), paint);
+        }
+      }
+      canvas.restore();
+    }
+  }
 
   void _drawSectionLayerSeparators(
     Canvas canvas,

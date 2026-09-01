@@ -11,6 +11,7 @@ import 'package:viewer_flutter/src/documentation/document_pdf_service.dart';
 import 'package:viewer_flutter/src/documentation/sheet_workspace_controller.dart';
 import 'package:viewer_flutter/src/elements/bim_element_module.dart';
 import 'package:viewer_flutter/src/elements/bim_element_registry.dart';
+import 'package:viewer_flutter/src/elements/floor_type_catalog.dart';
 import 'package:viewer_flutter/src/elements/wall_type_catalog.dart';
 import 'package:viewer_flutter/src/render_scene_editor.dart';
 import 'package:viewer_flutter/src/render_scene_estimator.dart';

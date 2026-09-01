@@ -161,6 +161,13 @@ Project make_residential_template(int building_count, int story_count) {
         tbe::core::WallAssemblyLayer{.material_id = screed, .thickness_meters = 0.05, .function = tbe::core::WallLayerFunction::Core},
         tbe::core::WallAssemblyLayer{.material_id = laminate, .thickness_meters = 0.012, .function = tbe::core::WallLayerFunction::InteriorFinish},
     });
+    const auto asphalt_floor_assembly = document.create_layered_assembly(tbe::core::LayeredAssemblyKind::Floor, "Asphalt Floor", {
+        tbe::core::WallAssemblyLayer{.material_id = concrete, .thickness_meters = 0.16, .function = tbe::core::WallLayerFunction::Core, .structural = true},
+        tbe::core::WallAssemblyLayer{.material_id = screed, .thickness_meters = 0.04, .function = tbe::core::WallLayerFunction::ExteriorFinish},
+    });
+    const auto concrete_floor_assembly = document.create_layered_assembly(tbe::core::LayeredAssemblyKind::Floor, "Concrete Floor", {
+        tbe::core::WallAssemblyLayer{.material_id = concrete, .thickness_meters = 0.20, .function = tbe::core::WallLayerFunction::Core, .structural = true},
+    });
     const auto foundation_assembly = document.create_layered_assembly(tbe::core::LayeredAssemblyKind::Floor, "Foundation Slab", {
         tbe::core::WallAssemblyLayer{.material_id = concrete, .thickness_meters = 0.25, .function = tbe::core::WallLayerFunction::Core, .priority = 100, .structural = true},
         tbe::core::WallAssemblyLayer{.material_id = insulation, .thickness_meters = 0.08, .function = tbe::core::WallLayerFunction::Insulation, .priority = 70},
@@ -178,6 +185,8 @@ Project make_residential_template(int building_count, int story_count) {
         tbe::core::WallAssemblyLayer{.material_id = concrete, .thickness_meters = 0.16, .function = tbe::core::WallLayerFunction::Core, .priority = 100, .structural = true},
         tbe::core::WallAssemblyLayer{.material_id = tile, .thickness_meters = 0.02, .function = tbe::core::WallLayerFunction::InteriorFinish, .priority = 10},
     });
+    (void)asphalt_floor_assembly;
+    (void)concrete_floor_assembly;
 
     std::vector<ElementId> levels;
     // Storeys are semantic building levels; the roof has its own level above
@@ -579,6 +588,46 @@ std::string material_category_name(ApiElementKind kind) {
     case ApiElementKind::Room:
     case ApiElementKind::Unknown:
         return "generic";
+    }
+    return "generic";
+}
+
+std::string floor_surface_key(
+    const Document& document,
+    const tbe::core::LayeredAssemblyData* assembly,
+    ElementId fallback_material_id = 0
+) {
+    std::string searchable;
+    if (assembly != nullptr) {
+        searchable += assembly->name;
+        for (const auto& layer : assembly->layers) {
+            if (const auto* material = document.get_material(layer.material_id); material != nullptr) {
+                searchable += ' ';
+                searchable += material->name;
+            }
+        }
+    } else if (fallback_material_id != 0) {
+        if (const auto* material = document.get_material(fallback_material_id); material != nullptr) {
+            searchable = material->name;
+        }
+    }
+    std::transform(searchable.begin(), searchable.end(), searchable.begin(), [](unsigned char character) {
+        return static_cast<char>(std::tolower(character));
+    });
+    if (searchable.find("asphalt") != std::string::npos ||
+        searchable.find("bitumen") != std::string::npos) {
+        return "asphalt";
+    }
+    if (searchable.find("wood") != std::string::npos ||
+        searchable.find("timber") != std::string::npos ||
+        searchable.find("laminate") != std::string::npos ||
+        searchable.find("parquet") != std::string::npos) {
+        return "wood";
+    }
+    if (searchable.find("concrete") != std::string::npos ||
+        searchable.find("cement") != std::string::npos ||
+        searchable.find("screed") != std::string::npos) {
+        return "concrete";
     }
     return "generic";
 }
@@ -1644,6 +1693,38 @@ RenderSceneDTO build_render_scene(
         scene.wall_types.push_back(std::move(dto));
     }
 
+    for (const auto& [assembly_id, assembly] : document.layered_assemblies()) {
+        if (assembly.kind != tbe::core::LayeredAssemblyKind::Floor) continue;
+        RenderSceneFloorTypeDTO dto{
+            .id = to_id(assembly_id),
+            .name = assembly.name,
+            .surface_key = floor_surface_key(document, &assembly),
+            .total_thickness_meters = std::accumulate(
+                assembly.layers.begin(),
+                assembly.layers.end(),
+                0.0,
+                [](double total, const auto& layer) {
+                    return total + layer.thickness_meters;
+                }),
+            .core_start_layer = assembly.core_start_layer,
+            .core_end_layer = assembly.core_end_layer,
+        };
+        dto.layers.reserve(assembly.layers.size());
+        for (const auto& layer : assembly.layers) {
+            dto.layers.push_back(RenderSceneWallLayerDTO{
+                .material_id = to_id(layer.material_id),
+                .thickness_meters = layer.thickness_meters,
+                .function = to_api_layer_function(layer.function),
+                .priority = layer.priority,
+                .structural = layer.structural,
+                .side = to_api_layer_side(layer.side),
+                .wraps_openings = layer.wraps_openings,
+                .wraps_ends = layer.wraps_ends,
+            });
+        }
+        scene.floor_types.push_back(std::move(dto));
+    }
+
     // Default template guidance: two perpendicular cuts through the model
     // center are visible immediately in plan. The actual section scene is
     // generated only when the user requests one.
@@ -1791,6 +1872,9 @@ RenderSceneDTO build_render_scene(
         }
         if (const auto* slab = element.slab(); slab != nullptr) {
             const auto elevation = level_elevation(elevations, slab->level_id, 0.0) + slab->elevation_offset_meters;
+            const auto* assembly = slab->assembly_id == 0
+                ? nullptr
+                : document.get_layered_assembly(slab->assembly_id);
             append_object(make_object_dto(
                 element.id(),
                 ApiElementKind::Slab,
@@ -1801,6 +1885,8 @@ RenderSceneDTO build_render_scene(
                 {
                     {"elevation_offset_meters", std::to_string(slab->elevation_offset_meters)},
                     {"assembly_id", std::to_string(slab->assembly_id)},
+                    {"floor_type", floor_surface_key(document, assembly, slab->material_id)},
+                    {"floor_type_name", assembly == nullptr ? "Generic Floor" : assembly->name},
                 }
             ));
             (void)elevation;
@@ -1911,6 +1997,9 @@ RenderSceneDTO build_render_scene(
 
     for (const auto& [system_id, system] : document.floor_systems()) {
         const auto elevation = level_elevation(elevations, system.level_id, 0.0);
+        const auto* assembly = system.assembly_id == 0
+            ? nullptr
+            : document.get_layered_assembly(system.assembly_id);
         auto mesh = make_flat_polygon_mesh(system.boundary_polygon, elevation, 0.02);
         append_object(make_object_dto(
             system_id,
@@ -1920,6 +2009,8 @@ RenderSceneDTO build_render_scene(
             std::move(mesh),
             material_category_name(ApiElementKind::FloorSystem),
             {{"assembly_id", std::to_string(system.assembly_id)},
+             {"floor_type", floor_surface_key(document, assembly)},
+             {"floor_type_name", assembly == nullptr ? "Generic Floor" : assembly->name},
              {"stair_opening_count", std::to_string(system.stair_opening_ids.size())}}
         ));
     }
@@ -1997,6 +2088,32 @@ std::string render_scene_to_json(const RenderSceneDTO& scene) {
         for (std::size_t layer_index = 0; layer_index < wall_type.layers.size(); ++layer_index) {
             if (layer_index != 0) out << ',';
             const auto& layer = wall_type.layers[layer_index];
+            out << "{\"material_id\":" << layer.material_id.value
+                << ",\"thickness_meters\":" << safe_value(layer.thickness_meters)
+                << ",\"function\":" << static_cast<int>(layer.function)
+                << ",\"priority\":" << layer.priority
+                << ",\"structural\":" << (layer.structural ? "true" : "false")
+                << ",\"side\":" << static_cast<int>(layer.side)
+                << ",\"wraps_openings\":" << (layer.wraps_openings ? "true" : "false")
+                << ",\"wraps_ends\":" << (layer.wraps_ends ? "true" : "false")
+                << "}";
+        }
+        out << "]}";
+    }
+    out << "],\"floor_types\":[";
+    for (std::size_t index = 0; index < scene.floor_types.size(); ++index) {
+        if (index != 0) out << ',';
+        const auto& floor_type = scene.floor_types[index];
+        out << "{\"id\":" << floor_type.id.value
+            << ",\"name\":\"" << escape_json(floor_type.name) << "\""
+            << ",\"surface_key\":\"" << escape_json(floor_type.surface_key) << "\""
+            << ",\"total_thickness_meters\":" << safe_value(floor_type.total_thickness_meters)
+            << ",\"core_start_layer\":" << floor_type.core_start_layer
+            << ",\"core_end_layer\":" << floor_type.core_end_layer
+            << ",\"layers\":[";
+        for (std::size_t layer_index = 0; layer_index < floor_type.layers.size(); ++layer_index) {
+            if (layer_index != 0) out << ',';
+            const auto& layer = floor_type.layers[layer_index];
             out << "{\"material_id\":" << layer.material_id.value
                 << ",\"thickness_meters\":" << safe_value(layer.thickness_meters)
                 << ",\"function\":" << static_cast<int>(layer.function)

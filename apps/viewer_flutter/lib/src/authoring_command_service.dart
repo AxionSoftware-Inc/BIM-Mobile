@@ -60,6 +60,15 @@ class AuthoringCommandService {
         wallTypeId: wallTypeId,
       );
 
+  Future<RenderSceneLoadResult> setElementAssembly({
+    required int elementId,
+    required int assemblyId,
+  }) =>
+      _requireRepository().setElementAssembly(
+        elementId: elementId,
+        assemblyId: assemblyId,
+      );
+
   Future<RenderSceneLoadResult> setWallAxis({
     required int wallId,
     required RenderScenePoint start,

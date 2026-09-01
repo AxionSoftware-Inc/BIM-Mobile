@@ -65,10 +65,43 @@ void material(inout MaterialInputs material) {
     prepareMaterial(material);
     float3 world = getWorldPosition();
     material.normal = normalize(cross(dFdx(world), dFdy(world)));
-    float board = step(0.94, fract((world.x + world.z * 0.18) / 0.18)) * materialParams.displayShade;
-    float grain = 0.06 * sin(world.x * 58.0 + world.z * 9.0) * materialParams.displayShade;
+    float floorKind = materialParams.floorKind;
+    float woodJoint = step(0.94, fract((world.x + world.z * 0.18) / 0.18));
+    float woodGrain = 0.06 * sin(world.x * 58.0 + world.z * 9.0);
+    float concreteJointX = step(0.965, fract(world.x / 0.60));
+    float concreteJointZ = step(0.965, fract(world.z / 0.60));
+    float asphaltJoint = step(0.975, fract((world.x + world.z) / 0.42));
+    float line = floorKind < 0.5
+        ? asphaltJoint * 0.12
+        : floorKind < 1.5
+            ? max(concreteJointX, concreteJointZ) * 0.16
+            : woodJoint * 0.25;
+    float speckle = fract(sin(dot(world.xz, float2(12.9898, 78.233))) * 43758.5453);
+    float3 asphalt = materialParams.baseColor.rgb * (0.78 + speckle * 0.10 - line);
+    float3 concrete = materialParams.baseColor.rgb * (0.96 + (speckle - 0.5) * 0.12 - line);
+    float3 wood = materialParams.baseColor.rgb * (1.0 + woodGrain - line);
+    float3 textured = floorKind < 0.5 ? asphalt : floorKind < 1.5 ? concrete : wood;
     float shade = mix(1.0, 0.82 + 0.18 * sin(world.x * 0.45 + world.z * 0.31), materialParams.displayShade);
-    material.baseColor = float4(materialParams.baseColor.rgb * (1.0 + grain - board * 0.20) * shade, materialParams.baseColor.a);
+    material.baseColor = float4(textured * shade, materialParams.baseColor.a);
+}
+"""
+
+internal const val SOLID_FLOOR_MAT = """
+void material(inout MaterialInputs material) {
+    prepareMaterial(material);
+    float3 world = getWorldPosition();
+    float floorKind = materialParams.floorKind;
+    float woodJoint = step(0.94, fract((world.x + world.z * 0.18) / 0.18));
+    float concreteJointX = step(0.965, fract(world.x / 0.60));
+    float concreteJointZ = step(0.965, fract(world.z / 0.60));
+    float asphaltJoint = step(0.975, fract((world.x + world.z) / 0.42));
+    float line = floorKind < 0.5
+        ? asphaltJoint * 0.22
+        : floorKind < 1.5
+            ? max(concreteJointX, concreteJointZ) * 0.24
+            : woodJoint * 0.30;
+    float3 neutral = materialParams.baseColor.rgb * (1.0 - line);
+    material.baseColor = float4(neutral, materialParams.baseColor.a);
 }
 """
 
