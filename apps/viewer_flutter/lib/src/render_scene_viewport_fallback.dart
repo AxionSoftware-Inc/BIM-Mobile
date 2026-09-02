@@ -84,6 +84,8 @@ class _FallbackRenderSceneView extends StatefulWidget {
 class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
   Offset? _lastPointerPosition;
   Offset? _pointerDownPosition;
+  RenderSceneObject? _pointerDownObject;
+  RenderScenePoint? _pointerDownModelPoint;
   int? _activePointer;
   bool _isSecondaryDrag = false;
   int _activePointerCount = 0;
@@ -327,6 +329,8 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
               _activePointer = event.pointer;
               _pointerDownPosition = event.localPosition;
               _lastPointerPosition = event.localPosition;
+              _pointerDownObject = null;
+              _pointerDownModelPoint = null;
               _isSecondaryDrag = event.buttons == kSecondaryMouseButton ||
                   event.buttons == kMiddleMouseButton;
               _sceneDragStarted = false;
@@ -344,6 +348,9 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                   visibleKinds: controller.visibleKinds,
                   padding: FallbackRenderScenePainter.padding,
                 );
+                _pointerDownObject = picked;
+                _pointerDownModelPoint =
+                    controller.screenToModelPlan(event.localPosition, size);
                 _interaction.begin(
                   position: event.localPosition,
                   elementId: picked?.elementId?.toString(),
@@ -479,21 +486,35 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                   _pointerDownPosition != null &&
                   (event.localPosition - _pointerDownPosition!).distance >
                       _tapDistanceThreshold(event)) {
-                final picked = pickObjectAt(
-                  scene: scene,
-                  size: size,
-                  localPosition: event.localPosition,
-                  projectionMode: controller.projectionMode,
-                  orbitProjectionStyle: controller.orbitProjectionStyle,
-                  planCamera: controller.planCamera,
-                  camera: controller.camera,
-                  visibleKinds: controller.visibleKinds,
-                  padding: FallbackRenderScenePainter.padding,
-                );
-                final modelPoint =
-                    controller.screenToModelPlan(event.localPosition, size);
-                final pickedLevel =
-                    _pickLevelAtPosition(scene, size, event.localPosition);
+                // Keep the object and model point from pointer-down. Endpoint
+                // handles are visual overlay geometry, so after the finger
+                // moves away from the handle a fresh pick at the current
+                // position can no longer identify the wall or its endpoint.
+                // Starting the drag from the original hit preserves the
+                // start/end handle intent for the wall editor.
+                final initialObject = _pointerDownObject;
+                final picked = initialObject ??
+                    pickObjectAt(
+                      scene: scene,
+                      size: size,
+                      localPosition: event.localPosition,
+                      projectionMode: controller.projectionMode,
+                      orbitProjectionStyle: controller.orbitProjectionStyle,
+                      planCamera: controller.planCamera,
+                      camera: controller.camera,
+                      visibleKinds: controller.visibleKinds,
+                      padding: FallbackRenderScenePainter.padding,
+                    );
+                final modelPoint = initialObject != null
+                    ? (_pointerDownModelPoint ??
+                        controller.screenToModelPlan(
+                          event.localPosition,
+                          size,
+                        ))
+                    : controller.screenToModelPlan(event.localPosition, size);
+                final pickedLevel = initialObject == null
+                    ? _pickLevelAtPosition(scene, size, event.localPosition)
+                    : null;
                 widget.onSceneDragStart?.call(RenderSceneTapDetails(
                   screenPosition: event.localPosition,
                   globalPosition: event.position,
@@ -847,6 +868,8 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
     _touchRectangleArmed = false;
     _activePointer = null;
     _pointerDownPosition = null;
+    _pointerDownObject = null;
+    _pointerDownModelPoint = null;
     _lastPointerPosition = null;
     _isSecondaryDrag = false;
     _activePointerCount = 0;
