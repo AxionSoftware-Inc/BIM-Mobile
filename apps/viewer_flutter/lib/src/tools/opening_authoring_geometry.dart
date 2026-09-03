@@ -22,20 +22,32 @@ final class OpeningAuthoringGeometry {
     required RenderSceneObject hostWall,
     required RenderScenePoint point,
     required double widthMeters,
+    double? heightMeters,
+    double sillHeightMeters = 0.0,
     bool snapToGrid = true,
     double gridStepMeters = 0.25,
   }) {
     final rawOffset = RenderSceneEditor.wallOffsetMeters(hostWall, point);
     final wallLength = RenderSceneEditor.wallLength(hostWall) ?? 0.0;
-    if (rawOffset == null || wallLength <= 1e-9) return null;
+    if (rawOffset == null ||
+        !rawOffset.isFinite ||
+        !wallLength.isFinite ||
+        wallLength <= 1e-9) {
+      return null;
+    }
     final offset = snapToGrid
         ? (rawOffset / gridStepMeters).roundToDouble() * gridStepMeters
         : rawOffset;
-    final halfWidth = widthMeters * 0.5;
     return OpeningPlacementPreview(
       offsetMeters: offset,
       wallLengthMeters: wallLength,
-      valid: offset >= halfWidth && offset <= wallLength - halfWidth,
+      valid: isValid(
+        hostWall: hostWall,
+        offsetMeters: offset,
+        widthMeters: widthMeters,
+        heightMeters: heightMeters,
+        sillHeightMeters: sillHeightMeters,
+      ),
     );
   }
 
@@ -43,11 +55,68 @@ final class OpeningAuthoringGeometry {
     required RenderSceneObject hostWall,
     required double offsetMeters,
     required double widthMeters,
+    double? heightMeters,
+    double sillHeightMeters = 0.0,
+  }) {
+    return validationMessage(
+          hostWall: hostWall,
+          offsetMeters: offsetMeters,
+          widthMeters: widthMeters,
+          heightMeters: heightMeters,
+          sillHeightMeters: sillHeightMeters,
+        ) ==
+        null;
+  }
+
+  /// Returns a short reason when an opening cannot be created.
+  ///
+  /// `heightMeters` is optional for callers that only need horizontal
+  /// placement. Creation and move-opening pass it so the preview uses the
+  /// same vertical contract as the native document validator.
+  static String? validationMessage({
+    required RenderSceneObject hostWall,
+    required double offsetMeters,
+    required double widthMeters,
+    double? heightMeters,
+    double sillHeightMeters = 0.0,
   }) {
     final wallLength = RenderSceneEditor.wallLength(hostWall) ?? 0.0;
+    if (!wallLength.isFinite || wallLength <= 1e-9) {
+      return 'Host wall has no valid length.';
+    }
+    if (!offsetMeters.isFinite || !widthMeters.isFinite || widthMeters <= 0) {
+      return 'Width and offset must be positive numbers.';
+    }
+    if (!sillHeightMeters.isFinite || sillHeightMeters < 0) {
+      return 'Sill height must be zero or greater.';
+    }
+    if (heightMeters != null && (!heightMeters.isFinite || heightMeters <= 0)) {
+      return 'Height must be a positive number.';
+    }
     final halfWidth = widthMeters * 0.5;
-    return wallLength > 1e-9 &&
-        offsetMeters >= halfWidth &&
-        offsetMeters <= wallLength - halfWidth;
+    if (offsetMeters < halfWidth || offsetMeters > wallLength - halfWidth) {
+      return 'Opening overlaps the wall edge.';
+    }
+
+    if (heightMeters != null) {
+      final wallHeight = _wallHeightMeters(hostWall);
+      if (wallHeight != null &&
+          sillHeightMeters + heightMeters > wallHeight + 1e-6) {
+        return 'Opening height and sill exceed the host wall height.';
+      }
+    }
+    return null;
+  }
+
+  static double? _wallHeightMeters(RenderSceneObject wall) {
+    final metadataHeight =
+        double.tryParse(wall.metadata['height_meters']?.toString() ?? '');
+    if (metadataHeight != null &&
+        metadataHeight.isFinite &&
+        metadataHeight > 0) {
+      return metadataHeight;
+    }
+    final boundsHeight = wall.bounds.height;
+    return boundsHeight.isFinite && boundsHeight > 0 ? boundsHeight : null;
   }
 }

@@ -280,9 +280,8 @@ mixin _FallbackScenePlanPainterMixin {
       footprints.map((footprint) => footprint.path),
     );
     const wallColor = Color(0xFF334155);
-    final wallFillAlpha = displayStyle == RenderSceneDisplayStyle.solid
-        ? 1.0
-        : 0.28;
+    final wallFillAlpha =
+        displayStyle == RenderSceneDisplayStyle.solid ? 1.0 : 0.28;
     canvas.drawPath(
       joinedWallPath,
       Paint()
@@ -391,6 +390,45 @@ mixin _FallbackScenePlanPainterMixin {
             ..strokeJoin = StrokeJoin.miter
             ..color = wallColor.withValues(alpha: 0.55),
         );
+      }
+    }
+
+    // The union above is intentionally the single outer cut contour. It also
+    // removes any wall side that is fully inside that contour, which makes
+    // interior walls disappear in a floor plan. Restore each wall's two long
+    // sides as short, end-inset strokes. They preserve the clean joined
+    // corners while keeping every semantic wall readable for authoring.
+    final wallSidePaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = displayStyle == RenderSceneDisplayStyle.solid ? 0.95 : 0.8
+      ..strokeCap = StrokeCap.butt
+      ..color = wallColor.withValues(
+        alpha: displayStyle == RenderSceneDisplayStyle.solid ? 0.82 : 0.58,
+      );
+    for (final footprint in footprints) {
+      final axisUnit = footprint.axis.scale(1.0 / footprint.length);
+      final normalUnit = RenderScenePoint(
+        x: -axisUnit.y,
+        y: axisUnit.x,
+        z: 0,
+      );
+      final endInset = math.min(
+        footprint.length * 0.08,
+        math.max(footprint.thickness * 1.25, 0.08),
+      );
+      if (footprint.length <= endInset * 2.0) continue;
+      for (final side in <double>[-1.0, 1.0]) {
+        final edgeStart = footprint.start +
+            normalUnit.scale(footprint.thickness * 0.5 * side) +
+            axisUnit.scale(endInset);
+        final edgeEnd = footprint.end +
+            normalUnit.scale(footprint.thickness * 0.5 * side) -
+            axisUnit.scale(endInset);
+        final start = projection.project(edgeStart).screen;
+        final end = projection.project(edgeEnd).screen;
+        if ((end - start).distance > 0.5) {
+          canvas.drawLine(start, end, wallSidePaint);
+        }
       }
     }
 

@@ -90,7 +90,10 @@ bool intervals_overlap(double first_start, double first_end, double second_start
 void validate_opening_rectangles(const std::vector<OpeningRectangle>& openings, double wall_length, double wall_height) {
     for (std::size_t index = 0; index < openings.size(); ++index) {
         const auto& opening = openings[index];
-        if (opening.x_min < -epsilon || opening.x_max > wall_length + epsilon || opening.x_min >= opening.x_max) {
+        if (!std::isfinite(opening.x_min) || !std::isfinite(opening.x_max) ||
+            !std::isfinite(opening.y_min) || !std::isfinite(opening.y_max) ||
+            !std::isfinite(opening.z_min) || !std::isfinite(opening.z_max) ||
+            opening.x_min < -epsilon || opening.x_max > wall_length + epsilon || opening.x_min >= opening.x_max) {
             throw std::invalid_argument("opening must stay inside host wall length");
         }
         if (opening.z_min < -epsilon || opening.z_max > wall_height + epsilon || opening.z_min >= opening.z_max) {

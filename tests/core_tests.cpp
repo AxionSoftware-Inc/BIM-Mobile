@@ -10,6 +10,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <numbers>
 #include <stdexcept>
 #include <string>
@@ -276,6 +277,51 @@ int main() {
         rejected_overlapping_opening = true;
     }
     assert(rejected_overlapping_opening);
+
+    bool rejected_non_finite_door = false;
+    try {
+        document.create_door(
+            "NaN Door",
+            wall_a_id,
+            std::numeric_limits<double>::quiet_NaN(),
+            0.9,
+            2.1
+        );
+    } catch (const std::invalid_argument&) {
+        rejected_non_finite_door = true;
+    }
+    assert(rejected_non_finite_door);
+
+    bool rejected_non_finite_window_sill = false;
+    try {
+        document.create_window(
+            "NaN Window",
+            wall_a_id,
+            2.0,
+            0.8,
+            1.0,
+            std::numeric_limits<double>::quiet_NaN()
+        );
+    } catch (const std::invalid_argument&) {
+        rejected_non_finite_window_sill = true;
+    }
+    assert(rejected_non_finite_window_sill);
+
+    bool rejected_window_height_overflow = false;
+    try {
+        document.create_window("Tall Window", wall_a_id, 1.0, 0.4, 2.5, 0.7);
+    } catch (const std::invalid_argument&) {
+        rejected_window_height_overflow = true;
+    }
+    assert(rejected_window_height_overflow);
+
+    bool rejected_negative_window_height = false;
+    try {
+        document.create_window("Negative Window", wall_a_id, 1.0, 0.4, -0.5, 2.0);
+    } catch (const std::invalid_argument&) {
+        rejected_negative_window_height = true;
+    }
+    assert(rejected_negative_window_height);
 
     tbe::core::Document glass_opening_document{"Glass Opening Host"};
     const auto glass_host_material = glass_opening_document.create_material(

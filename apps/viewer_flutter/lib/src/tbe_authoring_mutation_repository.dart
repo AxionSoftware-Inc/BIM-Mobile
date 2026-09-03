@@ -141,6 +141,27 @@ final class TbeAuthoringMutationRepository {
     return _afterMutation();
   }
 
+  Future<RenderSceneLoadResult> createWallTypeForWall({
+    required int wallId,
+    required WallTypeCategory category,
+    required String name,
+    required List<WallTypeLayerDefinition> layers,
+  }) async {
+    final handle = _requireHandle();
+    final wallTypeId = _api.createWallType(
+      handle,
+      category: category,
+      name: name,
+      layers: layers,
+    );
+    _api.setWallType(
+      handle,
+      wallId: wallId,
+      wallTypeId: wallTypeId,
+    );
+    return _afterMutation();
+  }
+
   Future<RenderSceneLoadResult> createStair({
     required int baseLevelId,
     required int topLevelId,

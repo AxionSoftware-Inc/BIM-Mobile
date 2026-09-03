@@ -665,6 +665,12 @@ internal class RenderSceneFilamentHostView(
   private var lastOrbitMotionTimeMs = 0L
   private var orbitInertiaActive = false
   private var lastInertiaFrameNanos = 0L
+  // In 3D the native host owns the live orbit camera. Flutter still sends
+  // semantic/state synchronisation messages (selection, filters, Inspector
+  // rebuilds), and those messages carry the last Flutter camera snapshot.
+  // Once a native gesture has started, that stale snapshot must not reset the
+  // model behind the Inspector or make the viewport appear frozen.
+  private var nativeOrbitCameraActive = false
 
   init {
     setBackgroundColor(Color.rgb(243, 247, 244))
@@ -1224,6 +1230,7 @@ internal class RenderSceneFilamentHostView(
   private fun clearScene(message: String) {
     removeCallbacks(benchmarkTick)
     rendererBenchmark = null
+    nativeOrbitCameraActive = false
     nativeCacheLoadRevision += 1L
     closeNativeBimCache()
     resetClipVolumeState()
@@ -1270,6 +1277,9 @@ internal class RenderSceneFilamentHostView(
 
   fun fitCamera() {
     val camera = camera ?: return
+    // An explicit fit is a new camera authority boundary. The next Flutter
+    // sync may safely apply its freshly reset fit snapshot.
+    nativeOrbitCameraActive = false
     val metrics = sceneMetrics
     // sceneMetrics already comes from Filament-space renderable bounds.
     // Transforming it again moves the fitted camera away from the mesh.
@@ -1317,6 +1327,7 @@ internal class RenderSceneFilamentHostView(
     val edgeGeometryNeedsRefresh =
       (projectionMode == "topDown") != (mode == "topDown")
     projectionMode = mode
+    nativeOrbitCameraActive = false
     filamentView?.setShadowingEnabled(realShadowVisible(mode))
     if (mode == "isometric" && shadowsEnabled && groundReceiver == null && currentScene != null && materialBuilderReady) {
       createGroundReceiver(engine ?: return, scene ?: return, currentScene!!)
@@ -1378,20 +1389,22 @@ internal class RenderSceneFilamentHostView(
           orbitDistance = (halfHeight / 0.6).coerceIn(minimumPlanarOrbitDistance(), 250.0)
         }
       }
-    } else if (orbitCenterPayload != null) {
+    } else if (orbitCenterPayload != null &&
+      !(projectionMode == "isometric" && nativeOrbitCameraActive)
+    ) {
       orbitCenter = toFilamentPoint(orbitCenterPayload)
     }
     // Flutter and Filament now use the same orbit yaw convention.  Do not
     // mirror it here: doing so made a horizontal drag rotate the model in the
     // opposite direction in the native 3D viewport.
-    if (projectionMode == "isometric") {
+    if (projectionMode == "isometric" && !nativeOrbitCameraActive) {
       orbitYawRadians = toDouble(payload?.get("orbitYawRadians"))
         ?: orbitYawRadians
       orbitPitchRadians = toDouble(payload?.get("orbitPitchRadians")) ?: orbitPitchRadians
     }
     val distance = toDouble(payload?.get("orbitDistance"))
     val zoom = toDouble(payload?.get("orbitZoomScale"))
-    if (distance != null && !isPlanarProjection()) {
+    if (distance != null && !isPlanarProjection() && !nativeOrbitCameraActive) {
       orbitDistance = (distance / (zoom ?: 1.0)).coerceIn(minimumOrbitDistance(), 250.0)
     }
     configureCameraProjection()
@@ -5821,7 +5834,15 @@ internal class RenderSceneFilamentHostView(
       sectionBoxHandler.removeCallbacks(shadowResume)
       sectionBoxHandler.postDelayed(shadowResume, 80L)
     }
-    if (surfaceReady) scheduleFrame()
+    if (surfaceReady) {
+      // TextureView does not always invalidate itself after Flutter moves or
+      // resizes the PlatformView (notably when the Inspector opens). Keep the
+      // explicit Filament frame request and the TextureView invalidation in
+      // lockstep so a native camera update cannot leave the old model tile on
+      // screen while the Android overlay continues to repaint.
+      renderSurface.postInvalidateOnAnimation()
+      scheduleFrame()
+    }
   }
 
   private fun cancelFrame() {
@@ -5829,6 +5850,16 @@ internal class RenderSceneFilamentHostView(
       choreographer.removeFrameCallback(this)
       framePosted = false
     }
+  }
+
+  override fun onTouchEvent(event: MotionEvent): Boolean {
+    // The TextureView normally receives these events directly. This host-level
+    // fallback covers PlatformView compositor passes where a child touch
+    // target is temporarily skipped while the Inspector changes layout.
+    if (projectionMode == "isometric") {
+      return handleTouchEvent(event)
+    }
+    return super.onTouchEvent(event)
   }
 
   private fun aspectRatio(): Double {
@@ -5866,6 +5897,9 @@ internal class RenderSceneFilamentHostView(
     when (event.actionMasked) {
       MotionEvent.ACTION_DOWN -> {
         cancelOrbitInertia()
+        if (projectionMode == "isometric") {
+          nativeOrbitCameraActive = true
+        }
         multiTouching = false
         multiTouchFocusValid = false
         lastOrbitMotionTimeMs = SystemClock.uptimeMillis()
@@ -6302,7 +6336,23 @@ internal class RenderSceneFilamentHostView(
       topDown = projectionMode == "topDown",
       perspective = orbitProjectionStyle == "perspective",
       showNativeLevels = !isElevationProjection() && projectionMode != "section",
+      viewProjection = visualViewProjectionMatrix(),
     )
+  }
+
+  /** Reads the exact camera state Filament is using for the current frame. */
+  private fun visualViewProjectionMatrix(): FloatArray? {
+    val activeCamera = camera ?: return null
+    if (renderSurface.width <= 1 || renderSurface.height <= 1) return null
+    val projection = activeCamera.getProjectionMatrix(DoubleArray(16))
+      .map { it.toFloat() }
+      .toFloatArray()
+    val view = activeCamera.getViewMatrix(DoubleArray(16))
+      .map { it.toFloat() }
+      .toFloatArray()
+    return FloatArray(16).also { result ->
+      Matrix.multiplyMM(result, 0, projection, 0, view, 0)
+    }
   }
 
   private fun configureCameraProjection() {
@@ -6677,6 +6727,7 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
   private var topDown = true
   private var perspective = false
   private var showNativeLevels = true
+  private var visualViewProjection: FloatArray? = null
   private var wireframe = false
   private var viewportTheme = "light"
   // Filament owns the normal architectural edge batches. Painting the same
@@ -6728,6 +6779,13 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
     color = Color.rgb(8, 119, 139)
     textSize = context.resources.displayMetrics.scaledDensity * 11f
     typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+  }
+  private val planWallOutline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    style = Paint.Style.STROKE
+    color = Color.argb(150, 24, 39, 52)
+    strokeWidth = context.resources.displayMetrics.density * 1.05f
+    strokeCap = Paint.Cap.BUTT
+    strokeJoin = Paint.Join.MITER
   }
 
   init {
@@ -7107,6 +7165,7 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
     }
     val dark = viewportTheme != "light"
     outline.color = if (dark) Color.argb(210, 218, 226, 231) else Color.argb(155, 24, 39, 52)
+    planWallOutline.color = if (dark) Color.argb(190, 218, 226, 231) else Color.argb(150, 24, 39, 52)
     externalOutline.color = if (dark) Color.argb(235, 226, 235, 238) else Color.argb(232, 28, 45, 55)
     openingPaint.color = if (dark) Color.rgb(220, 228, 232) else Color.rgb(17, 24, 39)
     windowPaint.color = if (dark) Color.rgb(190, 211, 219) else Color.rgb(17, 24, 39)
@@ -7127,6 +7186,7 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
     topDown: Boolean,
     perspective: Boolean,
     showNativeLevels: Boolean,
+    viewProjection: FloatArray? = null,
   ) {
     this.center = center
     this.yawRadians = yawRadians
@@ -7136,6 +7196,7 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
     this.topDown = topDown
     this.perspective = perspective
     this.showNativeLevels = showNativeLevels
+    this.visualViewProjection = viewProjection?.copyOf()
     invalidate()
   }
 
@@ -7196,6 +7257,7 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
 
   private fun drawAuthoringEdges(canvas: Canvas) {
     if (width <= 1 || height <= 1) return
+    if (topDown) drawPlanWallContours(canvas)
     for (objectData in objects) {
       if (visibleKinds.isNotEmpty() &&
         !visibleKinds.contains(normalizeKind(objectData.kind))
@@ -7243,6 +7305,68 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
           canvas.drawLine(first.x, first.y, second.x, second.y, levelPaint)
           canvas.drawText(name, first.x + 6f, first.y - 5f, levelText)
         }
+      }
+    }
+  }
+
+  /**
+   * Floor-plan wall linework is a documentation overlay, not a second wall
+   * renderer. The depth-tested Filament ribbon can be hidden by a slab or a
+   * neighbouring storey even though the wall belongs to the active cut band.
+   * Reproject the authoritative joined profile here so every wall remains
+   * readable and stable while the plan camera pans or zooms.
+   */
+  private fun drawPlanWallContours(canvas: Canvas) {
+    for (objectData in allObjects) {
+      if (normalizeKind(objectData.kind) != "wall" ||
+        (visibleKinds.isNotEmpty() && !visibleKinds.contains("wall"))
+      ) continue
+      val rawProfile = objectData.metadata["profile_corners"]
+      val profile = rawProfile
+        ?.split(';')
+        ?.mapNotNull { pair ->
+          val coordinates = pair.split(',', limit = 2)
+          if (coordinates.size != 2) return@mapNotNull null
+          val x = coordinates[0].trim().toDoubleOrNull()
+          val y = coordinates[1].trim().toDoubleOrNull()
+          if (x == null || y == null || !x.isFinite() || !y.isFinite()) null
+          else sourcePlanPoint(x, y)
+        }
+        ?.filter { it.x.isFinite() && it.z.isFinite() }
+        ?: emptyList()
+      if (profile.size >= 2) {
+        for (index in profile.indices) {
+          val first = project(profile[index]) ?: continue
+          val second = project(profile[(index + 1) % profile.size]) ?: continue
+          if (kotlin.math.hypot(
+              (second.x - first.x).toDouble(),
+              (second.y - first.y).toDouble(),
+            ) > 0.5
+          ) {
+            canvas.drawLine(first.x, first.y, second.x, second.y, planWallOutline)
+          }
+        }
+        continue
+      }
+
+      // Legacy/cache snapshots may not carry profile_corners. Their scalar
+      // axis metadata is still enough to recover the two wall-face lines.
+      val startX = objectData.metadata["start_x"]?.toDoubleOrNull() ?: continue
+      val startY = objectData.metadata["start_y"]?.toDoubleOrNull() ?: continue
+      val endX = objectData.metadata["end_x"]?.toDoubleOrNull() ?: continue
+      val endY = objectData.metadata["end_y"]?.toDoubleOrNull() ?: continue
+      val thickness = objectData.metadata["thickness_meters"]?.toDoubleOrNull()
+        ?.takeIf { it > 0.0 } ?: continue
+      val dx = endX - startX
+      val dy = endY - startY
+      val length = kotlin.math.hypot(dx, dy)
+      if (!length.isFinite() || length <= 1.0e-8) continue
+      val nx = -dy / length * thickness * 0.5
+      val ny = dx / length * thickness * 0.5
+      for (side in listOf(1.0, -1.0)) {
+        val first = project(sourcePlanPoint(startX + nx * side, startY + ny * side)) ?: continue
+        val second = project(sourcePlanPoint(endX + nx * side, endY + ny * side)) ?: continue
+        canvas.drawLine(first.x, first.y, second.x, second.y, planWallOutline)
       }
     }
   }
@@ -7475,6 +7599,34 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
   }
 
   private fun project(point: ScenePoint): android.graphics.PointF? {
+    // Use Filament's live view-projection matrix whenever it is available.
+    // The manual orbit formula below is retained only for the short startup
+    // window before the camera has a valid viewport. This prevents Inspector
+    // and level annotations from drifting while the real model rotates.
+    visualViewProjection?.let { matrix ->
+      if (matrix.size >= 16) {
+        val clip = FloatArray(4)
+        Matrix.multiplyMV(
+          clip,
+          0,
+          matrix,
+          0,
+          floatArrayOf(point.x.toFloat(), point.y.toFloat(), point.z.toFloat(), 1f),
+          0,
+        )
+        val clipW = clip[3]
+        if (clipW.isFinite() && clipW > 1.0e-6f) {
+          val ndcX = clip[0] / clipW
+          val ndcY = clip[1] / clipW
+          if (ndcX.isFinite() && ndcY.isFinite()) {
+            return android.graphics.PointF(
+              (((ndcX + 1f) * 0.5f) * width).toFloat(),
+              (((1f - ndcY) * 0.5f) * height).toFloat(),
+            )
+          }
+        }
+      }
+    }
     val aspect = width.toDouble() / max(height, 1).toDouble()
     if (topDown) {
       val halfHeight = max(topDownZoom, 0.001)

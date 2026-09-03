@@ -29,6 +29,7 @@ class FallbackRenderScenePainter extends CustomPainter
     this.selectionRect,
     required this.highlightedElementId,
     required this.projectionMode,
+    this.interactionMode = RenderSceneInteractionMode.select,
     required this.orbitProjectionStyle,
     required this.displayStyle,
     this.viewportTheme = RenderSceneViewportTheme.light,
@@ -40,6 +41,7 @@ class FallbackRenderScenePainter extends CustomPainter
     required this.draftSurface,
     required this.draftWallThicknessMeters,
     required this.draftWallHeightMeters,
+    this.draftWallEditElementId,
     this.showObjectLabels = true,
     this.showReferenceGrid = true,
   });
@@ -61,6 +63,8 @@ class FallbackRenderScenePainter extends CustomPainter
   @override
   final RenderSceneProjectionMode projectionMode;
   @override
+  final RenderSceneInteractionMode interactionMode;
+  @override
   final RenderSceneOrbitProjectionStyle orbitProjectionStyle;
   @override
   final RenderSceneDisplayStyle displayStyle;
@@ -81,6 +85,8 @@ class FallbackRenderScenePainter extends CustomPainter
   final double draftWallThicknessMeters;
   @override
   final double draftWallHeightMeters;
+  @override
+  final int? draftWallEditElementId;
   final bool showObjectLabels;
   final bool showReferenceGrid;
 
@@ -514,6 +520,7 @@ class FallbackRenderScenePainter extends CustomPainter
         oldDelegate.selectionRect != selectionRect ||
         oldDelegate.highlightedElementId != highlightedElementId ||
         oldDelegate.projectionMode != projectionMode ||
+        oldDelegate.interactionMode != interactionMode ||
         oldDelegate.orbitProjectionStyle != orbitProjectionStyle ||
         oldDelegate.displayStyle != displayStyle ||
         oldDelegate.camera != camera ||
@@ -524,6 +531,7 @@ class FallbackRenderScenePainter extends CustomPainter
         oldDelegate.draftSurface != draftSurface ||
         oldDelegate.draftWallThicknessMeters != draftWallThicknessMeters ||
         oldDelegate.draftWallHeightMeters != draftWallHeightMeters ||
+        oldDelegate.draftWallEditElementId != draftWallEditElementId ||
         oldDelegate.showObjectLabels != showObjectLabels ||
         oldDelegate.showReferenceGrid != showReferenceGrid;
   }

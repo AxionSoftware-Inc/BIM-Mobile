@@ -151,7 +151,7 @@ class _DraftEditorCard extends StatefulWidget {
     required this.draftFloorTopElevationMeters,
     required this.surfaceDrawMode,
     required this.draftHostWall,
-    required this.openingOffsetMeters,
+    required this.openingKind,
     required this.openingWidthMeters,
     required this.openingHeightMeters,
     required this.openingSillHeightMeters,
@@ -162,10 +162,7 @@ class _DraftEditorCard extends StatefulWidget {
     required this.snapEnabled,
     required this.canConfirm,
     required this.onSnapToggled,
-    required this.onOpeningOffsetChanged,
-    required this.onOpeningWidthChanged,
-    required this.onOpeningHeightChanged,
-    required this.onOpeningSillHeightChanged,
+    required this.onOpeningPresetChanged,
     required this.onSurfaceThicknessChanged,
     required this.onSurfaceHeightChanged,
     required this.onFloorTopElevationChanged,
@@ -189,7 +186,7 @@ class _DraftEditorCard extends StatefulWidget {
   final double draftFloorTopElevationMeters;
   final RenderSceneSurfaceDrawMode surfaceDrawMode;
   final RenderSceneObject? draftHostWall;
-  final double openingOffsetMeters;
+  final String openingKind;
   final double openingWidthMeters;
   final double openingHeightMeters;
   final double openingSillHeightMeters;
@@ -200,10 +197,7 @@ class _DraftEditorCard extends StatefulWidget {
   final bool snapEnabled;
   final bool canConfirm;
   final ValueChanged<bool> onSnapToggled;
-  final ValueChanged<double> onOpeningOffsetChanged;
-  final ValueChanged<double> onOpeningWidthChanged;
-  final ValueChanged<double> onOpeningHeightChanged;
-  final ValueChanged<double> onOpeningSillHeightChanged;
+  final ValueChanged<OpeningPreset> onOpeningPresetChanged;
   final ValueChanged<double> onSurfaceThicknessChanged;
   final ValueChanged<double> onSurfaceHeightChanged;
   final ValueChanged<double> onFloorTopElevationChanged;
@@ -218,10 +212,6 @@ class _DraftEditorCard extends StatefulWidget {
 }
 
 class _DraftEditorCardState extends State<_DraftEditorCard> {
-  TextEditingController? _offsetController;
-  TextEditingController? _widthController;
-  TextEditingController? _heightController;
-  TextEditingController? _sillController;
   TextEditingController? _surfaceThicknessController;
   TextEditingController? _surfaceHeightController;
   TextEditingController? _floorTopController;
@@ -236,14 +226,6 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
   @override
   void didUpdateWidget(covariant _DraftEditorCard oldWidget) {
     super.didUpdateWidget(oldWidget);
-    _syncController(_offsetController, widget.openingOffsetMeters,
-        oldWidget.openingOffsetMeters);
-    _syncController(_widthController, widget.openingWidthMeters,
-        oldWidget.openingWidthMeters);
-    _syncController(_heightController, widget.openingHeightMeters,
-        oldWidget.openingHeightMeters);
-    _syncController(_sillController, widget.openingSillHeightMeters,
-        oldWidget.openingSillHeightMeters);
     _syncController(
         _surfaceThicknessController,
         widget.draftSurfaceThicknessMeters,
@@ -258,10 +240,6 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
 
   @override
   void dispose() {
-    _offsetController?.dispose();
-    _widthController?.dispose();
-    _heightController?.dispose();
-    _sillController?.dispose();
     _surfaceThicknessController?.dispose();
     _surfaceHeightController?.dispose();
     _floorTopController?.dispose();
@@ -284,14 +262,6 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
   }
 
   void _ensureControllers() {
-    _offsetController ??=
-        TextEditingController(text: _format(widget.openingOffsetMeters));
-    _widthController ??=
-        TextEditingController(text: _format(widget.openingWidthMeters));
-    _heightController ??=
-        TextEditingController(text: _format(widget.openingHeightMeters));
-    _sillController ??=
-        TextEditingController(text: _format(widget.openingSillHeightMeters));
     _surfaceThicknessController ??= TextEditingController(
       text: _format(widget.draftSurfaceThicknessMeters),
     );
@@ -452,47 +422,18 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
                 value: wall?.elementId?.toString() ?? 'Select a wall',
               ),
               const SizedBox(height: 8),
-              _NumericField(
-                label: 'Offset (m)',
-                controller: _offsetController!,
-                onChanged: (value) {
-                  final parsed = _parse(value);
-                  if (parsed != null) {
-                    widget.onOpeningOffsetChanged(parsed);
-                  }
-                },
+              _OpeningPresetField(
+                kind: widget.openingKind,
+                widthMeters: widget.openingWidthMeters,
+                heightMeters: widget.openingHeightMeters,
+                sillHeightMeters: widget.openingSillHeightMeters,
+                onChanged: widget.onOpeningPresetChanged,
               ),
-              _NumericField(
-                label: 'Width (m)',
-                controller: _widthController!,
-                onChanged: (value) {
-                  final parsed = _parse(value);
-                  if (parsed != null) {
-                    widget.onOpeningWidthChanged(parsed);
-                  }
-                },
+              const SizedBox(height: 6),
+              const _InfoRow(
+                label: 'Placement',
+                value: 'Tap or drag on the host wall',
               ),
-              _NumericField(
-                label: 'Height (m)',
-                controller: _heightController!,
-                onChanged: (value) {
-                  final parsed = _parse(value);
-                  if (parsed != null) {
-                    widget.onOpeningHeightChanged(parsed);
-                  }
-                },
-              ),
-              if (mode == RenderSceneInteractionMode.addWindow)
-                _NumericField(
-                  label: 'Sill height (m)',
-                  controller: _sillController!,
-                  onChanged: (value) {
-                    final parsed = _parse(value);
-                    if (parsed != null) {
-                      widget.onOpeningSillHeightChanged(parsed);
-                    }
-                  },
-                ),
               const SizedBox(height: 8),
               _InfoRow(
                 label: 'Preview',
@@ -530,6 +471,54 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
           child: const Text('Clear selection'),
         ),
       ],
+    );
+  }
+}
+
+class _OpeningPresetField extends StatelessWidget {
+  const _OpeningPresetField({
+    required this.kind,
+    required this.widthMeters,
+    required this.heightMeters,
+    required this.sillHeightMeters,
+    required this.onChanged,
+  });
+
+  final String kind;
+  final double widthMeters;
+  final double heightMeters;
+  final double sillHeightMeters;
+  final ValueChanged<OpeningPreset> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final presets = openingPresetsForKind(kind);
+    final selected = openingPresetForValues(
+      kind: kind,
+      widthMeters: widthMeters,
+      heightMeters: heightMeters,
+      sillHeightMeters: sillHeightMeters,
+    );
+    return DropdownButtonFormField<String>(
+      isExpanded: true,
+      initialValue: selected.id,
+      decoration: InputDecoration(
+        labelText: '${kind == 'window' ? 'Window' : 'Door'} type',
+        isDense: true,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+      items: <DropdownMenuItem<String>>[
+        for (final preset in presets)
+          DropdownMenuItem<String>(
+            value: preset.id,
+            child: Text(preset.label, overflow: TextOverflow.ellipsis),
+          ),
+      ],
+      onChanged: (id) {
+        if (id == null) return;
+        onChanged(presets.firstWhere((preset) => preset.id == id));
+      },
     );
   }
 }

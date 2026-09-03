@@ -12,6 +12,7 @@ class NativeDraftOverlayPainter extends CustomPainter {
   NativeDraftOverlayPainter({
     required this.scene,
     required this.projectionMode,
+    required this.interactionMode,
     required this.orbitProjectionStyle,
     required this.camera,
     required this.planCamera,
@@ -23,10 +24,12 @@ class NativeDraftOverlayPainter extends CustomPainter {
     required this.wallThicknessMeters,
     required this.activeElementId,
     required this.selectedLevelId,
+    this.draftWallEditElementId,
   });
 
   final RenderScene scene;
   final RenderSceneProjectionMode projectionMode;
+  final RenderSceneInteractionMode interactionMode;
   final RenderSceneOrbitProjectionStyle orbitProjectionStyle;
   final RenderSceneCameraState camera;
   final RenderScenePlanCameraState planCamera;
@@ -38,6 +41,7 @@ class NativeDraftOverlayPainter extends CustomPainter {
   final double wallThicknessMeters;
   final String? activeElementId;
   final int? selectedLevelId;
+  final int? draftWallEditElementId;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -333,6 +337,106 @@ class NativeDraftOverlayPainter extends CustomPainter {
       Offset((a.dx + b.dx) * 0.5, (a.dy + b.dy) * 0.5),
       WallAuthoringGeometry.formatWallLengthMeters(start.distanceTo(end)),
     );
+    if (projectionMode == RenderSceneProjectionMode.topDown &&
+        (interactionMode == RenderSceneInteractionMode.addWall ||
+            draftWallEditElementId != null)) {
+      _drawDraftWallAngle(
+        canvas,
+        projection,
+        start,
+        end,
+        excludeWallId: draftWallEditElementId,
+        levelId: selectedLevelId,
+      );
+    }
+  }
+
+  void _drawDraftWallAngle(
+    Canvas canvas,
+    RenderSceneProjection projection,
+    RenderScenePoint start,
+    RenderScenePoint end, {
+    required int? excludeWallId,
+    required int? levelId,
+  }) {
+    final preview = WallAuthoringGeometry.findDraftAngle(
+      scene: scene,
+      start: start,
+      end: end,
+      excludeWallId: excludeWallId,
+      levelId: levelId,
+    );
+    if (preview == null) return;
+
+    final vertex = projection.project(preview.vertex).screen;
+    final wallPoint = projection.project(preview.wallPoint).screen;
+    final referencePoint = projection.project(preview.referencePoint).screen;
+    final firstAngle = math.atan2(
+      wallPoint.dy - vertex.dy,
+      wallPoint.dx - vertex.dx,
+    );
+    final secondAngle = math.atan2(
+      referencePoint.dy - vertex.dy,
+      referencePoint.dx - vertex.dx,
+    );
+    var sweep = secondAngle - firstAngle;
+    while (sweep > math.pi) {
+      sweep -= math.pi * 2;
+    }
+    while (sweep < -math.pi) {
+      sweep += math.pi * 2;
+    }
+    if (sweep.abs() < 0.04 || sweep.abs() > math.pi - 0.04) return;
+
+    const radius = 25.0;
+    final arcPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.2
+      ..strokeCap = StrokeCap.round
+      ..color = const Color(0xFF7C3AED);
+    canvas.drawArc(
+      Rect.fromCircle(center: vertex, radius: radius),
+      firstAngle,
+      sweep,
+      false,
+      arcPaint,
+    );
+
+    final midpointAngle = firstAngle + sweep * 0.5;
+    final labelCenter = vertex +
+        Offset(
+              math.cos(midpointAngle),
+              math.sin(midpointAngle),
+            ) *
+            (radius + 13);
+    final painter = TextPainter(
+      text: TextSpan(
+        text: '${preview.degrees.round()}°',
+        style: const TextStyle(
+          color: Color(0xFF4C1D95),
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    final rect = Rect.fromCenter(
+      center: labelCenter,
+      width: painter.width + 12,
+      height: painter.height + 8,
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(rect, const Radius.circular(7)),
+      Paint()..color = const Color(0xFFF5F3FF).withValues(alpha: 0.96),
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(rect, const Radius.circular(7)),
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.0
+        ..color = const Color(0xFFC4B5FD),
+    );
+    painter.paint(canvas, rect.topLeft + const Offset(6, 4));
   }
 
   void _drawWallLengthLabel(Canvas canvas, Offset midpoint, String text) {

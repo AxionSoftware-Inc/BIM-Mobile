@@ -7,6 +7,7 @@ mixin _FallbackSceneOverlayMixin {
   int? get selectedLevelId;
   String? get highlightedElementId;
   RenderSceneProjectionMode get projectionMode;
+  RenderSceneInteractionMode get interactionMode;
   RenderSceneOrbitProjectionStyle get orbitProjectionStyle;
   RenderSceneDisplayStyle get displayStyle;
   RenderSceneViewportTheme get viewportTheme;
@@ -16,6 +17,7 @@ mixin _FallbackSceneOverlayMixin {
   RenderScenePoint? get draftWallEnd;
   double get draftWallThicknessMeters;
   double get draftWallHeightMeters;
+  int? get draftWallEditElementId;
 
   void _drawDraftOverlay(Canvas canvas, RenderSceneProjection projection) {
     final wallStart = draftWallStart;
@@ -72,6 +74,18 @@ mixin _FallbackSceneOverlayMixin {
         Offset((a.dx + b.dx) * 0.5, (a.dy + b.dy) * 0.5),
         WallAuthoringGeometry.formatWallLengthMeters(wallLength),
       );
+      if (projectionMode == RenderSceneProjectionMode.topDown &&
+          (interactionMode == RenderSceneInteractionMode.addWall ||
+              draftWallEditElementId != null)) {
+        _drawDraftWallAngle(
+          canvas,
+          projection,
+          wallStart,
+          wallEnd,
+          excludeWallId: draftWallEditElementId,
+          levelId: selectedLevelId,
+        );
+      }
     }
 
     if (surface != null) {
@@ -236,32 +250,49 @@ mixin _FallbackSceneOverlayMixin {
     final startPoint = center - axisUnit.scale(halfWidth);
     final endPoint = center + axisUnit.scale(halfWidth);
     final halfThickness = wallThickness * 0.5;
-    final upper = opening.sillHeightMeters + opening.heightMeters;
+    final lowerZ = hostStart.z + opening.sillHeightMeters;
+    final upperZ = lowerZ + opening.heightMeters;
 
     final corners = <RenderScenePoint>[
-      startPoint + normal.scale(halfThickness),
-      endPoint + normal.scale(halfThickness),
-      endPoint - normal.scale(halfThickness),
-      startPoint - normal.scale(halfThickness),
       RenderScenePoint(
         x: startPoint.x + normal.x * halfThickness,
         y: startPoint.y + normal.y * halfThickness,
-        z: upper,
+        z: lowerZ,
       ),
       RenderScenePoint(
         x: endPoint.x + normal.x * halfThickness,
         y: endPoint.y + normal.y * halfThickness,
-        z: upper,
+        z: lowerZ,
       ),
       RenderScenePoint(
         x: endPoint.x - normal.x * halfThickness,
         y: endPoint.y - normal.y * halfThickness,
-        z: upper,
+        z: lowerZ,
       ),
       RenderScenePoint(
         x: startPoint.x - normal.x * halfThickness,
         y: startPoint.y - normal.y * halfThickness,
-        z: upper,
+        z: lowerZ,
+      ),
+      RenderScenePoint(
+        x: startPoint.x + normal.x * halfThickness,
+        y: startPoint.y + normal.y * halfThickness,
+        z: upperZ,
+      ),
+      RenderScenePoint(
+        x: endPoint.x + normal.x * halfThickness,
+        y: endPoint.y + normal.y * halfThickness,
+        z: upperZ,
+      ),
+      RenderScenePoint(
+        x: endPoint.x - normal.x * halfThickness,
+        y: endPoint.y - normal.y * halfThickness,
+        z: upperZ,
+      ),
+      RenderScenePoint(
+        x: startPoint.x - normal.x * halfThickness,
+        y: startPoint.y - normal.y * halfThickness,
+        z: upperZ,
       ),
     ];
 
@@ -300,6 +331,94 @@ mixin _FallbackSceneOverlayMixin {
       maxLines: 2,
     )..layout(maxWidth: 160);
     messagePainter.paint(canvas, rect.topLeft + const Offset(4, -18));
+  }
+
+  void _drawDraftWallAngle(
+    Canvas canvas,
+    RenderSceneProjection projection,
+    RenderScenePoint start,
+    RenderScenePoint end, {
+    required int? excludeWallId,
+    required int? levelId,
+  }) {
+    final preview = WallAuthoringGeometry.findDraftAngle(
+      scene: scene,
+      start: start,
+      end: end,
+      excludeWallId: excludeWallId,
+      levelId: levelId,
+    );
+    if (preview == null) return;
+
+    final vertex = projection.project(preview.vertex).screen;
+    final wallPoint = projection.project(preview.wallPoint).screen;
+    final referencePoint = projection.project(preview.referencePoint).screen;
+    final firstAngle = math.atan2(
+      wallPoint.dy - vertex.dy,
+      wallPoint.dx - vertex.dx,
+    );
+    final secondAngle = math.atan2(
+      referencePoint.dy - vertex.dy,
+      referencePoint.dx - vertex.dx,
+    );
+    var sweep = secondAngle - firstAngle;
+    while (sweep > math.pi) {
+      sweep -= math.pi * 2;
+    }
+    while (sweep < -math.pi) {
+      sweep += math.pi * 2;
+    }
+    if (sweep.abs() < 0.04 || sweep.abs() > math.pi - 0.04) return;
+
+    const radius = 25.0;
+    final arcPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.2
+      ..strokeCap = StrokeCap.round
+      ..color = const Color(0xFF7C3AED);
+    canvas.drawArc(
+      Rect.fromCircle(center: vertex, radius: radius),
+      firstAngle,
+      sweep,
+      false,
+      arcPaint,
+    );
+
+    final midpointAngle = firstAngle + sweep * 0.5;
+    final labelCenter = vertex +
+        Offset(
+              math.cos(midpointAngle),
+              math.sin(midpointAngle),
+            ) *
+            (radius + 13);
+    final painter = TextPainter(
+      text: TextSpan(
+        text: '${preview.degrees.round()}°',
+        style: const TextStyle(
+          color: Color(0xFF4C1D95),
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    final rect = Rect.fromCenter(
+      center: labelCenter,
+      width: painter.width + 12,
+      height: painter.height + 8,
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(rect, const Radius.circular(7)),
+      Paint()..color = const Color(0xFFF5F3FF).withValues(alpha: 0.96),
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(rect, const Radius.circular(7)),
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.0
+        ..color = const Color(0xFFC4B5FD),
+    );
+    painter.paint(canvas, rect.topLeft + const Offset(6, 4));
   }
 
   void _drawWallLengthLabel(Canvas canvas, Offset midpoint, String text) {

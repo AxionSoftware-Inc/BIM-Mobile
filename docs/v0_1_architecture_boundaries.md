@@ -1,7 +1,7 @@
 # v0.1 Architecture Boundaries
 
 The engine/BIM baseline is `0.1.0`. The Flutter package has an independent
-mobile release version (currently `0.2.3+5`), so Play Store version codes never
+mobile release version (currently `0.2.4+6`), so Play Store version codes never
 need to be reduced when engine contracts evolve. A project document keeps
 schema version `1`; the render-scene contract is version `2`. These versions
 intentionally move independently: a rendering change must not mutate BIM
@@ -29,7 +29,7 @@ Engine render scene v2 (mesh + feature_edges)
   sill, head and jamb contours are explicit world-space segments.
 - Flutter and Filament can choose colour, line width, camera and visibility,
   but do not infer opening contours from triangle adjacency or metadata.
-- The BIM cache persists the same feature edges. Its compiler version is `12`
+- The BIM cache persists the same feature edges. Its compiler version is `13`
   and format is `3`; older caches are rejected and rebuilt deliberately.
 
 ## Change rules

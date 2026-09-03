@@ -50,6 +50,7 @@ class _FallbackRenderSceneView extends StatefulWidget {
     required this.draftSurfaceWallIds,
     required this.draftWallThicknessMeters,
     required this.draftWallHeightMeters,
+    this.draftWallEditElementId,
     required this.showDiagnostics,
     this.rendererChild,
     this.nativeRenderer = false,
@@ -72,6 +73,7 @@ class _FallbackRenderSceneView extends StatefulWidget {
   final Set<int> draftSurfaceWallIds;
   final double draftWallThicknessMeters;
   final double draftWallHeightMeters;
+  final int? draftWallEditElementId;
   final bool showDiagnostics;
   final Widget? rendererChild;
   final bool nativeRenderer;
@@ -746,6 +748,7 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                           selectionRect: controller.selectionRectangle,
                           highlightedElementId: controller.highlightedElementId,
                           projectionMode: controller.projectionMode,
+                          interactionMode: widget.interactionMode,
                           orbitProjectionStyle: controller.orbitProjectionStyle,
                           displayStyle: controller.displayStyle,
                           viewportTheme: controller.viewportTheme,
@@ -758,6 +761,7 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                           draftWallThicknessMeters:
                               widget.draftWallThicknessMeters,
                           draftWallHeightMeters: widget.draftWallHeightMeters,
+                          draftWallEditElementId: widget.draftWallEditElementId,
                         ),
                         size: Size.infinite,
                       ),
@@ -805,6 +809,8 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                         wallThicknessMeters: widget.draftWallThicknessMeters,
                         activeElementId: controller.activeElementId,
                         selectedLevelId: controller.selectedLevelId,
+                        interactionMode: widget.interactionMode,
+                        draftWallEditElementId: widget.draftWallEditElementId,
                       ),
                       size: Size.infinite,
                     ),

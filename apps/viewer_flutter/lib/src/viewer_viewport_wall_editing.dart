@@ -205,8 +205,11 @@ extension _ViewerViewportWallEditing on _ViewerHomePageState {
       point: point,
       announce: false,
     );
+    final draft = _viewportController.draftOpening;
     _updateViewportState(() {
-      _editStatusMessage = 'Opening move preview is ready.';
+      _editStatusMessage = draft?.valid == true
+          ? 'Opening move preview is ready.'
+          : (draft?.message ?? 'Opening dimensions are invalid.');
     });
   }
 
@@ -216,6 +219,11 @@ extension _ViewerViewportWallEditing on _ViewerHomePageState {
     required RenderScenePoint point,
     required bool announce,
   }) {
+    final kind = _interactionMode == RenderSceneInteractionMode.addDoor ||
+            (_interactionMode == RenderSceneInteractionMode.moveOpening &&
+                _draftMoveTarget?.kindKey == 'door')
+        ? 'Door'
+        : 'Window';
     if (RenderSceneEditor.isGlassWall(scene, hostWall)) {
       _updateViewportState(() {
         _draftHostWall = hostWall;
@@ -223,14 +231,13 @@ extension _ViewerViewportWallEditing on _ViewerHomePageState {
       });
       _viewportController.setOpeningDraft(
         RenderSceneOpeningDraft(
-          kind: _interactionMode == RenderSceneInteractionMode.addDoor
-              ? 'Door'
-              : 'Window',
+          kind: kind,
           hostWallId: hostWall.elementId,
           offsetMeters: 0.0,
           widthMeters: _draftOpeningWidthMeters,
           heightMeters: _draftOpeningHeightMeters,
-          sillHeightMeters: _draftOpeningSillHeightMeters,
+          sillHeightMeters:
+              kind == 'Window' ? _draftOpeningSillHeightMeters : 0.0,
           valid: false,
           message: RenderSceneQueries.glassWallOpeningMessage,
         ),
@@ -244,6 +251,8 @@ extension _ViewerViewportWallEditing on _ViewerHomePageState {
       hostWall: hostWall,
       point: point,
       widthMeters: _draftOpeningWidthMeters,
+      heightMeters: _draftOpeningHeightMeters,
+      sillHeightMeters: kind == 'Window' ? _draftOpeningSillHeightMeters : 0.0,
       snapToGrid: _snapDraftToGrid,
     );
     if (placement == null) {
@@ -257,9 +266,13 @@ extension _ViewerViewportWallEditing on _ViewerHomePageState {
 
     final snappedOffset = placement.offsetMeters;
     final valid = placement.valid;
-    final kind = _interactionMode == RenderSceneInteractionMode.addDoor
-        ? 'Door'
-        : 'Window';
+    final validationMessage = OpeningAuthoringGeometry.validationMessage(
+      hostWall: hostWall,
+      offsetMeters: snappedOffset,
+      widthMeters: _draftOpeningWidthMeters,
+      heightMeters: _draftOpeningHeightMeters,
+      sillHeightMeters: kind == 'Window' ? _draftOpeningSillHeightMeters : 0.0,
+    );
     final sameWall = _draftHostWall?.elementId == hostWall.elementId;
     final sameOffset = (_draftOpeningOffsetMeters - snappedOffset).abs() < 1e-6;
     if (!announce && sameWall && sameOffset) {
@@ -272,7 +285,7 @@ extension _ViewerViewportWallEditing on _ViewerHomePageState {
       if (announce) {
         _editStatusMessage = valid
             ? '$kind preview on wall #${hostWall.elementId}'
-            : '$kind is near wall edge.';
+            : (validationMessage ?? '$kind dimensions are invalid.');
       }
     });
 
@@ -283,10 +296,12 @@ extension _ViewerViewportWallEditing on _ViewerHomePageState {
         offsetMeters: snappedOffset,
         widthMeters: _draftOpeningWidthMeters,
         heightMeters: _draftOpeningHeightMeters,
-        sillHeightMeters: _draftOpeningSillHeightMeters,
+        sillHeightMeters:
+            kind == 'Window' ? _draftOpeningSillHeightMeters : 0.0,
         valid: valid,
-        message:
-            valid ? 'Ready to create $kind.' : 'Adjust the offset or width.',
+        message: valid
+            ? 'Ready to create $kind.'
+            : (validationMessage ?? 'Adjust the opening dimensions.'),
       ),
     );
   }

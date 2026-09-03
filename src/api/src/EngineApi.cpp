@@ -1164,7 +1164,14 @@ RenderSceneMeshDTO make_opening_mesh(const tbe::core::Line2& axis, const tbe::co
     const auto dx = axis.end.x - axis.start.x;
     const auto dy = axis.end.y - axis.start.y;
     const auto length = std::sqrt((dx * dx) + (dy * dy));
-    if (length <= 1.0e-9 || opening.width_meters <= 0.0 || opening.height_meters <= 0.0 || wall_thickness <= 0.0) {
+    if (!std::isfinite(length) || length <= 1.0e-9 ||
+        !std::isfinite(opening.offset_meters) ||
+        !std::isfinite(opening.width_meters) ||
+        !std::isfinite(opening.height_meters) ||
+        !std::isfinite(opening.sill_height_meters) ||
+        !std::isfinite(opening.vertical_offset_meters) ||
+        !std::isfinite(wall_thickness) ||
+        opening.width_meters <= 0.0 || opening.height_meters <= 0.0 || wall_thickness <= 0.0) {
         return dto;
     }
     const auto ux = dx / length;
@@ -1356,12 +1363,21 @@ std::vector<RenderSceneFeatureEdgeDTO> wall_feature_edges(
     const auto& profile = wall.geometry.profile;
     if (profile.polygon.size() >= 2) {
         edges.reserve(profile.polygon.size() * 2 + profile.openings.size() * 8);
+        constexpr double kBottomContourLiftMeters = 0.002;
         for (std::size_t index = 0; index < profile.polygon.size(); ++index) {
             const auto& first = profile.polygon[index];
             const auto& second = profile.polygon[(index + 1) % profile.polygon.size()];
             edges.push_back(RenderSceneFeatureEdgeDTO{
                 .start = wall_feature_point(wall, first.x, first.y, wall.height_meters, base_elevation),
                 .end = wall_feature_point(wall, second.x, second.y, wall.height_meters, base_elevation),
+                .role = RenderSceneFeatureEdgeRole::Silhouette,
+            });
+            // Keep the lower wall contour explicit as well. A tiny lift avoids
+            // z-fighting with a coincident floor/ground surface while keeping
+            // the line visually attached to the wall base in 3D.
+            edges.push_back(RenderSceneFeatureEdgeDTO{
+                .start = wall_feature_point(wall, first.x, first.y, kBottomContourLiftMeters, base_elevation),
+                .end = wall_feature_point(wall, second.x, second.y, kBottomContourLiftMeters, base_elevation),
                 .role = RenderSceneFeatureEdgeRole::Silhouette,
             });
             edges.push_back(RenderSceneFeatureEdgeDTO{
@@ -2115,14 +2131,16 @@ RenderSceneDTO build_render_scene(
                     : (opening_element != nullptr && opening_element->window() != nullptr
                            ? opening_element->window()->level_offset_meters
                            : 0.0);
-                auto opening_mesh = make_opening_mesh(wall->axis, opening, wall->thickness_meters, base_elevation);
-                if (opening_element != nullptr && opening_element->door() != nullptr &&
-                    !opening_element->door()->mesh.vertices.empty() && !opening_element->door()->mesh.indices.empty()) {
-                    opening_mesh = mesh_for_render(opening_element->door()->mesh, base_elevation, *opening_element);
-                } else if (opening_element != nullptr && opening_element->window() != nullptr &&
-                    !opening_element->window()->mesh.vertices.empty() && !opening_element->window()->mesh.indices.empty()) {
-                    opening_mesh = mesh_for_render(opening_element->window()->mesh, base_elevation, *opening_element);
-                }
+                // Hosted door/window geometry is parametric. Always rebuild
+                // the lightweight panel from the authoritative opening
+                // dimensions so legacy/imported meshes cannot keep an old
+                // height or sill after the Inspector changes it.
+                const auto opening_mesh = make_opening_mesh(
+                    wall->axis,
+                    opening,
+                    wall->thickness_meters,
+                    base_elevation
+                );
                 append_object(make_object_dto(
                     opening.element_id,
                     opening_kind,

@@ -1,4 +1,5 @@
 import 'render_scene_models.dart';
+import 'elements/wall_type_catalog.dart';
 import 'viewer_authoring_gateway.dart';
 import 'viewer_element_creation_gateway.dart';
 import 'viewer_engine_contracts.dart';
@@ -58,6 +59,19 @@ class AuthoringCommandService {
       _requireRepository().setWallType(
         wallId: wallId,
         wallTypeId: wallTypeId,
+      );
+
+  Future<RenderSceneLoadResult> createWallTypeForWall({
+    required int wallId,
+    required WallTypeCategory category,
+    required String name,
+    required List<WallTypeLayerDefinition> layers,
+  }) =>
+      _requireRepository().createWallTypeForWall(
+        wallId: wallId,
+        category: category,
+        name: name,
+        layers: layers,
       );
 
   Future<RenderSceneLoadResult> setElementAssembly({

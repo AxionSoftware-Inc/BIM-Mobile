@@ -525,6 +525,22 @@ class ViewerRepository
       );
 
   @override
+  Future<RenderSceneLoadResult> createWallTypeForWall({
+    required int wallId,
+    required WallTypeCategory category,
+    required String name,
+    required List<WallTypeLayerDefinition> layers,
+  }) =>
+      _authoringQueue.run(
+        () => _mutations.createWallTypeForWall(
+          wallId: wallId,
+          category: category,
+          name: name,
+          layers: layers,
+        ),
+      );
+
+  @override
   Future<RenderSceneLoadResult> createWallTransaction({
     required String name,
     required int levelId,

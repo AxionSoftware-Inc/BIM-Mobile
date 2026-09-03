@@ -551,6 +551,9 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
                 _ViewerHomePageState._defaultWallThicknessMeters,
             draftWallHeightMeters:
                 _ViewerHomePageState._defaultWallHeightMeters,
+            draftWallEditElementId: _draftMoveTarget?.kindKey == 'wall'
+                ? _draftMoveTarget?.elementId
+                : null,
             showDiagnostics: _showDiagnostics,
           ),
         ),
@@ -694,17 +697,6 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
     required InspectorTarget inspectorTarget,
   }) {
     final theme = Theme.of(context);
-    final selectionLabel = switch (inspectorTarget.kind) {
-      InspectorTargetKind.empty => 'No active selection',
-      InspectorTargetKind.level => '${inspectorTarget.level!.name} · Level',
-      InspectorTargetKind.object =>
-        '${prettySceneKind(inspectorTarget.object!.kind)} · '
-            '#${inspectorTarget.object!.elementId ?? '-'}',
-      InspectorTargetKind.multiple =>
-        '${inspectorTarget.objects.length} elements selected',
-    };
-    final hasSelection = inspectorTarget.kind != InspectorTargetKind.empty;
-
     return Container(
       width: 340,
       decoration: BoxDecoration(
@@ -716,45 +708,6 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
-          Padding(
-            padding: const EdgeInsets.fromLTRB(14, 12, 8, 10),
-            child: Row(
-              children: <Widget>[
-                Icon(Icons.tune_outlined,
-                    size: 20, color: theme.colorScheme.primary),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      Text(
-                        'Properties',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.titleMedium,
-                      ),
-                      Text(
-                        selectionLabel,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                if (hasSelection)
-                  IconButton(
-                    tooltip: 'Clear selection',
-                    onPressed: _clearSelection,
-                    icon: const Icon(Icons.close),
-                    visualDensity: VisualDensity.compact,
-                  ),
-              ],
-            ),
-          ),
-          const Divider(height: 1),
           Expanded(
             child: scene == null
                 ? const _EmptyPanelMessage(
@@ -770,7 +723,12 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
                           key: PageStorageKey<String>(
                             'inspector-active-tool-${_interactionMode.name}',
                           ),
-                          initiallyExpanded: false,
+                          initiallyExpanded: _interactionMode ==
+                                  RenderSceneInteractionMode.addDoor ||
+                              _interactionMode ==
+                                  RenderSceneInteractionMode.addWindow ||
+                              _interactionMode ==
+                                  RenderSceneInteractionMode.moveOpening,
                           backgroundColor: Colors.transparent,
                           collapsedBackgroundColor: Colors.transparent,
                           shape: const Border(),
@@ -816,7 +774,15 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
                                   _draftFloorTopElevationMeters,
                               surfaceDrawMode: _surfaceDrawMode,
                               draftHostWall: _draftHostWall,
-                              openingOffsetMeters: _draftOpeningOffsetMeters,
+                              openingKind: _interactionMode ==
+                                          RenderSceneInteractionMode
+                                              .addWindow ||
+                                      (_interactionMode ==
+                                              RenderSceneInteractionMode
+                                                  .moveOpening &&
+                                          _draftMoveTarget?.kindKey == 'window')
+                                  ? 'window'
+                                  : 'door',
                               openingWidthMeters: _draftOpeningWidthMeters,
                               openingHeightMeters: _draftOpeningHeightMeters,
                               openingSillHeightMeters:
@@ -843,27 +809,13 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
                                   _syncSurfaceDraftPreview();
                                 }
                               },
-                              onOpeningOffsetChanged: (value) {
+                              onOpeningPresetChanged: (preset) {
                                 _updateViewportState(() {
-                                  _draftOpeningOffsetMeters = value;
-                                });
-                                _syncOpeningDraft();
-                              },
-                              onOpeningWidthChanged: (value) {
-                                _updateViewportState(() {
-                                  _draftOpeningWidthMeters = value;
-                                });
-                                _syncOpeningDraft();
-                              },
-                              onOpeningHeightChanged: (value) {
-                                _updateViewportState(() {
-                                  _draftOpeningHeightMeters = value;
-                                });
-                                _syncOpeningDraft();
-                              },
-                              onOpeningSillHeightChanged: (value) {
-                                _updateViewportState(() {
-                                  _draftOpeningSillHeightMeters = value;
+                                  _draftOpeningWidthMeters = preset.widthMeters;
+                                  _draftOpeningHeightMeters =
+                                      preset.heightMeters;
+                                  _draftOpeningSillHeightMeters =
+                                      preset.sillHeightMeters;
                                 });
                                 _syncOpeningDraft();
                               },

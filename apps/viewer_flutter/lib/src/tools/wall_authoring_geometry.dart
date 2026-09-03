@@ -141,6 +141,26 @@ class WallSnapIndex {
   final List<WallSnapSegment> segments;
 }
 
+/// The transient angular dimension shown while a wall meets another wall.
+///
+/// This is presentation-neutral geometry: the viewport decides how to draw
+/// the arc and label, while the authoring tools only resolve the two axes that
+/// form the angle.
+@immutable
+class WallAnglePreview {
+  const WallAnglePreview({
+    required this.vertex,
+    required this.wallPoint,
+    required this.referencePoint,
+    required this.degrees,
+  });
+
+  final RenderScenePoint vertex;
+  final RenderScenePoint wallPoint;
+  final RenderScenePoint referencePoint;
+  final double degrees;
+}
+
 List<RenderScenePoint> _wallProfileCorners(RenderSceneObject wall) {
   final nativeCorners = <RenderScenePoint>[];
   for (final edge in wall.featureEdges) {
@@ -191,6 +211,92 @@ final class WallAuthoringGeometry {
   /// create values such as 5532 mm; intentional 5530 mm remains possible.
   static const double wallGridStepMeters = 0.10;
   static const double wallFreehandPrecisionMeters = 0.01;
+
+  /// Finds the nearest wall junction for a transient wall axis and returns
+  /// its included plan angle. The selected wall is excluded during endpoint
+  /// editing so its old axis cannot be mistaken for the neighbouring wall.
+  static WallAnglePreview? findDraftAngle({
+    required RenderScene scene,
+    required RenderScenePoint start,
+    required RenderScenePoint end,
+    int? excludeWallId,
+    int? levelId,
+    double toleranceMeters = 0.30,
+  }) {
+    if (start.distanceTo(end) <= 1e-6) return null;
+
+    final vertices = <({
+      RenderScenePoint vertex,
+      RenderScenePoint wallPoint,
+    })>[
+      (vertex: start, wallPoint: end),
+      (vertex: end, wallPoint: start),
+    ];
+    WallAnglePreview? best;
+    var bestDistance = double.infinity;
+
+    for (final object in scene.objects) {
+      if (object.kindKey != 'wall' || object.elementId == excludeWallId) {
+        continue;
+      }
+      if (levelId != null &&
+          object.levelId != null &&
+          object.levelId != levelId) {
+        continue;
+      }
+      final otherStart = RenderSceneEditor.wallStartPoint(object);
+      final otherEnd = RenderSceneEditor.wallEndPoint(object);
+      if (otherStart == null || otherEnd == null) continue;
+      if (otherStart.distanceTo(otherEnd) <= 1e-6) continue;
+
+      for (final candidate in vertices) {
+        final startDistance = candidate.vertex.distanceTo(otherStart);
+        final endDistance = candidate.vertex.distanceTo(otherEnd);
+        final joinsAtStart = startDistance <= toleranceMeters;
+        final joinsAtEnd = endDistance <= toleranceMeters;
+        if (!joinsAtStart && !joinsAtEnd) continue;
+
+        final distance = math.min(startDistance, endDistance);
+        if (distance >= bestDistance) continue;
+        final referencePoint = joinsAtStart ? otherEnd : otherStart;
+        final degrees = _includedPlanAngle(
+          vertex: candidate.vertex,
+          firstPoint: candidate.wallPoint,
+          secondPoint: referencePoint,
+        );
+        // A straight continuation has no useful bend dimension. Keep a small
+        // dead-band so jitter around 180 degrees does not make the label
+        // appear/disappear during a drag.
+        if (degrees <= 2.0 || degrees >= 178.0) continue;
+        bestDistance = distance;
+        best = WallAnglePreview(
+          vertex: candidate.vertex,
+          wallPoint: candidate.wallPoint,
+          referencePoint: referencePoint,
+          degrees: degrees,
+        );
+      }
+    }
+    return best;
+  }
+
+  static double _includedPlanAngle({
+    required RenderScenePoint vertex,
+    required RenderScenePoint firstPoint,
+    required RenderScenePoint secondPoint,
+  }) {
+    final firstX = firstPoint.x - vertex.x;
+    final firstY = firstPoint.y - vertex.y;
+    final secondX = secondPoint.x - vertex.x;
+    final secondY = secondPoint.y - vertex.y;
+    final firstLength = math.sqrt(firstX * firstX + firstY * firstY);
+    final secondLength = math.sqrt(secondX * secondX + secondY * secondY);
+    if (firstLength <= 1e-9 || secondLength <= 1e-9) return 0.0;
+    final cosine =
+        ((firstX * secondX + firstY * secondY) / (firstLength * secondLength))
+            .clamp(-1.0, 1.0);
+    return math.acos(cosine) * 180.0 / math.pi;
+  }
 
   static RenderScenePoint snapPoint(
     RenderScenePoint point, {

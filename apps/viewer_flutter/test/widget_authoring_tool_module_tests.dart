@@ -71,6 +71,22 @@ void registerAuthoringToolModuleTests() {
     );
   });
 
+  test('wall authoring geometry reports a live bend angle', () {
+    final scene = loadSampleScene();
+    final preview = WallAuthoringGeometry.findDraftAngle(
+      scene: scene,
+      start: const RenderScenePoint(x: 0, y: 0, z: 0),
+      end: const RenderScenePoint(x: 2, y: 2, z: 0),
+      levelId: 1,
+      toleranceMeters: 0.30,
+    );
+
+    expect(preview, isNotNull);
+    expect(preview!.vertex.x, closeTo(0, 1e-9));
+    expect(preview.vertex.y, closeTo(0, 1e-9));
+    expect(preview.degrees, closeTo(45, 1e-9));
+  });
+
   test('wall drawing quantizes freehand length to 10 mm and snap to 100 mm',
       () {
     const start = RenderScenePoint(x: 0, y: 0, z: 0);
@@ -386,6 +402,8 @@ void registerAuthoringToolModuleTests() {
       hostWall: wall,
       point: RenderScenePoint(x: center.x, y: center.y + 0.8, z: center.z),
       widthMeters: 0.9,
+      heightMeters: 1.2,
+      sillHeightMeters: 0.9,
       snapToGrid: false,
     );
 
@@ -397,6 +415,37 @@ void registerAuthoringToolModuleTests() {
         hostWall: wall,
         offsetMeters: 0,
         widthMeters: 0.9,
+        heightMeters: 1.2,
+        sillHeightMeters: 0.9,
+      ),
+      isFalse,
+    );
+    expect(
+      OpeningAuthoringGeometry.isValid(
+        hostWall: wall,
+        offsetMeters: preview.wallLengthMeters / 2,
+        widthMeters: 0.9,
+        heightMeters: 1.2,
+        sillHeightMeters: 0.9,
+      ),
+      isTrue,
+    );
+    expect(
+      OpeningAuthoringGeometry.isValid(
+        hostWall: wall,
+        offsetMeters: preview.wallLengthMeters / 2,
+        widthMeters: 0.9,
+        heightMeters: 2.5,
+        sillHeightMeters: 0.7,
+      ),
+      isFalse,
+    );
+    expect(
+      OpeningAuthoringGeometry.isValid(
+        hostWall: wall,
+        offsetMeters: preview.wallLengthMeters / 2,
+        widthMeters: double.nan,
+        heightMeters: 1.2,
       ),
       isFalse,
     );

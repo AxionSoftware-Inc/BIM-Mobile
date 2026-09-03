@@ -41,6 +41,7 @@ class RenderSceneViewport extends StatefulWidget {
     this.draftWallThicknessMeters =
         RenderSceneEditor.defaultWallThicknessMeters,
     this.draftWallHeightMeters = RenderSceneEditor.defaultWallHeightMeters,
+    this.draftWallEditElementId,
     this.showDiagnostics = false,
   });
 
@@ -61,6 +62,7 @@ class RenderSceneViewport extends StatefulWidget {
   final Set<int> draftSurfaceWallIds;
   final double draftWallThicknessMeters;
   final double draftWallHeightMeters;
+  final int? draftWallEditElementId;
   final bool showDiagnostics;
 
   @override
@@ -140,6 +142,7 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
         draftSurfaceWallIds: widget.draftSurfaceWallIds,
         draftWallThicknessMeters: widget.draftWallThicknessMeters,
         draftWallHeightMeters: widget.draftWallHeightMeters,
+        draftWallEditElementId: widget.draftWallEditElementId,
         showDiagnostics: widget.showDiagnostics,
         nativeRenderer: true,
         rendererChild: IgnorePointer(
@@ -170,6 +173,7 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
       draftSurfaceWallIds: widget.draftSurfaceWallIds,
       draftWallThicknessMeters: widget.draftWallThicknessMeters,
       draftWallHeightMeters: widget.draftWallHeightMeters,
+      draftWallEditElementId: widget.draftWallEditElementId,
       showDiagnostics: widget.showDiagnostics,
     );
   }

@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 
 import 'authoring_command_service.dart';
 import 'elements/bim_element_registry.dart';
+import 'elements/wall_type_catalog.dart';
 import 'inspector_controller.dart';
 import 'render_scene_models.dart';
+import 'tools/opening_tool_controller.dart';
 
 typedef ApplyInspectorResult = Future<void> Function(
   RenderSceneLoadResult result,
@@ -70,8 +72,6 @@ class PropertyEditor extends StatelessWidget {
           level: target.level!,
           commands: commands,
           onApplied: onApplied,
-          viewRangeMeters: viewRangeMeters,
-          onViewRangeChanged: onViewRangeChanged,
         ),
       InspectorTargetKind.object => Column(
           key: ValueKey<String>('object-${target.object!.elementId}'),
@@ -84,29 +84,36 @@ class PropertyEditor extends StatelessWidget {
               commands: commands,
               onApplied: onApplied,
             ),
-            const SizedBox(height: 8),
-            _DeleteElementButton(
-              object: target.object!,
-              commands: commands,
-              onApplied: onApplied,
-            ),
           ],
         ),
     };
-    if (!showPlanViewRange || target.kind == InspectorTargetKind.level) {
-      return properties;
+    final sections = <Widget>[properties];
+    if (showPlanViewRange) {
+      sections
+        ..add(const SizedBox(height: 8))
+        ..add(
+          _PlanViewRangeSection(
+            level: activePlanLevel,
+            value: viewRangeMeters,
+            onChanged: onViewRangeChanged,
+          ),
+        );
     }
+    if (target.kind == InspectorTargetKind.object) {
+      sections
+        ..add(const SizedBox(height: 8))
+        ..add(
+          _DeleteElementButton(
+            object: target.object!,
+            commands: commands,
+            onApplied: onApplied,
+          ),
+        );
+    }
+    if (sections.length == 1) return properties;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: <Widget>[
-        _PlanViewRangeSection(
-          level: activePlanLevel,
-          value: viewRangeMeters,
-          onChanged: onViewRangeChanged,
-        ),
-        const SizedBox(height: 8),
-        properties,
-      ],
+      children: sections,
     );
   }
 }
@@ -178,14 +185,10 @@ class _LevelPropertiesSection extends StatefulWidget {
     required this.level,
     required this.commands,
     required this.onApplied,
-    required this.viewRangeMeters,
-    required this.onViewRangeChanged,
   });
   final RenderSceneLevel level;
   final AuthoringCommandService commands;
   final ApplyInspectorResult onApplied;
-  final double viewRangeMeters;
-  final Future<void> Function(double value) onViewRangeChanged;
 
   @override
   State<_LevelPropertiesSection> createState() =>
@@ -196,7 +199,6 @@ class _LevelPropertiesSectionState extends State<_LevelPropertiesSection> {
   late final TextEditingController _name;
   late final TextEditingController _elevation;
   late final TextEditingController _height;
-  late final TextEditingController _viewRange;
   bool _busy = false;
 
   @override
@@ -207,7 +209,6 @@ class _LevelPropertiesSectionState extends State<_LevelPropertiesSection> {
         TextEditingController(text: _number(widget.level.elevationMeters));
     _height = TextEditingController(
         text: _number(widget.level.defaultWallHeightMeters));
-    _viewRange = TextEditingController(text: _number(widget.viewRangeMeters));
   }
 
   @override
@@ -215,19 +216,15 @@ class _LevelPropertiesSectionState extends State<_LevelPropertiesSection> {
     _name.dispose();
     _elevation.dispose();
     _height.dispose();
-    _viewRange.dispose();
     super.dispose();
   }
 
   Future<void> _apply() async {
     final elevation = double.tryParse(_elevation.text.trim());
     final height = double.tryParse(_height.text.trim());
-    final viewRange = double.tryParse(_viewRange.text.trim());
     if (elevation == null ||
         height == null ||
-        viewRange == null ||
         height <= 0 ||
-        viewRange <= 0.05 ||
         _name.text.trim().isEmpty) {
       return;
     }
@@ -240,7 +237,6 @@ class _LevelPropertiesSectionState extends State<_LevelPropertiesSection> {
         defaultWallHeightMeters: height,
       );
       await widget.onApplied(result, '${_name.text.trim()} updated.');
-      await widget.onViewRangeChanged(viewRange);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -259,7 +255,6 @@ class _LevelPropertiesSectionState extends State<_LevelPropertiesSection> {
             _height,
             numeric: true,
           ),
-          _field('Plan view range / cut height (m)', _viewRange, numeric: true),
           _applyButton(_busy, _apply),
         ],
       );
@@ -482,6 +477,21 @@ class _WallPropertiesSectionState extends State<_WallPropertiesSection> {
     _connected = _top != 0;
   }
 
+  @override
+  void didUpdateWidget(covariant _WallPropertiesSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.object.elementId == widget.object.elementId &&
+        oldWidget.object.revision == widget.object.revision) {
+      return;
+    }
+    _base = _metaInt(widget.object, 'base_level_id') ??
+        widget.object.levelId ??
+        widget.levels.first.levelId;
+    _top = _metaInt(widget.object, 'top_level_id') ?? 0;
+    _wallTypeId = _metaInt(widget.object, 'wall_type_id') ?? 0;
+    _connected = _top != 0;
+  }
+
   Future<void> _applyWallType() async {
     final wallId = widget.object.elementId;
     if (wallId == null) return;
@@ -500,6 +510,27 @@ class _WallPropertiesSectionState extends State<_WallPropertiesSection> {
             ? 'Wall type cleared.'
             : '${selected.name} applied to wall.',
       );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _applyWallLayers(
+    String name,
+    WallTypeCategory category,
+    List<WallTypeLayerDefinition> layers,
+  ) async {
+    final wallId = widget.object.elementId;
+    if (wallId == null || layers.isEmpty) return;
+    setState(() => _busy = true);
+    try {
+      final result = await widget.commands.createWallTypeForWall(
+        wallId: wallId,
+        category: category,
+        name: name,
+        layers: layers,
+      );
+      await widget.onApplied(result, 'Wall layers updated.');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -531,20 +562,7 @@ class _WallPropertiesSectionState extends State<_WallPropertiesSection> {
         title: 'Wall properties',
         icon: Icons.view_week_outlined,
         children: <Widget>[
-          if (widget.scene.wallTypes.isNotEmpty) ...<Widget>[
-            _wallTypeDrop(),
-            _wallAssemblySummary(),
-            _applyButton(_busy, _applyWallType, label: 'Apply type'),
-          ] else
-            _row('Wall type', _meta(widget.object, 'wall_type_category')),
-          _row('Layer count', '${_layerCount()} layers'),
-          _sectionLabel('Geometry'),
-          _row(
-            'Size',
-            '${_meta(widget.object, 'thickness_meters')} m thick · '
-                '${_meta(widget.object, 'length_meters')} m long',
-          ),
-          _sectionLabel('Constraints'),
+          _sectionLabel('Level & constraints'),
           _levelDrop(
             'Base level',
             _base,
@@ -562,6 +580,32 @@ class _WallPropertiesSectionState extends State<_WallPropertiesSection> {
               (value) => setState(() => _top = value),
             ),
           _applyButton(_busy, _apply, label: 'Apply constraints'),
+          _sectionLabel('Geometry'),
+          _row(
+            'Size',
+            '${_meta(widget.object, 'thickness_meters')} m thick · '
+                '${_meta(widget.object, 'length_meters')} m long',
+          ),
+          _sectionLabel('Layers'),
+          if (widget.scene.wallTypes.isNotEmpty) ...<Widget>[
+            _wallTypeDrop(),
+            _wallAssemblySummary(),
+          ] else
+            _row('Wall type', _meta(widget.object, 'wall_type_category')),
+          _row('Layer count', '${_layerCount()} layers'),
+          _WallLayersEditor(
+            key: ValueKey<String>(
+              'wall-layers-${widget.object.elementId}-$_wallTypeId',
+            ),
+            object: widget.object,
+            wallType: widget.scene.wallTypes
+                .where((type) => type.id == _wallTypeId)
+                .firstOrNull,
+            materials: widget.scene.materials,
+            onApply: _applyWallLayers,
+            busy: _busy,
+          ),
+          _applyButton(_busy, _applyWallType, label: 'Apply type'),
         ],
       );
 
@@ -639,6 +683,338 @@ class _WallPropertiesSectionState extends State<_WallPropertiesSection> {
           });
 }
 
+class _WallLayersEditor extends StatefulWidget {
+  const _WallLayersEditor({
+    super.key,
+    required this.object,
+    required this.wallType,
+    required this.materials,
+    required this.onApply,
+    required this.busy,
+  });
+
+  final RenderSceneObject object;
+  final WallTypeDefinition? wallType;
+  final List<RenderSceneMaterial> materials;
+  final Future<void> Function(
+    String name,
+    WallTypeCategory category,
+    List<WallTypeLayerDefinition> layers,
+  ) onApply;
+  final bool busy;
+
+  @override
+  State<_WallLayersEditor> createState() => _WallLayersEditorState();
+}
+
+class _WallLayersEditorState extends State<_WallLayersEditor> {
+  late final TextEditingController _nameController;
+  late String _name;
+  late WallTypeCategory _category;
+  late List<_EditableWallLayer> _layers;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _nameController = TextEditingController();
+    _resetFromSource();
+  }
+
+  @override
+  void didUpdateWidget(covariant _WallLayersEditor oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.wallType?.id != widget.wallType?.id ||
+        oldWidget.object.elementId != widget.object.elementId) {
+      _disposeLayers();
+      _resetFromSource();
+    }
+  }
+
+  void _resetFromSource() {
+    final wallType = widget.wallType;
+    // Editing creates an isolated copy, so the user explicitly names the
+    // result instead of accidentally overwriting the shared source type.
+    _name = '';
+    _nameController.text = _name;
+    _category = wallType?.category ?? WallTypeCategory.generic;
+    final sourceLayers = wallType?.layers ?? const <WallTypeLayerDefinition>[];
+    if (sourceLayers.isNotEmpty) {
+      _layers = sourceLayers.map(_EditableWallLayer.fromDefinition).toList();
+      return;
+    }
+    final materialId = widget.materials.firstOrNull?.id ?? 0;
+    _layers = <_EditableWallLayer>[
+      _EditableWallLayer(
+        materialId: materialId,
+        thicknessMeters: _metaDouble(widget.object, 'thickness_meters') ?? 0.20,
+        function: WallLayerFunction.core,
+        priority: 100,
+        structural: true,
+        side: WallLayerSide.unspecified,
+        wrapsOpenings: true,
+        wrapsEnds: true,
+      ),
+    ];
+  }
+
+  void _disposeLayers() {
+    for (final layer in _layers) {
+      layer.dispose();
+    }
+  }
+
+  @override
+  void dispose() {
+    _disposeLayers();
+    _nameController.dispose();
+    super.dispose();
+  }
+
+  void _addLayer() {
+    setState(() {
+      _error = null;
+      _layers.add(
+        _EditableWallLayer(
+          materialId: widget.materials.firstOrNull?.id ?? 0,
+          thicknessMeters: 0.05,
+          function: WallLayerFunction.generic,
+          priority: 0,
+          structural: false,
+          side: WallLayerSide.unspecified,
+          wrapsOpenings: true,
+          wrapsEnds: true,
+        ),
+      );
+    });
+  }
+
+  void _removeLayer(int index) {
+    if (_layers.length <= 1) {
+      setState(() => _error = 'A wall type must keep at least one layer.');
+      return;
+    }
+    setState(() {
+      _layers.removeAt(index).dispose();
+      _error = null;
+    });
+  }
+
+  Future<void> _apply() async {
+    final name = _name.trim();
+    if (name.isEmpty) {
+      setState(() => _error = 'Enter a wall type name.');
+      return;
+    }
+    final layers = <WallTypeLayerDefinition>[];
+    for (final layer in _layers) {
+      final thickness = double.tryParse(layer.thickness.text.trim());
+      if (layer.materialId == 0 || thickness == null || thickness <= 0) {
+        setState(() => _error = 'Every layer needs material and thickness.');
+        return;
+      }
+      layers.add(layer.toDefinition(thickness));
+    }
+    setState(() => _error = null);
+    await widget.onApply(name, _category, layers);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        Padding(
+          padding: const EdgeInsets.only(bottom: 6),
+          child: Row(
+            children: <Widget>[
+              Expanded(
+                child: TextField(
+                  controller: _nameController,
+                  maxLines: 1,
+                  onChanged: (value) => _name = value,
+                  decoration: _dropdownDecoration(
+                    widget.wallType == null
+                        ? 'New type name'
+                        : 'Isolated type name',
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        for (var index = 0; index < _layers.length; index += 1)
+          _buildLayerRow(index),
+        if (_error != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Text(
+              _error!,
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.error,
+                fontSize: 12,
+              ),
+            ),
+          ),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: OutlinedButton.icon(
+            onPressed: widget.busy ? null : _addLayer,
+            icon: const Icon(Icons.add, size: 18),
+            label: const Text('Add layer'),
+            style: OutlinedButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+            ),
+          ),
+        ),
+        const SizedBox(height: 4),
+        _applyButton(widget.busy, _apply, label: 'Apply assembly'),
+      ],
+    );
+  }
+
+  Widget _buildLayerRow(int index) {
+    final layer = _layers[index];
+    final validMaterial = widget.materials.any(
+      (material) => material.id == layer.materialId,
+    );
+    return Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.fromLTRB(6, 6, 2, 2),
+      decoration: BoxDecoration(
+        border: Border.all(color: Colors.black12),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        children: <Widget>[
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              SizedBox(
+                width: 22,
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 10),
+                  child: Text(
+                    '${index + 1}',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 4),
+              Expanded(
+                child: DropdownButtonFormField<int>(
+                  isExpanded: true,
+                  initialValue: validMaterial ? layer.materialId : null,
+                  decoration: _dropdownDecoration('Material'),
+                  hint: const Text('Select material'),
+                  items: <DropdownMenuItem<int>>[
+                    for (final material in widget.materials)
+                      DropdownMenuItem<int>(
+                        value: material.id,
+                        child: Text(
+                          material.name,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                  ],
+                  onChanged: widget.busy
+                      ? null
+                      : (value) {
+                          if (value != null) {
+                            setState(() => layer.materialId = value);
+                          }
+                        },
+                ),
+              ),
+              const SizedBox(width: 6),
+              SizedBox(
+                width: 66,
+                child: _field('m', layer.thickness, numeric: true),
+              ),
+              IconButton(
+                tooltip: 'Remove layer',
+                onPressed: widget.busy ? null : () => _removeLayer(index),
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.remove_circle_outline),
+              ),
+            ],
+          ),
+          DropdownButtonFormField<WallLayerFunction>(
+            isExpanded: true,
+            initialValue: layer.function,
+            decoration: _dropdownDecoration('Function'),
+            items: WallLayerFunction.values
+                .map(
+                  (function) => DropdownMenuItem<WallLayerFunction>(
+                    value: function,
+                    child: Text(function.label),
+                  ),
+                )
+                .toList(growable: false),
+            onChanged: widget.busy
+                ? null
+                : (value) {
+                    if (value != null) {
+                      setState(() => layer.function = value);
+                    }
+                  },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _EditableWallLayer {
+  _EditableWallLayer({
+    required this.materialId,
+    required double thicknessMeters,
+    required this.function,
+    required this.priority,
+    required this.structural,
+    required this.side,
+    required this.wrapsOpenings,
+    required this.wrapsEnds,
+  }) : thickness = TextEditingController(text: _number(thicknessMeters));
+
+  factory _EditableWallLayer.fromDefinition(WallTypeLayerDefinition layer) {
+    return _EditableWallLayer(
+      materialId: layer.materialId,
+      thicknessMeters: layer.thicknessMeters,
+      function: layer.function,
+      priority: layer.priority,
+      structural: layer.structural,
+      side: layer.side,
+      wrapsOpenings: layer.wrapsOpenings,
+      wrapsEnds: layer.wrapsEnds,
+    );
+  }
+
+  int materialId;
+  final TextEditingController thickness;
+  WallLayerFunction function;
+  final int priority;
+  final bool structural;
+  final WallLayerSide side;
+  final bool wrapsOpenings;
+  final bool wrapsEnds;
+
+  WallTypeLayerDefinition toDefinition(double thicknessMeters) =>
+      WallTypeLayerDefinition(
+        materialId: materialId,
+        thicknessMeters: thicknessMeters,
+        function: function,
+        priority: priority,
+        structural: structural,
+        side: side,
+        wrapsOpenings: wrapsOpenings,
+        wrapsEnds: wrapsEnds,
+      );
+
+  void dispose() => thickness.dispose();
+}
+
 class _OpeningPropertiesSection extends StatefulWidget {
   const _OpeningPropertiesSection(
       {required this.object,
@@ -655,11 +1031,7 @@ class _OpeningPropertiesSection extends StatefulWidget {
 }
 
 class _OpeningPropertiesSectionState extends State<_OpeningPropertiesSection> {
-  late final TextEditingController _offset;
-  late final TextEditingController _width;
-  late final TextEditingController _height;
-  late final TextEditingController _sill;
-  late final TextEditingController _levelOffset;
+  late OpeningPreset _preset;
   late int _levelId;
   bool _locked = true;
   bool _busy = false;
@@ -667,45 +1039,33 @@ class _OpeningPropertiesSectionState extends State<_OpeningPropertiesSection> {
   void initState() {
     super.initState();
     final object = widget.object;
-    _offset = TextEditingController(text: _meta(object, 'offset_meters'));
-    _width = TextEditingController(text: _meta(object, 'width_meters'));
-    _height = TextEditingController(text: _meta(object, 'height_meters'));
-    _sill = TextEditingController(text: _meta(object, 'sill_height_meters'));
-    _levelOffset = TextEditingController(
-        text: _meta(object, 'level_offset_meters') == '-'
-            ? '0.00'
-            : _meta(object, 'level_offset_meters'));
-    _levelId = object.levelId ?? widget.levels.first.levelId;
+    _preset = openingPresetForValues(
+      kind: object.kindKey,
+      widthMeters: _metaDouble(object, 'width_meters') ?? 0.9,
+      heightMeters: _metaDouble(object, 'height_meters') ??
+          (object.kindKey == 'window' ? 1.2 : 2.1),
+      sillHeightMeters: _metaDouble(object, 'sill_height_meters') ??
+          (object.kindKey == 'window' ? 0.9 : 0.0),
+    );
+    _levelId = object.levelId ??
+        (widget.levels.isNotEmpty ? widget.levels.first.levelId : 0);
     _locked = _meta(object, 'level_locked') != 'false';
   }
 
-  @override
-  void dispose() {
-    _offset.dispose();
-    _width.dispose();
-    _height.dispose();
-    _sill.dispose();
-    _levelOffset.dispose();
-    super.dispose();
-  }
-
   Future<void> _apply() async {
-    final offset = double.tryParse(_offset.text);
-    final width = double.tryParse(_width.text);
-    final height = double.tryParse(_height.text);
-    final sill = double.tryParse(_sill.text) ?? 0;
+    final offset = _metaDouble(widget.object, 'offset_meters');
     final id = widget.object.elementId;
     if (offset == null ||
-        width == null ||
-        height == null ||
-        width <= 0 ||
-        height <= 0 ||
+        !offset.isFinite ||
+        _preset.widthMeters <= 0 ||
+        _preset.heightMeters <= 0 ||
         id == null) {
       return;
     }
     setState(() => _busy = true);
     try {
-      final levelOffset = double.tryParse(_levelOffset.text) ?? 0;
+      final levelOffset =
+          _metaDouble(widget.object, 'level_offset_meters') ?? 0;
       await widget.commands.setOpeningLevelConstraint(
         openingId: id,
         levelId: _levelId,
@@ -715,9 +1075,9 @@ class _OpeningPropertiesSectionState extends State<_OpeningPropertiesSection> {
       final result = await widget.commands.updateOpening(
           object: widget.object,
           offsetMeters: offset,
-          widthMeters: width,
-          heightMeters: height,
-          sillHeightMeters: sill);
+          widthMeters: _preset.widthMeters,
+          heightMeters: _preset.heightMeters,
+          sillHeightMeters: _preset.sillHeightMeters);
       await widget.onApplied(result, '${_label(widget.object)} updated.');
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -732,37 +1092,59 @@ class _OpeningPropertiesSectionState extends State<_OpeningPropertiesSection> {
               : Icons.window_outlined,
           children: <Widget>[
             _row('Host wall', _meta(widget.object, 'host_wall_id')),
-            _sectionLabel('Placement & size'),
+            _openingPresetDrop(),
+            _row('Dimensions', _preset.dimensionsLabel),
             _openingLevelDrop(),
-            _fieldPair(
-              'Offset (m)',
-              _offset,
-              'Level offset (m)',
-              _levelOffset,
-              numeric: true,
-            ),
-            _fieldPair(
-              'Width (m)',
-              _width,
-              'Height (m)',
-              _height,
-              numeric: true,
-            ),
-            if (widget.object.kindKey == 'window')
-              _field('Sill height (m)', _sill, numeric: true),
             _compactSwitch(
               label: 'Lock to level',
               value: _locked,
               onChanged: (value) => setState(() => _locked = value),
             ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: () => _showAdvancedMetadata(context, widget.object),
+                icon: const Icon(Icons.tune, size: 17),
+                label: const Text('Advanced details'),
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                ),
+              ),
+            ),
             _applyButton(_busy, _apply),
           ]);
+
+  Widget _openingPresetDrop() {
+    final presets = openingPresetsForKind(widget.object.kindKey);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: DropdownButtonFormField<String>(
+        isExpanded: true,
+        initialValue: _preset.id,
+        decoration: _dropdownDecoration('Type'),
+        items: <DropdownMenuItem<String>>[
+          for (final preset in presets)
+            DropdownMenuItem<String>(
+              value: preset.id,
+              child: Text(preset.label, overflow: TextOverflow.ellipsis),
+            ),
+        ],
+        onChanged: (id) {
+          if (id == null) return;
+          setState(() {
+            _preset = presets.firstWhere((preset) => preset.id == id);
+          });
+        },
+      ),
+    );
+  }
 
   Widget _openingLevelDrop() => DropdownButtonFormField<int>(
         isExpanded: true,
         initialValue: widget.levels.any((level) => level.levelId == _levelId)
             ? _levelId
-            : widget.levels.first.levelId,
+            : (widget.levels.isNotEmpty ? widget.levels.first.levelId : null),
         decoration: _dropdownDecoration('Base level'),
         items: <DropdownMenuItem<int>>[
           for (final level in widget.levels)
@@ -773,9 +1155,11 @@ class _OpeningPropertiesSectionState extends State<_OpeningPropertiesSection> {
               ),
             ),
         ],
-        onChanged: (value) {
-          if (value != null) setState(() => _levelId = value);
-        },
+        onChanged: widget.levels.isEmpty
+            ? null
+            : (value) {
+                if (value != null) setState(() => _levelId = value);
+              },
       );
 }
 
@@ -892,7 +1276,83 @@ class _ReadOnlyObjectSection extends StatelessWidget {
           icon: _icon(object.kindKey),
           children: <Widget>[
             for (final entry in rows.entries) _row(entry.key, entry.value),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: () => _showAdvancedMetadata(context, object),
+                icon: const Icon(Icons.tune, size: 17),
+                label: const Text('Advanced details'),
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                ),
+              ),
+            ),
           ]);
+}
+
+Future<void> _showAdvancedMetadata(
+  BuildContext context,
+  RenderSceneObject object,
+) async {
+  final entries = <MapEntry<String, String>>[
+    MapEntry<String, String>('Element ID', object.elementId?.toString() ?? '-'),
+    MapEntry<String, String>('Kind', object.kind),
+    MapEntry<String, String>('Level ID', object.levelId?.toString() ?? '-'),
+    ...object.metadata.entries.map(
+      (entry) => MapEntry<String, String>(entry.key, entry.value.toString()),
+    ),
+  ];
+  await showDialog<void>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('Advanced details'),
+      content: SizedBox(
+        width: 420,
+        child: entries.isEmpty
+            ? const Text('No additional data.')
+            : ListView.separated(
+                shrinkWrap: true,
+                itemCount: entries.length,
+                separatorBuilder: (_, __) => const Divider(height: 1),
+                itemBuilder: (context, index) {
+                  final entry = entries[index];
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 7),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Expanded(
+                          child: Text(
+                            entry.key,
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Flexible(
+                          child: Text(
+                            entry.value,
+                            textAlign: TextAlign.right,
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodySmall
+                                ?.copyWith(fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Close'),
+        ),
+      ],
+    ),
+  );
 }
 
 class _DeleteElementButton extends StatefulWidget {

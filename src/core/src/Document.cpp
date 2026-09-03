@@ -2451,8 +2451,11 @@ ElementId Document::create_window(
     if (name.empty()) {
         throw std::invalid_argument("window name must not be empty");
     }
-    if (sill_height_meters < 0.0) {
+    if (!std::isfinite(sill_height_meters) || sill_height_meters < 0.0) {
         throw std::invalid_argument("window sill height must not be negative");
+    }
+    if (!std::isfinite(height_meters) || height_meters <= 0.0) {
+        throw std::invalid_argument("window height must be positive");
     }
 
     auto& wall_element = require_wall(host_wall_id);
@@ -5790,7 +5793,10 @@ void Document::validate_opening(const WallData& wall, double offset_meters, doub
     if (wall_uses_glass(wall)) {
         throw std::invalid_argument("doors and windows cannot be hosted by glass walls");
     }
-    if (offset_meters < 0.0 || width_meters <= 0.0 || height_meters <= 0.0) {
+    if (!std::isfinite(offset_meters) ||
+        !std::isfinite(width_meters) ||
+        !std::isfinite(height_meters) ||
+        offset_meters < 0.0 || width_meters <= 0.0 || height_meters <= 0.0) {
         throw std::invalid_argument("opening dimensions must be positive");
     }
 
@@ -5826,7 +5832,13 @@ void Document::validate_wall_openings(const WallData& wall, std::optional<Elemen
         if (ignored_opening_id.has_value() && opening.element_id == *ignored_opening_id) {
             continue;
         }
-        if (opening.offset_meters < 0.0 || opening.width_meters <= 0.0 || opening.height_meters <= 0.0 || opening.sill_height_meters < 0.0) {
+        if (!std::isfinite(opening.offset_meters) ||
+            !std::isfinite(opening.width_meters) ||
+            !std::isfinite(opening.height_meters) ||
+            !std::isfinite(opening.sill_height_meters) ||
+            !std::isfinite(opening.vertical_offset_meters) ||
+            opening.offset_meters < 0.0 || opening.width_meters <= 0.0 ||
+            opening.height_meters <= 0.0 || opening.sill_height_meters < 0.0) {
             throw std::invalid_argument("opening dimensions must be positive");
         }
         if (opening.vertical_offset_meters < 0.0) {

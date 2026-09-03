@@ -92,6 +92,13 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
     await _viewportController.setInteractionMode(mode);
     await _clearDraft();
 
+    if (mode == RenderSceneInteractionMode.addDoor ||
+        mode == RenderSceneInteractionMode.addWindow) {
+      _openingTool.prepareForCreation(
+        window: mode == RenderSceneInteractionMode.addWindow,
+      );
+    }
+
     if (mode == RenderSceneInteractionMode.addFloor ||
         mode == RenderSceneInteractionMode.addCeiling ||
         mode == RenderSceneInteractionMode.addRoof) {
@@ -104,9 +111,7 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
       }
     }
 
-    if ((mode == RenderSceneInteractionMode.moveOpening ||
-            mode == RenderSceneInteractionMode.addDoor ||
-            mode == RenderSceneInteractionMode.addWindow) &&
+    if (mode == RenderSceneInteractionMode.moveOpening &&
         selected != null &&
         (selected.kindKey == 'door' || selected.kindKey == 'window')) {
       _updateViewportState(() {

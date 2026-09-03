@@ -219,6 +219,23 @@ TbeApiStatusCode tbe_set_wall_type(
     uint64_t wall_id,
     uint64_t wall_type_id
 );
+TbeApiStatusCode tbe_create_wall_type(
+    TbeEngineHandle* handle,
+    int category,
+    const char* name,
+    const uint64_t* material_ids,
+    const double* thickness_meters,
+    const int* functions,
+    const int* priorities,
+    const int* structural,
+    const int* sides,
+    const int* wraps_openings,
+    const int* wraps_ends,
+    size_t layer_count,
+    int core_start_layer,
+    int core_end_layer,
+    uint64_t* out_wall_type_id
+);
 TbeApiStatusCode tbe_set_wall_level_constraints(
     TbeEngineHandle* handle,
     uint64_t wall_id,

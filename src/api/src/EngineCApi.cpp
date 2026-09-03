@@ -8,6 +8,8 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <utility>
+#include <vector>
 
 struct TbeEngineHandle {
     std::unique_ptr<tbe::api::EngineSession> session{};
@@ -345,6 +347,62 @@ TbeApiStatusCode tbe_set_wall_type(
         return null_handle_error(handle);
     }
     return apply_result(handle, handle->session->set_wall_type(wall_id, wall_type_id));
+}
+
+TbeApiStatusCode tbe_create_wall_type(
+    TbeEngineHandle* handle,
+    int category,
+    const char* name,
+    const uint64_t* material_ids,
+    const double* thickness_meters,
+    const int* functions,
+    const int* priorities,
+    const int* structural,
+    const int* sides,
+    const int* wraps_openings,
+    const int* wraps_ends,
+    size_t layer_count,
+    int core_start_layer,
+    int core_end_layer,
+    uint64_t* out_wall_type_id
+) {
+    if (handle == nullptr || handle->session == nullptr || name == nullptr ||
+        out_wall_type_id == nullptr || layer_count == 0 ||
+        material_ids == nullptr || thickness_meters == nullptr ||
+        functions == nullptr || priorities == nullptr || structural == nullptr ||
+        sides == nullptr || wraps_openings == nullptr || wraps_ends == nullptr) {
+        return null_handle_error(handle);
+    }
+    if (category < 0 || category > 2) {
+        handle->last_error = "wall type category is invalid";
+        return TBE_API_INVALID_ARGUMENT;
+    }
+
+    std::vector<tbe::api::AssemblyLayerDTO> layers;
+    layers.reserve(layer_count);
+    for (size_t index = 0; index < layer_count; ++index) {
+        layers.push_back(tbe::api::AssemblyLayerDTO{
+            .material_id = tbe::api::ElementIdDTO{material_ids[index]},
+            .thickness_meters = thickness_meters[index],
+            .function = static_cast<tbe::api::ApiWallLayerFunction>(functions[index]),
+            .priority = priorities[index],
+            .structural = structural[index] != 0,
+            .side = static_cast<tbe::api::ApiWallLayerSide>(sides[index]),
+            .wraps_openings = wraps_openings[index] != 0,
+            .wraps_ends = wraps_ends[index] != 0,
+        });
+    }
+    const auto result = handle->session->create_wall_type(
+        static_cast<tbe::api::ApiWallTypeCategory>(category),
+        name,
+        std::move(layers),
+        core_start_layer,
+        core_end_layer
+    );
+    if (result.ok() && result.value.has_value()) {
+        *out_wall_type_id = result.value->value;
+    }
+    return apply_result(handle, result);
 }
 
 TbeApiStatusCode tbe_set_wall_level_constraints(

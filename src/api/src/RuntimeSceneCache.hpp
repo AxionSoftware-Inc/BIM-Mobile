@@ -13,7 +13,7 @@ inline constexpr std::uint32_t kBimCacheFormatVersion = 3;
 // Bumped when cached render geometry or the interactive chunk/proxy policy
 // changes. Existing device caches must be rebuilt so stale wall/opening meshes
 // or legacy opening-profile texture hints cannot survive an APK update.
-inline constexpr std::uint32_t kBimCacheSceneCompilerVersion = 12;
+inline constexpr std::uint32_t kBimCacheSceneCompilerVersion = 13;
 inline constexpr std::uint32_t kBimCacheObjectMappingVersion = 4;
 inline constexpr std::uint32_t kBimCacheFormatFlags = 0x00000001u;
 

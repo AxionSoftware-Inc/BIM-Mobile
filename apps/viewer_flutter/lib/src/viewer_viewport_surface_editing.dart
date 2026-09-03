@@ -863,14 +863,26 @@ extension _ViewerViewportSurfaceEditing on _ViewerHomePageState {
     }
 
     final offset = _draftOpeningOffsetMeters;
+    final kind = _interactionMode == RenderSceneInteractionMode.addDoor ||
+            (_interactionMode == RenderSceneInteractionMode.moveOpening &&
+                _draftMoveTarget?.kindKey == 'door')
+        ? 'Door'
+        : 'Window';
+    final sillHeight = kind == 'Window' ? _draftOpeningSillHeightMeters : 0.0;
     final valid = OpeningAuthoringGeometry.isValid(
       hostWall: hostWall,
       offsetMeters: offset,
       widthMeters: _draftOpeningWidthMeters,
+      heightMeters: _draftOpeningHeightMeters,
+      sillHeightMeters: sillHeight,
     );
-    final kind = _interactionMode == RenderSceneInteractionMode.addDoor
-        ? 'Door'
-        : 'Window';
+    final validationMessage = OpeningAuthoringGeometry.validationMessage(
+      hostWall: hostWall,
+      offsetMeters: offset,
+      widthMeters: _draftOpeningWidthMeters,
+      heightMeters: _draftOpeningHeightMeters,
+      sillHeightMeters: sillHeight,
+    );
 
     _viewportController.setOpeningDraft(
       RenderSceneOpeningDraft(
@@ -879,11 +891,11 @@ extension _ViewerViewportSurfaceEditing on _ViewerHomePageState {
         offsetMeters: offset,
         widthMeters: _draftOpeningWidthMeters,
         heightMeters: _draftOpeningHeightMeters,
-        sillHeightMeters: _draftOpeningSillHeightMeters,
+        sillHeightMeters: sillHeight,
         valid: valid,
         message: valid
             ? 'Ready to create $kind.'
-            : 'Opening overlaps wall edge or is too wide.',
+            : (validationMessage ?? 'Adjust the opening dimensions.'),
       ),
     );
   }

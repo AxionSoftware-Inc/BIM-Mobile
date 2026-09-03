@@ -1,4 +1,5 @@
 import 'render_scene_models.dart';
+import 'elements/wall_type_catalog.dart';
 
 /// Application boundary used by authoring and Inspector use-cases.
 ///
@@ -32,6 +33,15 @@ abstract interface class ViewerAuthoringGateway {
   Future<RenderSceneLoadResult> setWallType({
     required int wallId,
     required int wallTypeId,
+  });
+
+  /// Creates an isolated wall type from the edited layer stack and assigns it
+  /// to one wall. Existing walls using the source type remain unchanged.
+  Future<RenderSceneLoadResult> createWallTypeForWall({
+    required int wallId,
+    required WallTypeCategory category,
+    required String name,
+    required List<WallTypeLayerDefinition> layers,
   });
 
   Future<RenderSceneLoadResult> setElementAssembly({

@@ -278,6 +278,13 @@ void registerInteractionAuthoringTests() {
     expect(tool.widthMeters, closeTo(1.1, 1e-9));
     expect(tool.heightMeters, closeTo(2.2, 1e-9));
     expect(tool.sillHeightMeters, closeTo(0.85, 1e-9));
+    tool.prepareForCreation(window: true);
+    expect(tool.widthMeters, closeTo(0.9, 1e-9));
+    expect(tool.heightMeters, closeTo(1.2, 1e-9));
+    expect(tool.sillHeightMeters, closeTo(0.9, 1e-9));
+    tool.prepareForCreation(window: false);
+    expect(tool.heightMeters, closeTo(2.1, 1e-9));
+    expect(tool.sillHeightMeters, closeTo(0.0, 1e-9));
     tool.reset();
     expect(tool.offsetMeters, closeTo(1.0, 1e-9));
   });
