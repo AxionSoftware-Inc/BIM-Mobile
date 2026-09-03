@@ -84,6 +84,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
 
   RenderScenePoint? _draftWallStart;
   RenderScenePoint? _draftWallEnd;
+  RenderSceneWallArcDraft? _draftWallArc;
   RenderSceneOpeningDraft? _draftOpening;
   RenderSceneSurfaceDraft? _draftSurface;
   Rect? _selectionRectangle;
@@ -164,6 +165,9 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
 
   @override
   RenderScenePoint? get draftWallEnd => _draftWallEnd;
+
+  @override
+  RenderSceneWallArcDraft? get draftWallArc => _draftWallArc;
 
   @override
   RenderSceneOpeningDraft? get draftOpening => _draftOpening;
@@ -563,6 +567,17 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
   void setWallDraft(RenderScenePoint? start, RenderScenePoint? end) {
     _draftWallStart = start;
     _draftWallEnd = end;
+    _draftWallArc = null;
+    _scheduleDraftNotification();
+  }
+
+  @override
+  void setWallArcDraft(RenderSceneWallArcDraft? draft) {
+    _draftWallArc = draft;
+    if (draft != null) {
+      _draftWallStart = null;
+      _draftWallEnd = null;
+    }
     _scheduleDraftNotification();
   }
 
@@ -582,6 +597,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
   void clearDraft() {
     _draftWallStart = null;
     _draftWallEnd = null;
+    _draftWallArc = null;
     _draftOpening = null;
     _draftSurface = null;
     notifyListeners();

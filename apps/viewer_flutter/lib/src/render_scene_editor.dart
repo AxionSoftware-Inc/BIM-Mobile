@@ -844,6 +844,9 @@ class RenderSceneEditor {
   static RenderScenePoint? wallEndPoint(RenderSceneObject wall) =>
       RenderSceneQueries.wallEndPoint(wall);
 
+  static List<RenderScenePoint> wallCenterlinePoints(RenderSceneObject wall) =>
+      RenderSceneQueries.wallCenterlinePoints(wall);
+
   static double? wallThickness(RenderSceneObject wall) =>
       RenderSceneQueries.wallThickness(wall);
 

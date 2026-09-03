@@ -38,6 +38,7 @@ class FallbackRenderScenePainter extends CustomPainter
     required this.planCamera,
     required this.draftWallStart,
     required this.draftWallEnd,
+    this.draftWallArc,
     required this.draftOpening,
     required this.draftSurface,
     required this.draftWallThicknessMeters,
@@ -79,6 +80,8 @@ class FallbackRenderScenePainter extends CustomPainter
   final RenderScenePoint? draftWallStart;
   @override
   final RenderScenePoint? draftWallEnd;
+  @override
+  final RenderSceneWallArcDraft? draftWallArc;
   @override
   final RenderSceneOpeningDraft? draftOpening;
   @override
@@ -533,6 +536,7 @@ class FallbackRenderScenePainter extends CustomPainter
         oldDelegate.planCamera != planCamera ||
         oldDelegate.draftWallStart != draftWallStart ||
         oldDelegate.draftWallEnd != draftWallEnd ||
+        oldDelegate.draftWallArc != draftWallArc ||
         oldDelegate.draftOpening != draftOpening ||
         oldDelegate.draftSurface != draftSurface ||
         oldDelegate.draftWallThicknessMeters != draftWallThicknessMeters ||
@@ -676,6 +680,7 @@ class _PlanWallFootprint {
     required this.axis,
     required this.length,
     required this.thickness,
+    required this.curved,
     required this.profile,
     required this.selected,
     required this.highlighted,
@@ -687,6 +692,7 @@ class _PlanWallFootprint {
   final RenderScenePoint axis;
   final double length;
   final double thickness;
+  final bool curved;
   final List<_LayerProfileEntry> profile;
   final bool selected;
   final bool highlighted;

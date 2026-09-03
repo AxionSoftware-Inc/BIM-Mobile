@@ -581,6 +581,24 @@ class ViewerRepository
       );
 
   @override
+  Future<RenderSceneLoadResult> createCurvedWall({
+    required String name,
+    required int levelId,
+    required WallArcGeometry geometry,
+    required double thicknessMeters,
+    required double heightMeters,
+  }) =>
+      _authoringQueue.run(
+        () => _mutations.createCurvedWall(
+          name: name,
+          levelId: levelId,
+          geometry: geometry,
+          thicknessMeters: thicknessMeters,
+          heightMeters: heightMeters,
+        ),
+      );
+
+  @override
   Future<RenderSceneLoadResult> setWallType({
     required int wallId,
     required int wallTypeId,

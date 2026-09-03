@@ -144,6 +144,9 @@ class _DraftEditorCard extends StatefulWidget {
     required this.units,
     required this.draftWallStart,
     required this.draftWallEnd,
+    required this.wallArcStart,
+    required this.wallArcEnd,
+    required this.wallArcControl,
     required this.draftSurfaceStart,
     required this.draftSurfaceEnd,
     required this.draftSurfacePointCount,
@@ -156,6 +159,7 @@ class _DraftEditorCard extends StatefulWidget {
     required this.stairTopLevelId,
     required this.draftFloorTopElevationMeters,
     required this.surfaceDrawMode,
+    required this.wallDrawMode,
     required this.wallTypes,
     required this.wallTypeId,
     required this.floorTypes,
@@ -181,6 +185,7 @@ class _DraftEditorCard extends StatefulWidget {
     required this.onSurfaceThicknessChanged,
     required this.onSurfaceHeightChanged,
     required this.onFloorTopElevationChanged,
+    required this.onWallDrawModeChanged,
     required this.onWallTypeChanged,
     required this.onFloorAssemblyChanged,
     required this.onRoofAssemblyChanged,
@@ -199,6 +204,9 @@ class _DraftEditorCard extends StatefulWidget {
   final ProjectUnitSettings units;
   final RenderScenePoint? draftWallStart;
   final RenderScenePoint? draftWallEnd;
+  final RenderScenePoint? wallArcStart;
+  final RenderScenePoint? wallArcEnd;
+  final RenderScenePoint? wallArcControl;
   final RenderScenePoint? draftSurfaceStart;
   final RenderScenePoint? draftSurfaceEnd;
   final int draftSurfacePointCount;
@@ -211,6 +219,7 @@ class _DraftEditorCard extends StatefulWidget {
   final int? stairTopLevelId;
   final double draftFloorTopElevationMeters;
   final RenderSceneSurfaceDrawMode surfaceDrawMode;
+  final WallDrawMode wallDrawMode;
   final List<WallTypeDefinition> wallTypes;
   final int wallTypeId;
   final List<FloorTypeDefinition> floorTypes;
@@ -236,6 +245,7 @@ class _DraftEditorCard extends StatefulWidget {
   final ValueChanged<double> onSurfaceThicknessChanged;
   final ValueChanged<double> onSurfaceHeightChanged;
   final ValueChanged<double> onFloorTopElevationChanged;
+  final ValueChanged<WallDrawMode> onWallDrawModeChanged;
   final ValueChanged<int> onWallTypeChanged;
   final ValueChanged<int> onFloorAssemblyChanged;
   final ValueChanged<int> onRoofAssemblyChanged;
@@ -403,11 +413,16 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
           Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
+              _wallDrawModeButtons(),
               _wallTypeDrop(),
               _WallDraftSummary(
                 start: widget.draftWallStart,
                 end: widget.draftWallEnd,
                 units: widget.units,
+                drawMode: widget.wallDrawMode,
+                arcStart: widget.wallArcStart,
+                arcEnd: widget.wallArcEnd,
+                arcControl: widget.wallArcControl,
               ),
             ],
           )
@@ -698,6 +713,73 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
     );
   }
 
+  IconData _wallDrawModeIcon(WallDrawMode mode) => switch (mode) {
+        WallDrawMode.straight => Icons.straighten,
+        WallDrawMode.rectangle => Icons.crop_square,
+        WallDrawMode.arc => Icons.rounded_corner,
+      };
+
+  Widget _wallDrawModeButtons() {
+    final theme = Theme.of(context);
+    const modes = WallDrawMode.values;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Text('Wall draw mode', style: theme.textTheme.labelMedium),
+          const SizedBox(height: 4),
+          Row(
+            children: <Widget>[
+              for (var index = 0; index < modes.length; index++)
+                Expanded(
+                  child: Padding(
+                    padding: EdgeInsets.only(
+                      right: index == modes.length - 1 ? 0 : 6,
+                    ),
+                    child: Tooltip(
+                      message: modes[index].label,
+                      child: Semantics(
+                        container: true,
+                        button: true,
+                        selected: widget.wallDrawMode == modes[index],
+                        label: 'Wall draw mode ${modes[index].label}',
+                        child: InkWell(
+                          onTap: () =>
+                              widget.onWallDrawModeChanged(modes[index]),
+                          borderRadius: BorderRadius.circular(8),
+                          child: Container(
+                            height: 50,
+                            decoration: BoxDecoration(
+                              color: widget.wallDrawMode == modes[index]
+                                  ? theme.colorScheme.primaryContainer
+                                  : theme.colorScheme.surface,
+                              border: Border.all(
+                                color: widget.wallDrawMode == modes[index]
+                                    ? theme.colorScheme.primary
+                                    : theme.colorScheme.outline,
+                              ),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Icon(
+                              _wallDrawModeIcon(modes[index]),
+                              color: widget.wallDrawMode == modes[index]
+                                  ? theme.colorScheme.primary
+                                  : theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _floorTypeDrop() {
     if (widget.floorTypes.isEmpty) return const SizedBox.shrink();
     final hasCurrent = widget.floorTypes.any(
@@ -815,19 +897,35 @@ class _WallDraftSummary extends StatelessWidget {
     required this.start,
     required this.end,
     required this.units,
+    this.drawMode = WallDrawMode.straight,
+    this.arcStart,
+    this.arcEnd,
+    this.arcControl,
   });
 
   final RenderScenePoint? start;
   final RenderScenePoint? end;
   final ProjectUnitSettings units;
+  final WallDrawMode drawMode;
+  final RenderScenePoint? arcStart;
+  final RenderScenePoint? arcEnd;
+  final RenderScenePoint? arcControl;
 
   @override
   Widget build(BuildContext context) {
+    if (drawMode == WallDrawMode.arc) {
+      return _buildArcSummary();
+    }
     if (start == null || end == null) {
-      return const Text('Tap once to set the wall start point.');
+      return Text(
+        drawMode == WallDrawMode.rectangle
+            ? 'Tap once to set the first rectangle corner.'
+            : 'Tap once to set the wall start point.',
+      );
     }
 
-    final length = start!.distanceTo(end!);
+    final width = (end!.x - start!.x).abs();
+    final depth = (end!.y - start!.y).abs();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
@@ -841,9 +939,67 @@ class _WallDraftSummary extends StatelessWidget {
           value: '(${units.formatLength(end!.x, withUnit: false)}, '
               '${units.formatLength(end!.y, withUnit: false)})',
         ),
+        if (drawMode == WallDrawMode.rectangle) ...<Widget>[
+          _InfoRow(label: 'Width', value: units.formatLength(width)),
+          _InfoRow(label: 'Depth', value: units.formatLength(depth)),
+        ] else
+          _InfoRow(
+            label: 'Length',
+            value: units.formatLength(start!.distanceTo(end!)),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildArcSummary() {
+    final firstPoint = arcStart;
+    final secondPoint = arcEnd;
+    final bendPoint = arcControl;
+    if (firstPoint == null) {
+      return const Text('Tap the first point of the curved wall.');
+    }
+    if (secondPoint == null) {
+      return _InfoRow(
+        label: 'First point',
+        value: '(${units.formatLength(firstPoint.x, withUnit: false)}, '
+            '${units.formatLength(firstPoint.y, withUnit: false)}) · '
+            'tap second point',
+      );
+    }
+    if (bendPoint == null) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          _InfoRow(
+            label: 'Chord',
+            value: units.formatLength(firstPoint.distanceTo(secondPoint)),
+          ),
+          const Text('Tap/drag the radius or bend point.'),
+        ],
+      );
+    }
+    final geometry = WallAuthoringGeometry.arcFromThreePoints(
+      first: firstPoint,
+      second: secondPoint,
+      bend: bendPoint,
+    );
+    if (geometry == null) {
+      return const Text('Arc needs a larger radius and a visible bend.');
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
         _InfoRow(
-          label: 'Length',
-          value: units.formatLength(length),
+          label: 'Radius',
+          value: units.formatLength(geometry.radiusMeters),
+        ),
+        _InfoRow(
+          label: 'Angle',
+          value: '${geometry.sweepDegrees.abs().toStringAsFixed(1)}°',
+        ),
+        const _InfoRow(
+          label: 'Model',
+          value: '1 curved wall',
         ),
       ],
     );

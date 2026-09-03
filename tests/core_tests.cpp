@@ -1021,6 +1021,139 @@ int main() {
     assert(near(angled_a->axis.end.x, angled_b->axis.start.x));
     assert(near(angled_a->axis.end.y, angled_b->axis.start.y));
 
+    // A Revit-style three-point arc is one semantic wall. Tessellation is
+    // derived mesh data only and must never leak into the element model.
+    tbe::core::Document semantic_arc_document{"Semantic Curved Wall"};
+    const auto semantic_arc_level = semantic_arc_document.create_level("Level 1", 0.0, 3.0);
+    const auto semantic_arc_wall = semantic_arc_document.create_curved_wall(
+        "Curved Wall",
+        tbe::core::Line2{.start = {.x = 5.0, .y = 0.0}, .end = {.x = 0.0, .y = 5.0}},
+        tbe::core::WallArcData{
+            .center = {.x = 0.0, .y = 0.0},
+            .radius_meters = 5.0,
+            .start_angle_radians = 0.0,
+            .sweep_radians = std::numbers::pi / 2.0,
+        },
+        0.2,
+        3.0,
+        semantic_arc_level
+    );
+    assert(semantic_arc_document.elements().size() == 2);
+    const auto* semantic_wall = semantic_arc_document.find_ptr(semantic_arc_wall)->wall();
+    assert(semantic_wall != nullptr && semantic_wall->arc.has_value());
+    assert(near(semantic_wall->arc->radius_meters, 5.0));
+    semantic_arc_document.regenerate_dirty_geometry(tbe::core::GeometryDetail::Envelope);
+    semantic_wall = semantic_arc_document.find_ptr(semantic_arc_wall)->wall();
+    assert(semantic_wall->geometry.mesh.vertices.size() > 40);
+    const auto semantic_round_trip = tbe::core::Document::from_json(semantic_arc_document.to_json());
+    const auto* round_trip_wall = semantic_round_trip.find_ptr(semantic_arc_wall)->wall();
+    assert(round_trip_wall != nullptr && round_trip_wall->arc.has_value());
+    assert(near(round_trip_wall->arc->sweep_radians, std::numbers::pi / 2.0));
+
+    // The previous implementation expanded an arc into many independent
+    // chords. Keep this regression fixture only for straight-wall compatibility
+    // and ensure it is not used by the semantic curved-wall API above.
+    tbe::core::Document arc_chain_document{"Arc Chain Join Isolation"};
+    const auto arc_level = arc_chain_document.create_level("Level 1", 0.0, 3.0);
+    constexpr int arc_segments = 22;
+    constexpr double arc_radius = 4.0;
+    std::vector<tbe::core::Point2> arc_points;
+    arc_points.reserve(arc_segments + 1);
+    for (int index = 0; index <= arc_segments; ++index) {
+        const auto angle = (std::numbers::pi / 2.0) *
+            static_cast<double>(index) / static_cast<double>(arc_segments);
+        arc_points.push_back({
+            .x = arc_radius * std::cos(angle),
+            .y = arc_radius * std::sin(angle),
+        });
+    }
+    std::vector<tbe::core::ElementId> arc_wall_ids;
+    arc_wall_ids.reserve(arc_segments);
+    for (int index = 0; index < arc_segments; ++index) {
+        arc_wall_ids.push_back(arc_chain_document.create_wall(
+            "Arc segment",
+            tbe::core::Line2{
+                .start = arc_points[static_cast<std::size_t>(index)],
+                .end = arc_points[static_cast<std::size_t>(index + 1)],
+            },
+            0.2,
+            3.0,
+            arc_level
+        ));
+    }
+    arc_chain_document.auto_join_walls();
+    for (int index = 0; index < arc_segments; ++index) {
+        const auto* wall = arc_chain_document
+            .find_ptr(arc_wall_ids[static_cast<std::size_t>(index)])->wall();
+        assert(wall != nullptr);
+        assert(near(wall->axis.start.x, arc_points[static_cast<std::size_t>(index)].x));
+        assert(near(wall->axis.start.y, arc_points[static_cast<std::size_t>(index)].y));
+        assert(near(wall->axis.end.x, arc_points[static_cast<std::size_t>(index + 1)].x));
+        assert(near(wall->axis.end.y, arc_points[static_cast<std::size_t>(index + 1)].y));
+        const auto expected_joins = index == 0 || index == arc_segments - 1 ? 1U : 2U;
+        assert(wall->joins.size() == expected_joins);
+    }
+
+    // A straight wall feeding into the first point of the same arc must not
+    // become joined to the arc's later chords. This is the exact mixed-mode
+    // Straight -> Arc workflow used by the tablet authoring path.
+    tbe::core::Document mixed_chain_document{"Mixed Straight Arc Chain"};
+    const auto mixed_level = mixed_chain_document.create_level("Level 1", 0.0, 3.0);
+    const auto mixed_straight = mixed_chain_document.create_wall(
+        "Straight lead-in",
+        tbe::core::Line2{
+            .start = {.x = -10.0, .y = 4.0},
+            .end = {.x = 0.0, .y = 4.0},
+        },
+        0.2,
+        3.0,
+        mixed_level
+    );
+    std::vector<tbe::core::ElementId> mixed_arc_ids;
+    constexpr int mixed_arc_segments = 24;
+    constexpr double mixed_arc_radius = 4.0;
+    std::vector<tbe::core::Point2> mixed_arc_points;
+    mixed_arc_points.reserve(mixed_arc_segments + 1);
+    for (int index = 0; index <= mixed_arc_segments; ++index) {
+        const auto angle = (std::numbers::pi / 2.0) *
+            static_cast<double>(index) / static_cast<double>(mixed_arc_segments);
+        mixed_arc_points.push_back({
+            .x = mixed_arc_radius * std::sin(angle),
+            .y = mixed_arc_radius * std::cos(angle),
+        });
+    }
+    for (int index = 0; index < mixed_arc_segments; ++index) {
+        mixed_arc_ids.push_back(mixed_chain_document.create_wall(
+            "Mixed arc segment",
+            tbe::core::Line2{
+                .start = mixed_arc_points[static_cast<std::size_t>(index)],
+                .end = mixed_arc_points[static_cast<std::size_t>(index + 1)],
+            },
+            0.2,
+            3.0,
+            mixed_level
+        ));
+    }
+    mixed_chain_document.auto_join_walls();
+    const auto* mixed_lead = mixed_chain_document.find_ptr(mixed_straight)->wall();
+    assert(mixed_lead != nullptr);
+    assert(near(mixed_lead->axis.start.x, -10.0));
+    assert(near(mixed_lead->axis.start.y, 4.0));
+    assert(near(mixed_lead->axis.end.x, 0.0));
+    assert(near(mixed_lead->axis.end.y, 4.0));
+    assert(mixed_lead->joins.size() == 1);
+    for (int index = 0; index < mixed_arc_segments; ++index) {
+        const auto* wall = mixed_chain_document
+            .find_ptr(mixed_arc_ids[static_cast<std::size_t>(index)])->wall();
+        assert(wall != nullptr);
+        assert(near(wall->axis.start.x, mixed_arc_points[static_cast<std::size_t>(index)].x));
+        assert(near(wall->axis.start.y, mixed_arc_points[static_cast<std::size_t>(index)].y));
+        assert(near(wall->axis.end.x, mixed_arc_points[static_cast<std::size_t>(index + 1)].x));
+        assert(near(wall->axis.end.y, mixed_arc_points[static_cast<std::size_t>(index + 1)].y));
+        const auto expected_joins = index == mixed_arc_segments - 1 ? 1U : 2U;
+        assert(wall->joins.size() == expected_joins);
+    }
+
     // A small collinear hand-drawn gap is repaired only when the walls meet
     // end-to-end. This protects the common wall-chain case without turning
     // overlapping parallel walls into false joins.

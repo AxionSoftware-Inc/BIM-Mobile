@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'render_scene_editor.dart';
 import 'render_scene_models.dart';
 import 'viewer_authoring_gateway.dart';
+import 'tools/wall_authoring_geometry.dart';
 
 /// A completed model mutation. UI code may render [scene] only after [success]
 /// is true; this prevents a draft preview from being mistaken for a committed
@@ -40,6 +41,25 @@ class CreateWallRequest {
   final RenderScene scene;
   final RenderScenePoint start;
   final RenderScenePoint end;
+  final int baseLevelId;
+  final int topLevelId;
+  final double heightMeters;
+  final double thicknessMeters;
+}
+
+@immutable
+class CreateCurvedWallRequest {
+  const CreateCurvedWallRequest({
+    required this.scene,
+    required this.geometry,
+    required this.baseLevelId,
+    required this.topLevelId,
+    required this.heightMeters,
+    required this.thicknessMeters,
+  });
+
+  final RenderScene scene;
+  final WallArcGeometry geometry;
   final int baseLevelId;
   final int topLevelId;
   final double heightMeters;
@@ -155,6 +175,88 @@ class SceneMutationService {
       );
     } catch (error) {
       trace.add('engine exception=$error');
+      return SceneMutationOutcome(
+        scene: null,
+        createdElementId: null,
+        success: false,
+        trace: trace,
+        error: error.toString(),
+      );
+    }
+  }
+
+  Future<SceneMutationOutcome> createCurvedWall(
+    CreateCurvedWallRequest request,
+  ) async {
+    final trace = <String>[
+      'request curved wall base=${request.baseLevelId} top=${request.topLevelId}',
+      'start=${_pointLabel(request.geometry.start)} end=${_pointLabel(request.geometry.end)}',
+      'radius=${request.geometry.radiusMeters.toStringAsFixed(3)} sweep=${request.geometry.sweepDegrees.toStringAsFixed(1)}',
+    ];
+    final engine = engineRepository;
+    if (engine == null) {
+      return SceneMutationOutcome(
+        scene: request.scene,
+        createdElementId: null,
+        success: false,
+        trace: trace,
+        error: 'Curved wall requires the native authoring engine.',
+      );
+    }
+    try {
+      var result = await engine.createCurvedWall(
+        name: 'Curved Wall',
+        levelId: request.baseLevelId,
+        geometry: request.geometry,
+        thicknessMeters: request.thicknessMeters,
+        heightMeters: request.heightMeters,
+      );
+      var scene = result.scene;
+      final wallId = engine.lastCreatedElementId;
+      trace.add(
+        'engine create curved id=$wallId walls=${scene?.kindCounts['wall']} '
+        'errors=${result.errors.join('|')}',
+      );
+      if (scene == null || wallId == null || scene.objectById(wallId) == null) {
+        return SceneMutationOutcome(
+          scene: scene,
+          createdElementId: wallId,
+          success: false,
+          trace: trace,
+          error: result.errors.isEmpty
+              ? 'Curved wall ID yoki snapshot tasdiqlanmadi.'
+              : result.errors.join(' '),
+        );
+      }
+      if (request.topLevelId != 0) {
+        result = await engine.setWallLevelConstraints(
+          wallId: wallId,
+          baseLevelId: request.baseLevelId,
+          topLevelId: request.topLevelId,
+          heightMode: 1,
+        );
+        scene = result.scene;
+        trace.add('curved wall level constraint committed top=${request.topLevelId}');
+      }
+      if (scene == null || scene.objectById(wallId) == null) {
+        return SceneMutationOutcome(
+          scene: scene,
+          createdElementId: wallId,
+          success: false,
+          trace: trace,
+          error: result.errors.isEmpty
+              ? 'Curved wall is missing from the final snapshot.'
+              : result.errors.join(' '),
+        );
+      }
+      return SceneMutationOutcome(
+        scene: scene,
+        createdElementId: wallId,
+        success: true,
+        trace: trace,
+      );
+    } catch (error) {
+      trace.add('engine curved wall exception=$error');
       return SceneMutationOutcome(
         scene: null,
         createdElementId: null,

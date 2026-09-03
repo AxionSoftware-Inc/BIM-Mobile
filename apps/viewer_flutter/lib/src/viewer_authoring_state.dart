@@ -140,6 +140,36 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
     }
   }
 
+  Future<void> _setWallDrawMode(WallDrawMode mode) async {
+    if (_interactionMode != RenderSceneInteractionMode.addWall ||
+        _wallTool.drawMode == mode) {
+      return;
+    }
+
+    final hadChainEndpoint = _wallTool.chainEndpoint != null;
+    _wallTool.switchDrawMode(mode);
+    _viewportController.clearDraft();
+    if (mode == WallDrawMode.arc) {
+      _syncWallArcDraft();
+    } else if (_wallTool.start != null) {
+      _viewportController.setWallDraft(
+        _wallTool.start,
+        _wallTool.end ?? _wallTool.start,
+      );
+    }
+    if (!mounted) return;
+    _updateViewportState(() {
+      _editStatusMessage = hadChainEndpoint
+          ? mode == WallDrawMode.arc
+              ? 'Arc mode: tap the center, then the arc end point.'
+              : mode == WallDrawMode.straight
+                  ? 'Continue from the last wall endpoint.'
+                  : mode.description
+          : mode.description;
+      _statusMessage = _editStatusMessage;
+    });
+  }
+
   Future<void> _prepareAutomaticFlatRoof() async {
     final scene = _scene;
     final baseLevelId = _activeLevelId;

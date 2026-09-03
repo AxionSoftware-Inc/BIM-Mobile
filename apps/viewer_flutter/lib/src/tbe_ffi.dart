@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:ffi' as ffi;
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:ffi/ffi.dart';
 import 'async_serial_queue.dart';
@@ -10,6 +11,7 @@ import 'elements/wall_parameters.dart';
 import 'elements/wall_type_catalog.dart';
 import 'native_engine_library_loader.dart';
 import 'render_scene_models.dart';
+import 'tools/wall_authoring_geometry.dart';
 import 'viewer_authoring_gateway.dart';
 import 'viewer_bim_cache_gateway.dart';
 import 'viewer_engine_contracts.dart';
@@ -113,6 +115,9 @@ class TbeViewerApi {
         _createWall =
             library.lookupFunction<_CreateWallNative, _CreateWallDart>(
                 'tbe_create_wall'),
+        _createCurvedWall = library.lookupFunction<
+            _CreateCurvedWallNative,
+            _CreateCurvedWallDart>('tbe_create_curved_wall'),
         _createStair =
             library.lookupFunction<_CreateStairNative, _CreateStairDart>(
                 'tbe_create_stair'),
@@ -243,6 +248,7 @@ class TbeViewerApi {
   final _SetStructuralWallCutDart _setStructuralWallCut;
   final _SetBeamColumnJoinDart _setBeamColumnJoin;
   final _CreateWallDart _createWall;
+  final _CreateCurvedWallDart _createCurvedWall;
   final _CreateStairDart _createStair;
   final _CreateDoorDart _createDoor;
   final _CreateWindowDart _createWindow;

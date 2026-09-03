@@ -103,10 +103,24 @@ extension _ViewerViewportInput on _ViewerHomePageState {
         return;
       case RenderSceneInteractionMode.addWall:
         final start = _wallTool.start;
+        if (_wallTool.drawMode == WallDrawMode.arc) {
+          if (!_wallTool.hasArcFirstPoint) return;
+          final snappedPoint = _wallDraftPoint(
+            rawPoint: modelPoint,
+            referenceStart: _wallTool.arcEnd ?? _wallTool.arcStart,
+          );
+          if (!_wallTool.hasArcSecondPoint) {
+            _wallTool.setArcSecond(snappedPoint);
+          } else {
+            _wallTool.previewArcControl(snappedPoint);
+          }
+          _syncWallArcDraft();
+          return;
+        }
         if (start == null) {
           return;
         }
-        final snappedPoint = _draftLinePoint(
+        final snappedPoint = _wallDraftPoint(
           rawPoint: modelPoint,
           referenceStart: start,
         );
@@ -290,28 +304,96 @@ extension _ViewerViewportInput on _ViewerHomePageState {
       return;
     }
 
-    final snappedPoint = _draftLinePoint(
+    final snappedPoint = _wallDraftPoint(
       rawPoint: modelPoint,
-      referenceStart: _wallTool.start,
+      referenceStart: _wallTool.drawMode == WallDrawMode.arc
+          ? (_wallTool.arcEnd ?? _wallTool.arcStart)
+          : _wallTool.start,
     );
+
+    if (_wallTool.drawMode == WallDrawMode.arc) {
+      await _handleAddWallArcTap(snappedPoint);
+      return;
+    }
 
     if (!_wallTool.hasStart) {
       _wallTool.begin(snappedPoint);
       _updateViewportState(() {
-        _editStatusMessage =
-            'Wall start set. Tap again for the end point. Ortho/snap is active.';
+        _editStatusMessage = _wallTool.drawMode == WallDrawMode.rectangle
+            ? 'First rectangle corner set. Tap the opposite corner.'
+            : 'Wall start set. Tap again for the end point. Ortho/snap is active.';
       });
       _viewportController.setWallDraft(snappedPoint, snappedPoint);
       return;
     }
 
     _wallTool.preview(snappedPoint);
+    if (_wallTool.drawMode == WallDrawMode.rectangle) {
+      _updateViewportState(() {
+        _editStatusMessage = 'Rectangle ready. Creating four wall segments...';
+      });
+      _viewportController.setWallDraft(_wallTool.start, snappedPoint);
+      await _commitWallRectangle();
+      return;
+    }
     _updateViewportState(() {
       _editStatusMessage =
           'Wall segment: ${_projectUnitSettings.formatLength(_wallTool.start!.distanceTo(snappedPoint))}. Creating...';
     });
     _viewportController.setWallDraft(_wallTool.start, snappedPoint);
     await _commitWallDraft(autoContinue: true);
+  }
+
+  Future<void> _handleAddWallArcTap(RenderScenePoint point) async {
+    if (!_wallTool.hasArcFirstPoint) {
+      _wallTool.beginArcFirst(point);
+      _syncWallArcDraft();
+      _updateViewportState(() {
+        _editStatusMessage =
+            'First point set. Tap the second point of the curved wall.';
+      });
+      return;
+    }
+    if (!_wallTool.hasArcSecondPoint) {
+      _wallTool.setArcSecond(point);
+      _syncWallArcDraft();
+      _updateViewportState(() {
+        _editStatusMessage =
+            'Second point set. Tap the arc radius/bend point.';
+      });
+      return;
+    }
+
+    _wallTool.previewArcControl(point);
+    _syncWallArcDraft();
+    await _commitWallArc();
+  }
+
+  void _syncWallArcDraft() {
+    final start = _wallTool.arcStart;
+    if (start == null) {
+      _viewportController.setWallArcDraft(null);
+      return;
+    }
+    final end = _wallTool.arcEnd;
+    final control = _wallTool.arcControl;
+    final geometry = end == null || control == null
+        ? null
+        : WallAuthoringGeometry.arcFromThreePoints(
+            first: start,
+            second: end,
+            bend: control,
+          );
+    _viewportController.setWallArcDraft(
+      RenderSceneWallArcDraft(
+        start: start,
+        end: end,
+        control: control,
+        center: geometry?.center,
+        points: geometry?.points ??
+            <RenderScenePoint>[start, if (end != null) end, if (control != null) control],
+      ),
+    );
   }
 
   Future<void> _handleAddStairTap(RenderScenePoint? modelPoint) async {
@@ -472,10 +554,163 @@ extension _ViewerViewportInput on _ViewerHomePageState {
     await queued;
   }
 
+  Future<void> _commitWallRectangle() async {
+    final start = _wallTool.start;
+    final end = _wallTool.end;
+    if (start == null || end == null) return;
+
+    final corners = WallAuthoringGeometry.rectangleCorners(start, end);
+    if (corners == null) {
+      _updateViewportState(() {
+        _editStatusMessage = 'Rectangle needs two corners with area.';
+      });
+      return;
+    }
+
+    final wallTypeId = _wallTool.wallTypeId;
+
+    // Rectangle is one authoring gesture but four ordinary wall mutations.
+    // Queue the group behind any earlier wall commits so scene snapshots
+    // remain ordered, while clearing only the transient draft immediately.
+    _wallTool.clearDraft();
+    _viewportController.clearDraft();
+    final queued = _wallCommitTail.then<void>((_) async {
+      for (var index = 0; index < corners.length; index++) {
+        final nextIndex = (index + 1) % corners.length;
+        try {
+          await _commitWallSegment(
+            corners[index],
+            corners[nextIndex],
+            wallTypeId: wallTypeId,
+          );
+        } catch (error) {
+          if (mounted) {
+            _updateViewportState(() {
+              _editStatusMessage = 'Rectangle wall mutation failed: $error';
+            });
+          }
+          break;
+        }
+      }
+    });
+    _wallCommitTail = queued;
+    await queued;
+    if (mounted) {
+      _updateViewportState(() {
+        _editStatusMessage = 'Rectangle walls created.';
+      });
+    }
+  }
+
+  Future<void> _commitWallArc() async {
+    final start = _wallTool.arcStart;
+    final end = _wallTool.arcEnd;
+    final control = _wallTool.arcControl;
+    if (start == null || end == null || control == null) return;
+
+    final geometry = WallAuthoringGeometry.arcFromThreePoints(
+      first: start,
+      second: end,
+      bend: control,
+    );
+    if (geometry == null) {
+      _updateViewportState(() {
+        _editStatusMessage =
+            'Arc needs a radius of at least 0.25 m and a visible bend.';
+      });
+      return;
+    }
+
+    final scene = _scene;
+    if (scene == null) return;
+    final activeLevelId = _activeLevel(scene)?.levelId;
+    if (activeLevelId == null) {
+      _updateViewportState(() {
+        _editStatusMessage = 'Select a Base Level before drawing a wall.';
+      });
+      return;
+    }
+    final topLevel = _nextHigherLevel(scene, activeLevelId);
+    final wallTypeId = _wallTool.wallTypeId;
+    _wallTool.clearDraft(preserveChainEndpoint: true);
+    _viewportController.clearDraft();
+    final queued = _wallCommitTail.then<void>((_) async {
+      try {
+        final mutation = SceneMutationService(
+          engineRepository: _engineBackedMode ? _engineRepository : null,
+        );
+        var outcome = await mutation.createCurvedWall(
+          CreateCurvedWallRequest(
+            scene: scene,
+            geometry: geometry,
+            baseLevelId: activeLevelId,
+            topLevelId: topLevel?.levelId ?? 0,
+            heightMeters: _activeLevelDefaultWallHeight(scene),
+            thicknessMeters: _ViewerHomePageState._defaultWallThicknessMeters,
+          ),
+        );
+        for (final entry in outcome.trace) {
+          _traceAndroidMutation(entry);
+        }
+        if (!outcome.success || outcome.scene == null) {
+          throw StateError(outcome.error ?? 'Curved wall could not be created.');
+        }
+        if (wallTypeId != 0 && outcome.createdElementId != null) {
+          final typedScene = await _authoringCommands.setWallType(
+            wallId: outcome.createdElementId!,
+            wallTypeId: wallTypeId,
+          );
+          outcome = SceneMutationOutcome(
+            scene: typedScene.scene,
+            createdElementId: outcome.createdElementId,
+            success: typedScene.scene != null,
+            trace: outcome.trace,
+            error: typedScene.errors.isEmpty ? null : typedScene.errors.join(' '),
+          );
+          if (!outcome.success || outcome.scene == null) {
+            throw StateError(outcome.error ?? 'Curved wall type could not be applied.');
+          }
+        }
+        await _applySceneChange(
+          outcome.scene!,
+          message: topLevel == null
+              ? 'One curved wall created.'
+              : 'One curved wall created and constrained to ${topLevel.name}.',
+          authoritative: true,
+        );
+        if (outcome.createdElementId != null) {
+          await _viewportController.selectElement(outcome.createdElementId.toString());
+          await _viewportController.highlightElement(outcome.createdElementId.toString());
+        }
+      } catch (error) {
+        if (mounted) {
+          _updateViewportState(() {
+            _editStatusMessage = 'Curved wall mutation failed: $error';
+          });
+        }
+      }
+    });
+    _wallCommitTail = queued;
+    await queued;
+    if (mounted) {
+      _wallTool.continueFrom(end);
+      if (_wallTool.drawMode == WallDrawMode.arc) {
+        _syncWallArcDraft();
+      } else {
+        _viewportController.setWallDraft(end, end);
+      }
+      _updateViewportState(() {
+        _editStatusMessage =
+            'One smooth curved wall created. Tap Straight to continue.';
+      });
+    }
+  }
+
   Future<void> _commitWallSegment(
     RenderScenePoint start,
-    RenderScenePoint end,
-  ) async {
+    RenderScenePoint end, {
+    int? wallTypeId,
+  }) async {
     final scene = _scene;
     if (scene == null) {
       return;
@@ -534,10 +769,11 @@ extension _ViewerViewportInput on _ViewerHomePageState {
       }
       return;
     }
-    if (_wallTool.wallTypeId != 0 && outcome.createdElementId != null) {
+    final selectedWallTypeId = wallTypeId ?? _wallTool.wallTypeId;
+    if (selectedWallTypeId != 0 && outcome.createdElementId != null) {
       final typedScene = await _authoringCommands.setWallType(
         wallId: outcome.createdElementId!,
-        wallTypeId: _wallTool.wallTypeId,
+        wallTypeId: selectedWallTypeId,
       );
       outcome = SceneMutationOutcome(
         scene: typedScene.scene,
@@ -545,7 +781,7 @@ extension _ViewerViewportInput on _ViewerHomePageState {
         success: typedScene.scene != null,
         trace: <String>[
           ...outcome.trace,
-          'wall type applied=${_wallTool.wallTypeId}'
+          'wall type applied=$selectedWallTypeId'
         ],
         error: typedScene.errors.isEmpty ? null : typedScene.errors.join(' '),
       );

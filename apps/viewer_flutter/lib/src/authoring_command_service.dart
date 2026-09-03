@@ -3,6 +3,7 @@ import 'elements/wall_type_catalog.dart';
 import 'viewer_authoring_gateway.dart';
 import 'viewer_element_creation_gateway.dart';
 import 'viewer_engine_contracts.dart';
+import 'tools/wall_authoring_geometry.dart';
 
 /// Engine-first Inspector mutations. A command either returns a new
 /// authoritative snapshot or an error; widgets never mutate local geometry.
@@ -59,6 +60,21 @@ class AuthoringCommandService {
       _requireRepository().setWallType(
         wallId: wallId,
         wallTypeId: wallTypeId,
+      );
+
+  Future<RenderSceneLoadResult> createCurvedWall({
+    required String name,
+    required int levelId,
+    required WallArcGeometry geometry,
+    required double thicknessMeters,
+    required double heightMeters,
+  }) =>
+      _requireRepository().createCurvedWall(
+        name: name,
+        levelId: levelId,
+        geometry: geometry,
+        thicknessMeters: thicknessMeters,
+        heightMeters: heightMeters,
       );
 
   Future<RenderSceneLoadResult> createWallTypeForWall({

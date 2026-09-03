@@ -67,6 +67,16 @@ struct Line2 {
     Point2 end{};
 };
 
+// A curved wall keeps its two authored endpoints in WallData::axis and stores
+// the circular centerline separately.  The axis is therefore an endpoint
+// chord for curved walls, never a tessellated approximation of the curve.
+struct WallArcData {
+    Point2 center{};
+    double radius_meters{};
+    double start_angle_radians{};
+    double sweep_radians{};
+};
+
 enum class WallJoinKind {
     End,
     Tee,
@@ -261,6 +271,9 @@ struct WallData {
     // the project JSON or used by the interactive envelope viewport.
     GeneratedGeometry layered_geometry{};
     bool geometry_is_layered{false};
+    // Optional semantic curve definition.  A curved wall is still one Wall
+    // element; mesh tessellation is a derived render artifact only.
+    std::optional<WallArcData> arc{};
 };
 
 struct DoorData {

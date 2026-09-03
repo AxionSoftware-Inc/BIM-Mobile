@@ -338,6 +338,41 @@ TbeApiStatusCode tbe_create_wall(
     return apply_result(handle, result);
 }
 
+TbeApiStatusCode tbe_create_curved_wall(
+    TbeEngineHandle* handle,
+    const char* name,
+    uint64_t level_id,
+    TbeVec2 start,
+    TbeVec2 end,
+    TbeVec2 center,
+    double radius_meters,
+    double start_angle_radians,
+    double sweep_radians,
+    double thickness_meters,
+    double height_meters,
+    uint64_t* out_wall_id
+) {
+    if (handle == nullptr || handle->session == nullptr || name == nullptr || out_wall_id == nullptr) {
+        return null_handle_error(handle);
+    }
+    const auto result = handle->session->create_curved_wall(
+        name,
+        tbe::api::Vec2{.x = start.x, .y = start.y},
+        tbe::api::Vec2{.x = end.x, .y = end.y},
+        tbe::api::Vec2{.x = center.x, .y = center.y},
+        radius_meters,
+        start_angle_radians,
+        sweep_radians,
+        thickness_meters,
+        height_meters,
+        level_id
+    );
+    if (result.ok() && result.value.has_value()) {
+        *out_wall_id = result.value->value;
+    }
+    return apply_result(handle, result);
+}
+
 TbeApiStatusCode tbe_set_wall_type(
     TbeEngineHandle* handle,
     uint64_t wall_id,

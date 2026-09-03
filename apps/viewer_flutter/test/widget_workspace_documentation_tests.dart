@@ -19,7 +19,7 @@ void registerWorkspaceDocumentationTests() {
 
     expect(find.text('Tablet BIM'), findsOneWidget);
     expect(find.text('Level 1 plan'), findsOneWidget);
-    expect(find.text('3D View'), findsNWidgets(2));
+    expect(find.text('3D View'), findsOneWidget);
     expect(find.byTooltip('Floor plan'), findsOneWidget);
     expect(find.byTooltip('3D view'), findsOneWidget);
     expect(find.byTooltip('Wall'), findsOneWidget);
@@ -27,6 +27,29 @@ void registerWorkspaceDocumentationTests() {
     await tester.tap(find.byTooltip('Workspace actions'));
     await tester.pumpAndSettle();
     expect(find.text('Documentation and PDF'), findsOneWidget);
+  });
+
+  testWidgets('wall draw modes are exposed inside the Inspector',
+      (WidgetTester tester) async {
+    final json = File('assets/render_scene.json').readAsStringSync();
+    await tester.binding.setSurfaceSize(const Size(1600, 1000));
+    await tester.pumpWidget(
+      ViewerApp(
+        source:
+            MemoryRenderSceneSource(json, source: 'assets/render_scene.json'),
+        preferEngineBackedBundledSample: false,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Wall'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Wall draw mode'), findsOneWidget);
+    expect(find.byTooltip('Straight'), findsOneWidget);
+    expect(find.byTooltip('Rectangle'), findsOneWidget);
+    expect(find.byTooltip('Arc'), findsOneWidget);
+    expect(find.text('Draw Walls'), findsNothing);
   });
 
   testWidgets('App launch shows the project start screen',
@@ -50,6 +73,14 @@ void registerWorkspaceDocumentationTests() {
     expect(find.text('Residential tower'), findsOneWidget);
     expect(find.text('Residential campus'), findsOneWidget);
     expect(find.text('Wall #11'), findsNothing);
+
+    final grids = tester.widgetList<GridView>(find.byType(GridView)).toList();
+    expect(grids, hasLength(2));
+    for (final grid in grids) {
+      final delegate =
+          grid.gridDelegate as SliverGridDelegateWithFixedCrossAxisCount;
+      expect(delegate.crossAxisCount, 5);
+    }
   });
 
   testWidgets('Roof tool exposes contextual boundary and Trim controls',

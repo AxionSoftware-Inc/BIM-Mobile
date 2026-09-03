@@ -419,8 +419,8 @@ void registerArchitectureModuleTests() {
     expect(store.tabs.first.kind, OpenedViewKind.floorPlan);
     expect(store.tabs.first.label, '${firstLevel.name} plan');
     expect(store.tabs.first.projectionMode, RenderSceneProjectionMode.topDown);
-    expect(store.tabs.last.id, ViewWorkspaceStore.threeDViewId);
-    expect(store.tabs.last.projectionMode, RenderSceneProjectionMode.isometric);
+    expect(store.tabs, hasLength(1));
+    expect(store.tabById(ViewWorkspaceStore.threeDViewId), isNull);
   });
 }
 

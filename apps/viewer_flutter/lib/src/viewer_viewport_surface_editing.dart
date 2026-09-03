@@ -339,6 +339,27 @@ extension _ViewerViewportSurfaceEditing on _ViewerHomePageState {
     );
   }
 
+  /// Resolves a wall-tool point according to the active construction mode.
+  /// Straight walls use endpoint/orthogonal snapping; Rectangle needs the
+  /// unmodified second corner so both X and Y dimensions remain available.
+  RenderScenePoint _wallDraftPoint({
+    required RenderScenePoint rawPoint,
+    required RenderScenePoint? referenceStart,
+  }) {
+    if (_wallTool.drawMode == WallDrawMode.rectangle ||
+        _wallTool.drawMode == WallDrawMode.arc) {
+      return WallAuthoringGeometry.snapPoint(
+        rawPoint,
+        enabled: _snapDraftToGrid,
+        stepMeters: WallAuthoringGeometry.wallGridStepMeters,
+      );
+    }
+    return _draftLinePoint(
+      rawPoint: rawPoint,
+      referenceStart: referenceStart,
+    );
+  }
+
   double _snapDouble(double value, double step) {
     return WallAuthoringGeometry.snapDouble(
       value,

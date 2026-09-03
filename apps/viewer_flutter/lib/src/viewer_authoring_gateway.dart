@@ -1,5 +1,6 @@
 import 'render_scene_models.dart';
 import 'elements/wall_type_catalog.dart';
+import 'tools/wall_authoring_geometry.dart';
 
 /// Application boundary used by authoring and Inspector use-cases.
 ///
@@ -26,6 +27,14 @@ abstract interface class ViewerAuthoringGateway {
     required int levelId,
     required RenderScenePoint start,
     required RenderScenePoint end,
+    required double thicknessMeters,
+    required double heightMeters,
+  });
+
+  Future<RenderSceneLoadResult> createCurvedWall({
+    required String name,
+    required int levelId,
+    required WallArcGeometry geometry,
     required double thicknessMeters,
     required double heightMeters,
   });

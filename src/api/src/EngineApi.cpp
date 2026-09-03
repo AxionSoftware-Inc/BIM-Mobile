@@ -1030,11 +1030,15 @@ RenderSceneMeshDTO make_flat_polygon_mesh(const std::vector<tbe::core::Point2>& 
     return dto;
 }
 
-RenderSceneMeshDTO make_opening_mesh(const tbe::core::Line2& axis, const tbe::core::HostedOpening& opening, double wall_thickness, double z_offset = 0.0) {
+RenderSceneMeshDTO make_opening_mesh(const tbe::core::WallData& wall, const tbe::core::HostedOpening& opening, double z_offset = 0.0) {
     RenderSceneMeshDTO dto;
+    const auto& axis = wall.axis;
     const auto dx = axis.end.x - axis.start.x;
     const auto dy = axis.end.y - axis.start.y;
-    const auto length = std::sqrt((dx * dx) + (dy * dy));
+    const auto length = wall.arc.has_value()
+        ? std::abs(wall.arc->radius_meters * wall.arc->sweep_radians)
+        : std::sqrt((dx * dx) + (dy * dy));
+    const auto wall_thickness = wall.thickness_meters;
     if (!std::isfinite(length) || length <= 1.0e-9 ||
         !std::isfinite(opening.offset_meters) ||
         !std::isfinite(opening.width_meters) ||
@@ -1045,12 +1049,22 @@ RenderSceneMeshDTO make_opening_mesh(const tbe::core::Line2& axis, const tbe::co
         opening.width_meters <= 0.0 || opening.height_meters <= 0.0 || wall_thickness <= 0.0) {
         return dto;
     }
-    const auto ux = dx / length;
-    const auto uy = dy / length;
+    double ux = dx / length;
+    double uy = dy / length;
+    double center_x = axis.start.x + (ux * opening.offset_meters);
+    double center_y = axis.start.y + (uy * opening.offset_meters);
+    if (wall.arc.has_value()) {
+        const auto& arc = *wall.arc;
+        const auto fraction = std::clamp(opening.offset_meters / length, 0.0, 1.0);
+        const auto angle = arc.start_angle_radians + (arc.sweep_radians * fraction);
+        center_x = arc.center.x + (std::cos(angle) * arc.radius_meters);
+        center_y = arc.center.y + (std::sin(angle) * arc.radius_meters);
+        const auto direction = arc.sweep_radians >= 0.0 ? 1.0 : -1.0;
+        ux = -std::sin(angle) * direction;
+        uy = std::cos(angle) * direction;
+    }
     const auto nx = -uy;
     const auto ny = ux;
-    const auto center_x = axis.start.x + (ux * opening.offset_meters);
-    const auto center_y = axis.start.y + (uy * opening.offset_meters);
     const auto sill = safe_value(opening.sill_height_meters);
     const auto width = opening.width_meters;
     const auto height = opening.height_meters;
@@ -1176,11 +1190,98 @@ std::string wall_layer_profile(const Document& document, const tbe::core::WallDa
     return {};
 }
 
+std::vector<Point2> wall_centerline_points(const tbe::core::WallData& wall) {
+    if (!wall.arc.has_value()) {
+        return {wall.axis.start, wall.axis.end};
+    }
+    const auto& arc = *wall.arc;
+    const auto path_length = std::abs(arc.radius_meters * arc.sweep_radians);
+    const auto segment_count = std::clamp(static_cast<int>(std::ceil(path_length / 0.18)), 16, 96);
+    std::vector<Point2> points;
+    points.reserve(static_cast<std::size_t>(segment_count) + 1);
+    for (int index = 0; index <= segment_count; ++index) {
+        const auto fraction = static_cast<double>(index) / static_cast<double>(segment_count);
+        const auto angle = arc.start_angle_radians + (arc.sweep_radians * fraction);
+        points.push_back(Point2{
+            .x = arc.center.x + (std::cos(angle) * arc.radius_meters),
+            .y = arc.center.y + (std::sin(angle) * arc.radius_meters),
+        });
+    }
+    if (!points.empty()) {
+        points.front() = wall.axis.start;
+        points.back() = wall.axis.end;
+    }
+    return points;
+}
+
+std::string wall_centerline_points_string(const tbe::core::WallData& wall) {
+    const auto points = wall_centerline_points(wall);
+    std::ostringstream result;
+    result << std::setprecision(12);
+    for (std::size_t index = 0; index < points.size(); ++index) {
+        if (index != 0) result << ';';
+        result << points[index].x << ',' << points[index].y;
+    }
+    return result.str();
+}
+
 // GeometryService has already resolved end-to-end mitres and T-junction
 // trims by the time a render scene is built. Keep those final plan profile
 // corners available to the tablet authoring layer so boundary snapping uses
 // the same visible join geometry as the wall mesh.
 std::string wall_profile_corners(const tbe::core::WallData& wall) {
+    if (wall.arc.has_value()) {
+        // `profile_corners` is consumed by the Android plan overlay as the
+        // actual cut footprint.  Returning only the arc centerline makes the
+        // overlay close the curve with its chord, producing a filled sector
+        // (the wall looks like a split circle instead of a thin curved wall).
+        // Keep `curve_points` as the centerline and expose the two offset
+        // boundaries here, in the same outside-then-inside order used by the
+        // Flutter plan painter.
+        const auto centerline = wall_centerline_points(wall);
+        const auto half_thickness = wall.thickness_meters * 0.5;
+        if (centerline.size() < 2 || half_thickness <= 0.0) return {};
+
+        std::vector<Point2> outside;
+        std::vector<Point2> inside;
+        outside.reserve(centerline.size());
+        inside.reserve(centerline.size());
+        for (const auto& point : centerline) {
+            const auto radial = Point2{
+                .x = point.x - wall.arc->center.x,
+                .y = point.y - wall.arc->center.y,
+            };
+            const auto radial_length = std::sqrt(
+                (radial.x * radial.x) + (radial.y * radial.y));
+            if (radial_length <= 1.0e-9) return {};
+            const auto normal = Point2{
+                .x = radial.x / radial_length * half_thickness,
+                .y = radial.y / radial_length * half_thickness,
+            };
+            outside.push_back(Point2{
+                .x = point.x + normal.x,
+                .y = point.y + normal.y,
+            });
+            inside.push_back(Point2{
+                .x = point.x - normal.x,
+                .y = point.y - normal.y,
+            });
+        }
+
+        std::ostringstream profile;
+        profile << std::setprecision(12);
+        bool first_point = true;
+        const auto append_point = [&](const Point2& point) {
+            if (!first_point) profile << ';';
+            first_point = false;
+            profile << point.x << ',' << point.y;
+        };
+        for (const auto& point : outside) append_point(point);
+        for (auto point = inside.rbegin(); point != inside.rend(); ++point) {
+            append_point(*point);
+        }
+        return profile.str();
+    }
     const auto dx = wall.axis.end.x - wall.axis.start.x;
     const auto dy = wall.axis.end.y - wall.axis.start.y;
     const auto length = std::sqrt((dx * dx) + (dy * dy));
@@ -1234,6 +1335,69 @@ std::vector<RenderSceneFeatureEdgeDTO> wall_feature_edges(
 ) {
     std::vector<RenderSceneFeatureEdgeDTO> edges;
     const auto& profile = wall.geometry.profile;
+    if (wall.arc.has_value()) {
+        const auto centerline = wall_centerline_points(wall);
+        const auto& arc = *wall.arc;
+        const auto path_length = std::abs(arc.radius_meters * arc.sweep_radians);
+        const auto half_thickness = wall.thickness_meters / 2.0;
+        const auto point_at = [&](double distance, double side, double z) {
+            const auto fraction = path_length <= 1.0e-9
+                ? 0.0
+                : std::clamp(distance / path_length, 0.0, 1.0);
+            const auto angle = arc.start_angle_radians + (arc.sweep_radians * fraction);
+            const auto radial_x = std::cos(angle);
+            const auto radial_y = std::sin(angle);
+            return Vec3{
+                .x = arc.center.x + (radial_x * (arc.radius_meters + side)),
+                .y = arc.center.y + (radial_y * (arc.radius_meters + side)),
+                .z = base_elevation + z,
+            };
+        };
+        constexpr double kBottomContourLiftMeters = 0.002;
+        for (std::size_t index = 0; index + 1 < centerline.size(); ++index) {
+            const auto first_distance = path_length * static_cast<double>(index) /
+                static_cast<double>(centerline.size() - 1);
+            const auto second_distance = path_length * static_cast<double>(index + 1) /
+                static_cast<double>(centerline.size() - 1);
+            for (const auto side : {-half_thickness, half_thickness}) {
+                edges.push_back({
+                    .start = point_at(first_distance, side, wall.height_meters),
+                    .end = point_at(second_distance, side, wall.height_meters),
+                    .role = RenderSceneFeatureEdgeRole::Silhouette,
+                });
+                edges.push_back({
+                    .start = point_at(first_distance, side, kBottomContourLiftMeters),
+                    .end = point_at(second_distance, side, kBottomContourLiftMeters),
+                    .role = RenderSceneFeatureEdgeRole::Silhouette,
+                });
+            }
+        }
+        for (const auto distance : {0.0, path_length}) {
+            edges.push_back({
+                .start = point_at(distance, -half_thickness, 0.0),
+                .end = point_at(distance, -half_thickness, wall.height_meters),
+                .role = RenderSceneFeatureEdgeRole::Silhouette,
+            });
+            edges.push_back({
+                .start = point_at(distance, half_thickness, 0.0),
+                .end = point_at(distance, half_thickness, wall.height_meters),
+                .role = RenderSceneFeatureEdgeRole::Silhouette,
+            });
+        }
+        for (const auto& opening : profile.openings) {
+            for (const auto side : {-half_thickness, half_thickness}) {
+                const auto lower_left = point_at(opening.x_min, side, opening.z_min);
+                const auto lower_right = point_at(opening.x_max, side, opening.z_min);
+                const auto upper_right = point_at(opening.x_max, side, opening.z_max);
+                const auto upper_left = point_at(opening.x_min, side, opening.z_max);
+                edges.push_back({.start = lower_left, .end = lower_right, .role = RenderSceneFeatureEdgeRole::OpeningContour});
+                edges.push_back({.start = lower_right, .end = upper_right, .role = RenderSceneFeatureEdgeRole::OpeningContour});
+                edges.push_back({.start = upper_right, .end = upper_left, .role = RenderSceneFeatureEdgeRole::OpeningContour});
+                edges.push_back({.start = upper_left, .end = lower_left, .role = RenderSceneFeatureEdgeRole::OpeningContour});
+            }
+        }
+        return edges;
+    }
     if (profile.polygon.size() >= 2) {
         edges.reserve(profile.polygon.size() * 2 + profile.openings.size() * 8);
         constexpr double kBottomContourLiftMeters = 0.002;
@@ -1965,10 +2129,12 @@ RenderSceneDTO build_render_scene(
     double max_y = std::numeric_limits<double>::lowest();
     for (const auto& element : document.elements()) {
         if (const auto* wall = element.wall()) {
-            min_x = std::min({min_x, wall->axis.start.x, wall->axis.end.x});
-            min_y = std::min({min_y, wall->axis.start.y, wall->axis.end.y});
-            max_x = std::max({max_x, wall->axis.start.x, wall->axis.end.x});
-            max_y = std::max({max_y, wall->axis.start.y, wall->axis.end.y});
+            for (const auto& point : wall_centerline_points(*wall)) {
+                min_x = std::min(min_x, point.x);
+                min_y = std::min(min_y, point.y);
+                max_x = std::max(max_x, point.x);
+                max_y = std::max(max_y, point.y);
+            }
         }
     }
     if (min_x <= max_x && min_y <= max_y) {
@@ -2021,6 +2187,13 @@ RenderSceneDTO build_render_scene(
                     {"level_locked", "true"},
                     {"layer_profile", layer_profile},
                     {"profile_corners", wall_profile_corners(*wall)},
+                    {"curve_kind", wall->arc.has_value() ? "arc" : "straight"},
+                    {"curve_points", wall_centerline_points_string(*wall)},
+                    {"curve_center_x", wall->arc.has_value() ? std::to_string(wall->arc->center.x) : std::string{}},
+                    {"curve_center_y", wall->arc.has_value() ? std::to_string(wall->arc->center.y) : std::string{}},
+                    {"curve_radius_meters", wall->arc.has_value() ? std::to_string(wall->arc->radius_meters) : std::string{}},
+                    {"curve_start_angle_radians", wall->arc.has_value() ? std::to_string(wall->arc->start_angle_radians) : std::string{}},
+                    {"curve_sweep_radians", wall->arc.has_value() ? std::to_string(wall->arc->sweep_radians) : std::string{}},
                 }
             );
             wall_object.feature_edges = wall_feature_edges(*wall, base_elevation);
@@ -2051,9 +2224,8 @@ RenderSceneDTO build_render_scene(
                 // dimensions so legacy/imported meshes cannot keep an old
                 // height or sill after the Inspector changes it.
                 const auto opening_mesh = make_opening_mesh(
-                    wall->axis,
+                    *wall,
                     opening,
-                    wall->thickness_meters,
                     base_elevation
                 );
                 append_object(make_object_dto(
@@ -4232,6 +4404,41 @@ ApiResult<ElementIdDTO> EngineSession::create_wall(
         out = to_id(document.create_wall(
             std::move(name),
             Line2{.start = to_point(start), .end = to_point(end)},
+            thickness_meters,
+            height_meters,
+            level_id,
+            0,
+            wall_type_id));
+    });
+}
+
+ApiResult<ElementIdDTO> EngineSession::create_curved_wall(
+    std::string name,
+    Vec2 start,
+    Vec2 end,
+    Vec2 center,
+    double radius_meters,
+    double start_angle_radians,
+    double sweep_radians,
+    double thickness_meters,
+    double height_meters,
+    std::uint64_t level_id,
+    std::uint64_t wall_type_id
+) {
+    ElementIdDTO created{};
+    return apply_mutation_with_value(*impl_, "create_curved_wall", created, [&](Document& document, ElementIdDTO& out) {
+        if (wall_type_id == 0) {
+            wall_type_id = tbe::core::find_default_project_catalog(document).basic_wall_type;
+        }
+        out = to_id(document.create_curved_wall(
+            std::move(name),
+            Line2{.start = to_point(start), .end = to_point(end)},
+            tbe::core::WallArcData{
+                .center = to_point(center),
+                .radius_meters = radius_meters,
+                .start_angle_radians = start_angle_radians,
+                .sweep_radians = sweep_radians,
+            },
             thickness_meters,
             height_meters,
             level_id,

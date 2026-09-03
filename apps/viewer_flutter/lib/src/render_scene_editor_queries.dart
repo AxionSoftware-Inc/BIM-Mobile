@@ -67,6 +67,29 @@ class RenderSceneQueries {
     return _wallGeometry(wall)?.end;
   }
 
+  /// Returns the authored wall centerline. Curved walls expose a sampled
+  /// centerline for rendering/picking while their model identity remains one
+  /// wall object; straight walls simply return their two axis endpoints.
+  static List<RenderScenePoint> wallCenterlinePoints(RenderSceneObject wall) {
+    final raw = wall.metadata['curve_points'];
+    if (raw is String && raw.isNotEmpty) {
+      final parsed = <RenderScenePoint>[];
+      for (final token in raw.split(';')) {
+        final values = token.split(',');
+        if (values.length != 2) continue;
+        final x = double.tryParse(values[0]);
+        final y = double.tryParse(values[1]);
+        if (x == null || y == null || !x.isFinite || !y.isFinite) continue;
+        parsed.add(RenderScenePoint(x: x, y: y, z: 0));
+      }
+      if (parsed.length >= 2) return List<RenderScenePoint>.unmodifiable(parsed);
+    }
+    final start = wallStartPoint(wall);
+    final end = wallEndPoint(wall);
+    if (start == null || end == null) return const <RenderScenePoint>[];
+    return <RenderScenePoint>[start, end];
+  }
+
   static double? wallThickness(RenderSceneObject wall) {
     return _wallGeometry(wall)?.thickness;
   }

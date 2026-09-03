@@ -236,7 +236,31 @@ extension _ViewerWorkspaceInteractions on _ViewerHomePageState {
       case RenderSceneInteractionMode.addWall:
         final point = details.modelPoint;
         if (point == null) return;
-        final snapped = _draftLinePoint(
+        if (_wallTool.drawMode == WallDrawMode.arc) {
+          final snapped = _wallDraftPoint(
+            rawPoint: point,
+            referenceStart: _wallTool.arcEnd ?? _wallTool.arcStart,
+          );
+          if (!_wallTool.hasArcFirstPoint) {
+            _wallTool.beginArcFirst(snapped);
+          } else if (!_wallTool.hasArcSecondPoint) {
+            _wallTool.setArcSecond(snapped);
+          } else {
+            _wallTool.previewArcControl(snapped);
+          }
+          _syncWallArcDraft();
+          _updateViewportState(() {
+            _editStatusMessage = !_wallTool.hasArcFirstPoint
+                ? 'Drag to set the first point.'
+                : !_wallTool.hasArcSecondPoint
+                    ? 'Drag to set the second point.'
+                    : !_wallTool.hasArcControlPoint
+                        ? 'Drag to set the arc radius/bend.'
+                        : 'Release to create one curved wall.';
+          });
+          return;
+        }
+        final snapped = _wallDraftPoint(
           rawPoint: point,
           referenceStart: _wallTool.start,
         );
@@ -248,8 +272,12 @@ extension _ViewerWorkspaceInteractions on _ViewerHomePageState {
         _viewportController.setWallDraft(_wallTool.start, _wallTool.end);
         _updateViewportState(() {
           _editStatusMessage = _wallTool.hasSegment
-              ? 'Release to create this wall.'
-              : 'Drag to draw, or tap the next wall corner.';
+              ? _wallTool.drawMode == WallDrawMode.rectangle
+                  ? 'Release to create the four walls of this rectangle.'
+                  : 'Release to create this wall.'
+              : _wallTool.drawMode == WallDrawMode.rectangle
+                  ? 'Drag to the opposite corner, or tap it.'
+                  : 'Drag to draw, or tap the next wall corner.';
         });
         return;
       case RenderSceneInteractionMode.addDoor:
@@ -409,9 +437,24 @@ extension _ViewerWorkspaceInteractions on _ViewerHomePageState {
   Future<void> _handleSceneDragEnd(RenderSceneTapDetails details) async {
     switch (_interactionMode) {
       case RenderSceneInteractionMode.addWall:
+        if (_wallTool.drawMode == WallDrawMode.arc) {
+          // The direct authoring surface calls dragStart for every touch,
+          // including a stationary tap. Arc stages are already advanced by
+          // dragStart; only real move samples should update the preview. If
+          // we hover again at PointerUp, the first center tap becomes a zero
+          // radius and the three-tap arc can never be completed.
+          if (_wallTool.hasSegment) {
+            await _commitWallArc();
+          }
+          return;
+        }
         _handleSceneHover(details);
         if (_wallTool.hasSegment) {
-          await _commitWallDraft(autoContinue: true);
+          if (_wallTool.drawMode == WallDrawMode.rectangle) {
+            await _commitWallRectangle();
+          } else {
+            await _commitWallDraft(autoContinue: true);
+          }
         }
         return;
       case RenderSceneInteractionMode.addDoor:

@@ -297,6 +297,115 @@ void registerInteractionAuthoringTests() {
     expect(tool.end, c);
   });
 
+  test('wall tool switches draw modes without changing its draft contract', () {
+    final tool = WallToolController();
+    addTearDown(tool.dispose);
+    const a = RenderScenePoint(x: 1, y: 2, z: 0);
+    const b = RenderScenePoint(x: 5, y: 2, z: 0);
+
+    tool.drawMode = WallDrawMode.rectangle;
+    tool.begin(a);
+    tool.preview(b);
+
+    expect(tool.drawMode, WallDrawMode.rectangle);
+    expect(tool.hasSegment, isTrue);
+    tool.clearDraft();
+    expect(tool.drawMode, WallDrawMode.rectangle);
+    expect(tool.hasStart, isFalse);
+  });
+
+  test('wall draw mode switching preserves a committed chain endpoint', () {
+    final tool = WallToolController();
+    addTearDown(tool.dispose);
+    const firstEnd = RenderScenePoint(x: 4, y: 0, z: 0);
+    const arcSecond = RenderScenePoint(x: 7, y: 0, z: 0);
+    const arcBend = RenderScenePoint(x: 6, y: 2, z: 0);
+
+    tool.begin(const RenderScenePoint(x: 0, y: 0, z: 0));
+    tool.preview(firstEnd);
+    tool.continueFrom(firstEnd);
+    tool.switchDrawMode(WallDrawMode.arc);
+
+    expect(tool.chainEndpoint, firstEnd);
+    expect(tool.arcStart, firstEnd);
+    expect(tool.hasArcFirstPoint, isTrue);
+    tool.setArcSecond(arcSecond);
+    tool.previewArcControl(arcBend);
+    expect(tool.hasSegment, isTrue);
+
+    tool.continueFrom(arcSecond);
+    tool.switchDrawMode(WallDrawMode.straight);
+    expect(tool.start, arcSecond);
+    expect(tool.end, arcSecond);
+    expect(tool.chainEndpoint, arcSecond);
+  });
+
+  test('wall rectangle geometry returns a perimeter of four segments', () {
+    const first = RenderScenePoint(x: 5, y: 4, z: 2);
+    const second = RenderScenePoint(x: 1, y: 1, z: 2);
+
+    final corners = WallAuthoringGeometry.rectangleCorners(first, second);
+
+    expect(corners, isNotNull);
+    expect(corners, hasLength(4));
+    expect(corners![0].x, 1);
+    expect(corners[0].y, 1);
+    expect(corners[1].x, 5);
+    expect(corners[1].y, 1);
+    expect(corners[2].x, 5);
+    expect(corners[2].y, 4);
+    expect(corners[3].x, 1);
+    expect(corners[3].y, 4);
+    expect(
+      WallAuthoringGeometry.rectangleCorners(
+        first,
+        const RenderScenePoint(x: 5, y: 4.05, z: 2),
+      ),
+      isNull,
+    );
+  });
+
+  test('wall arc geometry returns one smooth semantic circular path', () {
+    const start = RenderScenePoint(x: 5, y: 0, z: 0);
+    const end = RenderScenePoint(x: 0, y: 5, z: 0);
+    const bend = RenderScenePoint(x: 3.535533906, y: 3.535533906, z: 0);
+
+    final arc = WallAuthoringGeometry.arcFromThreePoints(
+      first: start,
+      second: end,
+      bend: bend,
+    );
+
+    expect(arc, isNotNull);
+    expect(arc!.points.length, greaterThan(4));
+    expect(arc.points.first, start);
+    expect(arc.points.last, end);
+    expect(arc.radiusMeters, closeTo(5, 1e-9));
+    expect(arc.sweepDegrees, closeTo(90, 1e-7));
+    expect(
+      arc.points[arc.points.length ~/ 2].distanceTo(arc.center),
+      closeTo(5, 0.02),
+    );
+  });
+
+  test('wall arc tool keeps first, second and bend as separate stages', () {
+    final tool = WallToolController()..drawMode = WallDrawMode.arc;
+    addTearDown(tool.dispose);
+    const start = RenderScenePoint(x: 5, y: 0, z: 0);
+    const end = RenderScenePoint(x: 0, y: 5, z: 0);
+    const bend = RenderScenePoint(x: 3.535533906, y: 3.535533906, z: 0);
+
+    tool.begin(start);
+    expect(tool.hasArcFirstPoint, isTrue);
+    expect(tool.hasArcSecondPoint, isFalse);
+    tool.preview(end);
+    expect(tool.hasArcSecondPoint, isTrue);
+    expect(tool.hasArcControlPoint, isFalse);
+    tool.preview(bend);
+    expect(tool.hasArcControlPoint, isTrue);
+    expect(tool.hasSegment, isTrue);
+  });
+
   test('level tool controller keeps elevation draft separate from wall tool',
       () {
     final tool = LevelToolController();

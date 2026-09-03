@@ -53,6 +53,52 @@ int main() {
         assert(typed_object->metadata.at("assembly_id") == "0");
     }
 
+    {
+        // The public authoring seam must keep the circular wall as one
+        // selectable element while exposing a smooth derived render mesh.
+        auto curved_result = tbe::api::create_session("Curved Wall API Test");
+        assert(curved_result.ok() && curved_result.value.has_value());
+        auto curved = std::move(*curved_result.value);
+        assert(curved->new_project("Curved Wall").ok());
+        const auto level = curved->create_level("Level 1", 0.0, 3.0);
+        assert(level.ok() && level.value.has_value());
+        const auto wall = curved->create_curved_wall(
+            "Curved Wall",
+            {.x = 5.0, .y = 0.0},
+            {.x = 0.0, .y = 5.0},
+            {.x = 0.0, .y = 0.0},
+            5.0,
+            0.0,
+            1.5707963267948966,
+            0.2,
+            3.0,
+            level.value->value
+        );
+        assert(wall.ok() && wall.value.has_value());
+        const auto scene = curved->get_render_scene();
+        assert(scene.ok() && scene.value.has_value());
+        const auto object = std::find_if(
+            scene.value->objects.begin(), scene.value->objects.end(),
+            [&](const auto& candidate) { return candidate.element_id.value == wall.value->value; });
+        assert(object != scene.value->objects.end());
+        assert(object->metadata.at("curve_kind") == "arc");
+        const auto count_profile_points = [](const std::string& value) {
+            return value.empty()
+                ? std::size_t{0}
+                : static_cast<std::size_t>(std::count(value.begin(), value.end(), ';')) + 1;
+        };
+        const auto& curve_points = object->metadata.at("curve_points");
+        const auto& profile_corners = object->metadata.at("profile_corners");
+        assert(count_profile_points(curve_points) > 2);
+        // The plan profile is a closed strip: two offset boundaries, not the
+        // centerline closed by its chord (which renders as a filled sector).
+        assert(count_profile_points(profile_corners) == count_profile_points(curve_points) * 2);
+        assert(object->mesh.positions.size() > 40);
+        assert(std::count_if(
+            scene.value->objects.begin(), scene.value->objects.end(),
+            [](const auto& candidate) { return candidate.kind == tbe::api::ApiElementKind::Wall; }) == 1);
+    }
+
     for (int iteration = 0; iteration < 5; ++iteration) {
         auto session_result = tbe::api::create_session("API Test");
         assert(session_result.ok());

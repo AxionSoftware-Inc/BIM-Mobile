@@ -308,6 +308,176 @@ final class WallAuthoringGeometry {
     return PlanSketchGeometry.snapToGrid(point, stepMeters: stepMeters);
   }
 
+  /// Returns the four corners for a two-corner wall rectangle.
+  ///
+  /// The result is ordered around the perimeter and uses the first point's
+  /// elevation. Returning null for a near-line rectangle keeps the UI from
+  /// sending zero-length segments to the mutation service.
+  static List<RenderScenePoint>? rectangleCorners(
+    RenderScenePoint first,
+    RenderScenePoint second, {
+    double minimumSpanMeters = 0.1,
+  }) {
+    final minX = math.min(first.x, second.x);
+    final maxX = math.max(first.x, second.x);
+    final minY = math.min(first.y, second.y);
+    final maxY = math.max(first.y, second.y);
+    if ((maxX - minX).abs() < minimumSpanMeters ||
+        (maxY - minY).abs() < minimumSpanMeters) {
+      return null;
+    }
+    return <RenderScenePoint>[
+      RenderScenePoint(x: minX, y: minY, z: first.z),
+      RenderScenePoint(x: maxX, y: minY, z: first.z),
+      RenderScenePoint(x: maxX, y: maxY, z: first.z),
+      RenderScenePoint(x: minX, y: maxY, z: first.z),
+    ];
+  }
+
+  /// Creates one semantic circular wall from the Revit-style three-point
+  /// gesture: first endpoint, second endpoint, then a point on the desired
+  /// bend/radius side.  The returned sample points are preview tessellation
+  /// only; the native model receives the center/radius/sweep definition.
+  static WallArcGeometry? arcFromThreePoints({
+    required RenderScenePoint first,
+    required RenderScenePoint second,
+    required RenderScenePoint bend,
+    double minimumRadiusMeters = 0.25,
+    double minimumSweepRadians = math.pi / 36.0,
+  }) {
+    if (!first.isFinite || !second.isFinite || !bend.isFinite) return null;
+    final determinant = 2.0 *
+        (first.x * (second.y - bend.y) +
+            second.x * (bend.y - first.y) +
+            bend.x * (first.y - second.y));
+    if (determinant.abs() < 1e-8) return null;
+
+    final firstSquared = first.x * first.x + first.y * first.y;
+    final secondSquared = second.x * second.x + second.y * second.y;
+    final bendSquared = bend.x * bend.x + bend.y * bend.y;
+    final center = RenderScenePoint(
+      x: (firstSquared * (second.y - bend.y) +
+              secondSquared * (bend.y - first.y) +
+              bendSquared * (first.y - second.y)) /
+          determinant,
+      y: (firstSquared * (bend.x - second.x) +
+              secondSquared * (first.x - bend.x) +
+              bendSquared * (second.x - first.x)) /
+          determinant,
+      z: first.z,
+    );
+    final radius = center.distanceTo(first);
+    if (!center.isFinite || !radius.isFinite || radius < minimumRadiusMeters) {
+      return null;
+    }
+
+    double positiveAngle(double value) {
+      var normalized = value % (math.pi * 2.0);
+      if (normalized < 0.0) normalized += math.pi * 2.0;
+      return normalized;
+    }
+
+    final startAngle = math.atan2(first.y - center.y, first.x - center.x);
+    final endAngle = math.atan2(second.y - center.y, second.x - center.x);
+    final bendAngle = math.atan2(bend.y - center.y, bend.x - center.x);
+    final counterClockwiseEnd = positiveAngle(endAngle - startAngle);
+    final counterClockwiseBend = positiveAngle(bendAngle - startAngle);
+    final sweep = counterClockwiseBend <= counterClockwiseEnd + 1e-7
+        ? counterClockwiseEnd
+        : counterClockwiseEnd - (math.pi * 2.0);
+    if (sweep.abs() < minimumSweepRadians || sweep.abs() > math.pi * 2.0 - 1e-7) {
+      return null;
+    }
+
+    final segmentCount = math.max(
+      8,
+      math.min(96, (sweep.abs() * radius / 0.18).ceil()),
+    );
+    final points = <RenderScenePoint>[
+      for (var index = 0; index <= segmentCount; index += 1)
+        RenderScenePoint(
+          x: center.x + radius * math.cos(startAngle + sweep * index / segmentCount),
+          y: center.y + radius * math.sin(startAngle + sweep * index / segmentCount),
+          z: first.z,
+        ),
+    ];
+    points[0] = first;
+    points[points.length - 1] = second;
+    return WallArcGeometry(
+      center: center,
+      start: first,
+      end: second,
+      radiusMeters: radius,
+      sweepRadians: sweep,
+      points: List<RenderScenePoint>.unmodifiable(points),
+    );
+  }
+
+  /// Legacy center/start/end helper retained for old project previews. New
+  /// wall authoring uses [arcFromThreePoints] so the bend is explicitly the
+  /// third gesture point and never expands into model segments.
+  static WallArcGeometry? arcFromCenter({
+    required RenderScenePoint center,
+    required RenderScenePoint start,
+    required RenderScenePoint end,
+    double minimumRadiusMeters = 0.25,
+    double minimumSweepRadians = math.pi / 36.0,
+  }) {
+    final startRadius = center.distanceTo(start);
+    final endRadius = center.distanceTo(end);
+    if (!center.isFinite ||
+        !start.isFinite ||
+        !end.isFinite ||
+        !startRadius.isFinite ||
+        !endRadius.isFinite ||
+        startRadius < minimumRadiusMeters ||
+        endRadius < minimumRadiusMeters) {
+      return null;
+    }
+
+    final startAngle = math.atan2(start.y - center.y, start.x - center.x);
+    final endAngle = math.atan2(end.y - center.y, end.x - center.x);
+    var sweep = endAngle - startAngle;
+    while (sweep > math.pi) {
+      sweep -= math.pi * 2.0;
+    }
+    while (sweep < -math.pi) {
+      sweep += math.pi * 2.0;
+    }
+    if (sweep.abs() < minimumSweepRadians) return null;
+
+    // Keep the authoring footprint light enough for a tablet while holding a
+    // visibly round contour. Chord length is capped around 35 cm and no arc
+    // can create more than 24 ordinary wall elements.
+    final segmentCount = math.max(
+      4,
+      math.min(24, (sweep.abs() * startRadius / 0.35).ceil()),
+    );
+    final points = <RenderScenePoint>[
+      for (var index = 0; index <= segmentCount; index += 1)
+        RenderScenePoint(
+          x: center.x +
+              startRadius * math.cos(startAngle + sweep * index / segmentCount),
+          y: center.y +
+              startRadius * math.sin(startAngle + sweep * index / segmentCount),
+          z: start.z,
+        ),
+    ];
+    // Preserve the exact user-selected endpoints. This makes an arc that is
+    // chained to an existing wall join at the same snapped point while the
+    // intermediate points remain on the defined circle.
+    points[0] = start;
+    points[points.length - 1] = end;
+    return WallArcGeometry(
+      center: center,
+      start: start,
+      end: end,
+      radiusMeters: startRadius,
+      sweepRadians: sweep,
+      points: List<RenderScenePoint>.unmodifiable(points),
+    );
+  }
+
   static RenderScenePoint resolveLineEndpoint({
     required RenderScenePoint rawPoint,
     required RenderScenePoint? referenceStart,
@@ -767,4 +937,25 @@ final class WallAuthoringGeometry {
     }
     return activeLevelId;
   }
+}
+
+@immutable
+class WallArcGeometry {
+  const WallArcGeometry({
+    required this.center,
+    required this.start,
+    required this.end,
+    required this.radiusMeters,
+    required this.sweepRadians,
+    required this.points,
+  });
+
+  final RenderScenePoint center;
+  final RenderScenePoint start;
+  final RenderScenePoint end;
+  final double radiusMeters;
+  final double sweepRadians;
+  final List<RenderScenePoint> points;
+
+  double get sweepDegrees => sweepRadians * 180.0 / math.pi;
 }

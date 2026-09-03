@@ -40,12 +40,13 @@ final class ViewWorkspaceStore {
             projectionMode: RenderSceneProjectionMode.topDown,
             levelId: firstLevel.levelId,
           ),
-        OpenedViewTab(
-          id: threeDViewId,
-          label: '3D View',
-          kind: OpenedViewKind.threeD,
-          projectionMode: RenderSceneProjectionMode.isometric,
-        ),
+        if (firstLevel == null)
+          OpenedViewTab(
+            id: threeDViewId,
+            label: '3D View',
+            kind: OpenedViewKind.threeD,
+            projectionMode: RenderSceneProjectionMode.isometric,
+          ),
       ]);
     _savedPresentations.clear();
     _sheetSourceScene = null;

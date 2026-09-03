@@ -584,23 +584,6 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
               onCancel: _cancelDraft,
             ),
           ),
-        if (_interactionMode == RenderSceneInteractionMode.addWall ||
-            _interactionMode == RenderSceneInteractionMode.addStair)
-          Positioned(
-            left: 16,
-            top: 16,
-            child: LineDrawingContextBar(
-              mode: _interactionMode,
-              enabled: _scene != null && !_workspaceBusy,
-              hasDraft: _interactionMode == RenderSceneInteractionMode.addWall
-                  ? _wallTool.hasStart
-                  : _stairTool.hasStart,
-              onDone: () => unawaited(
-                _setInteractionMode(RenderSceneInteractionMode.select),
-              ),
-              onCancel: _cancelDraft,
-            ),
-          ),
         // The Section Box is drawn and manipulated in the native Filament
         // overlay so its border and clipping planes share one camera matrix.
         Positioned(
@@ -738,6 +721,18 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
                                       RenderSceneInteractionMode.addLevel
                                   ? _levelTool.end
                                   : _draftWallEnd,
+                          wallArcStart: _interactionMode ==
+                                  RenderSceneInteractionMode.addWall
+                              ? _wallTool.arcStart
+                              : null,
+                          wallArcEnd: _interactionMode ==
+                                  RenderSceneInteractionMode.addWall
+                              ? _wallTool.arcEnd
+                              : null,
+                          wallArcControl: _interactionMode ==
+                                  RenderSceneInteractionMode.addWall
+                              ? _wallTool.arcControl
+                              : null,
                           draftSurfaceStart: _draftSurfaceStart,
                           draftSurfaceEnd: _draftSurfaceEnd,
                           draftSurfacePointCount: _draftSurfacePoints.length,
@@ -755,6 +750,7 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
                           draftFloorTopElevationMeters:
                               _draftFloorTopElevationMeters,
                           surfaceDrawMode: _surfaceDrawMode,
+                          wallDrawMode: _wallTool.drawMode,
                           wallTypes: scene.wallTypes,
                           wallTypeId: _wallTool.wallTypeId,
                           floorTypes: scene.floorTypes,
@@ -826,6 +822,9 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
                             _updateViewportState(() {
                               _draftFloorTopElevationMeters = value;
                             });
+                          },
+                          onWallDrawModeChanged: (value) {
+                            unawaited(_setWallDrawMode(value));
                           },
                           onWallTypeChanged: (value) {
                             _updateViewportState(() {

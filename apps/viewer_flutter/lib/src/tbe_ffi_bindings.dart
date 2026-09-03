@@ -427,6 +427,34 @@ typedef _CreateWallDart = int Function(
   double,
   ffi.Pointer<ffi.Uint64>,
 );
+typedef _CreateCurvedWallNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Pointer<Utf8>,
+  ffi.Uint64,
+  TbeVec2,
+  TbeVec2,
+  TbeVec2,
+  ffi.Double,
+  ffi.Double,
+  ffi.Double,
+  ffi.Double,
+  ffi.Double,
+  ffi.Pointer<ffi.Uint64>,
+);
+typedef _CreateCurvedWallDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Pointer<Utf8>,
+  int,
+  TbeVec2,
+  TbeVec2,
+  TbeVec2,
+  double,
+  double,
+  double,
+  double,
+  double,
+  ffi.Pointer<ffi.Uint64>,
+);
 typedef _CreateStairNative = ffi.Int32 Function(
   ffi.Pointer<ffi.Void>,
   ffi.Uint64,

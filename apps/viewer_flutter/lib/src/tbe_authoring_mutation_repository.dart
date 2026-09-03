@@ -89,6 +89,36 @@ final class TbeAuthoringMutationRepository {
     return _afterMutation();
   }
 
+  Future<RenderSceneLoadResult> createCurvedWall({
+    required String name,
+    required int levelId,
+    required WallArcGeometry geometry,
+    required double thicknessMeters,
+    required double heightMeters,
+  }) async {
+    final id = _api.createCurvedWall(
+      _requireHandle(),
+      name: name,
+      levelId: levelId,
+      startX: geometry.start.x,
+      startY: geometry.start.y,
+      endX: geometry.end.x,
+      endY: geometry.end.y,
+      centerX: geometry.center.x,
+      centerY: geometry.center.y,
+      radiusMeters: geometry.radiusMeters,
+      startAngleRadians: math.atan2(
+        geometry.start.y - geometry.center.y,
+        geometry.start.x - geometry.center.x,
+      ),
+      sweepRadians: geometry.sweepRadians,
+      thicknessMeters: thicknessMeters,
+      heightMeters: heightMeters,
+    );
+    _setLastCreatedElementId(id);
+    return _afterMutation();
+  }
+
   Future<RenderSceneLoadResult> createWallTransaction({
     required String name,
     required int levelId,

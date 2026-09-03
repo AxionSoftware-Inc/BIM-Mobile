@@ -765,6 +765,7 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                           planCamera: controller.planCamera,
                           draftWallStart: controller.draftWallStart,
                           draftWallEnd: controller.draftWallEnd,
+                          draftWallArc: controller.draftWallArc,
                           draftOpening: controller.draftOpening,
                           draftSurface: controller.draftSurface,
                           draftWallThicknessMeters:
@@ -815,6 +816,7 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                         planCamera: controller.planCamera,
                         draftWallStart: controller.draftWallStart,
                         draftWallEnd: controller.draftWallEnd,
+                        draftWallArc: controller.draftWallArc,
                         draftOpening: controller.draftOpening,
                         draftSurface: controller.draftSurface,
                         pickedWallIds: widget.draftSurfaceWallIds,

@@ -214,6 +214,20 @@ TbeApiStatusCode tbe_create_wall(
     double height_meters,
     uint64_t* out_wall_id
 );
+TbeApiStatusCode tbe_create_curved_wall(
+    TbeEngineHandle* handle,
+    const char* name,
+    uint64_t level_id,
+    TbeVec2 start,
+    TbeVec2 end,
+    TbeVec2 center,
+    double radius_meters,
+    double start_angle_radians,
+    double sweep_radians,
+    double thickness_meters,
+    double height_meters,
+    uint64_t* out_wall_id
+);
 TbeApiStatusCode tbe_set_wall_type(
     TbeEngineHandle* handle,
     uint64_t wall_id,

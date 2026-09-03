@@ -7,6 +7,7 @@
 #include <map>
 #include <sstream>
 #include <cstdlib>
+#include <iomanip>
 #include <stdexcept>
 
 namespace tbe::core {
@@ -736,6 +737,12 @@ std::string Document::to_json() const {
             ensure_finite_line(wall->axis, "wall.axis");
             ensure_finite(wall->thickness_meters, "wall.thickness");
             ensure_finite(wall->height_meters, "wall.height");
+            if (wall->arc.has_value()) {
+                ensure_finite_point(wall->arc->center, "wall.arc.center");
+                ensure_finite(wall->arc->radius_meters, "wall.arc.radius");
+                ensure_finite(wall->arc->start_angle_radians, "wall.arc.start_angle");
+                ensure_finite(wall->arc->sweep_radians, "wall.arc.sweep");
+            }
             for (const auto& join : wall->joins) {
                 ensure_finite_point(join.point, "wall.join.point");
                 ensure_finite_line(join.other_axis, "wall.join.other_axis");
@@ -816,6 +823,11 @@ std::string Document::to_json() const {
     }
 
     std::ostringstream out;
+    // Authored geometry, especially circular walls, must survive a save/load
+    // cycle without collapsing a radius or sweep to the old six-digit stream
+    // default.  The document JSON is a semantic checkpoint, so keep enough
+    // precision for round-trip authoring edits.
+    out << std::setprecision(17);
     out << "{\"schema\":\"tbe.document.v1\",";
     out << "\"name\":\"" << escape_json(name_) << "\",";
     out << "\"units\":{\"system\":\"" << unit_system_to_string(unit_settings_.system)
@@ -1035,6 +1047,13 @@ std::string Document::to_json() const {
             out << ",\"top_offset\":" << wall->top_offset_meters;
             out << ",\"height_mode\":\"" << (wall->height_mode == WallHeightMode::TopLevel ? "TopLevel" : "Unconnected") << "\"";
             out << ",\"geometry_is_layered\":" << (wall->geometry_is_layered ? "true" : "false");
+            if (wall->arc.has_value()) {
+                out << ",\"arc\":{\"center\":";
+                write_point(out, wall->arc->center);
+                out << ",\"radius\":" << wall->arc->radius_meters
+                    << ",\"start_angle\":" << wall->arc->start_angle_radians
+                    << ",\"sweep\":" << wall->arc->sweep_radians << '}';
+            }
             out << ",\"joins\":[";
             for (std::size_t join_index = 0; join_index < wall->joins.size(); ++join_index) {
                 if (join_index != 0) {
@@ -1463,6 +1482,15 @@ Document Document::from_json(std::string_view json) {
                     ? WallHeightMode::TopLevel
                     : WallHeightMode::Unconnected,
             };
+            if (const auto arc = wall.find("arc"); arc != wall.end()) {
+                const auto& arc_object = as_object(arc->second);
+                data.arc = WallArcData{
+                    .center = parse_point(field(arc_object, "center")),
+                    .radius_meters = as_number(field(arc_object, "radius")),
+                    .start_angle_radians = as_number(field(arc_object, "start_angle")),
+                    .sweep_radians = as_number(field(arc_object, "sweep")),
+                };
+            }
             if (const auto mesh = wall.find("mesh"); mesh != wall.end()) {
                 data.geometry.mesh = parse_mesh(mesh->second);
                 data.geometry.dirty = false;

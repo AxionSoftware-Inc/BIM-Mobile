@@ -198,6 +198,24 @@ class RenderSceneWallDraft {
 }
 
 @immutable
+class RenderSceneWallArcDraft {
+  const RenderSceneWallArcDraft({
+    this.start,
+    this.end,
+    this.control,
+    this.center,
+    this.points = const <RenderScenePoint>[],
+  });
+
+  final RenderScenePoint? start;
+  final RenderScenePoint? end;
+  final RenderScenePoint? control;
+  // Derived circle center used only for optional authoring guidance.
+  final RenderScenePoint? center;
+  final List<RenderScenePoint> points;
+}
+
+@immutable
 class RenderSceneOpeningDraft {
   const RenderSceneOpeningDraft({
     required this.kind,
@@ -306,6 +324,7 @@ abstract class RenderSceneViewportActions extends ChangeNotifier
   RenderSceneCameraState get camera;
   RenderScenePoint? get draftWallStart;
   RenderScenePoint? get draftWallEnd;
+  RenderSceneWallArcDraft? get draftWallArc;
   RenderSceneOpeningDraft? get draftOpening;
   RenderSceneSurfaceDraft? get draftSurface;
 
@@ -322,6 +341,7 @@ abstract class RenderSceneViewportActions extends ChangeNotifier
   Future<void> setBackend(RenderSceneViewportBackend backend);
   Future<void> setInteractionMode(RenderSceneInteractionMode mode);
   void setWallDraft(RenderScenePoint? start, RenderScenePoint? end);
+  void setWallArcDraft(RenderSceneWallArcDraft? draft);
   void setOpeningDraft(RenderSceneOpeningDraft? draft);
   void setSurfaceDraft(RenderSceneSurfaceDraft? draft);
   void clearDraft();

@@ -8,6 +8,7 @@
 #include <cmath>
 #include <fstream>
 #include <limits>
+#include <numbers>
 #include <numeric>
 #include <set>
 #include <sstream>
@@ -24,6 +25,13 @@ double length(const Line2& line) {
     const auto dx = line.end.x - line.start.x;
     const auto dy = line.end.y - line.start.y;
     return std::sqrt((dx * dx) + (dy * dy));
+}
+
+double wall_centerline_length(const WallData& wall) {
+    if (wall.arc.has_value()) {
+        return std::abs(wall.arc->radius_meters * wall.arc->sweep_radians);
+    }
+    return length(wall.axis);
 }
 
 Point2 add(Point2 left, Point2 right) {
@@ -1868,6 +1876,81 @@ ElementId Document::create_wall(
     return id;
 }
 
+ElementId Document::create_curved_wall(
+    std::string name,
+    Line2 chord,
+    WallArcData arc,
+    double thickness_meters,
+    double height_meters,
+    ElementId level_id,
+    ElementId assembly_id,
+    ElementId wall_type_id
+) {
+    if (name.empty()) {
+        throw std::invalid_argument("wall name must not be empty");
+    }
+    validate_wall_axis(chord, thickness_meters, height_meters);
+    const auto distance_to_center = [&](Point2 point) {
+        return std::hypot(point.x - arc.center.x, point.y - arc.center.y);
+    };
+    if (!std::isfinite(arc.center.x) || !std::isfinite(arc.center.y) ||
+        !std::isfinite(arc.radius_meters) || !std::isfinite(arc.start_angle_radians) ||
+        !std::isfinite(arc.sweep_radians) || arc.radius_meters <= epsilon ||
+        std::abs(arc.sweep_radians) <= epsilon ||
+        std::abs(arc.sweep_radians) > (2.0 * std::numbers::pi) + 1.0e-6) {
+        throw std::invalid_argument("curved wall arc geometry is invalid");
+    }
+    const auto endpoint_tolerance = std::max(1.0e-5, arc.radius_meters * 1.0e-4);
+    if (std::abs(distance_to_center(chord.start) - arc.radius_meters) > endpoint_tolerance ||
+        std::abs(distance_to_center(chord.end) - arc.radius_meters) > endpoint_tolerance) {
+        throw std::invalid_argument("curved wall endpoints must lie on the arc");
+    }
+    if (level_id != 0) {
+        (void)require_level(level_id);
+    }
+    if (assembly_id != 0) {
+        const auto* assembly = get_layered_assembly(assembly_id);
+        if (assembly == nullptr || assembly->kind != LayeredAssemblyKind::Wall) {
+            throw std::invalid_argument("wall assembly must exist and have Wall kind");
+        }
+        if (wall_type_id != 0) {
+            throw std::invalid_argument("wall cannot use both a wall type and an assembly");
+        }
+        wall_type_id = wall_type_for_assembly(*assembly);
+        assembly_id = 0;
+        thickness_meters = total_wall_type_thickness(*get_wall_type(wall_type_id));
+        validate_wall_axis(chord, thickness_meters, height_meters);
+    }
+    if (wall_type_id != 0) {
+        const auto* wall_type = get_wall_type(wall_type_id);
+        if (wall_type == nullptr) {
+            throw std::invalid_argument("wall type does not exist");
+        }
+        thickness_meters = total_wall_type_thickness(*wall_type);
+        validate_wall_axis(chord, thickness_meters, height_meters);
+    }
+
+    const auto id = allocate_id();
+    elements_.emplace_back(id, ElementKind::Wall, std::move(name), WallData{
+        .level_id = level_id,
+        .base_level_id = level_id,
+        .wall_type_id = wall_type_id,
+        .assembly_id = assembly_id,
+        .axis = chord,
+        .thickness_meters = thickness_meters,
+        .height_meters = height_meters,
+        .arc = std::move(arc),
+    });
+    if (level_id != 0) {
+        dirty_room_level_ids_.push_back(level_id);
+    }
+    if (automatic_wall_join_enabled_) {
+        auto_join_walls();
+    }
+    invalidate_dependency_graph_cache();
+    return id;
+}
+
 void Document::set_wall_type(ElementId wall_id, ElementId wall_type_id) {
     auto& wall_element = require_wall(wall_id);
     auto* wall = wall_element.wall();
@@ -2264,6 +2347,9 @@ void Document::set_wall_properties(ElementId wall_id, double thickness_meters, d
 void Document::set_wall_axis(ElementId wall_id, Line2 axis) {
     auto& wall_element = require_wall(wall_id);
     auto* wall = wall_element.wall();
+    if (wall->arc.has_value()) {
+        throw std::invalid_argument("curved wall requires an arc geometry edit");
+    }
     validate_wall_axis(axis, wall->thickness_meters, resolved_wall_height(*wall));
 
     auto updated = *wall;
@@ -2292,6 +2378,9 @@ void Document::set_wall_axis(ElementId wall_id, Line2 axis) {
 void Document::set_wall_axis_with_joins(ElementId wall_id, Line2 axis) {
     auto& wall_element = require_wall(wall_id);
     auto* wall = wall_element.wall();
+    if (wall->arc.has_value()) {
+        throw std::invalid_argument("curved wall requires an arc geometry edit");
+    }
     validate_wall_axis(axis, wall->thickness_meters, resolved_wall_height(*wall));
 
     struct AxisUpdate {
@@ -2560,6 +2649,9 @@ void Document::trim_extend_walls(
 ElementId Document::split_wall(ElementId wall_id, double offset_meters) {
     auto& wall_element = require_wall(wall_id);
     auto* wall = wall_element.wall();
+    if (wall->arc.has_value()) {
+        throw std::invalid_argument("curved walls cannot be split into segments");
+    }
     const auto wall_length = length(wall->axis);
     if (offset_meters <= epsilon || offset_meters >= (wall_length - epsilon)) {
         throw std::invalid_argument("split offset must stay inside wall");
@@ -3401,6 +3493,49 @@ void Document::auto_join_walls() {
                 continue;
             }
 
+            // A curved wall's axis is an endpoint chord, not its visible
+            // centerline. Never run the straight-line intersection/mitre
+            // solver against that chord: it can pull the curve endpoint to a
+            // false crossing and corrupt the authored arc. Curved walls only
+            // participate in safe end-to-end joins for now.
+            if (first_wall->arc.has_value() || second_wall->arc.has_value()) {
+                auto closest_distance = endpoint_join_tolerance_meters;
+                std::optional<Point2> first_contact;
+                std::optional<Point2> second_contact;
+                for (const auto first_point : {first_wall->axis.start, first_wall->axis.end}) {
+                    for (const auto second_point : {second_wall->axis.start, second_wall->axis.end}) {
+                        const auto distance = length(Line2{.start = first_point, .end = second_point});
+                        if (distance <= closest_distance) {
+                            closest_distance = distance;
+                            first_contact = first_point;
+                            second_contact = second_point;
+                        }
+                    }
+                }
+                if (!first_contact.has_value() || !second_contact.has_value()) {
+                    continue;
+                }
+                const auto join_point = Point2{
+                    .x = (first_contact->x + second_contact->x) * 0.5,
+                    .y = (first_contact->y + second_contact->y) * 0.5,
+                };
+                first_wall->joins.push_back(WallJoin{
+                    .other_wall_id = second->id(),
+                    .point = join_point,
+                    .other_axis = second_wall->axis,
+                    .kind = WallJoinKind::End,
+                });
+                second_wall->joins.push_back(WallJoin{
+                    .other_wall_id = first->id(),
+                    .point = join_point,
+                    .other_axis = first_wall->axis,
+                    .kind = WallJoinKind::End,
+                });
+                mark_wall_dirty(*first);
+                mark_wall_dirty(*second);
+                continue;
+            }
+
             auto line_intersection_point = line_intersection(first_wall->axis, second_wall->axis);
             auto parallel_endpoint_join = false;
             if (!line_intersection_point.has_value()) {
@@ -3474,6 +3609,49 @@ void Document::auto_join_walls() {
             const auto second_near_endpoint = endpoint_distance(*line_intersection_point, second_wall->axis) <= endpoint_join_tolerance_meters;
             if ((!first_on_segment && !first_near_endpoint) ||
                 (!second_on_segment && !second_near_endpoint)) {
+                continue;
+            }
+
+            // A short authoring chord is especially sensitive to the
+            // infinite-line repair above: a later arc chord can cross a long
+            // straight wall just beyond its own endpoint and get pulled onto
+            // that unrelated intersection. Short segments may therefore join
+            // only when one of their actual endpoints is close to an endpoint
+            // of the other wall. Longer hand-drawn walls retain the tolerant
+            // endpoint repair and true T-junction behavior.
+            const auto first_length = length(first_wall->axis);
+            const auto second_length = length(second_wall->axis);
+            if (first_length <= endpoint_join_tolerance_meters * 2.0 ||
+                second_length <= endpoint_join_tolerance_meters * 2.0) {
+                const auto short_segment_length = std::min(first_length, second_length);
+                const auto short_join_tolerance = std::min(
+                    endpoint_join_tolerance_meters,
+                    short_segment_length * 0.5);
+                const auto endpoints_are_close = [&](Line2 first_axis, Line2 second_axis) {
+                    for (const auto first_point : {first_axis.start, first_axis.end}) {
+                        for (const auto second_point : {second_axis.start, second_axis.end}) {
+                            if (length(Line2{.start = first_point, .end = second_point}) <=
+                                short_join_tolerance) {
+                                return true;
+                            }
+                        }
+                    }
+                    return false;
+                };
+                if (!endpoints_are_close(first_wall->axis, second_wall->axis)) {
+                    continue;
+                }
+            }
+
+            // Two short, gently turning wall chords can still have an
+            // ambiguous intersection just beyond both endpoints. The
+            // endpoint-pair rule above normally filters this already; retain
+            // this explicit guard for the case where both axes are short and
+            // their endpoints happen to be within tolerance on opposite
+            // sides of the same crossing.
+            if (!first_on_segment && !second_on_segment &&
+                first_length <= endpoint_join_tolerance_meters * 2.0 &&
+                second_length <= endpoint_join_tolerance_meters * 2.0) {
                 continue;
             }
 
@@ -5966,7 +6144,7 @@ void Document::validate_opening(const WallData& wall, double offset_meters, doub
         throw std::invalid_argument("opening is taller than host wall");
     }
 
-    const auto wall_length = length(wall.axis);
+    const auto wall_length = wall_centerline_length(wall);
     const auto half_width = width_meters / 2.0;
     if ((offset_meters - half_width) < 0.0 || (offset_meters + half_width) > wall_length) {
         throw std::invalid_argument("opening must stay inside host wall");
@@ -6014,7 +6192,7 @@ void Document::validate_wall_openings(const WallData& wall, std::optional<Elemen
                 " host=" + std::to_string(resolved_wall_height(wall))
             );
         }
-        const auto wall_length = length(wall.axis);
+        const auto wall_length = wall_centerline_length(wall);
         const auto half_width = opening.width_meters / 2.0;
         if ((opening.offset_meters - half_width) < 0.0 || (opening.offset_meters + half_width) > wall_length) {
             throw std::invalid_argument("opening must stay inside host wall");

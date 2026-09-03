@@ -804,6 +804,19 @@ public:
         std::uint64_t level_id = 0,
         std::uint64_t wall_type_id = 0
     );
+    ApiResult<ElementIdDTO> create_curved_wall(
+        std::string name,
+        Vec2 start,
+        Vec2 end,
+        Vec2 center,
+        double radius_meters,
+        double start_angle_radians,
+        double sweep_radians,
+        double thickness_meters,
+        double height_meters,
+        std::uint64_t level_id = 0,
+        std::uint64_t wall_type_id = 0
+    );
     ApiVoidResult set_wall_type(std::uint64_t wall_id, std::uint64_t wall_type_id);
     ApiResult<ElementIdDTO> create_wall_type(
         ApiWallTypeCategory category,

@@ -563,6 +563,64 @@ extension _TbeViewerApiMethods on TbeViewerApi {
     }
   }
 
+  int createCurvedWall(
+    ffi.Pointer<ffi.Void> handle, {
+    required String name,
+    required int levelId,
+    required double startX,
+    required double startY,
+    required double endX,
+    required double endY,
+    required double centerX,
+    required double centerY,
+    required double radiusMeters,
+    required double startAngleRadians,
+    required double sweepRadians,
+    required double thicknessMeters,
+    required double heightMeters,
+  }) {
+    final namePtr = name.toNativeUtf8();
+    final out = calloc<ffi.Uint64>();
+    final start = calloc<TbeVec2>();
+    final end = calloc<TbeVec2>();
+    final center = calloc<TbeVec2>();
+    start.ref
+      ..x = startX
+      ..y = startY;
+    end.ref
+      ..x = endX
+      ..y = endY;
+    center.ref
+      ..x = centerX
+      ..y = centerY;
+    try {
+      _check(
+        handle,
+        _createCurvedWall(
+          handle,
+          namePtr,
+          levelId,
+          start.ref,
+          end.ref,
+          center.ref,
+          radiusMeters,
+          startAngleRadians,
+          sweepRadians,
+          thicknessMeters,
+          heightMeters,
+          out,
+        ),
+      );
+      return out.value;
+    } finally {
+      calloc.free(namePtr);
+      calloc.free(start);
+      calloc.free(end);
+      calloc.free(center);
+      calloc.free(out);
+    }
+  }
+
   int createStair(
     ffi.Pointer<ffi.Void> handle, {
     required int baseLevelId,

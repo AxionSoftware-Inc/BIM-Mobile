@@ -228,21 +228,49 @@ mixin _FallbackScenePlanPainterMixin {
       final end = RenderSceneEditor.wallEndPoint(wall);
       final thickness = RenderSceneEditor.wallThickness(wall);
       if (start == null || end == null || thickness == null) continue;
+      final centerline = RenderSceneEditor.wallCenterlinePoints(wall);
+      if (centerline.length < 2) continue;
       final axis = end - start;
-      final length = axis.distanceTo(RenderScenePoint.zero());
+      var length = 0.0;
+      for (var index = 0; index + 1 < centerline.length; index += 1) {
+        length += (centerline[index + 1] - centerline[index])
+            .distanceTo(RenderScenePoint.zero());
+      }
       if (length <= 1e-8) continue;
       final half = thickness * 0.5;
-      final normal = RenderScenePoint(
-        x: -axis.y / length * half,
-        y: axis.x / length * half,
-        z: 0,
-      );
-      final corners = <RenderScenePoint>[
-        start + normal,
-        end + normal,
-        end - normal,
-        start - normal,
-      ];
+      final curved = centerline.length > 2;
+      final corners = <RenderScenePoint>[];
+      if (curved) {
+        final outside = <RenderScenePoint>[];
+        final inside = <RenderScenePoint>[];
+        for (var index = 0; index < centerline.length; index += 1) {
+          final previous = index == 0 ? centerline[index] : centerline[index - 1];
+          final next = index == centerline.length - 1
+              ? centerline[index]
+              : centerline[index + 1];
+          final tangent = next - previous;
+          final tangentLength = tangent.distanceTo(RenderScenePoint.zero());
+          if (tangentLength <= 1e-8) continue;
+          final normal = RenderScenePoint(
+            x: -tangent.y / tangentLength * half,
+            y: tangent.x / tangentLength * half,
+            z: 0,
+          );
+          outside.add(centerline[index] + normal);
+          inside.add(centerline[index] - normal);
+        }
+        if (outside.length < 2 || inside.length != outside.length) continue;
+        corners.addAll(outside);
+        corners.addAll(inside.reversed);
+      } else {
+        final axis = end - start;
+        final normal = RenderScenePoint(
+          x: -axis.y / length * half,
+          y: axis.x / length * half,
+          z: 0,
+        );
+        corners.addAll(<RenderScenePoint>[start + normal, end + normal, end - normal, start - normal]);
+      }
       final screen = corners
           .map((point) => projection.project(point).screen)
           .toList(growable: false);
@@ -250,11 +278,11 @@ mixin _FallbackScenePlanPainterMixin {
       final selected = id != null && selectedElementIds.contains(id);
       final highlighted = id != null && id == highlightedElementId;
       final path = Path()
-        ..moveTo(screen.first.dx, screen.first.dy)
-        ..lineTo(screen[1].dx, screen[1].dy)
-        ..lineTo(screen[2].dx, screen[2].dy)
-        ..lineTo(screen[3].dx, screen[3].dy)
-        ..close();
+        ..moveTo(screen.first.dx, screen.first.dy);
+      for (final point in screen.skip(1)) {
+        path.lineTo(point.dx, point.dy);
+      }
+      path.close();
       footprints.add(
         _PlanWallFootprint(
           path: path,
@@ -263,6 +291,7 @@ mixin _FallbackScenePlanPainterMixin {
           axis: axis,
           length: length,
           thickness: thickness,
+          curved: curved,
           profile: _parseLayerProfile(wall.metadata['layer_profile']),
           selected: selected,
           highlighted: highlighted,
@@ -295,6 +324,7 @@ mixin _FallbackScenePlanPainterMixin {
     if (footprints.length <= 2000) {
       final layerBands = <_PlanLayerBandKey, List<Path>>{};
       for (final footprint in footprints) {
+        if (footprint.curved) continue;
         final profile = footprint.profile;
         if (profile.isEmpty) continue;
         final profileThickness = profile.fold<double>(
@@ -406,6 +436,7 @@ mixin _FallbackScenePlanPainterMixin {
         alpha: displayStyle == RenderSceneDisplayStyle.solid ? 0.82 : 0.58,
       );
     for (final footprint in footprints) {
+      if (footprint.curved) continue;
       final axisUnit = footprint.axis.scale(1.0 / footprint.length);
       final normalUnit = RenderScenePoint(
         x: -axisUnit.y,
@@ -500,18 +531,56 @@ mixin _FallbackScenePlanPainterMixin {
         continue;
       }
       final axis = end - start;
-      final length = axis.distanceTo(RenderScenePoint.zero());
+      final centerline = RenderSceneEditor.wallCenterlinePoints(host);
+      var length = 0.0;
+      for (var index = 0; index + 1 < centerline.length; index += 1) {
+        length += (centerline[index + 1] - centerline[index])
+            .distanceTo(RenderScenePoint.zero());
+      }
+      if (length <= 1e-8) {
+        length = axis.distanceTo(RenderScenePoint.zero());
+      }
       if (length <= 1e-8 || width <= 1e-8) continue;
-      final axisUnit = axis.scale(1.0 / length);
+      RenderScenePoint pointAt(double distance) {
+        if (centerline.length < 2) return start + axis.scale(distance / length);
+        var cursor = 0.0;
+        for (var index = 0; index + 1 < centerline.length; index += 1) {
+          final segment = centerline[index + 1] - centerline[index];
+          final segmentLength = segment.distanceTo(RenderScenePoint.zero());
+          if (cursor + segmentLength >= distance || index == centerline.length - 2) {
+            final fraction = segmentLength <= 1e-8
+                ? 0.0
+                : ((distance - cursor) / segmentLength).clamp(0.0, 1.0);
+            return centerline[index] + segment.scale(fraction);
+          }
+          cursor += segmentLength;
+        }
+        return centerline.last;
+      }
+      RenderScenePoint tangentAt(double distance) {
+        final before = pointAt((distance - 0.02).clamp(0.0, length));
+        final after = pointAt((distance + 0.02).clamp(0.0, length));
+        final tangent = after - before;
+        final tangentLength = tangent.distanceTo(RenderScenePoint.zero());
+        return tangentLength <= 1e-8 ? axis.scale(1.0 / length) : tangent.scale(1.0 / tangentLength);
+      }
+      final curved = centerline.length > 2;
+      final axisUnit = curved ? tangentAt(offset) : axis.scale(1.0 / length);
       final normal = RenderScenePoint(
         x: -axisUnit.y,
         y: axisUnit.x,
         z: 0,
       );
-      final center = start + axisUnit.scale(offset);
       final halfWidth = width * 0.5;
-      final first = center - axisUnit.scale(halfWidth);
-      final second = center + axisUnit.scale(halfWidth);
+      final center = curved
+          ? pointAt(offset)
+          : start + axisUnit.scale(offset);
+      final first = curved
+          ? pointAt((offset - halfWidth).clamp(0.0, length))
+          : center - axisUnit.scale(halfWidth);
+      final second = curved
+          ? pointAt((offset + halfWidth).clamp(0.0, length))
+          : center + axisUnit.scale(halfWidth);
       final hostThickness = RenderSceneEditor.wallThickness(host) ?? 0.20;
       final halfThickness = hostThickness * 0.5;
       final cutCorners = <RenderScenePoint>[

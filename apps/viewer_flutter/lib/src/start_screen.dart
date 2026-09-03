@@ -34,30 +34,38 @@ class StartScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final colors = theme.colorScheme;
 
     return Scaffold(
+      backgroundColor: colors.surfaceContainerLowest,
       body: SafeArea(
         child: LayoutBuilder(
           builder: (context, constraints) {
             final availableWidth =
-                constraints.maxWidth.isFinite ? constraints.maxWidth : 1180.0;
-            final contentWidth = availableWidth.clamp(0.0, 1180.0).toDouble();
-            final columnCount = contentWidth >= 1120
-                ? 3
-                : contentWidth >= 820
-                    ? 2
-                    : 1;
-            final cardGap = columnCount == 3 ? 14.0 : 18.0;
-            final cardWidth = columnCount == 1
-                ? contentWidth
-                : (contentWidth - cardGap * (columnCount - 1)) / columnCount;
+                constraints.maxWidth.isFinite ? constraints.maxWidth : 1600.0;
+            final horizontalPadding = availableWidth >= 1200 ? 32.0 : 18.0;
+            final contentWidth = (availableWidth - horizontalPadding * 2)
+                .clamp(0.0, 1480.0)
+                .toDouble();
+            // The tablet landscape layout is deliberately five columns so the
+            // preview and project name remain readable at a glance.
+            // Smaller windows retain readable cards instead of compressing
+            // the same information into unusable slivers.
+            final columnCount = contentWidth >= 1080
+                ? 5
+                : contentWidth >= 680
+                    ? 3
+                    : contentWidth >= 420
+                        ? 2
+                        : 1;
+            const cardGap = 14.0;
 
             return SingleChildScrollView(
               padding: EdgeInsets.fromLTRB(
-                contentWidth >= 900 ? 34 : 20,
-                24,
-                contentWidth >= 900 ? 34 : 20,
-                40,
+                horizontalPadding,
+                18,
+                horizontalPadding,
+                36,
               ),
               child: Center(
                 child: SizedBox(
@@ -65,21 +73,11 @@ class StartScreen extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: <Widget>[
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: IconButton(
-                          tooltip: 'Settings',
-                          onPressed: busy ? null : onSettings,
-                          style: IconButton.styleFrom(
-                            backgroundColor:
-                                theme.colorScheme.secondaryContainer,
-                            foregroundColor:
-                                theme.colorScheme.onSecondaryContainer,
-                          ),
-                          icon: const Icon(Icons.settings_outlined),
-                        ),
+                      _StartHeader(
+                        busy: busy,
+                        onSettings: onSettings,
                       ),
-                      const SizedBox(height: 6),
+                      const SizedBox(height: 20),
                       _StartHero(
                         busy: busy,
                         onOpen: onOpen,
@@ -98,23 +96,16 @@ class StartScreen extends StatelessWidget {
                         const SizedBox(height: 18),
                         _StartError(message: errorMessage!),
                       ],
-                      const SizedBox(height: 28),
-                      Text(
-                        'Templates',
-                        style: theme.textTheme.headlineSmall
-                            ?.copyWith(fontWeight: FontWeight.w700),
-                      ),
-                      const SizedBox(height: 14),
-                      Wrap(
-                        spacing: cardGap,
-                        runSpacing: cardGap,
+                      const SizedBox(height: 26),
+                      const _StartSectionHeader(title: 'Project templates'),
+                      const SizedBox(height: 12),
+                      _StartCardGrid(
+                        columnCount: columnCount,
+                        gap: cardGap,
                         children: <Widget>[
                           _TemplateCard(
-                            width: cardWidth,
                             template: WorkspaceTemplate.default3,
                             title: 'Default building',
-                            subtitle: '3-storey simple starter project',
-                            meta: '3 levels · ready to edit',
                             icon: Icons.apartment_outlined,
                             onPressed: busy
                                 ? null
@@ -123,12 +114,8 @@ class StartScreen extends StatelessWidget {
                                     ),
                           ),
                           _TemplateCard(
-                            width: cardWidth,
                             template: WorkspaceTemplate.tower9,
                             title: 'Residential tower',
-                            subtitle:
-                                '9-storey single-building starter project',
-                            meta: '9 levels · vertical study',
                             icon: Icons.location_city_outlined,
                             onPressed: busy
                                 ? null
@@ -137,11 +124,8 @@ class StartScreen extends StatelessWidget {
                                     ),
                           ),
                           _TemplateCard(
-                            width: cardWidth,
                             template: WorkspaceTemplate.campus6x9,
                             title: 'Residential campus',
-                            subtitle: '6 buildings, 9 storeys each',
-                            meta: '54 levels · campus study',
                             icon: Icons.grid_view_rounded,
                             onPressed: busy
                                 ? null
@@ -150,12 +134,8 @@ class StartScreen extends StatelessWidget {
                                     ),
                           ),
                           _TemplateCard(
-                            width: cardWidth,
                             template: WorkspaceTemplate.modern3,
                             title: 'Modern glass house',
-                            subtitle:
-                                'Courtyard house with ordered site layout',
-                            meta: '3 levels · lawn · asphalt · paving',
                             icon: Icons.house_siding_outlined,
                             onPressed: busy
                                 ? null
@@ -164,11 +144,8 @@ class StartScreen extends StatelessWidget {
                                     ),
                           ),
                           _TemplateCard(
-                            width: cardWidth,
                             template: WorkspaceTemplate.glassTower9,
                             title: 'Glass residential tower',
-                            subtitle: 'Central service core and curtain facade',
-                            meta: '9 levels · glass wall · core stair',
                             icon: Icons.business_outlined,
                             onPressed: busy
                                 ? null
@@ -177,11 +154,8 @@ class StartScreen extends StatelessWidget {
                                     ),
                           ),
                           _TemplateCard(
-                            width: cardWidth,
                             template: WorkspaceTemplate.glassCampus6x9,
                             title: 'Glass courtyard campus',
-                            subtitle: 'Six ordered towers around a shared road',
-                            meta: '54 levels · road · plaza · walkways',
                             icon: Icons.account_balance_outlined,
                             onPressed: busy
                                 ? null
@@ -191,34 +165,18 @@ class StartScreen extends StatelessWidget {
                           ),
                         ],
                       ),
-                      const SizedBox(height: 30),
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: <Widget>[
-                          Expanded(
-                            child: Text(
-                              'IFC sample projects',
-                              style: theme.textTheme.headlineSmall?.copyWith(
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
-                          Text(
-                            'Download on first open',
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: theme.colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                        ],
+                      const SizedBox(height: 28),
+                      const _StartSectionHeader(
+                        title: 'IFC sample projects',
+                        trailing: 'Download on first open',
                       ),
-                      const SizedBox(height: 14),
-                      Wrap(
-                        spacing: cardGap,
-                        runSpacing: cardGap,
+                      const SizedBox(height: 12),
+                      _StartCardGrid(
+                        columnCount: columnCount,
+                        gap: cardGap,
                         children: onlineIfcTemplates
                             .map(
                               (template) => _IfcTemplateCard(
-                                width: cardWidth,
                                 template: template,
                                 onPressed: busy || onSelectIfcTemplate == null
                                     ? null
@@ -239,14 +197,126 @@ class StartScreen extends StatelessWidget {
   }
 }
 
+class _StartHeader extends StatelessWidget {
+  const _StartHeader({
+    required this.busy,
+    required this.onSettings,
+  });
+
+  final bool busy;
+  final VoidCallback onSettings;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    return Row(
+      children: <Widget>[
+        Container(
+          width: 36,
+          height: 36,
+          decoration: BoxDecoration(
+            color: colors.surface,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: colors.primary.withValues(alpha: 0.36),
+            ),
+          ),
+          child: Icon(
+            Icons.view_in_ar_outlined,
+            color: colors.primary,
+            size: 21,
+          ),
+        ),
+        const SizedBox(width: 10),
+        Text(
+          'Tablet BIM',
+          style: theme.textTheme.titleLarge?.copyWith(
+            fontWeight: FontWeight.w700,
+            letterSpacing: -0.2,
+          ),
+        ),
+        const Spacer(),
+        IconButton(
+          tooltip: 'Settings',
+          onPressed: busy ? null : onSettings,
+          icon: const Icon(Icons.settings_outlined),
+        ),
+      ],
+    );
+  }
+}
+
+class _StartSectionHeader extends StatelessWidget {
+  const _StartSectionHeader({
+    required this.title,
+    this.trailing,
+  });
+
+  final String title;
+  final String? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: <Widget>[
+        Text(
+          title,
+          style: theme.textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        if (trailing != null) ...<Widget>[
+          const Spacer(),
+          Text(
+            trailing!,
+            style: theme.textTheme.labelMedium?.copyWith(
+              color: colors.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _StartCardGrid extends StatelessWidget {
+  const _StartCardGrid({
+    required this.columnCount,
+    required this.gap,
+    required this.children,
+  });
+
+  final int columnCount;
+  final double gap;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: children.length,
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: columnCount,
+        crossAxisSpacing: gap,
+        mainAxisSpacing: gap,
+        mainAxisExtent: columnCount == 5 ? 198 : 264,
+      ),
+      itemBuilder: (context, index) => children[index],
+    );
+  }
+}
+
 class _IfcTemplateCard extends StatelessWidget {
   const _IfcTemplateCard({
-    required this.width,
     required this.template,
     required this.onPressed,
   });
 
-  final double width;
   final IfcTemplate template;
   final VoidCallback? onPressed;
 
@@ -254,93 +324,85 @@ class _IfcTemplateCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
-    final enabled = onPressed != null;
-    return SizedBox(
-      width: width,
-      height: 324,
-      child: Card(
-        clipBehavior: Clip.antiAlias,
-        elevation: enabled ? 1.5 : 0,
-        shadowColor: colors.shadow.withValues(alpha: 0.18),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-          side: BorderSide(color: colors.outlineVariant.withValues(alpha: 0.7)),
-        ),
-        child: InkWell(
-          onTap: onPressed,
-          child: Column(
-            children: <Widget>[
-              SizedBox(
-                width: double.infinity,
-                height: 188,
-                child: RepaintBoundary(
-                  child: _IfcTemplatePreview(
-                    kind: template.kind,
-                    primary: colors.primary,
-                    secondary: colors.tertiary,
-                    surface: colors.surfaceContainerHighest,
-                  ),
-                ),
-              ),
-              Divider(
-                height: 1,
-                color: colors.outlineVariant.withValues(alpha: 0.68),
-              ),
-              Expanded(
+    return _StartProjectCard(
+      title: template.title,
+      icon: Icons.cloud_download_outlined,
+      onPressed: onPressed,
+      preview: _IfcTemplatePreview(
+        kind: template.kind,
+        primary: colors.primary,
+        secondary: colors.tertiary,
+        surface: colors.surfaceContainerHighest,
+      ),
+    );
+  }
+}
+
+class _StartProjectCard extends StatelessWidget {
+  const _StartProjectCard({
+    required this.title,
+    required this.icon,
+    required this.onPressed,
+    required this.preview,
+  });
+
+  final String title;
+  final IconData icon;
+  final VoidCallback? onPressed;
+  final Widget preview;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      margin: EdgeInsets.zero,
+      elevation: 0,
+      color: colors.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: BorderSide(color: colors.outlineVariant.withValues(alpha: 0.9)),
+      ),
+      child: InkWell(
+        onTap: onPressed,
+        child: Column(
+          children: <Widget>[
+            SizedBox(
+              width: double.infinity,
+              height: 124,
+              child: RepaintBoundary(child: preview),
+            ),
+            Divider(
+              height: 1,
+              color: colors.outlineVariant.withValues(alpha: 0.68),
+            ),
+            Expanded(
+              child: Align(
+                alignment: Alignment.centerLeft,
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(17, 14, 15, 14),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  padding: const EdgeInsets.fromLTRB(13, 8, 13, 8),
+                  child: Row(
                     children: <Widget>[
-                      Row(
-                        children: <Widget>[
-                          Icon(Icons.cloud_download_outlined,
-                              size: 18, color: colors.primary),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              template.title,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: theme.textTheme.titleMedium?.copyWith(
-                                fontWeight: FontWeight.w700,
-                                height: 1.08,
-                              ),
-                            ),
+                      Icon(icon, size: 17, color: colors.primary),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            fontWeight: FontWeight.w600,
+                            height: 1.12,
                           ),
-                          const SizedBox(width: 6),
-                          Icon(
-                            Icons.arrow_forward_rounded,
-                            size: 20,
-                            color: colors.onSurfaceVariant,
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 5),
-                      Text(
-                        template.subtitle,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: colors.onSurfaceVariant,
-                          height: 1.25,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        template.meta.toUpperCase(),
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: colors.primary,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 0.45,
                         ),
                       ),
                     ],
                   ),
                 ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
@@ -391,19 +453,8 @@ class _IfcTemplatePreviewPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     canvas.drawRect(
       Offset.zero & size,
-      Paint()..color = surface.withValues(alpha: 0.72),
+      Paint()..color = surface.withValues(alpha: 0.44),
     );
-    final gridPaint = Paint()
-      ..color = primary.withValues(alpha: 0.07)
-      ..strokeWidth = 1;
-    for (var x = -size.height; x < size.width + size.height; x += 24) {
-      canvas.drawLine(
-        Offset(x, size.height),
-        Offset(x + size.height, 0),
-        gridPaint,
-      );
-    }
-
     switch (kind) {
       case IfcTemplateKind.building:
         _drawBuilding(canvas, size, floors: 5, widthFactor: 0.34);
@@ -548,33 +599,49 @@ class _RecoveryBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Card(
-      margin: EdgeInsets.zero,
-      color: theme.colorScheme.tertiaryContainer.withValues(alpha: 0.6),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 10, 12),
-        child: Row(
-          children: <Widget>[
-            Icon(Icons.restore_outlined, color: theme.colorScheme.tertiary),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                'Unsaved recovery available · ${entry.projectName}',
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.titleSmall,
+    final colors = theme.colorScheme;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 7, 8, 7),
+      decoration: BoxDecoration(
+        color: colors.tertiaryContainer.withValues(alpha: 0.28),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: colors.outlineVariant.withValues(alpha: 0.9)),
+      ),
+      child: Row(
+        children: <Widget>[
+          Icon(Icons.restore_outlined, size: 20, color: colors.tertiary),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Unsaved recovery available · ${entry.projectName}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.labelLarge,
+            ),
+          ),
+          TextButton(
+            onPressed: busy ? null : onDismiss,
+            style: TextButton.styleFrom(
+              minimumSize: const Size(0, 34),
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: const Text('Dismiss'),
+          ),
+          FilledButton.tonal(
+            onPressed: busy ? null : onRecover,
+            style: FilledButton.styleFrom(
+              minimumSize: const Size(0, 34),
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(6),
               ),
             ),
-            TextButton(
-              onPressed: busy ? null : onDismiss,
-              child: const Text('Dismiss'),
-            ),
-            FilledButton.tonal(
-              onPressed: busy ? null : onRecover,
-              child: const Text('Recover'),
-            ),
-          ],
-        ),
+            child: const Text('Recover'),
+          ),
+        ],
       ),
     );
   }
@@ -597,11 +664,11 @@ class _StartHero extends StatelessWidget {
     final colors = theme.colorScheme;
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(20, 17, 20, 17),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
       decoration: BoxDecoration(
-        color: colors.primaryContainer.withValues(alpha: 0.32),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: colors.primary.withValues(alpha: 0.12)),
+        color: colors.surface,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: colors.outlineVariant.withValues(alpha: 0.9)),
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
@@ -610,22 +677,24 @@ class _StartHero extends StatelessWidget {
             runSpacing: 10,
             children: <Widget>[
               FilledButton.icon(
-                onPressed: busy ? null : onOpen,
-                icon: const Icon(Icons.folder_open_outlined),
-                label: const Text('Open project'),
-              ),
-              OutlinedButton.icon(
                 onPressed: busy ? null : onCreate,
+                style: _startActionButtonStyle(colors.primary),
                 icon: const Icon(Icons.add_box_outlined),
                 label: const Text('Create new'),
+              ),
+              OutlinedButton.icon(
+                onPressed: busy ? null : onOpen,
+                style: _startActionButtonStyle(colors.outline),
+                icon: const Icon(Icons.folder_open_outlined),
+                label: const Text('Open project'),
               ),
             ],
           );
           final title = Text(
             'Start a project',
-            style: theme.textTheme.headlineSmall?.copyWith(
-              fontWeight: FontWeight.w800,
-              color: colors.onPrimaryContainer,
+            style: theme.textTheme.titleLarge?.copyWith(
+              fontWeight: FontWeight.w700,
+              color: colors.onSurface,
             ),
           );
           if (constraints.maxWidth < 620) {
@@ -646,118 +715,41 @@ class _StartHero extends StatelessWidget {
   }
 }
 
+ButtonStyle _startActionButtonStyle(Color borderColor) {
+  return OutlinedButton.styleFrom(
+    minimumSize: const Size(0, 40),
+    padding: const EdgeInsets.symmetric(horizontal: 14),
+    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+    side: BorderSide(color: borderColor.withValues(alpha: 0.8)),
+  );
+}
+
 class _TemplateCard extends StatelessWidget {
   const _TemplateCard({
-    required this.width,
     required this.template,
     required this.title,
-    required this.subtitle,
-    required this.meta,
     required this.icon,
     required this.onPressed,
   });
 
-  final double width;
   final WorkspaceTemplate template;
   final String title;
-  final String subtitle;
-  final String meta;
   final IconData icon;
   final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colors = theme.colorScheme;
-    final enabled = onPressed != null;
-    return SizedBox(
-      width: width,
-      // Six templates now share the same responsive grid; keep enough room
-      // for a two-line modern title on compact tablet widths.
-      height: 332,
-      child: Card(
-        clipBehavior: Clip.antiAlias,
-        elevation: enabled ? 1.5 : 0,
-        shadowColor: colors.shadow.withValues(alpha: 0.18),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-          side: BorderSide(color: colors.outlineVariant.withValues(alpha: 0.7)),
-        ),
-        child: InkWell(
-          onTap: onPressed,
-          child: Column(
-            children: <Widget>[
-              SizedBox(
-                width: double.infinity,
-                height: 188,
-                child: RepaintBoundary(
-                  child: _TemplatePreview(
-                    template: template,
-                    primary: colors.primary,
-                    secondary: colors.tertiary,
-                    surface: colors.surfaceContainerHighest,
-                  ),
-                ),
-              ),
-              Divider(
-                height: 1,
-                color: colors.outlineVariant.withValues(alpha: 0.68),
-              ),
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(17, 14, 15, 14),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      Row(
-                        children: <Widget>[
-                          Icon(icon, size: 18, color: colors.primary),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              title,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: theme.textTheme.titleMedium?.copyWith(
-                                fontWeight: FontWeight.w700,
-                                height: 1.08,
-                              ),
-                            ),
-                          ),
-                          const Spacer(),
-                          Icon(
-                            Icons.arrow_forward_rounded,
-                            size: 20,
-                            color: colors.onSurfaceVariant,
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 5),
-                      Text(
-                        subtitle,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: colors.onSurfaceVariant,
-                          height: 1.25,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        meta.toUpperCase(),
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: colors.primary,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 0.45,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
+    final colors = Theme.of(context).colorScheme;
+    return _StartProjectCard(
+      title: title,
+      icon: icon,
+      onPressed: onPressed,
+      preview: _TemplatePreview(
+        template: template,
+        primary: colors.primary,
+        secondary: colors.tertiary,
+        surface: colors.surfaceContainerHighest,
       ),
     );
   }
@@ -805,19 +797,8 @@ class _TemplatePreviewPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final background = Paint()..color = surface.withValues(alpha: 0.72);
+    final background = Paint()..color = surface.withValues(alpha: 0.44);
     canvas.drawRect(Offset.zero & size, background);
-
-    final gridPaint = Paint()
-      ..color = primary.withValues(alpha: 0.07)
-      ..strokeWidth = 1;
-    for (var x = -size.height; x < size.width + size.height; x += 24) {
-      canvas.drawLine(
-        Offset(x, size.height),
-        Offset(x + size.height, 0),
-        gridPaint,
-      );
-    }
 
     switch (template) {
       case WorkspaceTemplate.default3:

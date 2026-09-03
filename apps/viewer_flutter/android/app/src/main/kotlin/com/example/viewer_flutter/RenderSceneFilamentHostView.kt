@@ -3051,9 +3051,12 @@ internal class RenderSceneFilamentHostView(
           // Keep Solid glass visibly see-through even when several coplanar
           // faces overlap; the low neutral alpha avoids a dark glass slab.
           "glass" -> floatArrayOf(0.92f, 0.92f, 0.92f, 0.10f)
-          // Exterior and interior wall faces use a soft white fill in Solid;
-          // their semantic difference remains in the independent edge pass.
-          else -> floatArrayOf(0.94f, 0.94f, 0.94f, 1.0f)
+          // Exterior and interior wall faces use a light neutral fill in
+          // Solid. Keep enough separation from the paper-white viewport so a
+          // valid unselected wall (especially a curved wall) never reads as
+          // wireframe; semantic differences remain in the independent edge
+          // pass.
+          else -> floatArrayOf(0.78f, 0.79f, 0.80f, 1.0f)
         }
       }
       val surface = when (viewportTheme) {
@@ -7339,6 +7342,36 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
    * readable and stable while the plan camera pans or zooms.
    */
   private fun drawPlanWallContours(canvas: Canvas) {
+    // Build one screen-space cut path for the active wall network. Drawing a
+    // separate filled polygon and outline for every wall makes coincident
+    // join edges get rasterized repeatedly; at thin zoom levels those doubled
+    // pixels shimmer while the plan camera moves. The semantic wall objects
+    // remain separate for picking/editing, but the documentation contour is
+    // painted once after a 2D union.
+    val joinedPath = Path()
+    var hasJoinedPath = false
+
+    fun addFootprint(profile: List<ScenePoint>): Boolean {
+      if (profile.size < 2) return false
+      val projected = profile.mapNotNull(::project)
+      if (projected.size < 2) return false
+      val wallPath = Path().apply {
+        moveTo(projected.first().x, projected.first().y)
+        for (point in projected.drop(1)) lineTo(point.x, point.y)
+        if (projected.size >= 3) close()
+      }
+      if (!hasJoinedPath) {
+        joinedPath.set(wallPath)
+        hasJoinedPath = true
+      } else if (!joinedPath.op(wallPath, Path.Op.UNION)) {
+        // Android's path boolean can reject a numerically degenerate polygon
+        // at an extreme zoom. Keep that rare wall visible without allowing a
+        // failed union to erase the already accumulated network.
+        joinedPath.addPath(wallPath)
+      }
+      return true
+    }
+
     for (objectData in allObjects) {
       if (normalizeKind(objectData.kind) != "wall" ||
         (visibleKinds.isNotEmpty() && !visibleKinds.contains("wall"))
@@ -7357,26 +7390,7 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
         ?.filter { it.x.isFinite() && it.z.isFinite() }
         ?: emptyList()
       if (profile.size >= 2) {
-        val projectedProfile = profile.mapNotNull(::project)
-        if (projectedProfile.size >= 2 && !wireframe) {
-          val fillPath = Path().apply {
-            moveTo(projectedProfile.first().x, projectedProfile.first().y)
-            for (point in projectedProfile.drop(1)) lineTo(point.x, point.y)
-            close()
-          }
-          canvas.drawPath(fillPath, planWallFill)
-        }
-        for (index in profile.indices) {
-          val first = project(profile[index]) ?: continue
-          val second = project(profile[(index + 1) % profile.size]) ?: continue
-          if (kotlin.math.hypot(
-              (second.x - first.x).toDouble(),
-              (second.y - first.y).toDouble(),
-            ) > 0.5
-          ) {
-            canvas.drawLine(first.x, first.y, second.x, second.y, planWallOutline)
-          }
-        }
+        addFootprint(profile)
         continue
       }
 
@@ -7394,28 +7408,20 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
       if (!length.isFinite() || length <= 1.0e-8) continue
       val nx = -dy / length * thickness * 0.5
       val ny = dx / length * thickness * 0.5
-      if (!wireframe) {
-        val projectedCorners = listOf(
-          project(sourcePlanPoint(startX + nx, startY + ny)),
-          project(sourcePlanPoint(endX + nx, endY + ny)),
-          project(sourcePlanPoint(endX - nx, endY - ny)),
-          project(sourcePlanPoint(startX - nx, startY - ny)),
-        ).filterNotNull()
-        if (projectedCorners.size == 4) {
-          val fillPath = Path().apply {
-            moveTo(projectedCorners[0].x, projectedCorners[0].y)
-            for (point in projectedCorners.drop(1)) lineTo(point.x, point.y)
-            close()
-          }
-          canvas.drawPath(fillPath, planWallFill)
-        }
-      }
-      for (side in listOf(1.0, -1.0)) {
-        val first = project(sourcePlanPoint(startX + nx * side, startY + ny * side)) ?: continue
-        val second = project(sourcePlanPoint(endX + nx * side, endY + ny * side)) ?: continue
-        canvas.drawLine(first.x, first.y, second.x, second.y, planWallOutline)
-      }
+      addFootprint(
+        listOf(
+          sourcePlanPoint(startX + nx, startY + ny),
+          sourcePlanPoint(endX + nx, endY + ny),
+          sourcePlanPoint(endX - nx, endY - ny),
+          sourcePlanPoint(startX - nx, startY - ny),
+        ),
+      )
     }
+    if (!hasJoinedPath) return
+    if (!wireframe) {
+      canvas.drawPath(joinedPath, planWallFill)
+    }
+    canvas.drawPath(joinedPath, planWallOutline)
   }
 
   private fun drawPlanOpeningSymbols(canvas: Canvas) {

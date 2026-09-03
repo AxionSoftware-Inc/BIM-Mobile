@@ -388,6 +388,181 @@ Point3 to_world_point(const Point3& local_point, const Line2& axis) {
     };
 }
 
+struct ArcStation {
+    double distance_meters{};
+    Point2 centerline{};
+    Point2 radial{};
+};
+
+std::vector<ArcStation> arc_stations(const WallData& wall, const WallProfile2D& profile) {
+    if (!wall.arc.has_value()) return {};
+    const auto& arc = *wall.arc;
+    const auto path_length = std::abs(arc.radius_meters * arc.sweep_radians);
+    if (path_length <= epsilon || arc.radius_meters <= epsilon) return {};
+
+    std::vector<double> distances{0.0, path_length};
+    for (const auto& opening : profile.openings) {
+        distances.push_back(std::clamp(opening.x_min, 0.0, path_length));
+        distances.push_back(std::clamp(opening.x_max, 0.0, path_length));
+    }
+    const auto segment_count = std::clamp(static_cast<int>(std::ceil(path_length / 0.18)), 12, 96);
+    for (int index = 1; index < segment_count; ++index) {
+        distances.push_back(path_length * static_cast<double>(index) / static_cast<double>(segment_count));
+    }
+    std::sort(distances.begin(), distances.end());
+    distances.erase(std::unique(distances.begin(), distances.end(), [](double left, double right) {
+        return std::abs(left - right) <= 1.0e-8;
+    }), distances.end());
+
+    std::vector<ArcStation> stations;
+    stations.reserve(distances.size());
+    for (const auto distance : distances) {
+        const auto fraction = distance / path_length;
+        const auto angle = arc.start_angle_radians + (arc.sweep_radians * fraction);
+        const auto radial = Point2{.x = std::cos(angle), .y = std::sin(angle)};
+        stations.push_back(ArcStation{
+            .distance_meters = distance,
+            .centerline = Point2{
+                .x = arc.center.x + (radial.x * arc.radius_meters),
+                .y = arc.center.y + (radial.y * arc.radius_meters),
+            },
+            .radial = radial,
+        });
+    }
+    return stations;
+}
+
+bool opening_contains_distance(const OpeningRectangle& opening, double distance) {
+    return distance > opening.x_min + epsilon && distance < opening.x_max - epsilon;
+}
+
+void append_curved_wall_band(
+    MeshBuffer& mesh,
+    Point2 outer,
+    Point2 inner,
+    double z_min,
+    double z_max,
+    double base_elevation,
+    ElementId material_id
+) {
+    if (z_max <= z_min + epsilon) return;
+    const auto base = static_cast<std::uint32_t>(mesh.vertices.size());
+    mesh.vertices.push_back(Point3{.x = outer.x, .y = outer.y, .z = base_elevation + z_min});
+    mesh.vertices.push_back(Point3{.x = inner.x, .y = inner.y, .z = base_elevation + z_min});
+    mesh.vertices.push_back(Point3{.x = inner.x, .y = inner.y, .z = base_elevation + z_max});
+    mesh.vertices.push_back(Point3{.x = outer.x, .y = outer.y, .z = base_elevation + z_max});
+    append_quad(mesh, base + 0, base + 1, base + 2, base + 3, material_id);
+}
+
+MeshBuffer build_curved_wall_mesh(
+    const WallData& wall,
+    const WallProfile2D& profile,
+    double height_meters,
+    double base_elevation,
+    ElementId material_id
+) {
+    MeshBuffer mesh;
+    const auto stations = arc_stations(wall, profile);
+    if (stations.size() < 2) return mesh;
+    const auto half_thickness = wall.thickness_meters / 2.0;
+
+    struct StationVertices {
+        std::uint32_t outer_bottom{};
+        std::uint32_t inner_bottom{};
+        std::uint32_t outer_top{};
+        std::uint32_t inner_top{};
+    };
+    std::vector<StationVertices> vertices;
+    vertices.reserve(stations.size());
+    for (const auto& station : stations) {
+        const auto outer = Point2{
+            .x = station.centerline.x + (station.radial.x * half_thickness),
+            .y = station.centerline.y + (station.radial.y * half_thickness),
+        };
+        const auto inner = Point2{
+            .x = station.centerline.x - (station.radial.x * half_thickness),
+            .y = station.centerline.y - (station.radial.y * half_thickness),
+        };
+        const auto base = static_cast<std::uint32_t>(mesh.vertices.size());
+        mesh.vertices.push_back(Point3{.x = outer.x, .y = outer.y, .z = base_elevation});
+        mesh.vertices.push_back(Point3{.x = inner.x, .y = inner.y, .z = base_elevation});
+        mesh.vertices.push_back(Point3{.x = outer.x, .y = outer.y, .z = base_elevation + height_meters});
+        mesh.vertices.push_back(Point3{.x = inner.x, .y = inner.y, .z = base_elevation + height_meters});
+        vertices.push_back(StationVertices{
+            .outer_bottom = base,
+            .inner_bottom = base + 1,
+            .outer_top = base + 2,
+            .inner_top = base + 3,
+        });
+    }
+
+    for (std::size_t index = 0; index + 1 < stations.size(); ++index) {
+        const auto& first = stations[index];
+        const auto& second = stations[index + 1];
+        const auto midpoint = (first.distance_meters + second.distance_meters) * 0.5;
+        const auto opening = std::find_if(profile.openings.begin(), profile.openings.end(), [&](const auto& candidate) {
+            return opening_contains_distance(candidate, midpoint);
+        });
+        const auto& a = vertices[index];
+        const auto& b = vertices[index + 1];
+        // Top and bottom remain continuous; a hosted opening removes only the
+        // vertical wall faces between its sill and head.
+        append_quad(mesh, a.outer_bottom, b.outer_bottom, b.inner_bottom, a.inner_bottom, material_id);
+        append_quad(mesh, a.outer_top, a.inner_top, b.inner_top, b.outer_top, material_id);
+        const auto append_side_bands = [&](std::uint32_t first_bottom, std::uint32_t second_bottom,
+                                           std::uint32_t second_top, std::uint32_t first_top) {
+            if (opening == profile.openings.end()) {
+                append_quad(mesh, first_bottom, second_bottom, second_top, first_top, material_id);
+                return;
+            }
+            append_curved_wall_band(mesh,
+                Point2{.x = mesh.vertices[first_bottom].x, .y = mesh.vertices[first_bottom].y},
+                Point2{.x = mesh.vertices[second_bottom].x, .y = mesh.vertices[second_bottom].y},
+                0.0, opening->z_min, base_elevation, material_id);
+            append_curved_wall_band(mesh,
+                Point2{.x = mesh.vertices[first_top].x, .y = mesh.vertices[first_top].y},
+                Point2{.x = mesh.vertices[second_top].x, .y = mesh.vertices[second_top].y},
+                opening->z_max, height_meters, base_elevation, material_id);
+        };
+        append_side_bands(a.outer_bottom, b.outer_bottom, b.outer_top, a.outer_top);
+        append_side_bands(a.inner_bottom, b.inner_bottom, b.inner_top, a.inner_top);
+    }
+
+    const auto append_end_cap = [&](const StationVertices& station) {
+        append_quad(mesh, station.outer_bottom, station.inner_bottom, station.inner_top, station.outer_top, material_id);
+    };
+    append_end_cap(vertices.front());
+    append_end_cap(vertices.back());
+
+    // Add the four reveal faces at every opening boundary.  The main wall
+    // faces above are split at these exact stations, so the opening remains a
+    // real void instead of a panel painted over a solid curved wall.
+    for (const auto& opening : profile.openings) {
+        for (const auto distance : {opening.x_min, opening.x_max}) {
+            const auto station = std::find_if(stations.begin(), stations.end(), [&](const auto& candidate) {
+                return std::abs(candidate.distance_meters - distance) <= 1.0e-8;
+            });
+            if (station == stations.end()) continue;
+            const auto radial = station->radial;
+            const auto outer = Point2{
+                .x = station->centerline.x + (radial.x * half_thickness),
+                .y = station->centerline.y + (radial.y * half_thickness),
+            };
+            const auto inner = Point2{
+                .x = station->centerline.x - (radial.x * half_thickness),
+                .y = station->centerline.y - (radial.y * half_thickness),
+            };
+            const auto base = static_cast<std::uint32_t>(mesh.vertices.size());
+            mesh.vertices.push_back(Point3{.x = outer.x, .y = outer.y, .z = base_elevation + opening.z_min});
+            mesh.vertices.push_back(Point3{.x = inner.x, .y = inner.y, .z = base_elevation + opening.z_min});
+            mesh.vertices.push_back(Point3{.x = inner.x, .y = inner.y, .z = base_elevation + opening.z_max});
+            mesh.vertices.push_back(Point3{.x = outer.x, .y = outer.y, .z = base_elevation + opening.z_max});
+            append_quad(mesh, base + 0, base + 1, base + 2, base + 3, material_id);
+        }
+    }
+    return mesh;
+}
+
 } // namespace
 
 std::string GeometryService::backend_name() const {
@@ -399,7 +574,9 @@ std::string GeometryService::backend_name() const {
 }
 
 WallProfile2D GeometryService::build_wall_profile(const WallData& wall) const {
-    const auto length = wall_length(wall.axis);
+    const auto length = wall.arc.has_value()
+        ? std::abs(wall.arc->radius_meters * wall.arc->sweep_radians)
+        : wall_length(wall.axis);
     if (length <= epsilon || wall.thickness_meters <= 0.0 || wall.height_meters <= 0.0) {
         throw std::invalid_argument("wall dimensions must be positive");
     }
@@ -413,6 +590,33 @@ WallProfile2D GeometryService::build_wall_profile(const WallData& wall) const {
             Point2{.x = 0.0, .y = half_thickness},
         },
     };
+
+    // Curved walls use arc-length coordinates for hosted openings.  Their
+    // endpoint joins are intentionally handled without straight-wall mitres;
+    // the real circular strip is generated by build_curved_wall_mesh().
+    if (wall.arc.has_value()) {
+        for (const auto& opening : wall.openings) {
+            const auto x_min = opening.offset_meters - (opening.width_meters / 2.0);
+            const auto x_max = opening.offset_meters + (opening.width_meters / 2.0);
+            const auto z_min = opening.vertical_offset_meters + opening.sill_height_meters;
+            const auto z_max = opening.vertical_offset_meters + opening.sill_height_meters + opening.height_meters;
+            profile.openings.push_back(OpeningRectangle{
+                .element_id = opening.element_id,
+                .kind = opening.kind,
+                .x_min = x_min,
+                .x_max = x_max,
+                .y_min = -half_thickness,
+                .y_max = half_thickness,
+                .z_min = z_min,
+                .z_max = z_max,
+            });
+        }
+        std::sort(profile.openings.begin(), profile.openings.end(), [](const auto& left, const auto& right) {
+            return left.x_min < right.x_min;
+        });
+        validate_opening_rectangles(profile.openings, length, wall.height_meters);
+        return profile;
+    }
 
     const auto direction = unit_direction(wall.axis);
     struct EndpointMiter {
@@ -526,6 +730,38 @@ GeneratedGeometry GeometryService::build_wall_geometry(
     const std::vector<WallAssemblyLayer>& layers
 ) const {
     auto profile = build_wall_profile(wall);
+    const auto arc_thickness = layers.empty()
+        ? wall.thickness_meters
+        : std::accumulate(layers.begin(), layers.end(), 0.0, [](double total, const auto& layer) {
+            return total + layer.thickness_meters;
+        });
+    if (wall.arc.has_value()) {
+        const auto material_id = layers.empty() ? ElementId{0} : layers.front().material_id;
+        auto mesh = build_curved_wall_mesh(
+            wall,
+            profile,
+            wall.height_meters,
+            0.0,
+            material_id
+        );
+        auto opening_volume = 0.0;
+        for (const auto& opening : profile.openings) {
+            opening_volume += (opening.x_max - opening.x_min) *
+                (opening.z_max - opening.z_min) * arc_thickness;
+        }
+        const auto gross_volume = std::abs(wall.arc->radius_meters * wall.arc->sweep_radians) *
+            wall.height_meters * arc_thickness;
+        return GeneratedGeometry{
+            .dirty = false,
+            .source_revision = source_revision,
+            .vertices = static_cast<int>(mesh.vertices.size()),
+            .triangles = static_cast<int>(mesh.indices.size() / 3),
+            .openings_cut = static_cast<int>(profile.openings.size()),
+            .solid_volume_cubic_meters = std::max(0.0, gross_volume - opening_volume),
+            .profile = std::move(profile),
+            .mesh = std::move(mesh),
+        };
+    }
     const auto layer_thickness = std::accumulate(layers.begin(), layers.end(), 0.0, [](double total, const auto& layer) {
         return total + layer.thickness_meters;
     });

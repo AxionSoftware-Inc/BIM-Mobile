@@ -54,6 +54,16 @@ public:
         ElementId assembly_id = 0,
         ElementId wall_type_id = 0
     );
+    ElementId create_curved_wall(
+        std::string name,
+        Line2 chord,
+        WallArcData arc,
+        double thickness_meters,
+        double height_meters,
+        ElementId level_id = 0,
+        ElementId assembly_id = 0,
+        ElementId wall_type_id = 0
+    );
     ElementId create_door(std::string name, ElementId host_wall_id, double offset_meters, double width_meters, double height_meters);
     ElementId create_window(
         std::string name,

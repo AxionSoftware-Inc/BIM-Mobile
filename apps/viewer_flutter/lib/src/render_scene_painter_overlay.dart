@@ -16,6 +16,7 @@ mixin _FallbackSceneOverlayMixin {
   RenderSceneSurfaceDraft? get draftSurface;
   RenderScenePoint? get draftWallStart;
   RenderScenePoint? get draftWallEnd;
+  RenderSceneWallArcDraft? get draftWallArc;
   double get draftWallThicknessMeters;
   double get draftWallHeightMeters;
   int? get draftWallEditElementId;
@@ -25,6 +26,49 @@ mixin _FallbackSceneOverlayMixin {
     final wallEnd = draftWallEnd;
     final opening = draftOpening;
     final surface = draftSurface;
+
+    final arc = draftWallArc;
+    if (arc != null && projectionMode.supportsPlanFootprintEditing) {
+      final points = arc.points
+          .map((point) => projection.project(point).screen)
+          .toList(growable: false);
+      if (points.length >= 2) {
+        final path = Path()..moveTo(points.first.dx, points.first.dy);
+        for (final point in points.skip(1)) {
+          path.lineTo(point.dx, point.dy);
+        }
+        canvas.drawPath(
+          path,
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 14.0
+            ..strokeCap = StrokeCap.round
+            ..strokeJoin = StrokeJoin.round
+            ..color = const Color(0xFF0EA5E9).withValues(alpha: 0.28),
+        );
+        canvas.drawPath(
+          path,
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 2.6
+            ..strokeCap = StrokeCap.round
+            ..strokeJoin = StrokeJoin.round
+            ..color = const Color(0xFF0284C7),
+        );
+      }
+      for (final point in <RenderScenePoint?>[
+        arc.start,
+        arc.end,
+        arc.control,
+      ]) {
+        if (point == null) continue;
+        canvas.drawCircle(
+          projection.project(point).screen,
+          5.5,
+          Paint()..color = const Color(0xFF0369A1),
+        );
+      }
+    }
 
     if (wallStart != null && wallEnd != null) {
       final wallLength = wallStart.distanceTo(wallEnd);
