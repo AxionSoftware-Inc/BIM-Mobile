@@ -5,6 +5,7 @@ import 'render_scene_models.dart';
 import 'render_scene_viewport_planar.dart';
 import 'render_scene_viewport_types.dart';
 import 'view_tabs.dart';
+import 'view_workspace_store.dart';
 
 /// Presentation-only view tree for the Project Browser.
 ///
@@ -125,10 +126,10 @@ class ProjectBrowserViews extends StatelessWidget {
           viewRow(
             label: '3D View',
             icon: Icons.view_in_ar_outlined,
-            selected: activeViewTabId == 'view-3d-default',
+            selected: activeViewTabId == ViewWorkspaceStore.threeDViewId,
             onTap: onOpen3d,
             dragView: viewReference(
-              id: 'view-3d-default',
+              id: ViewWorkspaceStore.threeDViewId,
               label: '3D View',
               kind: SheetViewKind.threeD,
               projectionMode: RenderSceneProjectionMode.isometric,
@@ -143,10 +144,11 @@ class ProjectBrowserViews extends StatelessWidget {
                 viewRow(
                   label: '${level.name} plan',
                   icon: Icons.grid_4x4_outlined,
-                  selected: activeViewTabId == 'floor-plan-${level.levelId}',
+                  selected: activeViewTabId ==
+                      ViewWorkspaceStore.floorPlanId(level.levelId),
                   onTap: () => onOpenFloorPlan(level.levelId),
                   dragView: viewReference(
-                    id: 'floor-plan-${level.levelId}',
+                    id: ViewWorkspaceStore.floorPlanId(level.levelId),
                     label: '${level.name} plan',
                     kind: SheetViewKind.floorPlan,
                     projectionMode: RenderSceneProjectionMode.topDown,

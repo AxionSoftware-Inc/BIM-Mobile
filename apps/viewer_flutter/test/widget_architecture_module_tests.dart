@@ -1,6 +1,129 @@
 part of 'widget_test.dart';
 
 void registerArchitectureModuleTests() {
+  test('element Inspector adapters decode typed family parameters', () {
+    const object = RenderSceneObject(
+      elementId: 42,
+      kind: 'Wall',
+      levelId: 7,
+      selectable: true,
+      visibleByDefault: true,
+      revision: 3,
+      bounds: RenderSceneBounds(
+        min: RenderScenePoint(x: 0, y: 0, z: 0),
+        max: RenderScenePoint(x: 0, y: 0, z: 0),
+      ),
+      mesh: RenderSceneMesh(
+        positions: <RenderScenePoint>[],
+        indices: <int>[],
+        normals: null,
+      ),
+      materialCategory: 'brick',
+      metadata: <String, Object?>{
+        'base_level_id': '7',
+        'top_level_id': 8,
+        'wall_type_id': '101',
+        'base_offset_meters': 0.15,
+        'top_offset_meters': '0.05',
+        'thickness_meters': 0.24,
+        'length_meters': '4.5',
+        'layer_profile': 'brick;insulation;plaster',
+        'wall_type_category': 'Exterior',
+        'host_wall_id': 42,
+        'offset_meters': 1.2,
+        'width_meters': '0.9',
+        'height_meters': 2.1,
+        'sill_height_meters': 0.0,
+        'level_offset_meters': 0.1,
+        'level_locked': 'true',
+        'assembly_id': '12',
+        'area_m2': 24.0,
+        'vertical_offset_meters': '0.2',
+        'floor_type_name': 'Concrete',
+        'roof_type': 'SimpleGable',
+        'slope_degrees': '30',
+        'overhang_meters': 0.3,
+        'total_run_meters': 3.6,
+        'total_rise_meters': '2.4',
+        'tread_count': '12',
+        'riser_count': 13,
+      },
+    );
+
+    final wall = WallElementParameters.fromObject(object);
+    expect(wall.baseLevelId, 7);
+    expect(wall.topLevelId, 8);
+    expect(wall.wallTypeId, 101);
+    expect(wall.layerCount, 3);
+    expect(wall.thicknessMeters, 0.24);
+
+    final opening = OpeningElementParameters.fromObject(object);
+    expect(opening.hostWallId, 42);
+    expect(opening.widthMeters, 0.9);
+    expect(opening.levelLocked, isTrue);
+
+    final surface = SurfaceElementParameters.fromObject(object);
+    expect(surface.assemblyId, 12);
+    expect(surface.areaSquareMeters, 24);
+    expect(surface.typeName, 'Concrete');
+
+    final roof = RoofElementParameters.fromObject(object);
+    expect(roof.roofType, 1);
+    expect(roof.slopeDegrees, 30);
+
+    final stair = StairElementParameters.fromObject(object);
+    expect(stair.totalRunMeters, 3.6);
+    expect(stair.riserCount, 13);
+
+    final linear = LinearElementParameters.fromObject(object);
+    expect(linear.heightMeters, 2.1);
+    expect(linear.lengthMeters, 4.5);
+
+    final room = RoomElementParameters.fromObject(object);
+    expect(room.areaSquareMeters, 24);
+    expect(room.perimeterMeters, isNull);
+
+    const malformed = RenderSceneObject(
+      elementId: 43,
+      kind: 'Wall',
+      levelId: 7,
+      selectable: true,
+      visibleByDefault: true,
+      revision: 1,
+      bounds: RenderSceneBounds(
+        min: RenderScenePoint(x: 0, y: 0, z: 0),
+        max: RenderScenePoint(x: 0, y: 0, z: 0),
+      ),
+      mesh: RenderSceneMesh(
+        positions: <RenderScenePoint>[],
+        indices: <int>[],
+        normals: null,
+      ),
+      materialCategory: 'generic',
+      metadata: <String, Object?>{
+        'height_meters': 'NaN',
+        'level_locked': 'unknown',
+      },
+    );
+    expect(LinearElementParameters.fromObject(malformed).heightMeters, isNull);
+    expect(
+      OpeningElementParameters.fromObject(malformed).levelLocked,
+      isTrue,
+    );
+  });
+
+  test('element modules resolve one Inspector adapter route per family', () {
+    const registry = BimElementInspectorRegistry.standard;
+    expect(registry.keyForKind('wall'), BimElementInspectorKeys.wall);
+    expect(registry.keyForKind('door'), BimElementInspectorKeys.opening);
+    expect(registry.keyForKind('window'), BimElementInspectorKeys.opening);
+    expect(registry.keyForKind('floor'), BimElementInspectorKeys.surface);
+    expect(registry.keyForKind('slab'), BimElementInspectorKeys.surface);
+    expect(registry.keyForKind('roof'), BimElementInspectorKeys.roof);
+    expect(
+        registry.keyForKind('unknown-kind'), BimElementInspectorKeys.generic);
+  });
+
   testWidgets('shared side panel switches between browser and Inspector',
       (WidgetTester tester) async {
     var activeTab = WorkspaceSidePanelTab.projectBrowser;
@@ -72,6 +195,7 @@ void registerArchitectureModuleTests() {
                 scene: scene,
                 target: target,
                 commands: commands,
+                units: const ProjectUnitSettings.defaults(),
                 onApplied: (result, message) async {},
                 onClearSelection: () {},
                 viewRangeMeters: 2,
@@ -278,6 +402,25 @@ void registerArchitectureModuleTests() {
     expect(store.removeTab(tab.id), isTrue);
     expect(store.tabById(tab.id), isNull);
     expect(store.savedPresentations, isEmpty);
+  });
+
+  test('view workspace defaults to the first level floor plan', () {
+    final scene = parseRenderSceneJson(
+      File('test/fixtures/render_scene_sample.json').readAsStringSync(),
+      source: 'view workspace defaults test',
+    ).scene!;
+    final store = ViewWorkspaceStore.standard();
+
+    store.resetForScene(scene);
+
+    final firstLevel = scene.levels.first;
+    expect(
+        store.activeTabId, ViewWorkspaceStore.floorPlanId(firstLevel.levelId));
+    expect(store.tabs.first.kind, OpenedViewKind.floorPlan);
+    expect(store.tabs.first.label, '${firstLevel.name} plan');
+    expect(store.tabs.first.projectionMode, RenderSceneProjectionMode.topDown);
+    expect(store.tabs.last.id, ViewWorkspaceStore.threeDViewId);
+    expect(store.tabs.last.projectionMode, RenderSceneProjectionMode.isometric);
   });
 }
 

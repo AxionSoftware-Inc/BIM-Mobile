@@ -54,6 +54,7 @@ class _FallbackRenderSceneView extends StatefulWidget {
     required this.showDiagnostics,
     this.rendererChild,
     this.nativeRenderer = false,
+    this.units = const ProjectUnitSettings.defaults(),
   });
 
   final RenderSceneViewportController controller;
@@ -77,6 +78,7 @@ class _FallbackRenderSceneView extends StatefulWidget {
   final bool showDiagnostics;
   final Widget? rendererChild;
   final bool nativeRenderer;
+  final ProjectUnitSettings units;
 
   @override
   State<_FallbackRenderSceneView> createState() =>
@@ -620,10 +622,16 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                 return;
               }
 
+              // Android can report a release coordinate that is a few frames
+              // behind the last move sample. Authoring must commit at the
+              // same point that was shown under the finger, otherwise an
+              // opening or wall endpoint visibly jumps on release.
+              final releasePosition =
+                  _lastPointerPosition ?? event.localPosition;
               final down = _pointerDownPosition;
               final moved = down == null
                   ? double.infinity
-                  : (event.localPosition - down).distance;
+                  : (releasePosition - down).distance;
               if (widget.interactionMode == RenderSceneInteractionMode.select &&
                   _interaction.intent == ViewportDragIntent.rectangleSelect &&
                   controller.selectionRectangle != null) {
@@ -661,7 +669,7 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                 widget.onSceneDragEnd?.call(_sceneDetails(
                   scene,
                   size,
-                  event.localPosition,
+                  releasePosition,
                   event.position,
                   touchFriendly: _usesTouchNavigation(event),
                 ));
@@ -684,16 +692,16 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                 final picked = _pickObject(
                   scene,
                   size,
-                  event.localPosition,
+                  releasePosition,
                   touchFriendly: _usesTouchNavigation(event),
                 );
 
                 final modelPoint =
-                    controller.screenToModelPlan(event.localPosition, size);
+                    controller.screenToModelPlan(releasePosition, size);
                 final pickedLevel =
-                    _pickLevelAtPosition(scene, size, event.localPosition);
+                    _pickLevelAtPosition(scene, size, releasePosition);
                 final details = RenderSceneTapDetails(
-                  screenPosition: event.localPosition,
+                  screenPosition: releasePosition,
                   globalPosition: event.position,
                   modelPoint: modelPoint,
                   pickedObject: pickedLevel != null ? null : picked,
@@ -752,6 +760,7 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                           orbitProjectionStyle: controller.orbitProjectionStyle,
                           displayStyle: controller.displayStyle,
                           viewportTheme: controller.viewportTheme,
+                          units: widget.units,
                           camera: controller.camera,
                           planCamera: controller.planCamera,
                           draftWallStart: controller.draftWallStart,
@@ -777,6 +786,7 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                         planCamera: controller.planCamera,
                         camera: controller.camera,
                         selectedLevelId: controller.selectedLevelId,
+                        units: widget.units,
                         padding: FallbackRenderScenePainter.padding,
                       ),
                       size: Size.infinite,
@@ -789,6 +799,7 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                     child: _InlineLevelElevationField(
                       key: ValueKey<int>(inlineLevel.levelId),
                       level: inlineLevel,
+                      units: widget.units,
                       onSubmitted: widget.onLevelElevationSubmitted,
                     ),
                   ),
@@ -799,6 +810,7 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                         scene: scene,
                         projectionMode: controller.projectionMode,
                         orbitProjectionStyle: controller.orbitProjectionStyle,
+                        units: widget.units,
                         camera: controller.camera,
                         planCamera: controller.planCamera,
                         draftWallStart: controller.draftWallStart,
@@ -836,6 +848,7 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                     child: _ViewportStatsCard(
                       scene: scene,
                       native: widget.nativeRenderer,
+                      units: widget.units,
                     ),
                   ),
               ],

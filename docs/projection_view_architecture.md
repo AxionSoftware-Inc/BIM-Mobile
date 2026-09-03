@@ -144,7 +144,8 @@ The widget tests currently verify:
 ## Known limits
 
 - orthographic visual styling is still a fallback painter, not final hidden-line CAD output
-- section/cut-plane rendering is not implemented yet
+- section snapshots and section-box clipping are implemented; final
+  hidden-line/cut-face styling is still limited
 - some editing tools remain intentionally plan-only
 
 ## Next good step

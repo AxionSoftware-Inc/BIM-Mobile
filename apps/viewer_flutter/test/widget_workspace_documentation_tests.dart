@@ -18,6 +18,8 @@ void registerWorkspaceDocumentationTests() {
     await tester.pumpAndSettle();
 
     expect(find.text('Tablet BIM'), findsOneWidget);
+    expect(find.text('Level 1 plan'), findsOneWidget);
+    expect(find.text('3D View'), findsNWidgets(2));
     expect(find.byTooltip('Floor plan'), findsOneWidget);
     expect(find.byTooltip('3D view'), findsOneWidget);
     expect(find.byTooltip('Wall'), findsOneWidget);
@@ -72,6 +74,10 @@ void registerWorkspaceDocumentationTests() {
     expect(find.text('Pick Walls'), findsOneWidget);
     expect(find.text('Trim / Extend'), findsOneWidget);
     expect(find.text('Auto Room'), findsNothing);
+    expect(find.text('Active tool'), findsNothing);
+    expect(find.text('Select an element'), findsNothing);
+    expect(find.text('Roof type'), findsOneWidget);
+    expect(find.textContaining('Overhang'), findsOneWidget);
   });
 
   testWidgets('Boundary tool uses an explicit close-before-finish workflow',

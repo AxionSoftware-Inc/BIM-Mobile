@@ -11,10 +11,14 @@ class StairToolController extends ChangeNotifier {
   RenderScenePoint? _start;
   RenderScenePoint? _end;
   double _widthMeters = 1.2;
+  int? _baseLevelId;
+  int? _topLevelId;
 
   RenderScenePoint? get start => _start;
   RenderScenePoint? get end => _end;
   double get widthMeters => _widthMeters;
+  int? get baseLevelId => _baseLevelId;
+  int? get topLevelId => _topLevelId;
   bool get hasStart => _start != null;
   bool get hasRun =>
       _start != null && _end != null && _start!.distanceTo(_end!) >= 0.8;
@@ -41,6 +45,18 @@ class StairToolController extends ChangeNotifier {
       return;
     }
     _widthMeters = value;
+    notifyListeners();
+  }
+
+  void setBaseLevelId(int? value) {
+    if (_baseLevelId == value) return;
+    _baseLevelId = value;
+    notifyListeners();
+  }
+
+  void setTopLevelId(int? value) {
+    if (_topLevelId == value) return;
+    _topLevelId = value;
     notifyListeners();
   }
 

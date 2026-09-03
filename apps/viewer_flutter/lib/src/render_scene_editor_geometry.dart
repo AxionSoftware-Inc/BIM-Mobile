@@ -189,6 +189,26 @@ _WallGeometry? _wallGeometry(RenderSceneObject wall) {
     return _WallGeometry(start: axisStart, end: axisEnd, thickness: thickness);
   }
 
+  // Native EngineApi serializes the axis as scalar string metadata. Keep
+  // this path in sync with _wallGeometryFromMap so read-only queries (used by
+  // preview, hit testing and the fallback renderer) preserve the authoritative
+  // wall direction too.
+  final startX = _toDouble(metadata['start_x'] ?? metadata['startX']);
+  final startY = _toDouble(metadata['start_y'] ?? metadata['startY']);
+  final endX = _toDouble(metadata['end_x'] ?? metadata['endX']);
+  final endY = _toDouble(metadata['end_y'] ?? metadata['endY']);
+  if (startX != null &&
+      startY != null &&
+      endX != null &&
+      endY != null &&
+      thickness != null) {
+    return _WallGeometry(
+      start: RenderScenePoint(x: startX, y: startY, z: 0.0),
+      end: RenderScenePoint(x: endX, y: endY, z: 0.0),
+      thickness: thickness,
+    );
+  }
+
   final bounds = wall.bounds;
   if (!bounds.isFinite) {
     return null;
@@ -239,6 +259,17 @@ double _dot(RenderScenePoint a, RenderScenePoint b) {
 double? _toDouble(Object? value) {
   if (value is num && value.isFinite) {
     return value.toDouble();
+  }
+  // Native RenderScene metadata is transported as a string map.  Keeping
+  // only numeric JSON values here silently drops the authoritative wall axis
+  // (`start_x/start_y/end_x/end_y`) and falls back to bounds, which reverses
+  // walls whose stored direction is end-to-start.  That makes a left-side
+  // opening preview commit on the right side in the native engine.
+  if (value is String) {
+    final parsed = double.tryParse(value.trim());
+    if (parsed != null && parsed.isFinite) {
+      return parsed;
+    }
   }
   return null;
 }

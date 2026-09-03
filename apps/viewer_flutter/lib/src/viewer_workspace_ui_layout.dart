@@ -257,6 +257,7 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
                   _LevelToolbarControl(
                     levels: scene.levels,
                     activeLevelId: _activeLevelId,
+                    units: _projectUnitSettings,
                     onChanged: (levelId) => _setActiveLevel(levelId),
                     onAddLevel: _showCreateLevelDialog,
                   ),
@@ -555,6 +556,7 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
                 ? _draftMoveTarget?.elementId
                 : null,
             showDiagnostics: _showDiagnostics,
+            units: _projectUnitSettings,
           ),
         ),
         if (_isSurfaceAuthoring)
@@ -719,151 +721,180 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
                     padding: const EdgeInsets.all(12),
                     children: <Widget>[
                       if (_interactionMode != RenderSceneInteractionMode.select)
-                        ExpansionTile(
-                          key: PageStorageKey<String>(
-                            'inspector-active-tool-${_interactionMode.name}',
-                          ),
-                          initiallyExpanded: _interactionMode ==
-                                  RenderSceneInteractionMode.addDoor ||
-                              _interactionMode ==
-                                  RenderSceneInteractionMode.addWindow ||
-                              _interactionMode ==
-                                  RenderSceneInteractionMode.moveOpening,
-                          backgroundColor: Colors.transparent,
-                          collapsedBackgroundColor: Colors.transparent,
-                          shape: const Border(),
-                          collapsedShape: const Border(),
-                          tilePadding:
-                              const EdgeInsets.symmetric(horizontal: 12),
-                          childrenPadding:
-                              const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                          leading: const Icon(Icons.build_outlined),
-                          title: const Text('Active tool'),
-                          subtitle: Text(_interactionMode.authoringLabel),
-                          children: <Widget>[
-                            _DraftEditorCard(
-                              interactionMode: _interactionMode,
-                              draftWallStart: _interactionMode ==
-                                      RenderSceneInteractionMode.addWall
-                                  ? _wallTool.start
-                                  : _interactionMode ==
-                                          RenderSceneInteractionMode.addLevel
-                                      ? _levelTool.start
-                                      : _draftWallStart,
-                              draftWallEnd: _interactionMode ==
-                                      RenderSceneInteractionMode.addWall
-                                  ? _wallTool.end
-                                  : _interactionMode ==
-                                          RenderSceneInteractionMode.addLevel
-                                      ? _levelTool.end
-                                      : _draftWallEnd,
-                              draftSurfaceStart: _draftSurfaceStart,
-                              draftSurfaceEnd: _draftSurfaceEnd,
-                              draftSurfacePointCount:
-                                  _draftSurfacePoints.length,
-                              draftSurfaceWallCount:
-                                  _draftSurfaceWallIds.length,
-                              draftSurfaceThicknessMeters:
-                                  _draftSurfaceThicknessMeters,
-                              draftSurfaceHeightMeters: _interactionMode ==
-                                      RenderSceneInteractionMode.addCeiling
-                                  ? _draftCeilingHeightOffsetMeters
-                                  : _draftSurfaceHeightMeters,
-                              draftStairWidthMeters: _stairTool.widthMeters,
-                              draftFloorTopElevationMeters:
-                                  _draftFloorTopElevationMeters,
-                              surfaceDrawMode: _surfaceDrawMode,
-                              draftHostWall: _draftHostWall,
-                              openingKind: _interactionMode ==
+                        _DraftEditorCard(
+                          interactionMode: _interactionMode,
+                          units: _projectUnitSettings,
+                          draftWallStart: _interactionMode ==
+                                  RenderSceneInteractionMode.addWall
+                              ? _wallTool.start
+                              : _interactionMode ==
+                                      RenderSceneInteractionMode.addLevel
+                                  ? _levelTool.start
+                                  : _draftWallStart,
+                          draftWallEnd: _interactionMode ==
+                                  RenderSceneInteractionMode.addWall
+                              ? _wallTool.end
+                              : _interactionMode ==
+                                      RenderSceneInteractionMode.addLevel
+                                  ? _levelTool.end
+                                  : _draftWallEnd,
+                          draftSurfaceStart: _draftSurfaceStart,
+                          draftSurfaceEnd: _draftSurfaceEnd,
+                          draftSurfacePointCount: _draftSurfacePoints.length,
+                          draftSurfaceWallCount: _draftSurfaceWallIds.length,
+                          draftSurfaceThicknessMeters:
+                              _draftSurfaceThicknessMeters,
+                          draftSurfaceHeightMeters: _interactionMode ==
+                                  RenderSceneInteractionMode.addCeiling
+                              ? _draftCeilingHeightOffsetMeters
+                              : _draftSurfaceHeightMeters,
+                          draftStairWidthMeters: _stairTool.widthMeters,
+                          stairLevels: scene.levels,
+                          stairBaseLevelId: _stairTool.baseLevelId,
+                          stairTopLevelId: _stairTool.topLevelId,
+                          draftFloorTopElevationMeters:
+                              _draftFloorTopElevationMeters,
+                          surfaceDrawMode: _surfaceDrawMode,
+                          wallTypes: scene.wallTypes,
+                          wallTypeId: _wallTool.wallTypeId,
+                          floorTypes: scene.floorTypes,
+                          floorAssemblyId: _surfaceTool.floorAssemblyId,
+                          roofTypes: scene.roofTypes,
+                          roofAssemblyId: _surfaceTool.roofAssemblyId,
+                          roofType: _surfaceTool.roofType,
+                          roofSlopeDegrees: _surfaceTool.roofSlopeDegrees,
+                          roofOverhangMeters: _surfaceTool.roofOverhangMeters,
+                          draftHostWall: _draftHostWall,
+                          openingKind: _interactionMode ==
+                                      RenderSceneInteractionMode.addWindow ||
+                                  (_interactionMode ==
                                           RenderSceneInteractionMode
-                                              .addWindow ||
-                                      (_interactionMode ==
-                                              RenderSceneInteractionMode
-                                                  .moveOpening &&
-                                          _draftMoveTarget?.kindKey == 'window')
-                                  ? 'window'
-                                  : 'door',
-                              openingWidthMeters: _draftOpeningWidthMeters,
-                              openingHeightMeters: _draftOpeningHeightMeters,
-                              openingSillHeightMeters:
-                                  _draftOpeningSillHeightMeters,
-                              trimFirstWall: _trimTool.first,
-                              trimSecondWall: _trimTool.second,
-                              trimPreview: _trimTool.preview,
-                              editStatusMessage: _editStatusMessage,
-                              snapEnabled: _snapDraftToGrid,
-                              canConfirm: _draftCanConfirm,
-                              onSnapToggled: (value) {
-                                _updateViewportState(() {
-                                  _snapDraftToGrid = value;
-                                });
-                                if (_interactionMode ==
-                                        RenderSceneInteractionMode.addDoor ||
-                                    _interactionMode ==
-                                        RenderSceneInteractionMode.addWindow ||
-                                    _interactionMode ==
-                                        RenderSceneInteractionMode
-                                            .moveOpening) {
-                                  _syncOpeningDraft();
-                                } else {
-                                  _syncSurfaceDraftPreview();
-                                }
-                              },
-                              onOpeningPresetChanged: (preset) {
-                                _updateViewportState(() {
-                                  _draftOpeningWidthMeters = preset.widthMeters;
-                                  _draftOpeningHeightMeters =
-                                      preset.heightMeters;
-                                  _draftOpeningSillHeightMeters =
-                                      preset.sillHeightMeters;
-                                });
-                                _syncOpeningDraft();
-                              },
-                              onSurfaceThicknessChanged: (value) {
-                                _updateViewportState(() {
-                                  _draftSurfaceThicknessMeters = value;
-                                });
-                              },
-                              onSurfaceHeightChanged: (value) {
-                                _updateViewportState(() {
-                                  if (_interactionMode ==
-                                      RenderSceneInteractionMode.addCeiling) {
-                                    _draftCeilingHeightOffsetMeters = value;
-                                  } else {
-                                    _draftSurfaceHeightMeters = value;
-                                  }
-                                });
-                              },
-                              onFloorTopElevationChanged: (value) {
-                                _updateViewportState(() {
-                                  _draftFloorTopElevationMeters = value;
-                                });
-                              },
-                              onStairWidthChanged: _stairTool.setWidth,
-                              onConfirm: _confirmDraft,
-                              onCancel: _cancelDraft,
-                              onClearSelection: _clearSelection,
-                              onResetMode: () => _setInteractionMode(
-                                RenderSceneInteractionMode.select,
-                              ),
-                            ),
-                          ],
+                                              .moveOpening &&
+                                      _draftMoveTarget?.kindKey == 'window')
+                              ? 'window'
+                              : 'door',
+                          openingWidthMeters: _draftOpeningWidthMeters,
+                          openingHeightMeters: _draftOpeningHeightMeters,
+                          openingSillHeightMeters:
+                              _draftOpeningSillHeightMeters,
+                          trimFirstWall: _trimTool.first,
+                          trimSecondWall: _trimTool.second,
+                          trimPreview: _trimTool.preview,
+                          editStatusMessage: _editStatusMessage,
+                          snapEnabled: _snapDraftToGrid,
+                          canConfirm: _draftCanConfirm,
+                          onSnapToggled: (value) {
+                            _updateViewportState(() {
+                              _snapDraftToGrid = value;
+                            });
+                            if (_interactionMode ==
+                                    RenderSceneInteractionMode.addDoor ||
+                                _interactionMode ==
+                                    RenderSceneInteractionMode.addWindow ||
+                                _interactionMode ==
+                                    RenderSceneInteractionMode.moveOpening) {
+                              _syncOpeningDraft();
+                            } else {
+                              _syncSurfaceDraftPreview();
+                            }
+                          },
+                          onOpeningPresetChanged: (preset) {
+                            _updateViewportState(() {
+                              _draftOpeningWidthMeters = preset.widthMeters;
+                              _draftOpeningHeightMeters = preset.heightMeters;
+                              _draftOpeningSillHeightMeters =
+                                  preset.sillHeightMeters;
+                            });
+                            _syncOpeningDraft();
+                          },
+                          onSurfaceThicknessChanged: (value) {
+                            _updateViewportState(() {
+                              _draftSurfaceThicknessMeters = value;
+                            });
+                          },
+                          onSurfaceHeightChanged: (value) {
+                            _updateViewportState(() {
+                              if (_interactionMode ==
+                                  RenderSceneInteractionMode.addCeiling) {
+                                _draftCeilingHeightOffsetMeters = value;
+                              } else {
+                                _draftSurfaceHeightMeters = value;
+                              }
+                            });
+                          },
+                          onFloorTopElevationChanged: (value) {
+                            _updateViewportState(() {
+                              _draftFloorTopElevationMeters = value;
+                            });
+                          },
+                          onWallTypeChanged: (value) {
+                            _updateViewportState(() {
+                              _wallTool.wallTypeId = value;
+                            });
+                          },
+                          onFloorAssemblyChanged: (value) {
+                            _updateViewportState(() {
+                              _surfaceTool.floorAssemblyId = value;
+                            });
+                          },
+                          onRoofAssemblyChanged: (value) {
+                            _updateViewportState(() {
+                              _surfaceTool.roofAssemblyId = value;
+                            });
+                          },
+                          onRoofTypeChanged: (value) {
+                            _updateViewportState(() {
+                              _surfaceTool.roofType = value;
+                            });
+                          },
+                          onRoofSlopeChanged: (value) {
+                            _updateViewportState(() {
+                              _surfaceTool.roofSlopeDegrees = value;
+                            });
+                          },
+                          onRoofOverhangChanged: (value) {
+                            _updateViewportState(() {
+                              _surfaceTool.roofOverhangMeters = value;
+                            });
+                          },
+                          onStairWidthChanged: _stairTool.setWidth,
+                          onStairBaseLevelChanged: (value) {
+                            _stairTool.setBaseLevelId(value);
+                            if (value == null) return;
+                            final nextTop = scene.levels
+                                .where((level) =>
+                                    level.elevationMeters >
+                                    (scene.levelById(value)?.elevationMeters ??
+                                        double.infinity))
+                                .toList()
+                              ..sort((left, right) => left.elevationMeters
+                                  .compareTo(right.elevationMeters));
+                            _stairTool.setTopLevelId(
+                              nextTop.firstOrNull?.levelId,
+                            );
+                          },
+                          onStairTopLevelChanged: _stairTool.setTopLevelId,
+                          onConfirm: _confirmDraft,
+                          onCancel: _cancelDraft,
+                          onResetMode: () => _setInteractionMode(
+                            RenderSceneInteractionMode.select,
+                          ),
                         ),
-                      if (_interactionMode != RenderSceneInteractionMode.select)
-                        const SizedBox(height: 16),
-                      PropertyEditor(
-                        scene: scene,
-                        target: inspectorTarget,
-                        commands: _authoringCommands,
-                        viewRangeMeters: _planViewRangeMeters,
-                        onViewRangeChanged: _setPlanViewRangeMeters,
-                        showPlanViewRange: _projectionMode ==
-                            RenderSceneProjectionMode.topDown,
-                        activePlanLevel: _activeLevel(scene),
-                        onApplied: (result, message) =>
-                            _applyEngineSceneResult(result, message: message),
-                        onClearSelection: _clearSelection,
-                      ),
+                      if (_interactionMode == RenderSceneInteractionMode.select)
+                        PropertyEditor(
+                          scene: scene,
+                          target: inspectorTarget,
+                          commands: _authoringCommands,
+                          units: _projectUnitSettings,
+                          viewRangeMeters: _planViewRangeMeters,
+                          onViewRangeChanged: _setPlanViewRangeMeters,
+                          showPlanViewRange: _projectionMode ==
+                              RenderSceneProjectionMode.topDown,
+                          activePlanLevel: _activeLevel(scene),
+                          onApplied: (result, message) =>
+                              _applyEngineSceneResult(result, message: message),
+                          onClearSelection: _clearSelection,
+                        ),
                     ],
                   ),
           ),

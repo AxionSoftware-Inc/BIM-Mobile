@@ -889,6 +889,10 @@ internal class RenderSceneFilamentHostView(
       clearScene("RenderScene load failed or scene cleared.")
       return
     }
+    // Keep the live camera while an authoritative edit is being committed.
+    // Re-fitting here makes the model jump between the preview frame and the
+    // committed frame, especially on touch-driven wall/opening authoring.
+    val preserveCamera = currentScene != null && currentSceneFingerprint != null
     val fingerprint = sceneFingerprint(newScene)
     if (currentSceneFingerprint == fingerprint && clipVolume.mode == ClipVolumeMode.NONE) {
       // Flutter may replay an unchanged authoritative snapshot while its
@@ -920,7 +924,14 @@ internal class RenderSceneFilamentHostView(
     selectionOverlay.setDisplayStyle(displayStyle)
     syncVisibility()
     refreshTintState()
-    fitCamera()
+    if (preserveCamera) {
+      configureCameraProjection()
+      updateOrbitCamera()
+      syncVisualOverlay()
+      requestRender()
+    } else {
+      fitCamera()
+    }
     statusMessage = "Loaded ${sceneMetrics.objectCount} renderables from RenderScene."
     Log.i(TAG, statusMessage)
     updateStatus()
@@ -2152,11 +2163,6 @@ internal class RenderSceneFilamentHostView(
     requestRender()
   }
 
-  override fun onDetachedFromWindow() {
-    super.onDetachedFromWindow()
-    disposeResources()
-  }
-
   fun disposeResources() {
     if (disposed) {
       return
@@ -3113,11 +3119,17 @@ internal class RenderSceneFilamentHostView(
 
   private fun faceVisible(objectData: SceneObject): Boolean =
     displayStyle != "wireframe" && kindVisible(normalizeKind(objectData.kind)) &&
-      openingVisibleInPlan(normalizeKind(objectData.kind))
+      openingVisibleInPlan(normalizeKind(objectData.kind)) &&
+      // Floorplan walls are drawn once by NativeSelectionOverlay as a 2D
+      // profile. Keeping the layered 3D wall caps in this pass makes joined
+      // layers/opening reveals share a depth value and shimmer during a fast
+      // orthographic zoom on mobile GPUs.
+      !(projectionMode == "topDown" && normalizeKind(objectData.kind) == "wall")
 
   private fun edgeVisible(kind: String): Boolean =
     (displayStyle == "solid" || displayStyle == "shaded") &&
-      kindVisible(kind) && openingVisibleInPlan(kind)
+      kindVisible(kind) && openingVisibleInPlan(kind) &&
+      !(projectionMode == "topDown" && kind == "wall")
 
   // VIEWPORT FREEZE: this is the production Solid border gate. Keep native
   // Filament edge batches enabled for Solid/Shaded; NativeSelectionOverlay is
@@ -3132,6 +3144,7 @@ internal class RenderSceneFilamentHostView(
       (key.nativeKindMask?.let(::nativeCacheKindMaskVisible)
         ?: kindVisible(key.kind)) &&
       openingVisibleInPlan(key.kind) &&
+      !(projectionMode == "topDown" && key.kind == "wall") &&
       (displayStyle == "wireframe" || projectionMode != "isometric" || isometricEdgeDetailVisible)
 
   private fun baseColorForObject(objectData: SceneObject): FloatArray =
@@ -6787,6 +6800,10 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
     strokeCap = Paint.Cap.BUTT
     strokeJoin = Paint.Join.MITER
   }
+  private val planWallFill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    style = Paint.Style.FILL
+    color = Color.rgb(235, 240, 237)
+  }
 
   init {
     isClickable = false
@@ -7166,6 +7183,11 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
     val dark = viewportTheme != "light"
     outline.color = if (dark) Color.argb(210, 218, 226, 231) else Color.argb(155, 24, 39, 52)
     planWallOutline.color = if (dark) Color.argb(190, 218, 226, 231) else Color.argb(150, 24, 39, 52)
+    planWallFill.color = if (dark) {
+      if (viewportTheme == "amoledBlack") Color.rgb(24, 28, 30) else Color.rgb(61, 70, 73)
+    } else {
+      Color.rgb(235, 240, 237)
+    }
     externalOutline.color = if (dark) Color.argb(235, 226, 235, 238) else Color.argb(232, 28, 45, 55)
     openingPaint.color = if (dark) Color.rgb(220, 228, 232) else Color.rgb(17, 24, 39)
     windowPaint.color = if (dark) Color.rgb(190, 211, 219) else Color.rgb(17, 24, 39)
@@ -7335,6 +7357,15 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
         ?.filter { it.x.isFinite() && it.z.isFinite() }
         ?: emptyList()
       if (profile.size >= 2) {
+        val projectedProfile = profile.mapNotNull(::project)
+        if (projectedProfile.size >= 2 && !wireframe) {
+          val fillPath = Path().apply {
+            moveTo(projectedProfile.first().x, projectedProfile.first().y)
+            for (point in projectedProfile.drop(1)) lineTo(point.x, point.y)
+            close()
+          }
+          canvas.drawPath(fillPath, planWallFill)
+        }
         for (index in profile.indices) {
           val first = project(profile[index]) ?: continue
           val second = project(profile[(index + 1) % profile.size]) ?: continue
@@ -7363,6 +7394,22 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
       if (!length.isFinite() || length <= 1.0e-8) continue
       val nx = -dy / length * thickness * 0.5
       val ny = dx / length * thickness * 0.5
+      if (!wireframe) {
+        val projectedCorners = listOf(
+          project(sourcePlanPoint(startX + nx, startY + ny)),
+          project(sourcePlanPoint(endX + nx, endY + ny)),
+          project(sourcePlanPoint(endX - nx, endY - ny)),
+          project(sourcePlanPoint(startX - nx, startY - ny)),
+        ).filterNotNull()
+        if (projectedCorners.size == 4) {
+          val fillPath = Path().apply {
+            moveTo(projectedCorners[0].x, projectedCorners[0].y)
+            for (point in projectedCorners.drop(1)) lineTo(point.x, point.y)
+            close()
+          }
+          canvas.drawPath(fillPath, planWallFill)
+        }
+      }
       for (side in listOf(1.0, -1.0)) {
         val first = project(sourcePlanPoint(startX + nx * side, startY + ny * side)) ?: continue
         val second = project(sourcePlanPoint(endX + nx * side, endY + ny * side)) ?: continue

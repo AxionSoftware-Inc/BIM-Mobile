@@ -9,6 +9,7 @@ import 'render_scene_editor.dart';
 import 'render_scene_level_overlay.dart';
 import 'render_scene_models.dart';
 import 'render_scene_native_overlay_painter.dart';
+import 'project_unit_settings.dart';
 import 'render_scene_viewport_hit_test.dart';
 import 'render_scene_viewport_controller.dart';
 import 'render_scene_viewport_painter.dart';
@@ -43,6 +44,7 @@ class RenderSceneViewport extends StatefulWidget {
     this.draftWallHeightMeters = RenderSceneEditor.defaultWallHeightMeters,
     this.draftWallEditElementId,
     this.showDiagnostics = false,
+    this.units = const ProjectUnitSettings.defaults(),
   });
 
   final RenderSceneViewportController controller;
@@ -64,6 +66,7 @@ class RenderSceneViewport extends StatefulWidget {
   final double draftWallHeightMeters;
   final int? draftWallEditElementId;
   final bool showDiagnostics;
+  final ProjectUnitSettings units;
 
   @override
   State<RenderSceneViewport> createState() => _RenderSceneViewportState();
@@ -144,6 +147,7 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
         draftWallHeightMeters: widget.draftWallHeightMeters,
         draftWallEditElementId: widget.draftWallEditElementId,
         showDiagnostics: widget.showDiagnostics,
+        units: widget.units,
         nativeRenderer: true,
         rendererChild: IgnorePointer(
           // Native Filament owns gestures only for the 3D Section Box. Planar
@@ -175,6 +179,7 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
       draftWallHeightMeters: widget.draftWallHeightMeters,
       draftWallEditElementId: widget.draftWallEditElementId,
       showDiagnostics: widget.showDiagnostics,
+      units: widget.units,
     );
   }
 }

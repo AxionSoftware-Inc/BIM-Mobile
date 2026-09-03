@@ -12,6 +12,14 @@ import 'package:viewer_flutter/src/documentation/sheet_workspace_controller.dart
 import 'package:viewer_flutter/src/elements/bim_element_module.dart';
 import 'package:viewer_flutter/src/elements/bim_element_registry.dart';
 import 'package:viewer_flutter/src/elements/floor_type_catalog.dart';
+import 'package:viewer_flutter/src/elements/inspector_registry.dart';
+import 'package:viewer_flutter/src/elements/linear_parameters.dart';
+import 'package:viewer_flutter/src/elements/opening_parameters.dart';
+import 'package:viewer_flutter/src/elements/room_parameters.dart';
+import 'package:viewer_flutter/src/elements/roof_parameters.dart';
+import 'package:viewer_flutter/src/elements/stair_parameters.dart';
+import 'package:viewer_flutter/src/elements/surface_parameters.dart';
+import 'package:viewer_flutter/src/elements/wall_parameters.dart';
 import 'package:viewer_flutter/src/elements/wall_type_catalog.dart';
 import 'package:viewer_flutter/src/render_scene_editor.dart';
 import 'package:viewer_flutter/src/render_scene_estimator.dart';
@@ -24,6 +32,7 @@ import 'package:viewer_flutter/src/project_persistence_service.dart';
 import 'package:viewer_flutter/src/project_lifecycle_service.dart';
 import 'package:viewer_flutter/src/project_session_controller.dart';
 import 'package:viewer_flutter/src/project_recovery_store.dart';
+import 'package:viewer_flutter/src/project_unit_settings.dart';
 import 'package:viewer_flutter/src/render_scene_viewport_controller.dart';
 import 'package:viewer_flutter/src/render_scene_viewport_planar.dart';
 import 'package:viewer_flutter/src/render_scene_viewport_projection.dart';
@@ -287,6 +296,19 @@ void main() {
   registerElementModuleRegistryTests();
   registerWallTypeTests();
 
+  test('project units convert and format model lengths consistently', () {
+    const units = ProjectUnitSettings(
+      system: 'metric',
+      length: 'centimeter',
+      angle: 'degrees',
+    );
+
+    expect(units.fromMeters(1.25), closeTo(125, 1e-9));
+    expect(units.toMeters(250), closeTo(2.5, 1e-9));
+    expect(units.formatLength(1.25), '125.0 cm');
+    expect(units.formatArea(1), '10000.00 cm²');
+  });
+
   test(
     'project recovery store writes and removes a durable checkpoint',
     () async {
@@ -313,6 +335,19 @@ void main() {
       );
     },
   );
+
+  test('project recovery entry rejects paths outside app storage', () async {
+    final entry = ProjectRecoveryEntry(
+      projectName: 'viewer-recovery-test',
+      jsonPath: '/tmp/untrusted-recovery.json',
+      updatedAt: DateTime.utc(2026),
+    );
+
+    await expectLater(
+      entry.readJson(),
+      throwsA(isA<StateError>()),
+    );
+  });
 
   test('showcase template lifecycle reaches the native session seam', () async {
     final session = _RecordingProjectSession();

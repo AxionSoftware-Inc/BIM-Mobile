@@ -5,6 +5,8 @@ import 'dart:io';
 import 'package:ffi/ffi.dart';
 import 'async_serial_queue.dart';
 import 'app_project_storage.dart';
+import 'atomic_file_writer.dart';
+import 'elements/wall_parameters.dart';
 import 'elements/wall_type_catalog.dart';
 import 'native_engine_library_loader.dart';
 import 'render_scene_models.dart';
@@ -84,6 +86,9 @@ class TbeViewerApi {
         _createWallType =
             library.lookupFunction<_CreateWallTypeNative, _CreateWallTypeDart>(
                 'tbe_create_wall_type'),
+        _upsertWallTypeForWall = library.lookupFunction<
+            _UpsertWallTypeForWallNative,
+            _UpsertWallTypeForWallDart>('tbe_upsert_wall_type_for_wall'),
         _setWallLevelConstraints = library.lookupFunction<
             _SetWallLevelConstraintsNative,
             _SetWallLevelConstraintsDart>('tbe_set_wall_level_constraints'),
@@ -228,6 +233,7 @@ class TbeViewerApi {
   final _MoveLevelElevationDart _moveLevelElevation;
   final _SetWallTypeDart _setWallType;
   final _CreateWallTypeDart _createWallType;
+  final _UpsertWallTypeForWallDart _upsertWallTypeForWall;
   final _SetWallLevelConstraintsDart _setWallLevelConstraints;
   final _SetWallAxisDart _setWallAxis;
   final _AutoJoinWallsDart _autoJoinWalls;

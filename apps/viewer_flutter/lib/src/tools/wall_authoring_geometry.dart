@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import '../project_unit_settings.dart';
 import 'package:flutter/foundation.dart';
 
 import '../render_scene_editor.dart';
@@ -719,14 +720,19 @@ final class WallAuthoringGeometry {
     return (value / step).roundToDouble() * step;
   }
 
-  static String formatWallLengthMeters(double lengthMeters) {
-    if (!lengthMeters.isFinite || lengthMeters < 0) return '0.00 m';
+  static String formatWallLengthMeters(
+    double lengthMeters, {
+    ProjectUnitSettings units = const ProjectUnitSettings.defaults(),
+  }) {
+    if (!lengthMeters.isFinite || lengthMeters < 0) {
+      return units.formatLength(0);
+    }
     final millimeters =
         (lengthMeters * 1000.0 / (wallFreehandPrecisionMeters * 1000.0))
                 .round() *
             (wallFreehandPrecisionMeters * 1000.0).round();
     final meters = millimeters / 1000.0;
-    return '${meters.toStringAsFixed(2)} m';
+    return units.formatLength(meters);
   }
 
   static RenderScenePoint _quantizeFreehandLength(

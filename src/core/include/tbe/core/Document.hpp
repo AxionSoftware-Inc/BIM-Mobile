@@ -45,7 +45,15 @@ public:
     [[nodiscard]] const LayeredAssemblyData* get_layered_assembly(ElementId assembly_id) const noexcept;
     void update_layered_assembly(LayeredAssemblyData assembly);
     ElementId create_level(std::string name, double elevation_meters, double default_wall_height_meters);
-    ElementId create_wall(std::string name, Line2 axis, double thickness_meters, double height_meters, ElementId level_id = 0, ElementId assembly_id = 0);
+    ElementId create_wall(
+        std::string name,
+        Line2 axis,
+        double thickness_meters,
+        double height_meters,
+        ElementId level_id = 0,
+        ElementId assembly_id = 0,
+        ElementId wall_type_id = 0
+    );
     ElementId create_door(std::string name, ElementId host_wall_id, double offset_meters, double width_meters, double height_meters);
     ElementId create_window(
         std::string name,
@@ -146,9 +154,26 @@ public:
     void set_opening_level_constraint(ElementId opening_id, ElementId level_id, double level_offset_meters);
     std::vector<ElementId> create_elements_from_profile(const ProfileDraft& draft);
     void set_wall_type(ElementId wall_id, ElementId wall_type_id);
-    /// Applies a canonical compound assembly to a supported element. Legacy
-    /// wall types remain readable, but new authoring should use this API.
+    /// Applies a wall type edit with copy-on-write semantics. A type is
+    /// updated in place only when this wall is its sole user; shared types
+    /// are cloned once and the wall is rebound to the clone. This keeps
+    /// per-wall layer editing isolated without accumulating duplicate types.
+    ElementId upsert_wall_type_for_wall(
+        ElementId wall_id,
+        std::string name,
+        std::vector<WallAssemblyLayer> layers,
+        WallTypeCategory category = WallTypeCategory::Generic,
+        int core_start_layer = -1,
+        int core_end_layer = -1
+    );
+    /// Applies a layered assembly to a supported non-wall element. A Wall-kind
+    /// assembly is accepted only for low-level legacy compatibility; wall
+    /// authoring uses set_wall_type instead.
     void set_element_assembly(ElementId element_id, ElementId assembly_id);
+    /// Converts legacy Wall-kind assemblies and dual-source wall records into
+    /// the single canonical WallTypeData source. This is idempotent and is
+    /// called after project load as well as by wall authoring adapters.
+    void normalize_wall_type_sources();
     void update_roof_properties(ElementId roof_id, RoofType roof_type, std::optional<double> slope_degrees, std::optional<double> overhang_meters);
     /// Creates/removes an explicit structural void in a wall. No destructive
     /// boolean is performed; the host wall owns the cut profile semantically.
@@ -172,6 +197,8 @@ public:
     ElementId split_wall(ElementId wall_id, double offset_meters);
     void delete_element(ElementId element_id);
     void move_hosted_opening(ElementId opening_id, double offset_meters);
+    // Compatibility wrappers; all horizontal opening edits delegate to the
+    // single hosted-opening transaction below.
     void resize_door(ElementId door_id, double width_meters, double height_meters);
     void resize_window(ElementId window_id, double width_meters, double height_meters, double sill_height_meters);
     /// Validates and applies all horizontal/vertical opening edits as one
@@ -253,6 +280,7 @@ private:
     [[nodiscard]] bool wall_type_uses_glass(const WallTypeData& wall_type) const;
     [[nodiscard]] bool layered_assembly_uses_glass(const LayeredAssemblyData& assembly) const;
     [[nodiscard]] bool wall_uses_glass(const WallData& wall) const;
+    [[nodiscard]] ElementId wall_type_for_assembly(const LayeredAssemblyData& assembly);
     [[nodiscard]] std::string layered_assembly_name(ElementId assembly_id) const;
     [[nodiscard]] double level_elevation(ElementId level_id) const;
     [[nodiscard]] double resolved_wall_base_elevation(const WallData& wall) const;

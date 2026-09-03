@@ -25,6 +25,34 @@ int main() {
         return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
     };
 
+    {
+        // A blank project must expose the same shared catalog as templates,
+        // and a newly drawn wall must be assigned atomically to Basic Wall.
+        auto blank_result = tbe::api::create_session("Blank Catalog Test");
+        assert(blank_result.ok() && blank_result.value.has_value());
+        auto blank = std::move(*blank_result.value);
+        assert(blank->new_project("Blank Catalog").ok());
+        const auto blank_scene = blank->get_render_scene();
+        assert(blank_scene.ok() && blank_scene.value.has_value());
+        assert(blank_scene.value->wall_types.size() >= 6);
+        assert(blank_scene.value->floor_types.size() >= 5);
+        const auto blank_level = blank->create_level("Level 1", 0.0, 3.2);
+        assert(blank_level.ok() && blank_level.value.has_value());
+        const auto blank_wall = blank->create_wall(
+            "Typed wall", {.x = 0.0, .y = 0.0}, {.x = 4.0, .y = 0.0},
+            0.2, 3.2, blank_level.value->value);
+        assert(blank_wall.ok() && blank_wall.value.has_value());
+        const auto typed_scene = blank->get_render_scene();
+        assert(typed_scene.ok() && typed_scene.value.has_value());
+        const auto typed_object = std::find_if(
+            typed_scene.value->objects.begin(), typed_scene.value->objects.end(),
+            [&](const auto& object) { return object.element_id.value == blank_wall.value->value; });
+        assert(typed_object != typed_scene.value->objects.end());
+        assert(std::stoull(typed_object->metadata.at("wall_type_id")) != 0);
+        assert(typed_object->metadata.at("wall_type_name") == "Basic Wall");
+        assert(typed_object->metadata.at("assembly_id") == "0");
+    }
+
     for (int iteration = 0; iteration < 5; ++iteration) {
         auto session_result = tbe::api::create_session("API Test");
         assert(session_result.ok());
@@ -1496,12 +1524,12 @@ int main() {
         const auto template_materials = template_session->list_materials();
         assert(template_materials.ok() && template_materials.value.has_value());
         assert(std::any_of(template_materials.value->begin(), template_materials.value->end(), [](const auto& material) {
-            return material.name == "Template Brick" && material.display_color == "#B86B4B";
+            return material.name == "Brick" && material.display_color == "#B86B4B";
         }));
         const auto template_assemblies = template_session->list_layered_assemblies();
         assert(template_assemblies.ok() && template_assemblies.value.has_value());
         assert(std::any_of(template_assemblies.value->begin(), template_assemblies.value->end(), [](const auto& assembly) {
-            return assembly.name == "Residential Wall" && assembly.layers.size() == 4;
+            return assembly.name == "Residential Floor" && assembly.layers.size() == 3;
         }));
         const auto template_wall_types = template_session->list_wall_types();
         assert(template_wall_types.ok() && template_wall_types.value.has_value());
@@ -1542,7 +1570,8 @@ int main() {
         assert(template_slab != template_scene.value->objects.end());
         assert(template_slab->mesh.triangle_material_ids.size() == template_slab->mesh.indices.size() / 3);
         // Foundation is below Level 1; ordinary storey walls use the
-        // Residential Wall assembly and do not receive a foundation layer.
+        // The canonical residential floor assembly is used by ordinary storeys
+        // and does not receive a foundation layer.
         assert(template_slab->bounds.min.z < -0.30);
         assert(template_slab->bounds.max.z < 1.0e-6);
         char* project_json = nullptr;
@@ -1606,8 +1635,8 @@ int main() {
                        type_name != object.metadata.end() && type_name->second == name;
             });
         };
-        const auto lawn = find_slab_by_name("Landscape Lawn Ground");
-        const auto asphalt_drive = find_slab_by_name("Asphalt Drive");
+        const auto lawn = find_slab_by_name("Landscape Ground");
+        const auto asphalt_drive = find_slab_by_name("Asphalt Surface");
         const auto paved_walk = find_slab_by_name("Paved Walkway");
         const auto foundation = find_slab_by_name("Showcase Foundation");
         assert(lawn != scene.value->objects.end());
@@ -1685,6 +1714,9 @@ int main() {
         assert(imported_result.ok() && imported_result.value.has_value());
         auto imported = std::move(*imported_result.value);
         assert(imported->import_ifc(ifc_path.string()).ok());
+        const auto imported_wall_types = imported->list_wall_types();
+        assert(imported_wall_types.ok() && imported_wall_types.value.has_value());
+        assert(!imported_wall_types.value->empty());
         const auto imported_settings = imported->get_unit_settings();
         assert(imported_settings.ok() && imported_settings.value.has_value());
         assert(imported_settings.value->length == "foot");

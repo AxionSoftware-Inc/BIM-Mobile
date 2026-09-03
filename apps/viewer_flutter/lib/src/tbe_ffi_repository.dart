@@ -32,14 +32,14 @@ class ViewerRepository
       TbeAuthoringMutationRepository(
     api: _api,
     handle: () => _handle,
-    refresh: currentRenderScene,
+    refresh: _currentRenderSceneNow,
     warmSnapshot: () async {
       final handle = _handle;
       if (handle != null) {
         await _buildSnapshot(handle, _projectName ?? 'Project');
       }
     },
-    beforeLevelMove: constrainUnconnectedWallsToNextLevel,
+    beforeLevelMove: _constrainUnconnectedWallsToNextLevelNow,
     setLastCreatedElementId: (id) => _lastCreatedElementId = id,
   );
 
@@ -68,6 +68,19 @@ class ViewerRepository
     required String projectName,
     required String json,
     String? sourcePath,
+  }) =>
+      _authoringQueue.run<ViewerLoadResult>(
+        () => _loadFromJsonNow(
+          projectName: projectName,
+          json: json,
+          sourcePath: sourcePath,
+        ),
+      );
+
+  Future<ViewerLoadResult> _loadFromJsonNow({
+    required String projectName,
+    required String json,
+    String? sourcePath,
   }) async {
     _projectName = projectName;
     _currentJson = json;
@@ -88,22 +101,30 @@ class ViewerRepository
   @override
   Future<RenderSceneLoadResult> createBlankProject({
     String projectName = 'New Project',
-  }) async {
-    _handle ??= _api.createSession();
-    final handle = _handle!;
-    _api.configureInteractiveSession(handle);
-    _api.newProject(handle, projectName);
-    _projectName = projectName;
-    _currentJson = null;
-    _currentJsonPath = null;
-    _currentPackagePath = null;
-    _activeLevelId = _api.createLevel(handle, 'Level 1', 0.0, 3.2);
-    _api.createLevel(handle, 'Level 2', 3.2, 3.2);
-    return currentRenderScene();
-  }
+  }) =>
+      _authoringQueue.run<RenderSceneLoadResult>(() async {
+        _handle ??= _api.createSession();
+        final handle = _handle!;
+        _api.configureInteractiveSession(handle);
+        _api.newProject(handle, projectName);
+        _projectName = projectName;
+        _currentJson = null;
+        _currentJsonPath = null;
+        _currentPackagePath = null;
+        _activeLevelId = _api.createLevel(handle, 'Level 1', 0.0, 3.2);
+        _api.createLevel(handle, 'Level 2', 3.2, 3.2);
+        return _currentRenderSceneNow();
+      });
 
   @override
   Future<ViewerLoadResult> loadFromPackage({
+    required String packagePath,
+  }) =>
+      _authoringQueue.run<ViewerLoadResult>(
+        () => _loadFromPackageNow(packagePath: packagePath),
+      );
+
+  Future<ViewerLoadResult> _loadFromPackageNow({
     required String packagePath,
   }) async {
     _projectName = packagePath.split(Platform.pathSeparator).last;
@@ -126,6 +147,17 @@ class ViewerRepository
   Future<RenderSceneLoadResult> createResidentialTemplate({
     required int buildingCount,
     required int storyCount,
+  }) =>
+      _authoringQueue.run<RenderSceneLoadResult>(
+        () => _createResidentialTemplateNow(
+          buildingCount: buildingCount,
+          storyCount: storyCount,
+        ),
+      );
+
+  Future<RenderSceneLoadResult> _createResidentialTemplateNow({
+    required int buildingCount,
+    required int storyCount,
   }) async {
     _handle ??= _api.createSession();
     final handle = _handle!;
@@ -142,11 +174,18 @@ class ViewerRepository
     _currentJsonPath = null;
     _currentPackagePath = null;
     await _buildSnapshot(handle, _projectName!);
-    return currentRenderScene();
+    return _currentRenderSceneNow();
   }
 
   @override
   Future<RenderSceneLoadResult> createShowcaseTemplate({
+    required int templateKind,
+  }) =>
+      _authoringQueue.run<RenderSceneLoadResult>(
+        () => _createShowcaseTemplateNow(templateKind: templateKind),
+      );
+
+  Future<RenderSceneLoadResult> _createShowcaseTemplateNow({
     required int templateKind,
   }) async {
     _handle ??= _api.createSession();
@@ -165,85 +204,99 @@ class ViewerRepository
     _currentJsonPath = null;
     _currentPackagePath = null;
     await _buildSnapshot(handle, _projectName!);
-    return currentRenderScene();
+    return _currentRenderSceneNow();
   }
 
   @override
-  Future<ViewerLoadResult> reloadCurrent() async {
-    final jsonPath = _currentJsonPath;
-    if (jsonPath != null) {
-      final json = await File(jsonPath).readAsString();
-      return loadFromJson(
-        projectName: _projectName ?? File(jsonPath).uri.pathSegments.last,
-        json: json,
-        sourcePath: jsonPath,
-      );
-    }
-    final json = _currentJson;
-    if (json != null) {
-      return loadFromJson(
-        projectName: _projectName ?? 'Reloaded Project',
-        json: json,
-      );
-    }
-    final packagePath = _currentPackagePath;
-    if (packagePath != null) return loadFromPackage(packagePath: packagePath);
-    throw TbeApiException('No current project to reload');
-  }
+  Future<ViewerLoadResult> reloadCurrent() => _authoringQueue.run(() async {
+        final jsonPath = _currentJsonPath;
+        if (jsonPath != null) {
+          final json = await File(jsonPath).readAsString();
+          return _loadFromJsonNow(
+            projectName: _projectName ?? File(jsonPath).uri.pathSegments.last,
+            json: json,
+            sourcePath: jsonPath,
+          );
+        }
+        final json = _currentJson;
+        if (json != null) {
+          return _loadFromJsonNow(
+            projectName: _projectName ?? 'Reloaded Project',
+            json: json,
+          );
+        }
+        final packagePath = _currentPackagePath;
+        if (packagePath != null) {
+          return _loadFromPackageNow(packagePath: packagePath);
+        }
+        throw TbeApiException('No current project to reload');
+      });
 
   @override
   Future<String> saveProjectJson() async {
+    return _authoringQueue.run(_saveProjectJsonNow);
+  }
+
+  Future<String> _saveProjectJsonNow() async {
     final handle = _handle;
     if (handle == null) throw TbeApiException('No loaded project');
+    final currentJsonPath = _currentJsonPath;
+    final currentPackagePath = _currentPackagePath;
     final json = _api.saveProjectJson(handle);
     _currentJson = json;
-    _currentJsonPath = null;
-    _currentPackagePath = null;
+    // Serializing a project is a read/checkpoint operation, not a project
+    // replacement. Keep the user's original save/reload target intact.
+    _currentJsonPath = currentJsonPath;
+    _currentPackagePath = currentPackagePath;
     _activeLevelId = _persistence.primaryLevelIdFromProjectJson(json);
     return json;
   }
 
   @override
-  Future<File> saveProjectToDefaultLocation() async {
-    final json = await saveProjectJson();
-    return _persistence.saveToDefaultLocation(
-      json: json,
-      projectName: _projectName,
-    );
-  }
+  Future<File> saveProjectToDefaultLocation() => _authoringQueue.run(() async {
+        final json = await _saveProjectJsonNow();
+        return _persistence.saveToDefaultLocation(
+          json: json,
+          projectName: _projectName,
+        );
+      });
 
   @override
-  Future<ViewerLoadResult> loadFromIfc({required String ifcPath}) async {
-    _projectName = File(ifcPath).uri.pathSegments.last;
-    _currentJson = null;
-    _currentJsonPath = null;
-    _currentPackagePath = null;
-    _handle ??= _api.createSession();
-    final handle = _handle!;
-    _api.configureInteractiveSession(handle);
-    _api.importIfc(handle, ifcPath);
-    _currentJson = _api.saveProjectJson(handle);
-    _activeLevelId = _persistence.primaryLevelIdFromProjectJson(_currentJson!);
-    final snapshot = await _buildSnapshot(handle, _projectName!);
-    return ViewerLoadResult(
-      snapshot: snapshot,
-      hitCandidates: const <HitCandidateView>[],
-    );
-  }
+  Future<ViewerLoadResult> loadFromIfc({required String ifcPath}) =>
+      _authoringQueue.run<ViewerLoadResult>(() async {
+        _projectName = File(ifcPath).uri.pathSegments.last;
+        _currentJson = null;
+        _currentJsonPath = null;
+        _currentPackagePath = null;
+        _handle ??= _api.createSession();
+        final handle = _handle!;
+        _api.configureInteractiveSession(handle);
+        _api.importIfc(handle, ifcPath);
+        _currentJson = _api.saveProjectJson(handle);
+        _activeLevelId =
+            _persistence.primaryLevelIdFromProjectJson(_currentJson!);
+        final snapshot = await _buildSnapshot(handle, _projectName!);
+        return ViewerLoadResult(
+          snapshot: snapshot,
+          hitCandidates: const <HitCandidateView>[],
+        );
+      });
 
   @override
-  Future<void> exportIfc({required String path}) async {
-    final handle = _handle;
-    if (handle == null) throw TbeApiException('No loaded project');
-    _api.exportIfc(handle, path);
-  }
+  Future<void> exportIfc({required String path}) =>
+      _authoringQueue.run(() async {
+        final handle = _handle;
+        if (handle == null) throw TbeApiException('No loaded project');
+        _api.exportIfc(handle, path);
+      });
 
   @override
-  Future<Map<String, dynamic>> getUnitSettings() async {
-    final handle = _handle;
-    if (handle == null) throw TbeApiException('No loaded project');
-    return _api.getUnitSettings(handle);
-  }
+  Future<Map<String, dynamic>> getUnitSettings() =>
+      _authoringQueue.run(() async {
+        final handle = _handle;
+        if (handle == null) throw TbeApiException('No loaded project');
+        return _api.getUnitSettings(handle);
+      });
 
   @override
   Future<void> setUnitSettings({
@@ -251,43 +304,49 @@ class ViewerRepository
     required String length,
     required String angle,
   }) async {
-    final handle = _handle;
-    if (handle == null) throw TbeApiException('No loaded project');
-    _api.setUnitSettings(
-      handle,
-      system: system,
-      length: length,
-      angle: angle,
-    );
+    await _authoringQueue.run<void>(() async {
+      final handle = _handle;
+      if (handle == null) throw TbeApiException('No loaded project');
+      _api.setUnitSettings(
+        handle,
+        system: system,
+        length: length,
+        angle: angle,
+      );
+    });
   }
 
   @override
-  Future<RenderSceneLoadResult> undo() async {
-    final handle = _handle;
-    if (handle == null) throw TbeApiException('No loaded project');
-    _api.undo(handle);
-    return currentRenderScene();
-  }
+  Future<RenderSceneLoadResult> undo() => _authoringQueue.run(() async {
+        final handle = _handle;
+        if (handle == null) throw TbeApiException('No loaded project');
+        _api.undo(handle);
+        return _currentRenderSceneNow();
+      });
 
   @override
-  Future<RenderSceneLoadResult> redo() async {
-    final handle = _handle;
-    if (handle == null) throw TbeApiException('No loaded project');
-    _api.redo(handle);
-    return currentRenderScene();
-  }
+  Future<RenderSceneLoadResult> redo() => _authoringQueue.run(() async {
+        final handle = _handle;
+        if (handle == null) throw TbeApiException('No loaded project');
+        _api.redo(handle);
+        return _currentRenderSceneNow();
+      });
 
   @override
-  Future<({int undoCount, int redoCount})> historyCounts() async {
-    final handle = _handle;
-    if (handle == null) {
-      return (undoCount: 0, redoCount: 0);
-    }
-    return _api.historyCounts(handle);
-  }
+  Future<({int undoCount, int redoCount})> historyCounts() =>
+      _authoringQueue.run(() async {
+        final handle = _handle;
+        if (handle == null) {
+          return (undoCount: 0, redoCount: 0);
+        }
+        return _api.historyCounts(handle);
+      });
 
   @override
-  Future<String> snapshotProjectJson() async {
+  Future<String> snapshotProjectJson() =>
+      _authoringQueue.run(_snapshotProjectJsonNow);
+
+  Future<String> _snapshotProjectJsonNow() async {
     final handle = _handle;
     if (handle == null) throw TbeApiException('No loaded project');
     final json = _api.saveProjectJson(handle);
@@ -300,36 +359,39 @@ class ViewerRepository
   Future<BimRuntimeCacheStats> compileBimRuntimeCache({
     required String sourceIfcPath,
     required String cachePath,
-  }) async {
-    final handle = _handle;
-    if (handle == null) throw TbeApiException('No loaded project');
-    return _api.compileBimCache(
-      handle,
-      sourceIfcPath: sourceIfcPath,
-      cachePath: cachePath,
-    );
-  }
+  }) =>
+      _authoringQueue.run(() async {
+        final handle = _handle;
+        if (handle == null) throw TbeApiException('No loaded project');
+        return _api.compileBimCache(
+          handle,
+          sourceIfcPath: sourceIfcPath,
+          cachePath: cachePath,
+        );
+      });
 
   @override
   Future<BimRuntimeCacheStats> inspectBimRuntimeCache({
     required String sourceIfcPath,
     required String cachePath,
-  }) async {
-    final handle = _handle;
-    if (handle == null) throw TbeApiException('No loaded project');
-    return _api.inspectBimCache(
-      handle,
-      sourceIfcPath: sourceIfcPath,
-      cachePath: cachePath,
-    );
-  }
+  }) =>
+      _authoringQueue.run(() async {
+        final handle = _handle;
+        if (handle == null) throw TbeApiException('No loaded project');
+        return _api.inspectBimCache(
+          handle,
+          sourceIfcPath: sourceIfcPath,
+          cachePath: cachePath,
+        );
+      });
 
   @override
-  Future<String> snapshotImportedProjectJson() async {
-    final json = _currentJson;
-    if (json != null && json.isNotEmpty) return json;
-    return snapshotProjectJson();
-  }
+  Future<String> snapshotImportedProjectJson() => _authoringQueue.run(() async {
+        if (_handle != null) return _snapshotProjectJsonNow();
+        final json = _currentJson;
+        if (json != null && json.isNotEmpty) return json;
+        throw TbeApiException('No imported project');
+      });
 
   Future<ViewerSnapshot> _buildSnapshot(
     ffi.Pointer<ffi.Void> handle,
@@ -364,10 +426,16 @@ class ViewerRepository
 
   @override
   Future<RenderSceneLoadResult> currentRenderScene() =>
+      _authoringQueue.run(_currentRenderSceneNow);
+
+  Future<RenderSceneLoadResult> _currentRenderSceneNow() =>
       _sceneQueries.currentRenderScene();
 
   @override
   Future<RenderSceneLoadResult> currentPrimaryRenderScene() =>
+      _authoringQueue.run(_currentPrimaryRenderSceneNow);
+
+  Future<RenderSceneLoadResult> _currentPrimaryRenderSceneNow() =>
       _sceneQueries.currentPrimaryRenderScene();
 
   @override
@@ -375,26 +443,36 @@ class ViewerRepository
     RenderScenePoint start,
     RenderScenePoint end,
   ) =>
-      _sceneQueries.sectionScene(start, end);
+      _authoringQueue.run(
+        () => _sceneQueries.sectionScene(start, end),
+      );
 
   @override
   Future<RenderSceneLoadResult> setActiveLevel(int levelId) async {
-    _activeLevelId = levelId;
-    return currentRenderScene();
+    return _authoringQueue.run(() async {
+      _activeLevelId = levelId;
+      return _currentRenderSceneNow();
+    });
   }
 
   @override
   Future<RenderSceneLoadResult> setFullSceneRenderScope(bool enabled) async {
-    _fullSceneRenderScope = enabled;
-    return currentRenderScene();
+    return _authoringQueue.run(() async {
+      _fullSceneRenderScope = enabled;
+      return _currentRenderSceneNow();
+    });
   }
 
   /// Repairs legacy walls before a level move, preserving the old atomic
   /// behavior while keeping the repair policy outside the mutation service.
-  Future<RenderSceneLoadResult> constrainUnconnectedWallsToNextLevel() async {
+  Future<RenderSceneLoadResult> constrainUnconnectedWallsToNextLevel() =>
+      _authoringQueue.run(_constrainUnconnectedWallsToNextLevelNow);
+
+  Future<RenderSceneLoadResult>
+      _constrainUnconnectedWallsToNextLevelNow() async {
     final handle = _handle;
     if (handle == null) throw TbeApiException('No loaded project');
-    final current = await currentRenderScene();
+    final current = await _currentRenderSceneNow();
     final scene = current.scene;
     if (scene == null) return current;
     final levels = [...scene.levels]..sort(
@@ -402,20 +480,16 @@ class ViewerRepository
     var changed = false;
     for (final wall
         in scene.objects.where((object) => object.kindKey == 'wall')) {
-      final heightMode = wall.metadata['height_mode']?.toString();
-      final baseLevelId = int.tryParse(
-            wall.metadata['base_level_id']?.toString() ?? '',
-          ) ??
-          wall.levelId;
-      final topLevelId =
-          int.tryParse(wall.metadata['top_level_id']?.toString() ?? '') ?? 0;
+      final parameters = WallElementParameters.fromObject(wall);
+      final baseLevelId = parameters.baseLevelId;
+      final topLevelId = parameters.topLevelId ?? 0;
       // Only repair genuinely legacy snapshots that have no height-mode
       // metadata. An explicit Unconnected wall is a valid authoring choice
       // and must not be silently converted to a top-level constraint before
       // every level move.
       if (baseLevelId == null ||
           topLevelId != 0 ||
-          heightMode?.isNotEmpty == true) {
+          parameters.hasExplicitHeightMode) {
         continue;
       }
       final base = scene.levelById(baseLevelId);
@@ -433,21 +507,15 @@ class ViewerRepository
         wallId: wall.elementId!,
         baseLevelId: baseLevelId,
         topLevelId: top.levelId,
-        baseOffsetMeters: double.tryParse(
-              wall.metadata['base_offset_meters']?.toString() ?? '',
-            ) ??
-            0.0,
-        topOffsetMeters: double.tryParse(
-              wall.metadata['top_offset_meters']?.toString() ?? '',
-            ) ??
-            0.0,
+        baseOffsetMeters: parameters.baseOffsetMeters,
+        topOffsetMeters: parameters.topOffsetMeters,
         heightMode: 1,
       );
       changed = true;
     }
     if (!changed) return current;
     await _buildSnapshot(handle, _projectName ?? 'Project');
-    return currentRenderScene();
+    return _currentRenderSceneNow();
   }
 
   @override
@@ -904,14 +972,22 @@ class ViewerRepository
       );
 
   @override
-  int? defaultAssemblyId(String kind) => _persistence.defaultAssemblyId(kind);
+  Future<int?> defaultAssemblyId(String kind) => _authoringQueue
+      .run<int?>(() async => _persistence.defaultAssemblyId(kind));
 
   @override
   void dispose() {
     final handle = _handle;
-    if (handle != null) {
+    if (handle == null) return;
+    // Disposal can be requested while a mutation, snapshot, or save is still
+    // waiting in the authoring lane. Queue destruction behind those calls so
+    // the native handle cannot be freed while an in-flight FFI operation is
+    // using it. The session controller drops this repository immediately;
+    // the queued closure only drains the old native session safely.
+    _authoringQueue.run<void>(() async {
+      if (!identical(_handle, handle)) return;
       _api.destroySession(handle);
       _handle = null;
-    }
+    });
   }
 }

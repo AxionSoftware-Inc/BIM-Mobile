@@ -1,4 +1,4 @@
-import 'wall_type_catalog.dart';
+import 'assembly_type_catalog.dart';
 
 /// Native floor assemblies exposed to the Inspector and viewport.
 ///
@@ -65,7 +65,7 @@ final class FloorTypeDefinition {
   final String name;
   final FloorSurfaceKind surfaceKind;
   final double totalThicknessMeters;
-  final List<WallTypeLayerDefinition> layers;
+  final List<AssemblyLayerDefinition> layers;
   final int coreStartLayer;
   final int coreEndLayer;
 
@@ -87,11 +87,11 @@ final class FloorTypeDefinition {
     final id = _floorTypeInt(value['id'] ?? value['assembly_id']);
     if (id == null || id == 0) return null;
 
-    final layers = <WallTypeLayerDefinition>[];
+    final layers = <AssemblyLayerDefinition>[];
     final rawLayers = value['layers'];
     if (rawLayers is List) {
       for (final rawLayer in rawLayers) {
-        final layer = WallTypeLayerDefinition.fromJson(rawLayer);
+        final layer = AssemblyLayerDefinition.fromJson(rawLayer);
         if (layer != null) layers.add(layer);
       }
     }
@@ -114,7 +114,7 @@ final class FloorTypeDefinition {
             value['total_thickness_meters'] ?? value['totalThicknessMeters'],
           ) ??
           calculatedThickness,
-      layers: List<WallTypeLayerDefinition>.unmodifiable(layers),
+      layers: List<AssemblyLayerDefinition>.unmodifiable(layers),
       coreStartLayer:
           _floorTypeInt(value['core_start_layer'] ?? value['coreStartLayer']) ??
               -1,

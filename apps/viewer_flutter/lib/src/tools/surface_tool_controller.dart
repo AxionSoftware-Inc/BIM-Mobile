@@ -18,6 +18,11 @@ class SurfaceToolController extends ChangeNotifier {
   double _heightMeters = 3.0;
   double _floorTopMeters = 0.0;
   double _ceilingOffsetMeters = 2.6;
+  int _roofAssemblyId = 0;
+  int _roofType = 0;
+  double _roofSlopeDegrees = 25.0;
+  double _roofOverhangMeters = 0.35;
+  int _floorAssemblyId = 0;
 
   RenderScenePoint? get start => _start;
   set start(RenderScenePoint? value) =>
@@ -57,6 +62,26 @@ class SurfaceToolController extends ChangeNotifier {
   double get ceilingOffsetMeters => _ceilingOffsetMeters;
   set ceilingOffsetMeters(double value) => _setDouble(
       value, _ceilingOffsetMeters, (next) => _ceilingOffsetMeters = next);
+
+  int get floorAssemblyId => _floorAssemblyId;
+  set floorAssemblyId(int value) => _setInt(value, _floorAssemblyId, (next) {
+        _floorAssemblyId = next;
+      });
+
+  int get roofAssemblyId => _roofAssemblyId;
+  set roofAssemblyId(int value) => _setInt(value, _roofAssemblyId, (next) {
+        _roofAssemblyId = next;
+      });
+  int get roofType => _roofType;
+  set roofType(int value) => _setInt(value, _roofType, (next) {
+        _roofType = next;
+      });
+  double get roofSlopeDegrees => _roofSlopeDegrees;
+  set roofSlopeDegrees(double value) =>
+      _setDouble(value, _roofSlopeDegrees, (next) => _roofSlopeDegrees = next);
+  double get roofOverhangMeters => _roofOverhangMeters;
+  set roofOverhangMeters(double value) => _setDouble(
+      value, _roofOverhangMeters, (next) => _roofOverhangMeters = next);
 
   void replacePoints(Iterable<RenderScenePoint> value) {
     _points
@@ -132,6 +157,11 @@ class SurfaceToolController extends ChangeNotifier {
     _heightMeters = defaultHeight;
     _floorTopMeters = levelElevation;
     _ceilingOffsetMeters = 2.6;
+    _roofAssemblyId = 0;
+    _roofType = 0;
+    _roofSlopeDegrees = 25.0;
+    _roofOverhangMeters = 0.35;
+    _floorAssemblyId = 0;
     notifyListeners();
   }
 
@@ -147,6 +177,12 @@ class SurfaceToolController extends ChangeNotifier {
 
   void _setDouble(double value, double current, void Function(double) assign) {
     if (!value.isFinite || (value - current).abs() < 1e-9) return;
+    assign(value);
+    notifyListeners();
+  }
+
+  void _setInt(int value, int current, void Function(int) assign) {
+    if (value == current) return;
     assign(value);
     notifyListeners();
   }

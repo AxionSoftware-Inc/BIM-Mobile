@@ -17,6 +17,7 @@ add_library(tbe_core
     src/IfcExchange.cpp
     src/JobSystem.cpp
     src/Project.cpp
+    src/ProjectCatalog.cpp
     src/Units.cpp
 )
 

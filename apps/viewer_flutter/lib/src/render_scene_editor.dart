@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:math' as math;
 
 import 'elements/bim_element_registry.dart';
+import 'elements/wall_type_catalog.dart';
 import 'render_scene_level_binding.dart';
 import 'render_scene_models.dart';
 
@@ -351,6 +352,20 @@ class RenderSceneEditor {
     final resolvedHeight = heightMeters <= 1e-6
         ? _levelDefaultWallHeightMeters(scene, resolvedLevelId)
         : heightMeters;
+    final defaultWallType = scene.wallTypes.firstWhere(
+      (type) => type.name == 'Basic Wall',
+      orElse: () => scene.wallTypes.isEmpty
+          ? const WallTypeDefinition(
+              id: 0,
+              name: 'Basic Wall',
+              category: WallTypeCategory.generic,
+              totalThicknessMeters: defaultWallThicknessMeters,
+              layers: <WallTypeLayerDefinition>[],
+              coreStartLayer: -1,
+              coreEndLayer: -1,
+            )
+          : scene.wallTypes.first,
+    );
     final wallObject = _buildWallObject(
       elementId: nextId,
       start: start,
@@ -364,6 +379,9 @@ class RenderSceneEditor {
           'top_level_id': resolvedTopLevelId.toString(),
         'height_mode': resolvedTopLevelId == null ? 'Unconnected' : 'TopLevel',
         'level_locked': true,
+        'wall_type_id': defaultWallType.id.toString(),
+        'wall_type_name': defaultWallType.name,
+        'wall_type_category': defaultWallType.categoryLabel,
       },
     );
     objects.add(wallObject);

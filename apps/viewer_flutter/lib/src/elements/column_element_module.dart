@@ -6,6 +6,7 @@ final class ColumnElementModule extends BimElementModule {
           kindKey: 'column',
           displayName: 'Column',
           typeFamily: BimElementTypeFamily.column,
+          inspectorAdapterKey: BimElementInspectorKeys.linear,
           aliases: const <String>{'column'},
           isLevelHosted: true,
           isPlanCore: true,

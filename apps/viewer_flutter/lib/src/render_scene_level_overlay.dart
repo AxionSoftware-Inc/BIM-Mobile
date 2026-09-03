@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'project_unit_settings.dart';
 import 'render_scene_models.dart';
 import 'render_scene_viewport_planar.dart';
 import 'render_scene_viewport_projection.dart';
@@ -35,6 +36,7 @@ final class RenderSceneLevelOverlayPainter extends CustomPainter {
     required this.camera,
     required this.selectedLevelId,
     this.padding = 48.0,
+    this.units = const ProjectUnitSettings.defaults(),
   });
 
   final RenderScene scene;
@@ -44,6 +46,7 @@ final class RenderSceneLevelOverlayPainter extends CustomPainter {
   final RenderSceneCameraState camera;
   final int? selectedLevelId;
   final double padding;
+  final ProjectUnitSettings units;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -84,7 +87,7 @@ final class RenderSceneLevelOverlayPainter extends CustomPainter {
       final painter = TextPainter(
         text: TextSpan(
           text:
-              '${overlay.level.name} ${overlay.level.elevationMeters.toStringAsFixed(2)}m',
+              '${overlay.level.name} ${units.formatLength(overlay.level.elevationMeters)}',
           style: selected
               ? textStyle.copyWith(
                   color: const Color(0xFF1D4ED8),
@@ -125,7 +128,14 @@ final class RenderSceneLevelOverlayPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant RenderSceneLevelOverlayPainter oldDelegate) =>
-      true;
+      scene != oldDelegate.scene ||
+      projectionMode != oldDelegate.projectionMode ||
+      orbitProjectionStyle != oldDelegate.orbitProjectionStyle ||
+      planCamera != oldDelegate.planCamera ||
+      camera != oldDelegate.camera ||
+      selectedLevelId != oldDelegate.selectedLevelId ||
+      padding != oldDelegate.padding ||
+      units != oldDelegate.units;
 }
 
 List<RenderSceneLevelOverlayEntry> buildLevelOverlayEntries({

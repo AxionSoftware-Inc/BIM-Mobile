@@ -153,7 +153,8 @@ class StartScreen extends StatelessWidget {
                             width: cardWidth,
                             template: WorkspaceTemplate.modern3,
                             title: 'Modern glass house',
-                            subtitle: 'Courtyard house with ordered site layout',
+                            subtitle:
+                                'Courtyard house with ordered site layout',
                             meta: '3 levels · lawn · asphalt · paving',
                             icon: Icons.house_siding_outlined,
                             onPressed: busy
@@ -847,12 +848,12 @@ class _TemplatePreviewPainter extends CustomPainter {
         }
       case WorkspaceTemplate.modern3:
         _drawModernGround(canvas, size);
-        _drawBuilding(canvas, size, floors: 3, scale: 0.90, offsetX: 0.0,
-            modern: true);
+        _drawBuilding(canvas, size,
+            floors: 3, scale: 0.90, offsetX: 0.0, modern: true);
       case WorkspaceTemplate.glassTower9:
         _drawModernGround(canvas, size);
-        _drawBuilding(canvas, size, floors: 9, scale: 0.78, offsetX: 0.0,
-            modern: true);
+        _drawBuilding(canvas, size,
+            floors: 9, scale: 0.78, offsetX: 0.0, modern: true);
       case WorkspaceTemplate.glassCampus6x9:
         _drawCampusGround(canvas, size);
         for (final offset in <Offset>[
@@ -863,8 +864,12 @@ class _TemplatePreviewPainter extends CustomPainter {
           const Offset(0.00, 0.19),
           const Offset(0.28, 0.13),
         ]) {
-          _drawBuilding(canvas, size, floors: 9, scale: 0.43,
-              offsetX: offset.dx, offsetY: offset.dy, modern: true);
+          _drawBuilding(canvas, size,
+              floors: 9,
+              scale: 0.43,
+              offsetX: offset.dx,
+              offsetY: offset.dy,
+              modern: true);
         }
     }
   }
@@ -968,8 +973,8 @@ class _TemplatePreviewPainter extends CustomPainter {
       final faceColor = modern && (edge == 0 || edge == 2)
           ? secondary.withValues(alpha: 0.28)
           : edge == 0 || edge == 1 || edge == 2
-          ? primary.withValues(alpha: 0.19)
-          : secondary.withValues(alpha: 0.16);
+              ? primary.withValues(alpha: 0.19)
+              : secondary.withValues(alpha: 0.16);
       canvas.drawPath(face, Paint()..color = faceColor);
       canvas.drawPath(face, linePaint);
     }

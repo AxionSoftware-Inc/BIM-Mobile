@@ -129,16 +129,16 @@ extension _RenderSceneViewportCamera on RenderSceneViewportController {
 
   Future<void> _invoke(String method, [Object? arguments]) async {
     final channel = _channel;
-    if (channel == null) {
+    if (channel == null || _backend != RenderSceneViewportBackend.native) {
       return;
     }
 
     try {
       await channel.invokeMethod<void>(method, arguments);
     } on MissingPluginException {
-      // Native bridge is optional.
+      _switchToFallback('Native viewport method "$method" is unavailable.');
     } on PlatformException {
-      // Fallback canvas should stay usable even if native renderer fails.
+      _switchToFallback('Native viewport method "$method" failed.');
     }
   }
 

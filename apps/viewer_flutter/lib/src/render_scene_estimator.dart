@@ -1,5 +1,9 @@
 import 'dart:math' as math;
 
+import 'elements/opening_parameters.dart';
+import 'elements/room_parameters.dart';
+import 'elements/surface_parameters.dart';
+import 'elements/wall_parameters.dart';
 import 'render_scene_editor.dart';
 import 'render_scene_models.dart';
 
@@ -109,31 +113,6 @@ class RenderSceneEstimateCatalog {
 class RenderSceneEstimator {
   const RenderSceneEstimator._();
 
-  static double? _metadataDouble(RenderSceneObject object, String key) {
-    final value = object.metadata[key];
-    if (value is num) {
-      return value.toDouble();
-    }
-    if (value is String) {
-      return double.tryParse(value);
-    }
-    return null;
-  }
-
-  static int? _metadataInt(RenderSceneObject object, String key) {
-    final value = object.metadata[key];
-    if (value is int) {
-      return value;
-    }
-    if (value is num) {
-      return value.toInt();
-    }
-    if (value is String) {
-      return int.tryParse(value);
-    }
-    return null;
-  }
-
   static RenderSceneEstimateSummary summarize(
     RenderScene scene, {
     RenderSceneEstimateCatalog catalog = const RenderSceneEstimateCatalog(),
@@ -160,7 +139,7 @@ class RenderSceneEstimator {
       if (object.kindKey != 'door' && object.kindKey != 'window') {
         continue;
       }
-      final hostWallId = _metadataInt(object, 'host_wall_id');
+      final hostWallId = OpeningElementParameters.fromObject(object).hostWallId;
       if (hostWallId == null) {
         continue;
       }
@@ -173,19 +152,20 @@ class RenderSceneEstimator {
       switch (object.kindKey) {
         case 'room':
           roomCount += 1;
-          totalRoomArea += _metadataDouble(object, 'area_m2') ??
+          final roomParameters = RoomElementParameters.fromObject(object);
+          totalRoomArea += roomParameters.areaSquareMeters ??
               (object.bounds.width * object.bounds.depth);
-          totalRoomPerimeter += _metadataDouble(object, 'perimeter_m') ??
+          totalRoomPerimeter += roomParameters.perimeterMeters ??
               ((object.bounds.width + object.bounds.depth) * 2.0);
           break;
         case 'wall':
           wallCount += 1;
+          final wallParameters = WallElementParameters.fromObject(object);
           final length =
               RenderSceneEditor.wallLength(object) ?? object.bounds.width;
           final thickness = RenderSceneEditor.wallThickness(object) ??
               math.min(object.bounds.width, object.bounds.depth);
-          final height =
-              _metadataDouble(object, 'height_meters') ?? object.bounds.height;
+          final height = wallParameters.heightMeters ?? object.bounds.height;
           final grossVolume = length * thickness * height;
           final grossArea = length * height;
           final attachedOpenings =
@@ -193,10 +173,11 @@ class RenderSceneEstimator {
           var wallOpeningVolume = 0.0;
           var wallOpeningArea = 0.0;
           for (final opening in attachedOpenings) {
-            final width = _metadataDouble(opening, 'width_meters') ??
-                opening.bounds.width;
-            final openingHeight = _metadataDouble(opening, 'height_meters') ??
-                opening.bounds.height;
+            final openingParameters =
+                OpeningElementParameters.fromObject(opening);
+            final width = openingParameters.widthMeters ?? opening.bounds.width;
+            final openingHeight =
+                openingParameters.heightMeters ?? opening.bounds.height;
             wallOpeningArea += width * openingHeight;
             wallOpeningVolume += width * openingHeight * thickness;
           }
@@ -207,29 +188,31 @@ class RenderSceneEstimator {
           break;
         case 'floor':
           floorCount += 1;
-          final area = object.bounds.width * object.bounds.depth;
-          final thickness = _metadataDouble(object, 'thickness_meters') ??
-              object.bounds.height;
+          final surfaceParameters = SurfaceElementParameters.fromObject(object);
+          final area = surfaceParameters.areaSquareMeters ??
+              (object.bounds.width * object.bounds.depth);
+          final thickness =
+              surfaceParameters.thicknessMeters ?? object.bounds.height;
           floorArea += area;
           floorConcreteVolume += area * thickness;
           break;
         case 'ceiling':
           ceilingCount += 1;
-          ceilingArea += object.bounds.width * object.bounds.depth;
+          final surfaceParameters = SurfaceElementParameters.fromObject(object);
+          ceilingArea += surfaceParameters.areaSquareMeters ??
+              (object.bounds.width * object.bounds.depth);
           break;
         case 'door':
           doorCount += 1;
-          openingArea +=
-              (_metadataDouble(object, 'width_meters') ?? object.bounds.width) *
-                  (_metadataDouble(object, 'height_meters') ??
-                      object.bounds.height);
+          final doorParameters = OpeningElementParameters.fromObject(object);
+          openingArea += (doorParameters.widthMeters ?? object.bounds.width) *
+              (doorParameters.heightMeters ?? object.bounds.height);
           break;
         case 'window':
           windowCount += 1;
-          openingArea +=
-              (_metadataDouble(object, 'width_meters') ?? object.bounds.width) *
-                  (_metadataDouble(object, 'height_meters') ??
-                      object.bounds.height);
+          final windowParameters = OpeningElementParameters.fromObject(object);
+          openingArea += (windowParameters.widthMeters ?? object.bounds.width) *
+              (windowParameters.heightMeters ?? object.bounds.height);
           break;
       }
     }

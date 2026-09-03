@@ -11,6 +11,7 @@ mixin _FallbackSceneOverlayMixin {
   RenderSceneOrbitProjectionStyle get orbitProjectionStyle;
   RenderSceneDisplayStyle get displayStyle;
   RenderSceneViewportTheme get viewportTheme;
+  ProjectUnitSettings get units;
   RenderSceneOpeningDraft? get draftOpening;
   RenderSceneSurfaceDraft? get draftSurface;
   RenderScenePoint? get draftWallStart;
@@ -72,7 +73,7 @@ mixin _FallbackSceneOverlayMixin {
       _drawWallLengthLabel(
         canvas,
         Offset((a.dx + b.dx) * 0.5, (a.dy + b.dy) * 0.5),
-        WallAuthoringGeometry.formatWallLengthMeters(wallLength),
+        WallAuthoringGeometry.formatWallLengthMeters(wallLength, units: units),
       );
       if (projectionMode == RenderSceneProjectionMode.topDown &&
           (interactionMode == RenderSceneInteractionMode.addWall ||
@@ -742,7 +743,7 @@ mixin _FallbackSceneOverlayMixin {
       final painter = TextPainter(
         text: TextSpan(
           text:
-              '${overlay.level.name} ${overlay.level.elevationMeters.toStringAsFixed(2)}m',
+              '${overlay.level.name} ${units.formatLength(overlay.level.elevationMeters)}',
           style: isSelected
               ? textStyle.copyWith(color: const Color(0xFF1D4ED8), fontSize: 13)
               : textStyle,

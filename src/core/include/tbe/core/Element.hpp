@@ -188,6 +188,9 @@ struct WallJoin {
 };
 
 struct HostedOpening {
+    // This is the wall's derived cut projection, not a second opening type
+    // record. DoorData/WindowData own the element values; opening mutations
+    // must update both through Document::update_hosted_opening.
     ElementId element_id{};
     OpeningKind kind{OpeningKind::Door};
     double offset_meters{};
@@ -240,8 +243,9 @@ struct WallData {
     ElementId base_level_id{};
     ElementId top_level_id{};
     ElementId wall_type_id{};
-    // WallTypeData is kept for legacy projects. New authoring uses the same
-    // compound assembly contract as floors, roofs and stairs.
+    // WallTypeData is the canonical semantic source for authored walls.
+    // LayeredAssemblyData remains available for floors, roofs and stairs, and
+    // only appears on walls while loading an older compatibility record.
     ElementId assembly_id{};
     Line2 axis{};
     double thickness_meters{};

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "tbe/core/Project.hpp"
+#include "tbe/core/ProjectCatalog.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -52,12 +53,17 @@ inline StressModel create_stress_model(std::string name, const StressModelOption
         model.upper_level_id = document.create_level("Level 2", 3.2, 3.2);
     }
 
-    const auto brick = document.create_material("Brick", MaterialCategory::Structural, 1800.0, 120.0);
-    const auto plaster = document.create_material("Plaster", MaterialCategory::Finish, 950.0, 40.0);
-    const auto concrete = document.create_material("Concrete", MaterialCategory::Structural, 2400.0, 110.0);
-    const auto tile = document.create_material("Tile", MaterialCategory::Finish, 2100.0, 55.0);
-    const auto gypsum = document.create_material("Gypsum", MaterialCategory::Finish, 850.0, 28.0);
-    const auto glass = document.create_material("Glass", MaterialCategory::Glass, 2500.0, 80.0);
+    // Stress models are still allowed to add custom stress-only assemblies,
+    // but their materials come from the same project catalog as production
+    // authoring. This keeps a stress run from creating a second material
+    // universe with duplicate Concrete/Brick/Gypsum/Glass records.
+    const auto catalog = ensure_default_project_catalog(document);
+    const auto brick = catalog.brick_material;
+    const auto plaster = catalog.gypsum_material;
+    const auto concrete = catalog.concrete_material;
+    const auto tile = catalog.stair_tile_material;
+    const auto gypsum = catalog.gypsum_material;
+    const auto glass = catalog.glass_material;
     model.concrete_material_id = concrete;
     model.finish_material_id = tile;
     model.glass_material_id = glass;

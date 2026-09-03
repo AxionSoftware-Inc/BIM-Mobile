@@ -6,6 +6,7 @@ final class DoorElementModule extends BimElementModule {
           kindKey: 'door',
           displayName: 'Door',
           typeFamily: BimElementTypeFamily.door,
+          inspectorAdapterKey: BimElementInspectorKeys.opening,
           aliases: const <String>{'door', 'opening'},
           isLevelHosted: true,
           isPlanCore: true,

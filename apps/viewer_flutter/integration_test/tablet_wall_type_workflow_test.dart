@@ -24,7 +24,7 @@ void main() {
             'Concrete Core Wall',
           ]));
       expect(
-        initial.materials.any((material) => material.name == 'Template Glass'),
+        initial.materials.any((material) => material.name == 'Glass'),
         isTrue,
       );
 

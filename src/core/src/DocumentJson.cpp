@@ -1709,25 +1709,24 @@ Document Document::from_json(std::string_view json) {
 
     document.replace_state(as_string(field(root_object, "name")), std::move(elements), as_id(field(root_object, "next_id")));
 
-    // v1 projects stored wall compositions only in WallTypeData. Promote each
-    // referenced legacy type to a canonical compound assembly on load so a
-    // subsequent edit/save follows the same contract as new walls.
-    std::map<ElementId, ElementId> migrated_wall_assemblies;
+    // Keep the invariant at the lowest load boundary as well as at Project
+    // load: every wall must expose one canonical WallTypeData source before
+    // any caller can query or edit the document.
+    document.normalize_wall_type_sources();
+
+    // v1 projects stored wall compositions in WallTypeData. WallTypeData is
+    // now the canonical wall source, so keep the existing type ID and repair
+    // only the derived envelope thickness. Do not create a second assembly
+    // record during load; that was the source of dual wall type identities.
     for (auto& element : document.elements_) {
         auto* wall = element.wall();
-        if (wall == nullptr || wall->assembly_id != 0 || wall->wall_type_id == 0) continue;
-        auto found = migrated_wall_assemblies.find(wall->wall_type_id);
-        if (found == migrated_wall_assemblies.end()) {
-            const auto* type = document.get_wall_type(wall->wall_type_id);
-            if (type == nullptr) continue;
-            const auto assembly_id = document.create_layered_assembly(
-                LayeredAssemblyKind::Wall, type->name, type->layers);
-            found = migrated_wall_assemblies.emplace(wall->wall_type_id, assembly_id).first;
-        }
-        wall->assembly_id = found->second;
-        wall->thickness_meters = 0.0;
-        for (const auto& layer : document.get_layered_assembly(found->second)->layers) {
-            wall->thickness_meters += layer.thickness_meters;
+        if (wall == nullptr || wall->wall_type_id == 0) continue;
+        if (const auto* type = document.get_wall_type(wall->wall_type_id)) {
+            wall->assembly_id = 0;
+            wall->thickness_meters = 0.0;
+            for (const auto& layer : type->layers) {
+                wall->thickness_meters += layer.thickness_meters;
+            }
         }
         wall->geometry.dirty = true;
     }

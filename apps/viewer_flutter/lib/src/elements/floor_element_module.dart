@@ -6,6 +6,7 @@ final class FloorElementModule extends BimElementModule {
           kindKey: 'floor',
           displayName: 'Floor',
           typeFamily: BimElementTypeFamily.floor,
+          inspectorAdapterKey: BimElementInspectorKeys.surface,
           aliases: const <String>{'floor', 'floorsystem'},
           isLevelHosted: true,
           isPlanCore: true,

@@ -6,6 +6,7 @@ final class WindowElementModule extends BimElementModule {
           kindKey: 'window',
           displayName: 'Window',
           typeFamily: BimElementTypeFamily.window,
+          inspectorAdapterKey: BimElementInspectorKeys.opening,
           aliases: const <String>{'window'},
           isLevelHosted: true,
           isPlanCore: true,

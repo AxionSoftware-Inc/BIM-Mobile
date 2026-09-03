@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import 'app_project_storage.dart';
+import 'atomic_file_writer.dart';
 import 'render_scene_viewport_types.dart';
 
 enum AppThemeMode {
@@ -112,6 +113,7 @@ class ViewerAppSettings {
 
 abstract final class ViewerAppSettingsStore {
   static const String _fileName = 'tablet_bim_settings.json';
+  static final SerializedFileWriter _writer = SerializedFileWriter();
 
   static Future<ViewerAppSettings> load() async {
     try {
@@ -134,7 +136,7 @@ abstract final class ViewerAppSettingsStore {
       final file = File(
         '${directory.path}${Platform.pathSeparator}$_fileName',
       );
-      await file.writeAsString(jsonEncode(settings.toJson()));
+      await _writer.write(file, jsonEncode(settings.toJson()));
     } catch (_) {
       // Appearance remains usable for the current session even when a host
       // does not expose persistent app storage.

@@ -1,12 +1,13 @@
 # Filament Renderer Plan
 
-`RenderScene` is the bridge between the C++ BIM engine and the future Flutter
-UI. The long-term renderer path is:
+`RenderScene` is the bridge between the C++ BIM engine and the Flutter UI. The
+current renderer path is:
 
 1. C++ engine exports `render_scene.json`.
 2. Flutter parses the scene and owns the app UI.
 3. A native renderer consumes the scene data.
-4. Filament becomes the Android/mobile 3D backend.
+4. Filament is the Android/mobile 3D backend; the Flutter painter remains the
+   renderer-neutral fallback for desktop and tests.
 
 ## Why this exists
 
@@ -72,9 +73,8 @@ and level. A future optimization pass can:
 
 ## Limitations
 
-- not a full scene graph
-- not a final material system
-- no shadows or post-processing yet
-- no advanced selection/picking in native renderer yet
-- no editing workflow is attached to this renderer pass yet
-- Android build validation is blocked on local SDK availability on this machine
+- not a full scene graph or final material/family system
+- hidden-line CAD styling and advanced LOD/instancing remain future work
+- Android native picking/highlighting is present, while authoring decisions
+  remain centralized in Flutter and the engine
+- iOS native rendering is still a placeholder

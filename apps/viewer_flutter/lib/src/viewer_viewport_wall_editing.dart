@@ -17,7 +17,7 @@ extension _ViewerViewportWallEditing on _ViewerHomePageState {
       _draftWallStart = preview.$1;
       _draftWallEnd = preview.$2;
       _editStatusMessage =
-          'Level move preview: ${nextElevation.toStringAsFixed(2)} m';
+          'Level move preview: ${_projectUnitSettings.formatLength(nextElevation)}';
     });
     _viewportController.setWallDraft(preview.$1, preview.$2);
   }
@@ -46,7 +46,7 @@ extension _ViewerViewportWallEditing on _ViewerHomePageState {
     if (_draftMoveTarget?.elementId != opening.elementId) {
       await _selectObject(opening);
     }
-    final hostWallId = _metadataInt(opening, 'host_wall_id');
+    final hostWallId = OpeningElementParameters.fromObject(opening).hostWallId;
     final hostWall = hostWallId == null ? null : scene.objectById(hostWallId);
     if (hostWall == null || hostWall.kindKey != 'wall') {
       _updateViewportState(() {
@@ -444,16 +444,20 @@ extension _ViewerViewportWallEditing on _ViewerHomePageState {
           boundaryWallIds.length >= 3 &&
           polygon != null &&
           polygon.length >= 3) {
-        // A blank project intentionally has no material catalog yet. The
+        // Legacy/imported documents may still have no layered assembly. The
         // native document supports assemblyId=0 and creates a valid plain
-        // slab in that case; do not make Finish a no-op just because the
-        // optional layered assembly has not been created yet.
-        final assemblyId = _authoringCommands.defaultAssemblyId(
-              _interactionMode == RenderSceneInteractionMode.addFloor
-                  ? 'Floor'
-                  : 'Ceiling',
-            ) ??
-            0;
+        // slab in that case; do not make Finish a no-op when that optional
+        // catalog entry is absent.
+        final assemblyId =
+            _interactionMode == RenderSceneInteractionMode.addFloor &&
+                    _surfaceTool.floorAssemblyId != 0
+                ? _surfaceTool.floorAssemblyId
+                : await _authoringCommands.defaultAssemblyId(
+                      _interactionMode == RenderSceneInteractionMode.addFloor
+                          ? 'Floor'
+                          : 'Ceiling',
+                    ) ??
+                    0;
         try {
           final result = await _authoringCommands.createProfile(
             targetKind: _surfaceTargetKind(),

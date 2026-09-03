@@ -8,6 +8,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
 import '../app_project_storage.dart';
+import '../atomic_file_writer.dart';
 import '../render_scene_models.dart';
 import '../render_scene_viewport_painter.dart';
 import '../render_scene_viewport_planar.dart';
@@ -144,7 +145,7 @@ class DocumentPdfService {
     final file = File(
       '${documentDirectory.path}${Platform.pathSeparator}${settings.safeFileName}',
     );
-    await file.writeAsBytes(bytes, flush: true);
+    await atomicWriteBytes(file, bytes);
     return file;
   }
 

@@ -49,6 +49,10 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
   // When true, Filament owns all large geometry through a validated
   // `.bimcache`; Flutter retains only the compact semantic envelope.
   bool _nativeGeometryActive = false;
+  // Keep the last cache request so a PlatformView recreation can restore the
+  // native geometry without asking Dart to resend a large JSON mesh payload.
+  Map<String, Object?>? _nativeCacheRequest;
+  bool _nativeCacheNeedsReplay = false;
 
   RenderSceneProjectionMode _projectionMode = kDefaultPlanProjectionMode;
   RenderSceneOrbitProjectionStyle _orbitProjectionStyle =
@@ -87,6 +91,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
 
   MethodChannel? _channel;
   Completer<void>? _nativeBridgeReady;
+  String? _nativeBridgeError;
 
   @override
   RenderScene? get scene => _scene;
@@ -171,6 +176,23 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
 
   bool get hasNativeBridge => _channel != null;
 
+  /// Non-null only after the Android bridge failed and the controller moved
+  /// to the Flutter renderer. The workspace can surface this diagnostic while
+  /// still keeping the model interactive.
+  String? get nativeBridgeError => _nativeBridgeError;
+
+  void _switchToFallback(String message) {
+    if (_backend != RenderSceneViewportBackend.native ||
+        defaultTargetPlatform != TargetPlatform.android ||
+        _disposed) {
+      return;
+    }
+    _nativeGeometryActive = false;
+    _nativeBridgeError = message;
+    _backend = RenderSceneViewportBackend.fallback;
+    notifyListeners();
+  }
+
   /// True while the live Android viewport owns the IFC mesh through the
   /// engine-backed `.bimcache`. Navigation must not replace that geometry
   /// with the legacy JSON scene just to change projection or scope.
@@ -188,6 +210,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     try {
       await ready.future.timeout(timeout);
     } on TimeoutException {
+      _switchToFallback('Native viewport bridge timed out.');
       return false;
     }
     return _channel != null;
@@ -223,11 +246,13 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     required String sourceIfcPath,
     required String cachePath,
   }) async {
-    _nativeGeometryActive = true;
-    await _invoke('loadNativeBimCache', <String, Object?>{
+    _nativeCacheRequest = <String, Object?>{
       'sourceIfcPath': sourceIfcPath,
       'cachePath': cachePath,
-    });
+    };
+    _nativeCacheNeedsReplay = true;
+    _nativeGeometryActive = false;
+    await _loadRememberedNativeBimCache();
   }
 
   /// Validates/reopens a cache, or compiles it natively on a background
@@ -239,6 +264,12 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
   }) async {
     final channel = _channel;
     if (channel == null) return null;
+    _nativeCacheRequest = <String, Object?>{
+      'sourceIfcPath': sourceIfcPath,
+      'cachePath': cachePath,
+    };
+    _nativeCacheNeedsReplay = true;
+    _nativeGeometryActive = false;
     try {
       final result = await channel.invokeMapMethod<Object?, Object?>(
         'prepareNativeBimCache',
@@ -247,7 +278,12 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
           'cachePath': cachePath,
         },
       );
-      if (result != null) _nativeGeometryActive = true;
+      if (result != null) {
+        _nativeGeometryActive = true;
+        _nativeCacheNeedsReplay = false;
+      } else {
+        _nativeCacheNeedsReplay = false;
+      }
       return result;
     } on MissingPluginException {
       return null;
@@ -273,6 +309,12 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
   void detachNativeBridge() {
     _channel?.setMethodCallHandler(null);
     _channel = null;
+    // The Android PlatformView may be recreated while the Flutter controller
+    // survives (for example after a route/lifecycle transition). Its native
+    // scene is gone with the old view, so replay the remembered cache request
+    // when the new channel attaches.
+    _nativeGeometryActive = false;
+    _nativeCacheNeedsReplay = _nativeCacheRequest != null;
     _nativeBridgeReady = null;
   }
 
@@ -296,6 +338,8 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     }
     if (!preserveNativeGeometry) {
       _nativeGeometryActive = false;
+      _nativeCacheRequest = null;
+      _nativeCacheNeedsReplay = false;
     }
     _scene = scene;
     _sceneBounds = scene.bounds;
@@ -323,6 +367,8 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
   @override
   Future<void> clearScene() async {
     _nativeGeometryActive = false;
+    _nativeCacheRequest = null;
+    _nativeCacheNeedsReplay = false;
     _scene = null;
     _selectedElementIds = <String>{};
     _activeElementId = null;
@@ -489,6 +535,10 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     }
 
     _backend = backend;
+    if (backend == RenderSceneViewportBackend.native) {
+      _nativeBridgeError = null;
+      _nativeCacheNeedsReplay = _nativeCacheRequest != null;
+    }
     notifyListeners();
     await _syncNativeBridge();
   }
@@ -730,10 +780,15 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     String? activeElementId,
   }) async {
     final normalized = Set<String>.from(elementIds);
+    final stableFallback = normalized.toList()..sort();
     final resolvedActive =
         activeElementId != null && normalized.contains(activeElementId)
             ? activeElementId
-            : (normalized.isEmpty ? null : normalized.last);
+            : normalized.isEmpty
+                ? null
+                : normalized.contains(_activeElementId)
+                    ? _activeElementId
+                    : stableFallback.last;
     if (setEquals(_selectedElementIds, normalized) &&
         _activeElementId == resolvedActive) {
       return;

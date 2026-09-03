@@ -251,6 +251,7 @@ class AuthoringCommandService {
     required double heightMeters,
     required double verticalOffsetMeters,
     int assemblyId = 0,
+    int roofType = 0,
   }) =>
       _requireCreationGateway().createProfile(
         targetKind: targetKind,
@@ -263,12 +264,13 @@ class AuthoringCommandService {
         heightMeters: heightMeters,
         verticalOffsetMeters: verticalOffsetMeters,
         assemblyId: assemblyId,
+        roofType: roofType,
       );
 
   Future<RenderSceneLoadResult> detectRooms() =>
       _requireCreationGateway().detectRooms();
 
-  int? defaultAssemblyId(String kind) =>
+  Future<int?> defaultAssemblyId(String kind) =>
       _requireCreationGateway().defaultAssemblyId(kind);
 
   ViewerAuthoringGateway _requireRepository() {

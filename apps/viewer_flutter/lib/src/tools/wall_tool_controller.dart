@@ -17,12 +17,20 @@ enum WallMoveMode {
 class WallToolController extends ChangeNotifier {
   RenderScenePoint? _start;
   RenderScenePoint? _end;
+  int _wallTypeId = 0;
 
   RenderScenePoint? get start => _start;
   RenderScenePoint? get end => _end;
   bool get hasStart => _start != null;
   bool get hasSegment =>
       _start != null && _end != null && _start!.distanceTo(_end!) >= 0.1;
+
+  int get wallTypeId => _wallTypeId;
+  set wallTypeId(int value) {
+    if (_wallTypeId == value) return;
+    _wallTypeId = value;
+    notifyListeners();
+  }
 
   void begin(RenderScenePoint point) {
     _start = point;
@@ -47,6 +55,7 @@ class WallToolController extends ChangeNotifier {
     if (_start == null && _end == null) return;
     _start = null;
     _end = null;
+    _wallTypeId = 0;
     notifyListeners();
   }
 }

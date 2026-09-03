@@ -148,16 +148,12 @@ final class TbeAuthoringMutationRepository {
     required List<WallTypeLayerDefinition> layers,
   }) async {
     final handle = _requireHandle();
-    final wallTypeId = _api.createWallType(
+    _api.upsertWallTypeForWall(
       handle,
+      wallId: wallId,
       category: category,
       name: name,
       layers: layers,
-    );
-    _api.setWallType(
-      handle,
-      wallId: wallId,
-      wallTypeId: wallTypeId,
     );
     return _afterMutation();
   }

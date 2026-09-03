@@ -6,6 +6,7 @@ final class CeilingElementModule extends BimElementModule {
           kindKey: 'ceiling',
           displayName: 'Ceiling',
           typeFamily: BimElementTypeFamily.ceiling,
+          inspectorAdapterKey: BimElementInspectorKeys.ceiling,
           aliases: const <String>{'ceiling', 'ceilingsystem'},
           isLevelHosted: true,
           isPlanCore: true,

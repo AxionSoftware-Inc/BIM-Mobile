@@ -10,6 +10,38 @@ permissions:
   contents: read
 
 jobs:
+  native-sanitizers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up sanitizer build
+        run: >-
+          cmake -S . -B build/ci-sanitizers -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug
+          -DTBE_BUILD_TESTS=ON
+          -DTBE_BUILD_CLI=OFF
+          -DTBE_BUILD_EXAMPLES=OFF
+          -DTBE_ENABLE_OCCT=OFF
+          '-DCMAKE_CXX_FLAGS=-fsanitize=address,undefined -fno-omit-frame-pointer'
+          '-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined'
+          '-DCMAKE_SHARED_LINKER_FLAGS=-fsanitize=address,undefined'
+
+      - name: Build sanitized native tests
+        run: >-
+          cmake --build build/ci-sanitizers --parallel
+          --target tbe_core_tests tbe_api_tests tbe_ifc_fixture_tests
+
+      - name: Run sanitized native tests
+        run: ctest --test-dir build/ci-sanitizers --output-on-failure
+        env:
+          ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+          LD_LIBRARY_PATH: ${{ github.workspace }}/build/ci-sanitizers/src/api
+
   quality:
     runs-on: ubuntu-latest
     timeout-minutes: 30

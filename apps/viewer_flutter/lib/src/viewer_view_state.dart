@@ -59,34 +59,6 @@ extension _ViewerViewState on _ViewerHomePageState {
         _ViewerHomePageState._defaultWallHeightMeters;
   }
 
-  int? _metadataInt(RenderSceneObject object, String key) {
-    final value = object.metadata[key];
-    if (value is int) {
-      return value;
-    }
-    if (value is num) {
-      return value.toInt();
-    }
-    if (value is String) {
-      return int.tryParse(value);
-    }
-    return null;
-  }
-
-  double? _metadataDouble(RenderSceneObject object, String key) {
-    final value = object.metadata[key];
-    if (value is double) {
-      return value;
-    }
-    if (value is num) {
-      return value.toDouble();
-    }
-    if (value is String) {
-      return double.tryParse(value);
-    }
-    return null;
-  }
-
   RenderSceneLevel? _pickLevelAtElevation(
     RenderScene scene,
     RenderScenePoint? modelPoint, {
@@ -155,12 +127,13 @@ extension _ViewerViewState on _ViewerHomePageState {
       return;
     }
 
+    final parameters = WallElementParameters.fromObject(object);
     final result = await repository.setWallLevelConstraints(
       wallId: wallId,
       baseLevelId: activeLevelId,
       topLevelId: nextLevel?.levelId ?? 0,
-      baseOffsetMeters: _metadataDouble(object, 'base_offset_meters') ?? 0.0,
-      topOffsetMeters: _metadataDouble(object, 'top_offset_meters') ?? 0.0,
+      baseOffsetMeters: parameters.baseOffsetMeters,
+      topOffsetMeters: parameters.topOffsetMeters,
       heightMode: constrainToNextLevel ? 1 : 0,
     );
     await _applyEngineSceneResult(

@@ -89,12 +89,11 @@ extension _IfcImportCache on _ViewerHomePageState {
               _ifcCacheSignature(ifcPath, stat)) {
         return;
       }
-      final partial = File('${cached.path}.download');
-      await partial.writeAsString(json, flush: true);
-      if (await cached.exists()) await cached.delete();
-      await partial.rename(cached.path);
-      await signatureFile.writeAsString(_ifcCacheSignature(ifcPath, stat),
-          flush: true);
+      await atomicWriteString(cached, json);
+      await atomicWriteString(
+        signatureFile,
+        _ifcCacheSignature(ifcPath, stat),
+      );
     } catch (_) {
       // The IFC itself remains the source of truth. Cache storage is best
       // effort because external/document-provider paths can be read-only.
@@ -145,7 +144,7 @@ extension _IfcImportCache on _ViewerHomePageState {
         cachePath: paths.cachePath,
       );
       if (!result.sourceValid || result.chunkCount == 0) return null;
-      await signatureFile.writeAsString(signature, flush: true);
+      await atomicWriteString(signatureFile, signature);
       return paths.cachePath;
     } catch (_) {
       // Cache failures must not hide a valid IFC/project JSON import.
@@ -205,10 +204,19 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
       _viewportController.activeElementId ?? '',
       _viewportController.selectedLevelId?.toString() ?? '',
       _viewportController.highlightedElementId ?? '',
+      _viewportController.nativeBridgeError ?? '',
     ].join('\u001f');
     if (_lastViewportUiSignature == nextSignature) return;
     _lastViewportUiSignature = nextSignature;
-    if (mounted) _updateViewportState(() {});
+    if (mounted) {
+      _updateViewportState(() {
+        final bridgeError = _viewportController.nativeBridgeError;
+        if (bridgeError != null) {
+          _engineLoadDiagnostic = bridgeError;
+          _statusMessage = 'Flutter viewport fallback is active.';
+        }
+      });
+    }
   }
 
   void _onSelectionChangedForWorkspace() {
@@ -363,13 +371,15 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
     required int generation,
     required String sourceLabel,
   }) {
+    final expectedSceneDataRevision = _sceneDataRevision;
     unawaited(() async {
       // Give the platform view one event turn to paint the primary scene
       // before serializing the heavier secondary scene.
       await Future<void>.delayed(Duration.zero);
       if (!mounted ||
           generation != _sceneLoadGeneration ||
-          !identical(_projectSession.session, session)) {
+          !identical(_projectSession.session, session) ||
+          expectedSceneDataRevision != _sceneDataRevision) {
         return;
       }
       _updateViewportState(() {
@@ -379,13 +389,20 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
         final result = await _sceneViews.refresh();
         if (!mounted ||
             generation != _sceneLoadGeneration ||
-            !identical(_projectSession.session, session)) {
+            !identical(_projectSession.session, session) ||
+            expectedSceneDataRevision != _sceneDataRevision) {
           return;
         }
-        await _applyLoadResult(
-          result,
-          sourceLabel: '$sourceLabel · details',
-          preserveViewport: true,
+        // Detail hydration shares the same presentation lane as authoring
+        // commits. A late read may finish after a wall/opening edit, but it
+        // can no longer overwrite the newer scene or viewport state.
+        await _sceneCommitQueue.run(
+          () => _applyLoadResult(
+            result,
+            sourceLabel: '$sourceLabel · details',
+            preserveViewport: true,
+            expectedSceneDataRevision: expectedSceneDataRevision,
+          ),
         );
       } catch (error) {
         if (!mounted ||
@@ -458,11 +475,6 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
         sourceLabel: '$label template',
         resetProjectChanges: true,
       );
-      if (buildingCount == 1 || showcaseKind != null) {
-        // A tower is most useful as a whole-building visual test on first
-        // open. Switching back to plan re-enables nearby-level streaming.
-        await _setProjectionMode(RenderSceneProjectionMode.isometric);
-      }
     } catch (error) {
       if (!mounted) return;
       _updateViewportState(() {
@@ -486,11 +498,6 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
         sourceLabel: 'Layered house',
         resetProjectChanges: true,
       );
-      // The bundled engine sample is the first visual proof of the complete
-      // building path. Open it in 3D so the top-level roof and monolithic
-      // stair are visible immediately instead of being hidden by the default
-      // top-down level filter.
-      await _setProjectionMode(RenderSceneProjectionMode.isometric);
       return true;
     } catch (error) {
       _projectSession.markUnavailable();
@@ -836,9 +843,15 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
         length: length,
         angle: 'degrees',
       );
+      final result = await _sceneViews.refresh();
+      await _applyLoadResult(
+        result,
+        sourceLabel: 'Project units',
+        preserveViewport: true,
+      );
       _updateViewportState(() {
         _projectHasChanges = true;
-        _statusMessage = 'Project units: $length';
+        _statusMessage = 'Project units: ${_projectUnitSettings.lengthSymbol}';
       });
     } catch (error) {
       if (!mounted) return;
@@ -1238,7 +1251,7 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
 
   Future<void> _open3dViewTab() {
     return _openViewTab(OpenedViewTab(
-      id: 'view-3d-default',
+      id: ViewWorkspaceStore.threeDViewId,
       label: '3D View',
       kind: OpenedViewKind.threeD,
       projectionMode: RenderSceneProjectionMode.isometric,
@@ -1249,7 +1262,7 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
     final level = _scene?.levelById(levelId);
     if (level == null) return;
     await _openViewTab(OpenedViewTab(
-      id: 'floor-plan-$levelId',
+      id: ViewWorkspaceStore.floorPlanId(levelId),
       label: '${level.name} plan',
       kind: OpenedViewKind.floorPlan,
       projectionMode: RenderSceneProjectionMode.topDown,
@@ -1457,7 +1470,15 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
     bool resetProjectChanges = false,
     bool nativeGeometryAlreadyLoaded = false,
     bool preserveViewport = false,
+    int? expectedSceneDataRevision,
   }) async {
+    if (expectedSceneDataRevision != null &&
+        expectedSceneDataRevision != _sceneDataRevision) {
+      return;
+    }
+    if (!preserveViewport) {
+      ++_sceneDataRevision;
+    }
     final rawScene = result.scene;
     final scene = rawScene == null
         ? null
@@ -1465,6 +1486,7 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
             ? rawScene
             : RenderSceneEditor.normalizeSceneGeometry(rawScene);
     _viewWorkspace.clearSheetCache();
+    final resetViewWorkspace = resetProjectChanges && !preserveViewport;
 
     _updateViewportState(() {
       // A deferred detail query is best-effort. If it fails, keep the
@@ -1489,11 +1511,28 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
       _isBusy = false;
 
       if (scene != null) {
+        if (resetViewWorkspace) {
+          // Project entry is the single boundary that owns default view
+          // state. Authoring refreshes, undo/redo, and detail hydration keep
+          // the user's opened tabs and camera mode intact.
+          _viewWorkspace.resetForScene(scene);
+          _activeViewTabId = _viewWorkspace.activeTabId;
+          _projectionMode =
+              _openedViewTabById(_activeViewTabId ?? '')?.projectionMode ??
+                  RenderSceneProjectionMode.topDown;
+          _usesProjectionDefaultVisibility = true;
+          _usesProjectionDefaultDisplayStyle = true;
+        }
         if (_usesProjectionDefaultDisplayStyle) {
           _displayStyle = _defaultDisplayStyleForProjection();
         }
-        _activeLevelId =
-            _resolveInitialLevelId(scene, preferred: _activeLevelId);
+        _activeLevelId = _resolveInitialLevelId(
+          scene,
+          // A new project gets a clean view context. Existing scene refreshes
+          // retain the user's current level, including after an edit or
+          // undo/redo.
+          preferred: resetViewWorkspace ? null : _activeLevelId,
+        );
         final activeLevel = scene.levelById(_activeLevelId) ??
             (scene.levels.isNotEmpty ? scene.levels.first : null);
         _draftFloorTopElevationMeters = activeLevel?.elevationMeters ?? 0.0;
@@ -1517,6 +1556,7 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
         await _viewportController.clearScene();
       }
       await _refreshHistoryState();
+      await _refreshProjectUnitSettings();
       return;
     }
 
@@ -1528,6 +1568,7 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
       await _viewportController.updateRenderScene(
         _sceneForViewport(scene),
         resetView: false,
+        preserveNativeGeometry: _viewportController.hasNativeGeometry,
       );
     } else {
       await _viewportController.loadRenderScene(_sceneForViewport(scene));
@@ -1566,5 +1607,33 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
       }
     }
     await _refreshHistoryState();
+    await _refreshProjectUnitSettings();
+  }
+
+  Future<void> _refreshProjectUnitSettings() async {
+    final repository = _engineRepository;
+    if (!_engineBackedMode || repository == null) {
+      if (mounted &&
+          _projectUnitSettings != const ProjectUnitSettings.defaults()) {
+        _updateViewportState(() {
+          _projectUnitSettings = const ProjectUnitSettings.defaults();
+        });
+      }
+      return;
+    }
+    try {
+      final settings = ProjectUnitSettings.fromMap(
+        await _projectPersistence.getUnitSettings(),
+      );
+      if (!mounted) return;
+      if (_projectUnitSettings != settings) {
+        _updateViewportState(() {
+          _projectUnitSettings = settings;
+        });
+      }
+    } catch (_) {
+      // Unit display is a presentation preference. Keep the last known value
+      // if an optional read fails; authoring remains in metres internally.
+    }
   }
 }

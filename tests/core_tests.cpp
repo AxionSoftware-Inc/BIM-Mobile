@@ -2009,7 +2009,70 @@ int main() {
     assert(std::all_of(loaded_room_schedule.begin(), loaded_room_schedule.end(), [](const auto& row) {
         return row.interior_area_square_meters > 0.0;
     }));
-    assert(loaded_multi_document.materials().empty());
+    // Every project load repairs the shared starter catalog, so a project
+    // authored from raw geometry no longer re-enters the app without types.
+    assert(!loaded_multi_document.materials().empty());
+
+    {
+        // Legacy template walls used a Wall-kind assembly while current
+        // authoring uses WallTypeData. Project loading must migrate that
+        // source exactly once, preserve its local IDs, and leave no dual
+        // wall source behind.
+        tbe::core::Document legacy_document{"Legacy Template Model"};
+        const auto legacy_level = legacy_document.create_level("Level 1", 0.0, 3.0);
+        const auto legacy_brick = legacy_document.create_material(
+            "Template Brick", tbe::core::MaterialCategory::Structural);
+        const auto legacy_insulation = legacy_document.create_material(
+            "Template Insulation", tbe::core::MaterialCategory::Insulation);
+        const auto legacy_assembly = legacy_document.create_layered_assembly(
+            tbe::core::LayeredAssemblyKind::Wall,
+            "Residential Wall",
+            {
+                {.material_id = legacy_brick, .thickness_meters = 0.20, .function = tbe::core::WallLayerFunction::Core},
+                {.material_id = legacy_insulation, .thickness_meters = 0.08, .function = tbe::core::WallLayerFunction::Insulation},
+            });
+        const auto legacy_wall = legacy_document.create_wall(
+            "Legacy wall", {{0.0, 0.0}, {4.0, 0.0}}, 0.20, 3.0,
+            legacy_level, legacy_assembly);
+        tbe::core::Project legacy_project{"Legacy Template"};
+        legacy_project.active_document() = std::move(legacy_document);
+        const auto migrated_project = tbe::core::Project::from_json(legacy_project.to_json());
+        const auto& migrated_document = migrated_project.active_document();
+        const auto* migrated_wall = migrated_document.find_ptr(legacy_wall)->wall();
+        assert(migrated_wall != nullptr);
+        assert(migrated_wall->assembly_id == 0);
+        assert(migrated_wall->wall_type_id != 0);
+        const auto* migrated_type = migrated_document.get_wall_type(migrated_wall->wall_type_id);
+        assert(migrated_type != nullptr);
+        assert(migrated_type->name == "Residential Wall");
+        assert(std::any_of(
+            migrated_document.materials().begin(), migrated_document.materials().end(),
+            [](const auto& entry) { return entry.second.name == "Brick"; }));
+        assert(std::none_of(
+            migrated_document.materials().begin(), migrated_document.materials().end(),
+            [](const auto& entry) { return entry.second.name == "Template Brick"; }));
+    }
+
+    {
+        // A malformed saved wall with a dangling type reference must be
+        // repaired even when it has no legacy assembly companion.
+        tbe::core::Document dangling_document{"Dangling Wall Type"};
+        const auto dangling_level = dangling_document.create_level("Level 1", 0.0, 3.0);
+        const auto dangling_wall = dangling_document.create_wall(
+            "Wall", {{0.0, 0.0}, {4.0, 0.0}}, 0.20, 3.0, dangling_level);
+        auto dangling_json = dangling_document.to_json();
+        const auto marker = std::string{"\"wall_type_id\":0"};
+        const auto marker_position = dangling_json.find(marker);
+        assert(marker_position != std::string::npos);
+        dangling_json.replace(marker_position, marker.size(), "\"wall_type_id\":999999");
+        const auto repaired_project = tbe::core::Project::from_json(
+            std::string{"{\"schema\":\"tbe.project.v1\",\"schema_version\":1,\"engine_version\":\"test\",\"project_name\":\"Dangling\",\"document\":"} +
+            dangling_json + "}");
+        const auto* repaired_wall = repaired_project.active_document().find_ptr(dangling_wall)->wall();
+        assert(repaired_wall != nullptr);
+        assert(repaired_wall->wall_type_id == 0);
+        assert(repaired_wall->assembly_id == 0);
+    }
 
     tbe::core::Document grid_document{"Grid"};
     const auto grid_level = grid_document.create_level("Level 1", 0.0, 3.0);
@@ -2609,6 +2672,45 @@ int main() {
     }
 
     {
+        // Wall layer editing is isolated without creating a new type for
+        // every Inspector save. Shared types clone once; the next edit of
+        // that wall updates its private type in place.
+        tbe::core::Document wall_type_edit{"Wall Type Edit"};
+        const auto edit_level = wall_type_edit.create_level("Level 1", 0.0, 3.0);
+        const auto brick = wall_type_edit.create_material(
+            "Brick", tbe::core::MaterialCategory::Structural);
+        const auto shared_type = wall_type_edit.create_wall_type(
+            "Shared Wall",
+            {{.material_id = brick, .thickness_meters = 0.20,
+              .function = tbe::core::WallLayerFunction::Core}});
+        const auto first_wall = wall_type_edit.create_wall(
+            "First", {{0.0, 0.0}, {4.0, 0.0}}, 0.20, 3.0, edit_level, 0, shared_type);
+        const auto second_wall = wall_type_edit.create_wall(
+            "Second", {{0.0, 4.0}, {4.0, 4.0}}, 0.20, 3.0, edit_level, 0, shared_type);
+        auto first_layers = wall_type_edit.get_wall_type(shared_type)->layers;
+        first_layers.front().thickness_meters = 0.24;
+        const auto private_type = wall_type_edit.upsert_wall_type_for_wall(
+            first_wall, "Shared Wall", first_layers);
+        assert(private_type != shared_type);
+        assert(wall_type_edit.find_ptr(first_wall)->wall()->wall_type_id == private_type);
+        assert(wall_type_edit.find_ptr(second_wall)->wall()->wall_type_id == shared_type);
+        const auto type_count_after_clone = wall_type_edit.wall_types().size();
+
+        first_layers.front().thickness_meters = 0.26;
+        const auto edited_private_type = wall_type_edit.upsert_wall_type_for_wall(
+            first_wall, "Shared Wall", first_layers);
+        assert(edited_private_type == private_type);
+        assert(wall_type_edit.wall_types().size() == type_count_after_clone);
+
+        // The legacy wall-kind assembly entry is converted at authoring time,
+        // so a wall never retains both assembly_id and wall_type_id.
+        const auto legacy_assembly = wall_type_edit.create_layered_assembly(
+            tbe::core::LayeredAssemblyKind::Wall, "Legacy Wall", first_layers);
+        const auto legacy_wall = wall_type_edit.create_wall(
+            "Legacy", {{0.0, 8.0}, {4.0, 8.0}}, 0.20, 3.0, edit_level, legacy_assembly);
+        assert(wall_type_edit.find_ptr(legacy_wall)->wall()->assembly_id == 0);
+        assert(wall_type_edit.find_ptr(legacy_wall)->wall()->wall_type_id != 0);
+
         // Compound assemblies are semantic data. Their generated meshes are
         // rebuilt after reload rather than persisted as project payload.
         tbe::core::Document compound{"Compound V2"};
@@ -2695,18 +2797,21 @@ int main() {
         const auto stair = compound.create_stair(level, level, {0.0, 0.5}, {1.0, 0.0}, 1.1, 3.0, 4.0, 18, 17, concrete, stair_assembly);
         assert(!compound.find_ptr(stair)->stair()->mesh.vertices.empty());
         assert(!compound.find_ptr(stair)->stair()->mesh.indices.empty());
-        auto edited = *compound.get_layered_assembly(wall_assembly);
+        const auto canonical_wall_type = compound.find_ptr(wall)->wall()->wall_type_id;
+        assert(canonical_wall_type != 0);
+        auto edited = *compound.get_wall_type(canonical_wall_type);
         edited.layers.front().thickness_meters = 0.25;
-        compound.update_layered_assembly(std::move(edited));
+        compound.update_wall_type(std::move(edited));
         assert(compound.find_ptr(wall)->wall()->geometry.dirty);
         compound.regenerate_dirty_geometry();
-        auto metadata_only = *compound.get_layered_assembly(wall_assembly);
+        auto metadata_only = *compound.get_wall_type(canonical_wall_type);
         metadata_only.layers.front().priority = 999;
         metadata_only.layers.front().structural = false;
-        compound.update_layered_assembly(std::move(metadata_only));
+        compound.update_wall_type(std::move(metadata_only));
         assert(!compound.find_ptr(wall)->wall()->geometry.dirty);
         const auto restored = tbe::core::Document::from_json(compound.to_json());
-        assert(restored.find_ptr(wall)->wall()->assembly_id == wall_assembly);
+        assert(restored.find_ptr(wall)->wall()->assembly_id == 0);
+        assert(restored.find_ptr(wall)->wall()->wall_type_id == canonical_wall_type);
         assert(restored.find_ptr(roof)->roof()->assembly_id == roof_assembly);
         assert(restored.find_ptr(slab)->slab()->assembly_id == slab_assembly);
         assert(restored.find_ptr(stair)->stair()->assembly_id == stair_assembly);

@@ -8,12 +8,14 @@ class _LevelToolbarControl extends StatelessWidget {
     required this.activeLevelId,
     required this.onChanged,
     required this.onAddLevel,
+    required this.units,
   });
 
   final List<RenderSceneLevel> levels;
   final int? activeLevelId;
   final ValueChanged<int?> onChanged;
   final VoidCallback onAddLevel;
+  final ProjectUnitSettings units;
 
   @override
   Widget build(BuildContext context) {
@@ -50,7 +52,7 @@ class _LevelToolbarControl extends StatelessWidget {
                   DropdownMenuItem<int>(
                     value: level.levelId,
                     child: Text(
-                      '${level.name} (${level.elevationMeters.toStringAsFixed(2)}m)',
+                      '${level.name} (${units.formatLength(level.elevationMeters)})',
                     ),
                   ),
               ],
@@ -89,9 +91,9 @@ class _SelectedWallLevelToolbarControl extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final baseLevelId =
-        _objectMetadataInt(wall, 'base_level_id') ?? wall.levelId;
-    final topLevelId = _objectMetadataInt(wall, 'top_level_id');
+    final wallParameters = WallElementParameters.fromObject(wall);
+    final baseLevelId = wallParameters.baseLevelId ?? wall.levelId;
+    final topLevelId = wallParameters.topLevelId;
     final baseLabel = scene.levelById(baseLevelId)?.name ?? 'None';
     final topLabel = (topLevelId == null || topLevelId == 0)
         ? 'Unconnected'
@@ -139,6 +141,7 @@ class _SelectedWallLevelToolbarControl extends StatelessWidget {
 class _DraftEditorCard extends StatefulWidget {
   const _DraftEditorCard({
     required this.interactionMode,
+    required this.units,
     required this.draftWallStart,
     required this.draftWallEnd,
     required this.draftSurfaceStart,
@@ -148,8 +151,20 @@ class _DraftEditorCard extends StatefulWidget {
     required this.draftSurfaceThicknessMeters,
     required this.draftSurfaceHeightMeters,
     required this.draftStairWidthMeters,
+    required this.stairLevels,
+    required this.stairBaseLevelId,
+    required this.stairTopLevelId,
     required this.draftFloorTopElevationMeters,
     required this.surfaceDrawMode,
+    required this.wallTypes,
+    required this.wallTypeId,
+    required this.floorTypes,
+    required this.floorAssemblyId,
+    required this.roofTypes,
+    required this.roofAssemblyId,
+    required this.roofType,
+    required this.roofSlopeDegrees,
+    required this.roofOverhangMeters,
     required this.draftHostWall,
     required this.openingKind,
     required this.openingWidthMeters,
@@ -166,14 +181,22 @@ class _DraftEditorCard extends StatefulWidget {
     required this.onSurfaceThicknessChanged,
     required this.onSurfaceHeightChanged,
     required this.onFloorTopElevationChanged,
+    required this.onWallTypeChanged,
+    required this.onFloorAssemblyChanged,
+    required this.onRoofAssemblyChanged,
+    required this.onRoofTypeChanged,
+    required this.onRoofSlopeChanged,
+    required this.onRoofOverhangChanged,
     required this.onStairWidthChanged,
+    required this.onStairBaseLevelChanged,
+    required this.onStairTopLevelChanged,
     required this.onConfirm,
     required this.onCancel,
-    required this.onClearSelection,
     required this.onResetMode,
   });
 
   final RenderSceneInteractionMode interactionMode;
+  final ProjectUnitSettings units;
   final RenderScenePoint? draftWallStart;
   final RenderScenePoint? draftWallEnd;
   final RenderScenePoint? draftSurfaceStart;
@@ -183,8 +206,20 @@ class _DraftEditorCard extends StatefulWidget {
   final double draftSurfaceThicknessMeters;
   final double draftSurfaceHeightMeters;
   final double draftStairWidthMeters;
+  final List<RenderSceneLevel> stairLevels;
+  final int? stairBaseLevelId;
+  final int? stairTopLevelId;
   final double draftFloorTopElevationMeters;
   final RenderSceneSurfaceDrawMode surfaceDrawMode;
+  final List<WallTypeDefinition> wallTypes;
+  final int wallTypeId;
+  final List<FloorTypeDefinition> floorTypes;
+  final int floorAssemblyId;
+  final List<FloorTypeDefinition> roofTypes;
+  final int roofAssemblyId;
+  final int roofType;
+  final double roofSlopeDegrees;
+  final double roofOverhangMeters;
   final RenderSceneObject? draftHostWall;
   final String openingKind;
   final double openingWidthMeters;
@@ -201,10 +236,17 @@ class _DraftEditorCard extends StatefulWidget {
   final ValueChanged<double> onSurfaceThicknessChanged;
   final ValueChanged<double> onSurfaceHeightChanged;
   final ValueChanged<double> onFloorTopElevationChanged;
+  final ValueChanged<int> onWallTypeChanged;
+  final ValueChanged<int> onFloorAssemblyChanged;
+  final ValueChanged<int> onRoofAssemblyChanged;
+  final ValueChanged<int> onRoofTypeChanged;
+  final ValueChanged<double> onRoofSlopeChanged;
+  final ValueChanged<double> onRoofOverhangChanged;
   final ValueChanged<double> onStairWidthChanged;
+  final ValueChanged<int?> onStairBaseLevelChanged;
+  final ValueChanged<int?> onStairTopLevelChanged;
   final VoidCallback onConfirm;
   final VoidCallback onCancel;
-  final VoidCallback onClearSelection;
   final VoidCallback onResetMode;
 
   @override
@@ -216,6 +258,8 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
   TextEditingController? _surfaceHeightController;
   TextEditingController? _floorTopController;
   TextEditingController? _stairWidthController;
+  TextEditingController? _roofSlopeController;
+  TextEditingController? _roofOverhangController;
 
   @override
   void initState() {
@@ -226,6 +270,16 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
   @override
   void didUpdateWidget(covariant _DraftEditorCard oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.units != widget.units) {
+      _surfaceThicknessController?.text =
+          _format(widget.draftSurfaceThicknessMeters);
+      _surfaceHeightController?.text = _format(widget.draftSurfaceHeightMeters);
+      _floorTopController?.text = _format(widget.draftFloorTopElevationMeters);
+      _stairWidthController?.text = _format(widget.draftStairWidthMeters);
+      _roofSlopeController?.text = _angleFormat(widget.roofSlopeDegrees);
+      _roofOverhangController?.text = _format(widget.roofOverhangMeters);
+      return;
+    }
     _syncController(
         _surfaceThicknessController,
         widget.draftSurfaceThicknessMeters,
@@ -236,6 +290,17 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
         oldWidget.draftFloorTopElevationMeters);
     _syncController(_stairWidthController, widget.draftStairWidthMeters,
         oldWidget.draftStairWidthMeters);
+    _syncController(
+      _roofSlopeController,
+      widget.roofSlopeDegrees,
+      oldWidget.roofSlopeDegrees,
+      unitAware: false,
+    );
+    _syncController(
+      _roofOverhangController,
+      widget.roofOverhangMeters,
+      oldWidget.roofOverhangMeters,
+    );
   }
 
   @override
@@ -244,21 +309,24 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
     _surfaceHeightController?.dispose();
     _floorTopController?.dispose();
     _stairWidthController?.dispose();
+    _roofSlopeController?.dispose();
+    _roofOverhangController?.dispose();
     super.dispose();
   }
 
   void _syncController(
     TextEditingController? controller,
     double next,
-    double previous,
-  ) {
+    double previous, {
+    bool unitAware = true,
+  }) {
     if (controller == null) {
       return;
     }
     if ((next - previous).abs() < 1e-9) {
       return;
     }
-    controller.text = _format(next);
+    controller.text = unitAware ? _format(next) : _angleFormat(next);
   }
 
   void _ensureControllers() {
@@ -271,15 +339,23 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
         text: _format(widget.draftFloorTopElevationMeters));
     _stairWidthController ??=
         TextEditingController(text: _format(widget.draftStairWidthMeters));
+    _roofSlopeController ??=
+        TextEditingController(text: _angleFormat(widget.roofSlopeDegrees));
+    _roofOverhangController ??= TextEditingController(
+      text: _format(widget.roofOverhangMeters),
+    );
   }
 
   String _format(double value) {
-    return value.toStringAsFixed(2);
+    return widget.units.formatLength(value, withUnit: false);
   }
 
   double? _parse(String text) {
-    return double.tryParse(text.trim());
+    final displayValue = double.tryParse(text.trim());
+    return displayValue == null ? null : widget.units.toMeters(displayValue);
   }
+
+  String _angleFormat(double value) => value.toStringAsFixed(1);
 
   @override
   Widget build(BuildContext context) {
@@ -289,10 +365,9 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
     final wall = widget.draftHostWall;
 
     return _InfoCard(
-      title: 'Edit',
-      icon: Icons.build_outlined,
+      title: mode.authoringLabel,
+      icon: _toolIcon(mode),
       children: <Widget>[
-        _InfoRow(label: 'Mode', value: mode.authoringLabel),
         if (mode != RenderSceneInteractionMode.trimExtend)
           _InfoRow(
             label: 'Snap',
@@ -316,16 +391,25 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
           _LevelDraftSummary(
             start: widget.draftWallStart,
             end: widget.draftWallEnd,
+            units: widget.units,
           )
         else if (mode == RenderSceneInteractionMode.moveLevel)
           _LevelDraftSummary(
             start: widget.draftWallStart,
             end: widget.draftWallEnd,
+            units: widget.units,
           )
         else if (mode == RenderSceneInteractionMode.addWall)
-          _WallDraftSummary(
-            start: widget.draftWallStart,
-            end: widget.draftWallEnd,
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              _wallTypeDrop(),
+              _WallDraftSummary(
+                start: widget.draftWallStart,
+                end: widget.draftWallEnd,
+                units: widget.units,
+              ),
+            ],
           )
         else if (mode == RenderSceneInteractionMode.addStair)
           Column(
@@ -334,13 +418,24 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
               const Text(
                   'Draw a straight stair run with two points. Rise comes from Base/Top Level.'),
               const SizedBox(height: 8),
+              _stairLevelDrop(
+                label: 'Base level',
+                value: widget.stairBaseLevelId,
+                onChanged: widget.onStairBaseLevelChanged,
+              ),
+              _stairLevelDrop(
+                label: 'Top level',
+                value: widget.stairTopLevelId,
+                onChanged: widget.onStairTopLevelChanged,
+              ),
               _WallDraftSummary(
                 start: widget.draftWallStart,
                 end: widget.draftWallEnd,
+                units: widget.units,
               ),
               const SizedBox(height: 8),
               _NumericField(
-                label: 'Width (m)',
+                label: 'Width (${widget.units.lengthSymbol})',
                 controller: _stairWidthController!,
                 onChanged: (value) {
                   final parsed = _parse(value);
@@ -353,12 +448,14 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
           _WallDraftSummary(
             start: widget.draftWallStart,
             end: widget.draftWallEnd,
+            units: widget.units,
           )
         else if (mode == RenderSceneInteractionMode.trimExtend)
           _TrimExtendDraftSummary(
             first: widget.trimFirstWall,
             second: widget.trimSecondWall,
             preview: widget.trimPreview,
+            units: widget.units,
           )
         else if (mode == RenderSceneInteractionMode.addFloor ||
             mode == RenderSceneInteractionMode.addCeiling ||
@@ -368,6 +465,7 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
             children: <Widget>[
               _SurfaceDraftSummary(
                 mode: mode,
+                units: widget.units,
                 start: widget.draftSurfaceStart,
                 end: widget.draftSurfaceEnd,
                 pointCount: widget.draftSurfacePointCount,
@@ -376,7 +474,7 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
               ),
               const SizedBox(height: 8),
               _NumericField(
-                label: 'Thickness (m)',
+                label: 'Thickness (${widget.units.lengthSymbol})',
                 controller: _surfaceThicknessController!,
                 onChanged: (value) {
                   final parsed = _parse(value);
@@ -386,19 +484,25 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
                 },
               ),
               if (mode == RenderSceneInteractionMode.addFloor)
-                _NumericField(
-                  label: 'Top elevation (m)',
-                  controller: _floorTopController!,
-                  onChanged: (value) {
-                    final parsed = _parse(value);
-                    if (parsed != null) {
-                      widget.onFloorTopElevationChanged(parsed);
-                    }
-                  },
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[
+                    _floorTypeDrop(),
+                    _NumericField(
+                      label: 'Top elevation (${widget.units.lengthSymbol})',
+                      controller: _floorTopController!,
+                      onChanged: (value) {
+                        final parsed = _parse(value);
+                        if (parsed != null) {
+                          widget.onFloorTopElevationChanged(parsed);
+                        }
+                      },
+                    ),
+                  ],
                 )
               else if (mode == RenderSceneInteractionMode.addCeiling)
                 _NumericField(
-                  label: 'Height offset (m)',
+                  label: 'Height offset (${widget.units.lengthSymbol})',
                   controller: _surfaceHeightController!,
                   onChanged: (value) {
                     final parsed = _parse(value);
@@ -407,10 +511,27 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
                     }
                   },
                 )
-              else
-                const Text(
-                  'Roof uses the same boundary sketch. Shape, slope and overhang stay editable in Properties.',
+              else ...<Widget>[
+                _roofAssemblyDrop(),
+                _roofTypeDrop(),
+                if (widget.roofType != 0)
+                  _NumericField(
+                    label: 'Slope (degrees)',
+                    controller: _roofSlopeController!,
+                    onChanged: (value) {
+                      final parsed = double.tryParse(value.trim());
+                      if (parsed != null) widget.onRoofSlopeChanged(parsed);
+                    },
+                  ),
+                _NumericField(
+                  label: 'Overhang (${widget.units.lengthSymbol})',
+                  controller: _roofOverhangController!,
+                  onChanged: (value) {
+                    final parsed = _parse(value);
+                    if (parsed != null) widget.onRoofOverhangChanged(parsed);
+                  },
                 ),
+              ],
             ],
           )
         else
@@ -424,6 +545,7 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
               const SizedBox(height: 8),
               _OpeningPresetField(
                 kind: widget.openingKind,
+                units: widget.units,
                 widthMeters: widget.openingWidthMeters,
                 heightMeters: widget.openingHeightMeters,
                 sillHeightMeters: widget.openingSillHeightMeters,
@@ -464,13 +586,173 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
         const SizedBox(height: 8),
         TextButton(
           onPressed: widget.onResetMode,
-          child: const Text('Back to Select'),
-        ),
-        TextButton(
-          onPressed: widget.onClearSelection,
-          child: const Text('Clear selection'),
+          child: const Text('Exit tool'),
         ),
       ],
+    );
+  }
+
+  IconData _toolIcon(RenderSceneInteractionMode mode) => switch (mode) {
+        RenderSceneInteractionMode.addWall ||
+        RenderSceneInteractionMode.moveWall ||
+        RenderSceneInteractionMode.trimExtend =>
+          Icons.view_week_outlined,
+        RenderSceneInteractionMode.addFloor => Icons.layers_outlined,
+        RenderSceneInteractionMode.addCeiling => Icons.layers_clear_outlined,
+        RenderSceneInteractionMode.addRoof => Icons.roofing_outlined,
+        RenderSceneInteractionMode.addDoor ||
+        RenderSceneInteractionMode.addWindow ||
+        RenderSceneInteractionMode.moveOpening =>
+          Icons.open_in_new_outlined,
+        RenderSceneInteractionMode.addStair => Icons.stairs_outlined,
+        RenderSceneInteractionMode.addLevel ||
+        RenderSceneInteractionMode.moveLevel =>
+          Icons.straighten_outlined,
+        RenderSceneInteractionMode.select => Icons.ads_click_outlined,
+      };
+
+  Widget _roofAssemblyDrop() {
+    if (widget.roofTypes.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.only(bottom: 6),
+        child: _InfoRow(label: 'Roof material', value: 'Default roof'),
+      );
+    }
+    final hasCurrent = widget.roofTypes.any(
+      (roofType) => roofType.id == widget.roofAssemblyId,
+    );
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: DropdownButtonFormField<int>(
+        isExpanded: true,
+        initialValue: hasCurrent ? widget.roofAssemblyId : null,
+        decoration: _toolDropdownDecoration('Roof material'),
+        hint: const Text('Select roof material'),
+        items: <DropdownMenuItem<int>>[
+          for (final roofType in widget.roofTypes)
+            DropdownMenuItem<int>(
+              value: roofType.id,
+              child: Text(
+                '${roofType.name} · ${widget.units.formatLength(roofType.totalThicknessMeters)}',
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+        ],
+        onChanged: (value) {
+          if (value != null) widget.onRoofAssemblyChanged(value);
+        },
+      ),
+    );
+  }
+
+  Widget _roofTypeDrop() => Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: DropdownButtonFormField<int>(
+          isExpanded: true,
+          initialValue: widget.roofType,
+          decoration: _toolDropdownDecoration('Roof type'),
+          items: const <DropdownMenuItem<int>>[
+            DropdownMenuItem(value: 0, child: Text('Flat')),
+            DropdownMenuItem(value: 1, child: Text('Simple gable')),
+            DropdownMenuItem(value: 2, child: Text('Auto footprint (L/U)')),
+          ],
+          onChanged: (value) {
+            if (value != null) widget.onRoofTypeChanged(value);
+          },
+        ),
+      );
+
+  InputDecoration _toolDropdownDecoration(String label) => InputDecoration(
+        labelText: label,
+        isDense: true,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+      );
+
+  Widget _wallTypeDrop() {
+    if (widget.wallTypes.isEmpty) return const SizedBox.shrink();
+    final hasCurrent = widget.wallTypes.any(
+      (wallType) => wallType.id == widget.wallTypeId,
+    );
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: DropdownButtonFormField<int>(
+        isExpanded: true,
+        initialValue: hasCurrent ? widget.wallTypeId : null,
+        decoration: _toolDropdownDecoration('Wall type'),
+        hint: const Text('Select wall type'),
+        items: <DropdownMenuItem<int>>[
+          for (final wallType in widget.wallTypes)
+            DropdownMenuItem<int>(
+              value: wallType.id,
+              child: Text(
+                '${wallType.name} · ${wallType.categoryLabel}',
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+        ],
+        onChanged: (value) {
+          if (value != null) widget.onWallTypeChanged(value);
+        },
+      ),
+    );
+  }
+
+  Widget _floorTypeDrop() {
+    if (widget.floorTypes.isEmpty) return const SizedBox.shrink();
+    final hasCurrent = widget.floorTypes.any(
+      (floorType) => floorType.id == widget.floorAssemblyId,
+    );
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: DropdownButtonFormField<int>(
+        isExpanded: true,
+        initialValue: hasCurrent ? widget.floorAssemblyId : null,
+        decoration: _toolDropdownDecoration('Floor type'),
+        hint: const Text('Select floor type'),
+        items: <DropdownMenuItem<int>>[
+          for (final floorType in widget.floorTypes)
+            DropdownMenuItem<int>(
+              value: floorType.id,
+              child: Text(
+                '${floorType.name} · ${floorType.surfaceLabel}',
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+        ],
+        onChanged: (value) {
+          if (value != null) widget.onFloorAssemblyChanged(value);
+        },
+      ),
+    );
+  }
+
+  Widget _stairLevelDrop({
+    required String label,
+    required int? value,
+    required ValueChanged<int?> onChanged,
+  }) {
+    final hasCurrent = value != null &&
+        widget.stairLevels.any((level) => level.levelId == value);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: DropdownButtonFormField<int>(
+        isExpanded: true,
+        initialValue: hasCurrent ? value : null,
+        decoration: _toolDropdownDecoration(label),
+        hint: Text('Select $label'),
+        items: <DropdownMenuItem<int>>[
+          for (final level in widget.stairLevels)
+            DropdownMenuItem<int>(
+              value: level.levelId,
+              child: Text(
+                '${level.name} (${widget.units.formatLength(level.elevationMeters)})',
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+        ],
+        onChanged: widget.stairLevels.isEmpty ? null : onChanged,
+      ),
     );
   }
 }
@@ -482,6 +764,7 @@ class _OpeningPresetField extends StatelessWidget {
     required this.heightMeters,
     required this.sillHeightMeters,
     required this.onChanged,
+    required this.units,
   });
 
   final String kind;
@@ -489,6 +772,7 @@ class _OpeningPresetField extends StatelessWidget {
   final double heightMeters;
   final double sillHeightMeters;
   final ValueChanged<OpeningPreset> onChanged;
+  final ProjectUnitSettings units;
 
   @override
   Widget build(BuildContext context) {
@@ -512,7 +796,10 @@ class _OpeningPresetField extends StatelessWidget {
         for (final preset in presets)
           DropdownMenuItem<String>(
             value: preset.id,
-            child: Text(preset.label, overflow: TextOverflow.ellipsis),
+            child: Text(
+              preset.labelFor(units),
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
       ],
       onChanged: (id) {
@@ -527,10 +814,12 @@ class _WallDraftSummary extends StatelessWidget {
   const _WallDraftSummary({
     required this.start,
     required this.end,
+    required this.units,
   });
 
   final RenderScenePoint? start;
   final RenderScenePoint? end;
+  final ProjectUnitSettings units;
 
   @override
   Widget build(BuildContext context) {
@@ -544,16 +833,17 @@ class _WallDraftSummary extends StatelessWidget {
       children: <Widget>[
         _InfoRow(
           label: 'Start',
-          value:
-              '(${start!.x.toStringAsFixed(2)}, ${start!.y.toStringAsFixed(2)})',
+          value: '(${units.formatLength(start!.x, withUnit: false)}, '
+              '${units.formatLength(start!.y, withUnit: false)})',
         ),
         _InfoRow(
           label: 'End',
-          value: '(${end!.x.toStringAsFixed(2)}, ${end!.y.toStringAsFixed(2)})',
+          value: '(${units.formatLength(end!.x, withUnit: false)}, '
+              '${units.formatLength(end!.y, withUnit: false)})',
         ),
         _InfoRow(
           label: 'Length',
-          value: '${length.toStringAsFixed(2)} m',
+          value: units.formatLength(length),
         ),
       ],
     );
@@ -565,11 +855,13 @@ class _TrimExtendDraftSummary extends StatelessWidget {
     required this.first,
     required this.second,
     required this.preview,
+    required this.units,
   });
 
   final TrimExtendWallSelection? first;
   final TrimExtendWallSelection? second;
   final PlanSketchTrimResult? preview;
+  final ProjectUnitSettings units;
 
   String _endpointLabel(PlanSketchEndpoint endpoint) =>
       endpoint == PlanSketchEndpoint.start ? 'Start' : 'End';
@@ -606,7 +898,8 @@ class _TrimExtendDraftSummary extends StatelessWidget {
             _InfoRow(
               label: 'Join point',
               value:
-                  '(${preview!.intersection.x.toStringAsFixed(2)}, ${preview!.intersection.y.toStringAsFixed(2)})',
+                  '(${units.formatLength(preview!.intersection.x, withUnit: false)}, '
+                  '${units.formatLength(preview!.intersection.y, withUnit: false)})',
             )
           else
             const Padding(
@@ -625,10 +918,12 @@ class _LevelDraftSummary extends StatelessWidget {
   const _LevelDraftSummary({
     required this.start,
     required this.end,
+    required this.units,
   });
 
   final RenderScenePoint? start;
   final RenderScenePoint? end;
+  final ProjectUnitSettings units;
 
   @override
   Widget build(BuildContext context) {
@@ -643,12 +938,14 @@ class _LevelDraftSummary extends StatelessWidget {
       children: <Widget>[
         _InfoRow(
           label: 'Elevation',
-          value: '${end!.z.toStringAsFixed(2)} m',
+          value: units.formatLength(end!.z),
         ),
         _InfoRow(
           label: 'Line',
-          value:
-              '(${start!.x.toStringAsFixed(2)}, ${start!.z.toStringAsFixed(2)}) → (${end!.x.toStringAsFixed(2)}, ${end!.z.toStringAsFixed(2)})',
+          value: '(${units.formatLength(start!.x, withUnit: false)}, '
+              '${units.formatLength(start!.z, withUnit: false)}) → '
+              '(${units.formatLength(end!.x, withUnit: false)}, '
+              '${units.formatLength(end!.z, withUnit: false)})',
         ),
       ],
     );
@@ -663,6 +960,7 @@ class _SurfaceDraftSummary extends StatelessWidget {
     required this.pointCount,
     required this.wallCount,
     required this.drawMode,
+    required this.units,
   });
 
   final RenderSceneInteractionMode mode;
@@ -671,6 +969,7 @@ class _SurfaceDraftSummary extends StatelessWidget {
   final int pointCount;
   final int wallCount;
   final RenderSceneSurfaceDrawMode drawMode;
+  final ProjectUnitSettings units;
 
   @override
   Widget build(BuildContext context) {
@@ -692,7 +991,8 @@ class _SurfaceDraftSummary extends StatelessWidget {
             _InfoRow(
               label: 'Bounds',
               value:
-                  '${(end!.x - start!.x).abs().toStringAsFixed(2)} × ${(end!.y - start!.y).abs().toStringAsFixed(2)} m',
+                  '${units.formatLength((end!.x - start!.x).abs(), withUnit: false)} × '
+                  '${units.formatLength((end!.y - start!.y).abs())}',
             ),
           ],
         ],
@@ -728,17 +1028,19 @@ class _SurfaceDraftSummary extends StatelessWidget {
         const SizedBox(height: 8),
         _InfoRow(
           label: 'Start',
-          value:
-              '(${start!.x.toStringAsFixed(2)}, ${start!.y.toStringAsFixed(2)})',
+          value: '(${units.formatLength(start!.x, withUnit: false)}, '
+              '${units.formatLength(start!.y, withUnit: false)})',
         ),
         _InfoRow(
           label: 'End',
-          value: '(${end!.x.toStringAsFixed(2)}, ${end!.y.toStringAsFixed(2)})',
+          value: '(${units.formatLength(end!.x, withUnit: false)}, '
+              '${units.formatLength(end!.y, withUnit: false)})',
         ),
         _InfoRow(
           label: 'Size',
           value:
-              '${(end!.x - start!.x).abs().toStringAsFixed(2)} × ${(end!.y - start!.y).abs().toStringAsFixed(2)} m',
+              '${units.formatLength((end!.x - start!.x).abs(), withUnit: false)} × '
+              '${units.formatLength((end!.y - start!.y).abs())}',
         ),
       ],
     );

@@ -10,23 +10,23 @@ Maqsad **"Revitning planshetdagi nusxasi"** emas. Maqsad — 12–14" Android/iP
   ceiling, flat roof va slope bilan ishlaydigan AutoFootprint roof;
 - professional level constraint va authoritative save/reload;
 - plan/elevation/3D, touch/stylus selection, drag, pan/orbit/zoom;
-- keyinchalik IFC va PDF/documentation eksporti.
+- IFC import/export va PDF/documentation eksporti.
 
 Ataylab V1 scope tashqarisida: MEP, murakkab Revit family ekotizimi, to‘liq konstruktsion hisob, slope/shape roof, og‘ir real-time clash/quantity compute va cloud collaboration.
 
 ## Arxitektura: source of truth
 
 ```
-Flutter UI / tools / Inspector / temporary preview
+Flutter UI / tools / Inspector / preview
                     │ FFI
                     ▼
 C++ Engine API / transaction / validation / snapshot
                     │
                     ▼
 C++ Document semantic model + dependency graph + persistence
-                    │ snapshot mesh DTO
-                    ▼
-Filament native renderer (Android/macOS) yoki Flutter fallback (debug)
+    │ snapshot mesh DTO
+    ▼
+Filament native renderer (Android) yoki Flutter fallback (desktop/debug)
 ```
 
 - **C++ engine authoritative**: production commit har doim enginega boradi. Flutter local editor faqat debug/demo/recovery uchun.
@@ -74,6 +74,13 @@ Hozir bor:
 
 - nearby/active level snapshot policy;
 - dirty element/level geometry recompute;
+- document-level type/instance separation: takroriy wall, floor, roof va stair
+  instance’lari layer/materialni ko‘paytirmasdan shared type/assembly ID’ga
+  murojaat qiladi;
+- copy-on-write type editing: bitta instance tahriri boshqa instance’larning
+  shared type’ini bilmasdan o‘zgartirmaydi;
+- type/assembly revision asosidagi invalidation keyingi render cache uchun
+  `(type revision, instance geometry parameters)` chegarasini tayyorlaydi;
 - immutable snapshotga mos compute pipeline yo‘nalishi;
 - real 3/6/9 qavat benchmark fixturelari;
 - Filament native renderer, adaptive idle render va telemetry UI;
@@ -82,7 +89,10 @@ Hozir bor:
 Hali majburiy ish:
 
 1. **Zone/level streaming**: katta bino faqat active + yaqin qavatlarni full meshda ushlashi; uzoq zone placeholder yoki LOD bo‘lishi.
-2. **Instancing**: bir xil door/window/stair/type geometriyasi bitta GPU mesh + transform bilan. Hozir ko‘p obyekt alohida mesh bo‘lishi mumkin.
+2. **Render instancing**: bir xil door/window/stair/type geometriyasi bitta
+   GPU mesh + transform bilan. Authoring instance’lari alohida qoladi; faqat
+   render prototiplari va draw-call’lar birlashtiriladi. Hozir ko‘p obyekt
+   alohida mesh bo‘lishi mumkin.
 3. **Batching/material grouping**: draw-call sonini kamaytirish.
 4. **LOD**: uzoqda facade/level shell, yaqinda to‘liq element mesh.
 5. **Benchmark acceptance**: 3/6/9 qavat va detail-heavy scenario uchun cold load, snapshot, edit, save/reload, FPS, RAM, CPU va thermal yozuvi.

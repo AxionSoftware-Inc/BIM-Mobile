@@ -57,6 +57,14 @@ fail_if_found \
   "$flutter_root/render_scene_viewport_painter.dart" \
   "$flutter_root/render_scene_painter_render.dart"
 
+# Inspector adapters must consume their element-family parameter model. Keep
+# raw metadata decoding in one small boundary so adding a property cannot
+# silently create a second schema inside a UI adapter.
+fail_if_found \
+  "Inspector adapters bypass typed element parameters" \
+  "metadata\\[|metadata\\." \
+  "$flutter_root/elements/inspectors"
+
 # A hosted opening is one semantic change. Presentation/UI code cannot fall
 # back to the old move-then-resize sequence, which could leave an invalid wall
 # if the second command failed.

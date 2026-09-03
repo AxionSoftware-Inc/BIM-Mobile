@@ -17,6 +17,20 @@ enum BimElementTypeFamily {
   stair,
 }
 
+/// Canonical Inspector adapter routes shared by element modules and the
+/// presentation registry. Keeping these keys in the semantic boundary avoids
+/// a second, stringly-typed object-family map in the UI.
+abstract final class BimElementInspectorKeys {
+  static const wall = 'wall';
+  static const opening = 'opening';
+  static const surface = 'surface';
+  static const roof = 'roof';
+  static const stair = 'stair';
+  static const ceiling = 'ceiling';
+  static const linear = 'linear';
+  static const generic = 'generic';
+}
+
 /// Presentation-neutral definition of a type supplied by an element module.
 ///
 /// The native document remains authoritative for persisted type records. This
@@ -67,6 +81,7 @@ class BimElementModule {
     required this.kindKey,
     required this.displayName,
     required this.typeFamily,
+    this.inspectorAdapterKey,
     this.aliases = const <String>{},
     this.isArchitectural = true,
     this.isLevelHosted = false,
@@ -80,6 +95,12 @@ class BimElementModule {
   final String kindKey;
   final String displayName;
   final BimElementTypeFamily typeFamily;
+
+  /// Presentation boundary used to connect this element to its Inspector.
+  ///
+  /// Element modules own this identity. The Inspector only resolves the key;
+  /// it must not infer object families with a second switch statement.
+  final String? inspectorAdapterKey;
   final Set<String> aliases;
   final bool isArchitectural;
   final bool isLevelHosted;
@@ -88,4 +109,6 @@ class BimElementModule {
   final bool defaultVisibleIn3d;
   final bool levelLockedByDefault;
   final List<BimElementTypeDefinition> typeDefinitions;
+
+  String get inspectorKey => inspectorAdapterKey ?? kindKey;
 }

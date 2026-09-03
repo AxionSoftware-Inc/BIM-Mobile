@@ -3,6 +3,7 @@
 #include "RuntimeSceneCache.hpp"
 
 #include "tbe/core/Project.hpp"
+#include "tbe/core/ProjectCatalog.hpp"
 #include "tbe/core/IfcExchange.hpp"
 #include "tbe/core/JobSystem.hpp"
 #include "tbe/core/PolygonTriangulation.hpp"
@@ -112,81 +113,15 @@ Project make_residential_template(int building_count, int story_count) {
     // deferred until the user asks for final analysis.
     document.set_automatic_wall_join_enabled(false);
 
-    const auto concrete = document.create_material("Template Concrete", tbe::core::MaterialCategory::Structural, 2400.0, 110.0, {}, "#8796A5");
-    const auto masonry = document.create_material("Template Brick", tbe::core::MaterialCategory::Structural, 1800.0, 90.0, {}, "#B86B4B");
-    const auto gypsum = document.create_material("Template Gypsum", tbe::core::MaterialCategory::Finish, 850.0, 28.0, {}, "#F0E6D2");
-    const auto insulation = document.create_material("Template Insulation", tbe::core::MaterialCategory::Insulation, 35.0, 18.0, {}, "#F1C453");
-    const auto screed = document.create_material("Template Screed", tbe::core::MaterialCategory::Structural, 2100.0, 36.0, {}, "#C8B79B");
-    const auto laminate = document.create_material("Template Laminate", tbe::core::MaterialCategory::Finish, 700.0, 42.0, {}, "#A8733E");
-    const auto tile = document.create_material("Template Stair Tile", tbe::core::MaterialCategory::Finish, 2100.0, 36.0, {}, "#D6A84A");
-    const auto wall_assembly = document.create_layered_assembly(tbe::core::LayeredAssemblyKind::Wall, "Residential Wall", {
-        tbe::core::WallAssemblyLayer{.material_id = masonry, .thickness_meters = 0.012, .function = tbe::core::WallLayerFunction::ExteriorFinish, .priority = 5},
-        tbe::core::WallAssemblyLayer{.material_id = insulation, .thickness_meters = 0.08, .function = tbe::core::WallLayerFunction::Insulation, .priority = 70},
-        tbe::core::WallAssemblyLayer{.material_id = masonry, .thickness_meters = 0.20, .function = tbe::core::WallLayerFunction::Core, .priority = 100, .structural = true},
-        tbe::core::WallAssemblyLayer{.material_id = gypsum, .thickness_meters = 0.015, .function = tbe::core::WallLayerFunction::InteriorFinish, .priority = 10},
-    });
-    const auto exterior_wall_type = document.create_wall_type("Exterior Wall", {
-        tbe::core::WallAssemblyLayer{.material_id = masonry, .thickness_meters = 0.012, .function = tbe::core::WallLayerFunction::ExteriorFinish, .priority = 5},
-        tbe::core::WallAssemblyLayer{.material_id = insulation, .thickness_meters = 0.08, .function = tbe::core::WallLayerFunction::Insulation, .priority = 70},
-        tbe::core::WallAssemblyLayer{.material_id = masonry, .thickness_meters = 0.20, .function = tbe::core::WallLayerFunction::Core, .priority = 100, .structural = true},
-        tbe::core::WallAssemblyLayer{.material_id = gypsum, .thickness_meters = 0.015, .function = tbe::core::WallLayerFunction::InteriorFinish, .priority = 10},
-    }, tbe::core::WallTypeCategory::Exterior);
-    const auto interior_wall_type = document.create_wall_type("Interior Wall", {
-        tbe::core::WallAssemblyLayer{.material_id = gypsum, .thickness_meters = 0.015, .function = tbe::core::WallLayerFunction::InteriorFinish, .priority = 10},
-        tbe::core::WallAssemblyLayer{.material_id = insulation, .thickness_meters = 0.05, .function = tbe::core::WallLayerFunction::Insulation, .priority = 70},
-        tbe::core::WallAssemblyLayer{.material_id = gypsum, .thickness_meters = 0.015, .function = tbe::core::WallLayerFunction::InteriorFinish, .priority = 10},
-    }, tbe::core::WallTypeCategory::Interior);
-    const auto generic_wall_type = document.create_wall_type("Generic Wall", {
-        tbe::core::WallAssemblyLayer{.material_id = masonry, .thickness_meters = 0.12, .function = tbe::core::WallLayerFunction::Generic, .priority = 50, .structural = true},
-    }, tbe::core::WallTypeCategory::Generic);
-    const auto glass = document.create_material("Template Glass", tbe::core::MaterialCategory::Glass, 2500.0, 80.0, {}, "#A8D8E8");
-    const auto exterior_glass_wall_type = document.create_wall_type("Exterior Glass Wall", {
-        tbe::core::WallAssemblyLayer{.material_id = glass, .thickness_meters = 0.12, .function = tbe::core::WallLayerFunction::Core, .priority = 100},
-        tbe::core::WallAssemblyLayer{.material_id = insulation, .thickness_meters = 0.08, .function = tbe::core::WallLayerFunction::Insulation, .priority = 70},
-        tbe::core::WallAssemblyLayer{.material_id = gypsum, .thickness_meters = 0.015, .function = tbe::core::WallLayerFunction::InteriorFinish, .priority = 10},
-    }, tbe::core::WallTypeCategory::Exterior);
-    const auto interior_glass_wall_type = document.create_wall_type("Interior Glass Partition", {
-        tbe::core::WallAssemblyLayer{.material_id = glass, .thickness_meters = 0.10, .function = tbe::core::WallLayerFunction::Core, .priority = 100},
-    }, tbe::core::WallTypeCategory::Interior);
-    const auto concrete_core_wall_type = document.create_wall_type("Concrete Core Wall", {
-        tbe::core::WallAssemblyLayer{.material_id = concrete, .thickness_meters = 0.20, .function = tbe::core::WallLayerFunction::Core, .priority = 100, .structural = true},
-    }, tbe::core::WallTypeCategory::Generic);
-    (void)wall_assembly;
-    (void)generic_wall_type;
-    (void)exterior_glass_wall_type;
-    (void)interior_glass_wall_type;
-    (void)concrete_core_wall_type;
-    const auto floor_assembly = document.create_layered_assembly(tbe::core::LayeredAssemblyKind::Floor, "Residential Floor", {
-        tbe::core::WallAssemblyLayer{.material_id = concrete, .thickness_meters = 0.18, .function = tbe::core::WallLayerFunction::Core},
-        tbe::core::WallAssemblyLayer{.material_id = screed, .thickness_meters = 0.05, .function = tbe::core::WallLayerFunction::Core},
-        tbe::core::WallAssemblyLayer{.material_id = laminate, .thickness_meters = 0.012, .function = tbe::core::WallLayerFunction::InteriorFinish},
-    });
-    const auto asphalt_floor_assembly = document.create_layered_assembly(tbe::core::LayeredAssemblyKind::Floor, "Asphalt Floor", {
-        tbe::core::WallAssemblyLayer{.material_id = concrete, .thickness_meters = 0.16, .function = tbe::core::WallLayerFunction::Core, .structural = true},
-        tbe::core::WallAssemblyLayer{.material_id = screed, .thickness_meters = 0.04, .function = tbe::core::WallLayerFunction::ExteriorFinish},
-    });
-    const auto concrete_floor_assembly = document.create_layered_assembly(tbe::core::LayeredAssemblyKind::Floor, "Concrete Floor", {
-        tbe::core::WallAssemblyLayer{.material_id = concrete, .thickness_meters = 0.20, .function = tbe::core::WallLayerFunction::Core, .structural = true},
-    });
-    const auto foundation_assembly = document.create_layered_assembly(tbe::core::LayeredAssemblyKind::Floor, "Foundation Slab", {
-        tbe::core::WallAssemblyLayer{.material_id = concrete, .thickness_meters = 0.25, .function = tbe::core::WallLayerFunction::Core, .priority = 100, .structural = true},
-        tbe::core::WallAssemblyLayer{.material_id = insulation, .thickness_meters = 0.08, .function = tbe::core::WallLayerFunction::Insulation, .priority = 70},
-    });
-    const auto ceiling_assembly = document.create_layered_assembly(tbe::core::LayeredAssemblyKind::Ceiling, "Residential Ceiling", {
-        tbe::core::WallAssemblyLayer{.material_id = gypsum, .thickness_meters = 0.015, .function = tbe::core::WallLayerFunction::InteriorFinish},
-        tbe::core::WallAssemblyLayer{.material_id = insulation, .thickness_meters = 0.04, .function = tbe::core::WallLayerFunction::Insulation},
-    });
-    const auto roof_assembly = document.create_layered_assembly(tbe::core::LayeredAssemblyKind::Roof, "Residential Roof", {
-        tbe::core::WallAssemblyLayer{.material_id = concrete, .thickness_meters = 0.20, .function = tbe::core::WallLayerFunction::Core, .priority = 100, .structural = true},
-        tbe::core::WallAssemblyLayer{.material_id = insulation, .thickness_meters = 0.10, .function = tbe::core::WallLayerFunction::Insulation, .priority = 70},
-        tbe::core::WallAssemblyLayer{.material_id = gypsum, .thickness_meters = 0.015, .function = tbe::core::WallLayerFunction::InteriorFinish, .priority = 10},
-    });
-    const auto stair_assembly = document.create_layered_assembly(tbe::core::LayeredAssemblyKind::Stair, "Residential Stair", {
-        tbe::core::WallAssemblyLayer{.material_id = concrete, .thickness_meters = 0.16, .function = tbe::core::WallLayerFunction::Core, .priority = 100, .structural = true},
-        tbe::core::WallAssemblyLayer{.material_id = tile, .thickness_meters = 0.02, .function = tbe::core::WallLayerFunction::InteriorFinish, .priority = 10},
-    });
-    (void)asphalt_floor_assembly;
-    (void)concrete_floor_assembly;
+    const auto catalog = tbe::core::ensure_default_project_catalog(document);
+    const auto concrete = catalog.concrete_material;
+    const auto exterior_wall_type = catalog.exterior_wall_type;
+    const auto interior_wall_type = catalog.interior_wall_type;
+    const auto floor_assembly = catalog.residential_floor_assembly;
+    const auto foundation_assembly = catalog.foundation_assembly;
+    const auto ceiling_assembly = catalog.ceiling_assembly;
+    const auto roof_assembly = catalog.roof_assembly;
+    const auto stair_assembly = catalog.stair_assembly;
 
     std::vector<ElementId> levels;
     // Storeys are semantic building levels; the roof has its own level above
@@ -369,86 +304,22 @@ Project make_showcase_template(int template_kind) {
     // site elements exist, so each building remains easy to edit afterwards.
     document.set_automatic_wall_join_enabled(false);
 
-    const auto concrete = document.create_material(
-        "Showcase Concrete", tbe::core::MaterialCategory::Structural,
-        2400.0, 110.0, {}, "#7B8794");
-    const auto glass = document.create_material(
-        "Showcase Glass", tbe::core::MaterialCategory::Glass,
-        2500.0, 80.0, {}, "#83C5D1");
-    const auto aluminum = document.create_material(
-        "Showcase Aluminum", tbe::core::MaterialCategory::Structural,
-        2700.0, 95.0, {}, "#B9C6D2");
-    const auto insulation = document.create_material(
-        "Showcase Insulation", tbe::core::MaterialCategory::Insulation,
-        35.0, 18.0, {}, "#E8C46A");
-    const auto gypsum = document.create_material(
-        "Showcase Gypsum", tbe::core::MaterialCategory::Finish,
-        850.0, 28.0, {}, "#F1F3F5");
-    const auto wood = document.create_material(
-        "Showcase Timber Floor", tbe::core::MaterialCategory::Finish,
-        700.0, 42.0, {}, "#B57A45");
-    const auto tile = document.create_material(
-        "Showcase Stair Tile", tbe::core::MaterialCategory::Finish,
-        2100.0, 36.0, {}, "#D7B56D");
-    const auto asphalt = document.create_material(
-        "Asphalt Surface", tbe::core::MaterialCategory::Structural,
-        2300.0, 32.0, {}, "#3E4652");
-    const auto paving = document.create_material(
-        "Paving Stone", tbe::core::MaterialCategory::Finish,
-        2200.0, 45.0, {}, "#B8B2A6");
-    const auto grass = document.create_material(
-        "Landscape Grass", tbe::core::MaterialCategory::Finish,
-        450.0, 12.0, {}, "#6F9B62");
-
-    const auto glass_wall_type = document.create_wall_type("Exterior Glass Wall", {
-        tbe::core::WallAssemblyLayer{.material_id = glass, .thickness_meters = 0.12, .function = tbe::core::WallLayerFunction::Core, .priority = 100},
-        tbe::core::WallAssemblyLayer{.material_id = aluminum, .thickness_meters = 0.04, .function = tbe::core::WallLayerFunction::ExteriorFinish, .priority = 10},
-        tbe::core::WallAssemblyLayer{.material_id = gypsum, .thickness_meters = 0.015, .function = tbe::core::WallLayerFunction::InteriorFinish, .priority = 5},
-    }, tbe::core::WallTypeCategory::Exterior);
-    const auto structural_wall_type = document.create_wall_type("Showcase Structural Wall", {
-        tbe::core::WallAssemblyLayer{.material_id = concrete, .thickness_meters = 0.22, .function = tbe::core::WallLayerFunction::Core, .priority = 100, .structural = true},
-    }, tbe::core::WallTypeCategory::Generic);
-    const auto glass_partition_type = document.create_wall_type("Interior Glass Partition", {
-        tbe::core::WallAssemblyLayer{.material_id = glass, .thickness_meters = 0.10, .function = tbe::core::WallLayerFunction::Core, .priority = 100},
-    }, tbe::core::WallTypeCategory::Interior);
-
-    const auto interior_floor_assembly = document.create_layered_assembly(
-        tbe::core::LayeredAssemblyKind::Floor, "Showcase Wood Floor", {
-            tbe::core::WallAssemblyLayer{.material_id = concrete, .thickness_meters = 0.18, .function = tbe::core::WallLayerFunction::Core},
-            tbe::core::WallAssemblyLayer{.material_id = wood, .thickness_meters = 0.018, .function = tbe::core::WallLayerFunction::InteriorFinish},
-        });
-    const auto asphalt_assembly = document.create_layered_assembly(
-        tbe::core::LayeredAssemblyKind::Floor, "Asphalt Drive", {
-            tbe::core::WallAssemblyLayer{.material_id = asphalt, .thickness_meters = 0.08, .function = tbe::core::WallLayerFunction::ExteriorFinish},
-        });
-    const auto paving_assembly = document.create_layered_assembly(
-        tbe::core::LayeredAssemblyKind::Floor, "Paved Walkway", {
-            tbe::core::WallAssemblyLayer{.material_id = paving, .thickness_meters = 0.06, .function = tbe::core::WallLayerFunction::ExteriorFinish},
-        });
-    const auto lawn_assembly = document.create_layered_assembly(
-        tbe::core::LayeredAssemblyKind::Floor, "Landscape Lawn Ground", {
-            tbe::core::WallAssemblyLayer{.material_id = grass, .thickness_meters = 0.12, .function = tbe::core::WallLayerFunction::ExteriorFinish},
-        });
-    const auto foundation_assembly = document.create_layered_assembly(
-        tbe::core::LayeredAssemblyKind::Floor, "Showcase Foundation", {
-            tbe::core::WallAssemblyLayer{.material_id = concrete, .thickness_meters = 0.26, .function = tbe::core::WallLayerFunction::Core, .structural = true},
-            tbe::core::WallAssemblyLayer{.material_id = insulation, .thickness_meters = 0.08, .function = tbe::core::WallLayerFunction::Insulation},
-        });
-    const auto ceiling_assembly = document.create_layered_assembly(
-        tbe::core::LayeredAssemblyKind::Ceiling, "Showcase Ceiling", {
-            tbe::core::WallAssemblyLayer{.material_id = gypsum, .thickness_meters = 0.015, .function = tbe::core::WallLayerFunction::InteriorFinish},
-            tbe::core::WallAssemblyLayer{.material_id = insulation, .thickness_meters = 0.04, .function = tbe::core::WallLayerFunction::Insulation},
-        });
-    const auto roof_assembly = document.create_layered_assembly(
-        tbe::core::LayeredAssemblyKind::Roof, "Showcase Flat Roof", {
-            tbe::core::WallAssemblyLayer{.material_id = concrete, .thickness_meters = 0.20, .function = tbe::core::WallLayerFunction::Core, .priority = 100, .structural = true},
-            tbe::core::WallAssemblyLayer{.material_id = insulation, .thickness_meters = 0.10, .function = tbe::core::WallLayerFunction::Insulation, .priority = 70},
-        });
-    const auto stair_assembly = document.create_layered_assembly(
-        tbe::core::LayeredAssemblyKind::Stair, "Showcase Stair", {
-            tbe::core::WallAssemblyLayer{.material_id = concrete, .thickness_meters = 0.16, .function = tbe::core::WallLayerFunction::Core, .priority = 100, .structural = true},
-            tbe::core::WallAssemblyLayer{.material_id = tile, .thickness_meters = 0.02, .function = tbe::core::WallLayerFunction::InteriorFinish, .priority = 10},
-        });
+    const auto catalog = tbe::core::ensure_default_project_catalog(document);
+    const auto concrete = catalog.concrete_material;
+    const auto asphalt = catalog.asphalt_material;
+    const auto paving = catalog.paving_material;
+    const auto grass = catalog.grass_material;
+    const auto glass_wall_type = catalog.exterior_glass_wall_type;
+    const auto structural_wall_type = catalog.concrete_core_wall_type;
+    const auto glass_partition_type = catalog.interior_glass_wall_type;
+    const auto interior_floor_assembly = catalog.wood_floor_assembly;
+    const auto asphalt_assembly = catalog.asphalt_floor_assembly;
+    const auto paving_assembly = catalog.paving_assembly;
+    const auto lawn_assembly = catalog.grass_assembly;
+    const auto foundation_assembly = catalog.showcase_foundation_assembly;
+    const auto ceiling_assembly = catalog.ceiling_assembly;
+    const auto roof_assembly = catalog.roof_assembly;
+    const auto stair_assembly = catalog.stair_assembly;
 
     std::vector<ElementId> levels;
     levels.reserve(static_cast<std::size_t>(story_count + 1));
@@ -1292,13 +1163,15 @@ std::string layer_profile(const std::vector<tbe::core::WallAssemblyLayer>& layer
 }
 
 std::string wall_layer_profile(const Document& document, const tbe::core::WallData& wall) {
+    if (wall.wall_type_id != 0) {
+        const auto* wall_type = document.get_wall_type(wall.wall_type_id);
+        if (wall_type != nullptr) return layer_profile(wall_type->layers);
+    }
+    // Compatibility fallback for a raw Document assembled by an older client.
+    // Engine-owned projects normalize this path before a scene is built.
     if (wall.assembly_id != 0) {
         const auto* assembly = document.get_layered_assembly(wall.assembly_id);
         return assembly == nullptr ? std::string{} : layer_profile(assembly->layers);
-    }
-    if (wall.wall_type_id != 0) {
-        const auto* wall_type = document.get_wall_type(wall.wall_type_id);
-        return wall_type == nullptr ? std::string{} : layer_profile(wall_type->layers);
     }
     return {};
 }
@@ -1515,11 +1388,14 @@ bool section_line_intersection(Point2 section_start, Point2 section_direction, P
 }
 
 std::vector<tbe::core::WallAssemblyLayer> section_wall_layers(const Document& document, const tbe::core::WallData& wall) {
-    if (wall.assembly_id != 0) {
-        if (const auto* assembly = document.get_layered_assembly(wall.assembly_id)) return assembly->layers;
-    }
+    // WallTypeData is canonical. Keep the legacy assembly fallback only for a
+    // raw compatibility document, and never let it shadow a valid wall type
+    // if an old payload happens to contain both references.
     if (wall.wall_type_id != 0) {
         if (const auto* wall_type = document.get_wall_type(wall.wall_type_id)) return wall_type->layers;
+    }
+    if (wall.assembly_id != 0) {
+        if (const auto* assembly = document.get_layered_assembly(wall.assembly_id)) return assembly->layers;
     }
     return {tbe::core::WallAssemblyLayer{.material_id = 0, .thickness_meters = wall.thickness_meters}};
 }
@@ -2048,6 +1924,38 @@ RenderSceneDTO build_render_scene(
         scene.floor_types.push_back(std::move(dto));
     }
 
+    for (const auto& [assembly_id, assembly] : document.layered_assemblies()) {
+        if (assembly.kind != tbe::core::LayeredAssemblyKind::Roof) continue;
+        RenderSceneFloorTypeDTO dto{
+            .id = to_id(assembly_id),
+            .name = assembly.name,
+            .surface_key = "roof",
+            .total_thickness_meters = std::accumulate(
+                assembly.layers.begin(),
+                assembly.layers.end(),
+                0.0,
+                [](double total, const auto& layer) {
+                    return total + layer.thickness_meters;
+                }),
+            .core_start_layer = assembly.core_start_layer,
+            .core_end_layer = assembly.core_end_layer,
+        };
+        dto.layers.reserve(assembly.layers.size());
+        for (const auto& layer : assembly.layers) {
+            dto.layers.push_back(RenderSceneWallLayerDTO{
+                .material_id = to_id(layer.material_id),
+                .thickness_meters = layer.thickness_meters,
+                .function = to_api_layer_function(layer.function),
+                .priority = layer.priority,
+                .structural = layer.structural,
+                .side = to_api_layer_side(layer.side),
+                .wraps_openings = layer.wraps_openings,
+                .wraps_ends = layer.wraps_ends,
+            });
+        }
+        scene.roof_types.push_back(std::move(dto));
+    }
+
     // Default template guidance: two perpendicular cuts through the model
     // center are visible immediately in plan. The actual section scene is
     // generated only when the user requests one.
@@ -2080,6 +1988,9 @@ RenderSceneDTO build_render_scene(
             const auto base_elevation = resolved_wall_base_elevation(*wall, elevations);
             const auto layer_profile = wall_layer_profile(document, *wall);
             const auto* wall_type = wall->wall_type_id == 0 ? nullptr : document.get_wall_type(wall->wall_type_id);
+            const auto* wall_assembly = wall->assembly_id == 0
+                ? nullptr
+                : document.get_layered_assembly(wall->assembly_id);
             auto wall_object = make_object_dto(
                 element.id(),
                 ApiElementKind::Wall,
@@ -2095,8 +2006,12 @@ RenderSceneDTO build_render_scene(
                     {"thickness_meters", std::to_string(wall->thickness_meters)},
                     {"assembly_id", std::to_string(wall->assembly_id)},
                     {"wall_type_id", std::to_string(wall->wall_type_id)},
-                    {"wall_type_name", wall_type == nullptr ? "Generic Wall" : wall_type->name},
-                    {"wall_type_category", wall_type == nullptr ? "Generic" : wall_type_category_name(wall_type->category)},
+                    {"wall_type_name", wall_type != nullptr
+                        ? wall_type->name
+                        : wall_assembly != nullptr ? wall_assembly->name : "Generic Wall"},
+                    {"wall_type_category", wall_type != nullptr
+                        ? wall_type_category_name(wall_type->category)
+                        : "Generic"},
                     {"height_meters", std::to_string(resolved_wall_height(*wall, elevations))},
                     {"base_level_id", std::to_string(wall->base_level_id)},
                     {"top_level_id", std::to_string(wall->top_level_id)},
@@ -2227,6 +2142,12 @@ RenderSceneDTO build_render_scene(
                 material_category_name(ApiElementKind::Roof),
                 {
                     {"assembly_id", std::to_string(roof->assembly_id)},
+                    {"material_id", std::to_string(roof->material_id)},
+                    {"roof_type_name", roof->assembly_id == 0
+                        ? "Generic Roof"
+                        : document.get_layered_assembly(roof->assembly_id) != nullptr
+                            ? document.get_layered_assembly(roof->assembly_id)->name
+                            : "Generic Roof"},
                     {"roof_type", roof->roof_type == tbe::core::RoofType::SimpleGable
                         ? "SimpleGable"
                         : roof->roof_type == tbe::core::RoofType::AutoFootprint ? "AutoFootprint" : "Flat"},
@@ -2451,6 +2372,32 @@ std::string render_scene_to_json(const RenderSceneDTO& scene) {
         }
         out << "]}";
     }
+    out << "],\"roof_types\":[";
+    for (std::size_t index = 0; index < scene.roof_types.size(); ++index) {
+        if (index != 0) out << ',';
+        const auto& roof_type = scene.roof_types[index];
+        out << "{\"id\":" << roof_type.id.value
+            << ",\"name\":\"" << escape_json(roof_type.name) << "\""
+            << ",\"surface_key\":\"" << escape_json(roof_type.surface_key) << "\""
+            << ",\"total_thickness_meters\":" << safe_value(roof_type.total_thickness_meters)
+            << ",\"core_start_layer\":" << roof_type.core_start_layer
+            << ",\"core_end_layer\":" << roof_type.core_end_layer
+            << ",\"layers\":[";
+        for (std::size_t layer_index = 0; layer_index < roof_type.layers.size(); ++layer_index) {
+            if (layer_index != 0) out << ',';
+            const auto& layer = roof_type.layers[layer_index];
+            out << "{\"material_id\":" << layer.material_id.value
+                << ",\"thickness_meters\":" << safe_value(layer.thickness_meters)
+                << ",\"function\":" << static_cast<int>(layer.function)
+                << ",\"priority\":" << layer.priority
+                << ",\"structural\":" << (layer.structural ? "true" : "false")
+                << ",\"side\":" << static_cast<int>(layer.side)
+                << ",\"wraps_openings\":" << (layer.wraps_openings ? "true" : "false")
+                << ",\"wraps_ends\":" << (layer.wraps_ends ? "true" : "false")
+                << "}";
+        }
+        out << "]}";
+    }
     out << "],\"sections\":[";
     for (std::size_t index = 0; index < scene.sections.size(); ++index) {
         if (index != 0) out << ',';
@@ -2634,6 +2581,26 @@ tbe::core::WallLayerSide to_core_layer_side(ApiWallLayerSide side) {
     case ApiWallLayerSide::Interior: return tbe::core::WallLayerSide::Interior;
     }
     return tbe::core::WallLayerSide::Unspecified;
+}
+
+std::vector<tbe::core::WallAssemblyLayer> to_core_layers(
+    const std::vector<AssemblyLayerDTO>& layers
+) {
+    std::vector<tbe::core::WallAssemblyLayer> result;
+    result.reserve(layers.size());
+    for (const auto& layer : layers) {
+        result.push_back(tbe::core::WallAssemblyLayer{
+            .material_id = layer.material_id.value,
+            .thickness_meters = layer.thickness_meters,
+            .function = to_core_layer_function(layer.function),
+            .priority = layer.priority,
+            .structural = layer.structural,
+            .side = to_core_layer_side(layer.side),
+            .wraps_openings = layer.wraps_openings,
+            .wraps_ends = layer.wraps_ends,
+        });
+    }
+    return result;
 }
 
 ApiWallTypeCategory to_api_wall_type_category(tbe::core::WallTypeCategory category) {
@@ -4248,10 +4215,28 @@ ApiVoidResult EngineSession::move_level_elevation(std::uint64_t level_id, double
     });
 }
 
-ApiResult<ElementIdDTO> EngineSession::create_wall(std::string name, Vec2 start, Vec2 end, double thickness_meters, double height_meters, std::uint64_t level_id) {
+ApiResult<ElementIdDTO> EngineSession::create_wall(
+    std::string name,
+    Vec2 start,
+    Vec2 end,
+    double thickness_meters,
+    double height_meters,
+    std::uint64_t level_id,
+    std::uint64_t wall_type_id
+) {
     ElementIdDTO created{};
     return apply_mutation_with_value(*impl_, "create_wall", created, [&](Document& document, ElementIdDTO& out) {
-        out = to_id(document.create_wall(std::move(name), Line2{.start = to_point(start), .end = to_point(end)}, thickness_meters, height_meters, level_id));
+        if (wall_type_id == 0) {
+            wall_type_id = tbe::core::find_default_project_catalog(document).basic_wall_type;
+        }
+        out = to_id(document.create_wall(
+            std::move(name),
+            Line2{.start = to_point(start), .end = to_point(end)},
+            thickness_meters,
+            height_meters,
+            level_id,
+            0,
+            wall_type_id));
     });
 }
 
@@ -4270,20 +4255,7 @@ ApiResult<ElementIdDTO> EngineSession::create_wall_type(
 ) {
     ElementIdDTO created{};
     return apply_mutation_with_value(*impl_, "create_wall_type", created, [&](Document& document, ElementIdDTO& out) {
-        std::vector<tbe::core::WallAssemblyLayer> core_layers;
-        core_layers.reserve(layers.size());
-        for (const auto& layer : layers) {
-            core_layers.push_back(tbe::core::WallAssemblyLayer{
-                .material_id = layer.material_id.value,
-                .thickness_meters = layer.thickness_meters,
-                .function = to_core_layer_function(layer.function),
-                .priority = layer.priority,
-                .structural = layer.structural,
-                .side = to_core_layer_side(layer.side),
-                .wraps_openings = layer.wraps_openings,
-                .wraps_ends = layer.wraps_ends,
-            });
-        }
+        auto core_layers = to_core_layers(layers);
         auto wall_type_id = document.create_wall_type(std::move(name), std::move(core_layers), to_core_wall_type_category(category));
         if (core_start_layer >= 0 || core_end_layer >= 0) {
             auto wall_type = *document.get_wall_type(wall_type_id);
@@ -4291,6 +4263,28 @@ ApiResult<ElementIdDTO> EngineSession::create_wall_type(
             wall_type.core_end_layer = core_end_layer;
             document.update_wall_type(std::move(wall_type));
         }
+        out = to_id(wall_type_id);
+    });
+}
+
+ApiResult<ElementIdDTO> EngineSession::upsert_wall_type_for_wall(
+    std::uint64_t wall_id,
+    ApiWallTypeCategory category,
+    std::string name,
+    std::vector<AssemblyLayerDTO> layers,
+    int core_start_layer,
+    int core_end_layer
+) {
+    ElementIdDTO selected{};
+    return apply_mutation_with_value(*impl_, "upsert_wall_type_for_wall", selected, [&](Document& document, ElementIdDTO& out) {
+        auto core_layers = to_core_layers(layers);
+        const auto wall_type_id = document.upsert_wall_type_for_wall(
+            wall_id,
+            std::move(name),
+            std::move(core_layers),
+            to_core_wall_type_category(category),
+            core_start_layer,
+            core_end_layer);
         out = to_id(wall_type_id);
     });
 }
@@ -4304,18 +4298,7 @@ ApiVoidResult EngineSession::update_wall_type(WallTypeDTO wall_type) {
             .core_start_layer = wall_type.core_start_layer,
             .core_end_layer = wall_type.core_end_layer,
         };
-        for (const auto& layer : wall_type.layers) {
-            core_type.layers.push_back(tbe::core::WallAssemblyLayer{
-                .material_id = layer.material_id.value,
-                .thickness_meters = layer.thickness_meters,
-                .function = to_core_layer_function(layer.function),
-                .priority = layer.priority,
-                .structural = layer.structural,
-                .side = to_core_layer_side(layer.side),
-                .wraps_openings = layer.wraps_openings,
-                .wraps_ends = layer.wraps_ends,
-            });
-        }
+        core_type.layers = to_core_layers(wall_type.layers);
         document.update_wall_type(std::move(core_type));
     });
 }
@@ -4563,20 +4546,7 @@ ApiResult<ElementIdDTO> EngineSession::create_layered_assembly(
 ) {
     ElementIdDTO created{};
     return apply_mutation_with_value(*impl_, "create_layered_assembly", created, [&](Document& document, ElementIdDTO& out) {
-        std::vector<tbe::core::WallAssemblyLayer> core_layers;
-        core_layers.reserve(layers.size());
-        for (const auto& layer : layers) {
-            core_layers.push_back(tbe::core::WallAssemblyLayer{
-                .material_id = layer.material_id.value,
-                .thickness_meters = layer.thickness_meters,
-                .function = to_core_layer_function(layer.function),
-                .priority = layer.priority,
-                .structural = layer.structural,
-                .side = to_core_layer_side(layer.side),
-                .wraps_openings = layer.wraps_openings,
-                .wraps_ends = layer.wraps_ends,
-            });
-        }
+        auto core_layers = to_core_layers(layers);
         auto assembly_id = document.create_layered_assembly(to_core_assembly_kind(kind), std::move(name), std::move(core_layers));
         if (core_start_layer >= 0 || core_end_layer >= 0) {
             auto assembly = *document.get_layered_assembly(assembly_id);
@@ -4595,19 +4565,7 @@ ApiVoidResult EngineSession::update_layered_assembly(LayeredAssemblyDTO assembly
             .kind = to_core_assembly_kind(assembly.kind),
             .name = std::move(assembly.name),
         };
-        core_assembly.layers.reserve(assembly.layers.size());
-        for (const auto& layer : assembly.layers) {
-            core_assembly.layers.push_back(tbe::core::WallAssemblyLayer{
-                .material_id = layer.material_id.value,
-                .thickness_meters = layer.thickness_meters,
-                .function = to_core_layer_function(layer.function),
-                .priority = layer.priority,
-                .structural = layer.structural,
-                .side = to_core_layer_side(layer.side),
-                .wraps_openings = layer.wraps_openings,
-                .wraps_ends = layer.wraps_ends,
-            });
-        }
+        core_assembly.layers = to_core_layers(assembly.layers);
         core_assembly.core_start_layer = assembly.core_start_layer;
         core_assembly.core_end_layer = assembly.core_end_layer;
         document.update_layered_assembly(std::move(core_assembly));
@@ -4850,6 +4808,12 @@ ApiVoidResult EngineSession::import_ifc(const std::string& path, LoadMode mode) 
         const auto before = impl_->project.to_json();
         impl_->project = Project(std::string(imported.name()));
         impl_->project.active_document() = std::move(imported);
+        // IFC import returns a raw Document, so it bypasses Project's normal
+        // constructor bootstrap. Re-enter the same catalog/migration
+        // boundary used by new projects and JSON loads before exposing the
+        // imported document to the session or Flutter.
+        impl_->project.active_document().normalize_wall_type_sources();
+        (void)tbe::core::ensure_default_project_catalog(impl_->project.active_document());
         impl_->clear_caches();
         impl_->mark_all_derived_dirty();
         rebuild_spatial_index_impl(*impl_);

@@ -1,6 +1,7 @@
 # Render Scene Bridge
 
-`RenderScene` is the stable export format between the C++ BIM engine and future Flutter + Filament UI layers.
+`RenderScene` is the stable export format between the C++ BIM engine and the
+Flutter + Android Filament UI layers.
 It exists so the viewer can consume a predictable scene payload without depending on `debug_report.json`, ad-hoc OBJ files, or internal engine classes.
 
 ## Why this exists
@@ -50,6 +51,8 @@ The scene currently includes:
 - columns
 - beams
 - stairs
+- imported proxy elements when the analytical importer does not understand the
+  exact IFC profile
 
 ## Chunking and levels
 
@@ -86,7 +89,11 @@ The render scene also exposes basic object, vertex, and index counts for quick d
 ## Renderer-neutral adapter plan
 
 - The C++ engine stays the source of truth for BIM semantics and geometry export.
-- The Next.js reference viewer consumes `render_scene.json` directly for 3D rendering.
-- Future Flutter UI will consume the same `render_scene.json` contract.
-- A future Filament adapter should translate `RenderScene` objects into renderer-specific buffers without touching project internals.
+- The Next.js reference viewer consumes `render_scene.json` directly for 3D
+  rendering.
+- Flutter consumes the same `render_scene.json` contract, with Android’s
+  Filament host owning the large native cache path and a renderer-neutral
+  fallback retained for desktop/tests.
+- Renderer adapters translate `RenderScene` objects into renderer-specific
+  buffers without touching project internals.
 - UI code should stay thin: load scene, filter kinds, select elements, and pass interaction back to the engine bridge.

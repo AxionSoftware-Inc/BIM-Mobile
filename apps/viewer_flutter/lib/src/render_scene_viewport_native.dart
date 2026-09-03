@@ -17,6 +17,8 @@ extension _RenderSceneViewportNative on RenderSceneViewportController {
   }
 
   Future<void> _syncNativeBridge() async {
+    if (_backend != RenderSceneViewportBackend.native) return;
+    await _loadRememberedNativeBimCache();
     final currentScene = _scene;
     if (currentScene != null && !_nativeGeometryActive) {
       await _invoke('loadRenderSceneJson', jsonEncode(currentScene.toJson()));
@@ -55,5 +57,22 @@ extension _RenderSceneViewportNative on RenderSceneViewportController {
       'bottom': rectangle?.bottom,
       'crossing': _selectionRectangleCrossing,
     });
+  }
+
+  Future<void> _loadRememberedNativeBimCache() async {
+    final request = _nativeCacheRequest;
+    if (request == null ||
+        !_nativeCacheNeedsReplay ||
+        _channel == null ||
+        _backend != RenderSceneViewportBackend.native ||
+        _disposed) {
+      return;
+    }
+    _nativeCacheNeedsReplay = false;
+    _nativeGeometryActive = false;
+    await _invoke('loadNativeBimCache', request);
+    if (_backend == RenderSceneViewportBackend.native && _channel != null) {
+      _nativeGeometryActive = true;
+    }
   }
 }

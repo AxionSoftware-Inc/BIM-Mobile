@@ -4,10 +4,12 @@ class _InlineLevelElevationField extends StatefulWidget {
   const _InlineLevelElevationField({
     super.key,
     required this.level,
+    required this.units,
     required this.onSubmitted,
   });
 
   final RenderSceneLevel level;
+  final ProjectUnitSettings units;
   final Future<void> Function(RenderSceneLevel level, String value)?
       onSubmitted;
 
@@ -25,7 +27,9 @@ class _InlineLevelElevationFieldState
   void initState() {
     super.initState();
     _controller = TextEditingController(
-      text: widget.level.elevationMeters.toStringAsFixed(2),
+      text: widget.units
+          .fromMeters(widget.level.elevationMeters)
+          .toStringAsFixed(widget.units.lengthDecimals),
     );
   }
 
@@ -38,9 +42,12 @@ class _InlineLevelElevationFieldState
   @override
   void didUpdateWidget(covariant _InlineLevelElevationField oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if ((oldWidget.level.elevationMeters - widget.level.elevationMeters).abs() >
-        1e-6) {
-      _controller.text = widget.level.elevationMeters.toStringAsFixed(2);
+    if (oldWidget.units != widget.units ||
+        (oldWidget.level.elevationMeters - widget.level.elevationMeters).abs() >
+            1e-6) {
+      _controller.text = widget.units
+          .fromMeters(widget.level.elevationMeters)
+          .toStringAsFixed(widget.units.lengthDecimals);
     }
   }
 
@@ -48,13 +55,17 @@ class _InlineLevelElevationFieldState
     if (_isCommitting) {
       return;
     }
-    final value = _controller.text.trim();
-    if (value.isEmpty || double.tryParse(value) == null) {
+    final displayValue = _controller.text.trim();
+    final parsedValue = double.tryParse(displayValue);
+    if (displayValue.isEmpty || parsedValue == null) {
       return;
     }
     setState(() => _isCommitting = true);
     try {
-      await widget.onSubmitted?.call(widget.level, value);
+      await widget.onSubmitted?.call(
+        widget.level,
+        widget.units.toMeters(parsedValue).toString(),
+      );
       if (mounted) {
         FocusScope.of(context).unfocus();
       }
@@ -83,7 +94,7 @@ class _InlineLevelElevationFieldState
         onEditingComplete: _commit,
         decoration: InputDecoration(
           isDense: true,
-          suffixText: 'm',
+          suffixText: widget.units.lengthSymbol,
           suffixIcon: IconButton(
             tooltip: 'Apply elevation',
             onPressed: _isCommitting ? null : _commit,
@@ -108,10 +119,12 @@ class _ViewportStatsCard extends StatelessWidget {
   const _ViewportStatsCard({
     required this.scene,
     required this.native,
+    required this.units,
   });
 
   final RenderScene scene;
   final bool native;
+  final ProjectUnitSettings units;
 
   @override
   Widget build(BuildContext context) {
@@ -132,9 +145,9 @@ class _ViewportStatsCard extends StatelessWidget {
               Text('Indices: ${scene.indexCount}'),
               Text('Triangles: ${scene.triangleCount}'),
               Text(
-                'Bounds: ${scene.bounds.width.toStringAsFixed(2)} × '
-                '${scene.bounds.depth.toStringAsFixed(2)} × '
-                '${scene.bounds.height.toStringAsFixed(2)} m',
+                'Bounds: ${units.formatLength(scene.bounds.width, withUnit: false)} × '
+                '${units.formatLength(scene.bounds.depth, withUnit: false)} × '
+                '${units.formatLength(scene.bounds.height)}',
               ),
             ],
           ),

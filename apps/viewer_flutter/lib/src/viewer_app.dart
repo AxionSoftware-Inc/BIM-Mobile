@@ -15,6 +15,7 @@ import 'package:flutter/services.dart';
 import 'authoring_command_service.dart';
 import 'app_project_storage.dart';
 import 'app_settings.dart';
+import 'atomic_file_writer.dart';
 import 'onboarding_page.dart';
 import 'telemetry_service.dart';
 import 'documentation/document_models.dart';
@@ -22,12 +23,18 @@ import 'documentation/documentation_workspace.dart';
 import 'documentation/sheet_canvas.dart';
 import 'documentation/sheet_workspace_controller.dart';
 import 'elements/bim_element_registry.dart';
+import 'elements/floor_type_catalog.dart';
+import 'elements/opening_parameters.dart';
+import 'elements/opening_type_catalog.dart';
+import 'elements/wall_parameters.dart';
+import 'elements/wall_type_catalog.dart';
 import 'inspector_controller.dart';
 import 'ifc_template_catalog.dart';
 import 'property_editor.dart';
 import 'project_lifecycle_service.dart';
 import 'project_persistence_service.dart';
 import 'project_recovery_store.dart';
+import 'project_unit_settings.dart';
 import 'project_session_controller.dart';
 import 'project_browser_panel.dart';
 import 'render_scene_editor.dart';
@@ -64,10 +71,10 @@ import 'async_serial_queue.dart';
 import 'viewer_viewport_scene_policy.dart';
 
 part 'viewer_viewport_input.dart';
+part 'viewer_form_widgets.dart';
 part 'viewer_viewport_wall_editing.dart';
 part 'viewer_viewport_surface_editing.dart';
 part 'viewer_inspector_draft_widgets.dart';
-part 'viewer_inspector_selection_widgets.dart';
 part 'viewer_inspector_estimate_widgets.dart';
 part 'viewer_inspector_info_widgets.dart';
 part 'viewer_workspace_ui_layout.dart';
@@ -109,10 +116,16 @@ class _ViewerHomePageState extends State<ViewerHomePage>
   bool get _engineBackedMode => _projectSession.isEngineBacked;
 
   RenderScene? _scene;
+  ProjectUnitSettings _projectUnitSettings =
+      const ProjectUnitSettings.defaults();
   String? _statusMessage;
   String? _loadError;
   bool _isBusy = false;
   int _sceneLoadGeneration = 0;
+  // Monotonic presentation token for the authoritative document snapshot.
+  // Deferred reads must never be allowed to commit after an edit, undo or
+  // reload has advanced this token.
+  int _sceneDataRevision = 0;
   bool _isViewNavigationBusy = false;
   bool _projectHasChanges = false;
   bool _canUndo = false;
@@ -168,6 +181,11 @@ class _ViewerHomePageState extends State<ViewerHomePage>
   String? _editStatusMessage;
   bool _snapDraftToGrid = true;
   bool _surfaceBoundaryMultiTouch = false;
+  // A hosted opening belongs to the wall touched at gesture start.  Keeping
+  // this separate from the hover preview prevents a release hit-test on a
+  // neighbouring/overlapping wall from changing the host or mirroring the
+  // wall-local offset just before commit.
+  bool _openingGestureActive = false;
   final List<String> _androidMutationTrace = <String>[];
   // Wall gestures can arrive before the previous engine mutation has
   // finished. Keep the commits ordered instead of dropping the next segment.
@@ -373,9 +391,6 @@ class _ViewerHomePageState extends State<ViewerHomePage>
             initialIfcPath,
             projectName: widget.initialProjectName ?? 'IFC sample project',
           );
-          if (mounted && _scene != null) {
-            await _setProjectionMode(RenderSceneProjectionMode.isometric);
-          }
         }());
       } else if (initialProjectJson != null) {
         _loadProjectJson(

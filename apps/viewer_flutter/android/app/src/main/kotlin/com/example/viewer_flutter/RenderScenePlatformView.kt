@@ -326,6 +326,7 @@ internal class RenderScenePlatformView(
   initialScene: SceneState?,
 ) : PlatformView, MethodChannel.MethodCallHandler {
   private val channel = MethodChannel(messenger, "tbe/render_scene_view_$viewId")
+  private var pendingCachePreparation: MethodChannel.Result? = null
   private val view = RenderSceneFilamentHostView(context, initialScene) { elementId ->
     channel.invokeMethod("objectTapped", mapOf("elementId" to elementId))
   }
@@ -338,6 +339,12 @@ internal class RenderScenePlatformView(
   override fun getView(): View = view
 
   override fun dispose() {
+    pendingCachePreparation?.error(
+      "render_view_disposed",
+      "Native BIM cache preparation was cancelled with the viewport.",
+      null,
+    )
+    pendingCachePreparation = null
     channel.setMethodCallHandler(null)
     NativeRendererBenchmarkHarness.detach(view)
     view.disposeResources()
@@ -368,8 +375,11 @@ internal class RenderScenePlatformView(
         val sourceIfcPath = payload?.get("sourceIfcPath") as? String
         if (cachePath.isNullOrBlank() || sourceIfcPath.isNullOrBlank()) {
           result.error("invalid_cache_request", "cachePath and sourceIfcPath are required", null)
+        } else if (pendingCachePreparation != null) {
+          result.error("cache_prepare_busy", "A native BIM cache is already being prepared.", null)
         } else {
-          prepareNativeBimCache(cachePath, sourceIfcPath, result)
+          pendingCachePreparation = result
+          prepareNativeBimCache(cachePath, sourceIfcPath)
         }
       }
 
@@ -479,7 +489,6 @@ internal class RenderScenePlatformView(
   private fun prepareNativeBimCache(
     cachePath: String,
     sourceIfcPath: String,
-    result: MethodChannel.Result,
   ) {
     Thread {
       var compileStats: NativeBimCacheCompileStats? = null
@@ -489,9 +498,11 @@ internal class RenderScenePlatformView(
         summary = NativeBimCacheBridge.describe(cachePath, sourceIfcPath)
       }
       val readySummary = summary
-      view.post {
+      val posted = view.post {
+        val pendingResult = pendingCachePreparation ?: return@post
+        pendingCachePreparation = null
         if (readySummary == null) {
-          result.error(
+          pendingResult.error(
             "native_cache_unavailable",
             NativeBimCacheBridge.lastError().ifBlank { "Could not prepare native BIM cache." },
             null,
@@ -501,7 +512,7 @@ internal class RenderScenePlatformView(
         // The host performs its own validated open to retain direct buffers
         // for the renderer; [readySummary] contains metadata only.
         view.loadNativeBimCache(cachePath, sourceIfcPath)
-        result.success(
+        pendingResult.success(
           linkedMapOf<String, Any?>(
             "scene" to readySummary,
             "cacheCompiled" to (compileStats != null),
@@ -509,6 +520,14 @@ internal class RenderScenePlatformView(
             "cacheBytes" to (compileStats?.byteSize ?: java.io.File(cachePath).length()),
           ),
         )
+      }
+      if (!posted) {
+        pendingCachePreparation?.error(
+          "render_view_unavailable",
+          "Native BIM cache preparation could not return to the viewport.",
+          null,
+        )
+        pendingCachePreparation = null
       }
     }.apply {
       name = "tbe-native-bim-cache-prepare"

@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'render_scene_editor.dart';
 import 'render_scene_level_overlay.dart';
 import 'render_scene_models.dart';
+import 'project_unit_settings.dart';
 import 'render_scene_viewport_planar.dart';
 import 'render_scene_viewport_projection.dart';
 import 'render_scene_viewport_types.dart';
@@ -44,6 +45,7 @@ class FallbackRenderScenePainter extends CustomPainter
     this.draftWallEditElementId,
     this.showObjectLabels = true,
     this.showReferenceGrid = true,
+    this.units = const ProjectUnitSettings.defaults(),
   });
 
   static const double padding = 48;
@@ -89,6 +91,8 @@ class FallbackRenderScenePainter extends CustomPainter
   final int? draftWallEditElementId;
   final bool showObjectLabels;
   final bool showReferenceGrid;
+  @override
+  final ProjectUnitSettings units;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -523,6 +527,8 @@ class FallbackRenderScenePainter extends CustomPainter
         oldDelegate.interactionMode != interactionMode ||
         oldDelegate.orbitProjectionStyle != orbitProjectionStyle ||
         oldDelegate.displayStyle != displayStyle ||
+        oldDelegate.viewportTheme != viewportTheme ||
+        oldDelegate.units != units ||
         oldDelegate.camera != camera ||
         oldDelegate.planCamera != planCamera ||
         oldDelegate.draftWallStart != draftWallStart ||

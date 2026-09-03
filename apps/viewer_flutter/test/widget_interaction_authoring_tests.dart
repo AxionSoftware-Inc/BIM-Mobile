@@ -212,6 +212,53 @@ void registerInteractionAuthoringTests() {
     );
   });
 
+  testWidgets('native BIM cache replays only after a platform-view restart',
+      (WidgetTester tester) async {
+    const channel = MethodChannel('tbe/render_scene_view_78');
+    final calls = <MethodCall>[];
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      return null;
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+
+    final controller = RenderSceneViewportController(
+      backend: RenderSceneViewportBackend.native,
+    );
+    addTearDown(controller.dispose);
+    await controller.attachNativeBridge(78);
+    await tester.pump(const Duration(milliseconds: 300));
+    calls.clear();
+
+    await controller.loadNativeBimCache(
+      sourceIfcPath: '/tmp/sample.ifc',
+      cachePath: '/tmp/sample.bimcache',
+    );
+    expect(
+      calls.where((call) => call.method == 'loadNativeBimCache'),
+      hasLength(1),
+    );
+    calls.clear();
+
+    await controller.setProjectionMode(
+      RenderSceneProjectionMode.eastElevation,
+    );
+    expect(
+      calls.where((call) => call.method == 'loadNativeBimCache'),
+      isEmpty,
+    );
+
+    controller.detachNativeBridge();
+    await controller.attachNativeBridge(78);
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(
+      calls.where((call) => call.method == 'loadNativeBimCache'),
+      hasLength(1),
+    );
+  });
+
   test('touch selection window requires a hold before it starts', () {
     final interaction = ViewportInteractionController();
     interaction.begin(

@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'app_project_storage.dart';
+import 'atomic_file_writer.dart';
 
 /// A small, publicly hosted IFC starter project.
 ///
@@ -118,12 +119,7 @@ class IfcTemplateDownloader {
           throw StateError('IFC sample download was empty.');
         }
 
-        final partial = File('${cached.path}.download');
-        await partial.writeAsBytes(bytes, flush: true);
-        if (await cached.exists()) {
-          await cached.delete();
-        }
-        await partial.rename(cached.path);
+        await atomicWriteBytes(cached, bytes);
         return cached.path;
       } finally {
         _activeDownloads.remove(template.id);

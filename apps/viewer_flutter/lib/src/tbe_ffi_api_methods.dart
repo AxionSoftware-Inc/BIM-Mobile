@@ -316,6 +316,76 @@ extension _TbeViewerApiMethods on TbeViewerApi {
     }
   }
 
+  int upsertWallTypeForWall(
+    ffi.Pointer<ffi.Void> handle, {
+    required int wallId,
+    required WallTypeCategory category,
+    required String name,
+    required List<WallTypeLayerDefinition> layers,
+    int coreStartLayer = -1,
+    int coreEndLayer = -1,
+  }) {
+    if (layers.isEmpty) {
+      throw TbeApiException('Wall type must contain at least one layer');
+    }
+    final namePtr = name.toNativeUtf8();
+    final materialIds = calloc<ffi.Uint64>(layers.length);
+    final thicknesses = calloc<ffi.Double>(layers.length);
+    final functions = calloc<ffi.Int32>(layers.length);
+    final priorities = calloc<ffi.Int32>(layers.length);
+    final structural = calloc<ffi.Int32>(layers.length);
+    final sides = calloc<ffi.Int32>(layers.length);
+    final wrapsOpenings = calloc<ffi.Int32>(layers.length);
+    final wrapsEnds = calloc<ffi.Int32>(layers.length);
+    final out = calloc<ffi.Uint64>();
+    for (var index = 0; index < layers.length; index += 1) {
+      final layer = layers[index];
+      materialIds[index] = layer.materialId;
+      thicknesses[index] = layer.thicknessMeters;
+      functions[index] = layer.function.index;
+      priorities[index] = layer.priority;
+      structural[index] = layer.structural ? 1 : 0;
+      sides[index] = layer.side.index;
+      wrapsOpenings[index] = layer.wrapsOpenings ? 1 : 0;
+      wrapsEnds[index] = layer.wrapsEnds ? 1 : 0;
+    }
+    try {
+      _check(
+        handle,
+        _upsertWallTypeForWall(
+          handle,
+          wallId,
+          category.index,
+          namePtr,
+          materialIds,
+          thicknesses,
+          functions,
+          priorities,
+          structural,
+          sides,
+          wrapsOpenings,
+          wrapsEnds,
+          layers.length,
+          coreStartLayer,
+          coreEndLayer,
+          out,
+        ),
+      );
+      return out.value;
+    } finally {
+      calloc.free(namePtr);
+      calloc.free(materialIds);
+      calloc.free(thicknesses);
+      calloc.free(functions);
+      calloc.free(priorities);
+      calloc.free(structural);
+      calloc.free(sides);
+      calloc.free(wrapsOpenings);
+      calloc.free(wrapsEnds);
+      calloc.free(out);
+    }
+  }
+
   void setWallLevelConstraints(
     ffi.Pointer<ffi.Void> handle, {
     required int wallId,

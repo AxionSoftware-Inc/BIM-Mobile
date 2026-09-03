@@ -83,20 +83,21 @@ void registerEngineIntegrationTests() {
         containsAll(<String>[
           'Exterior Wall',
           'Interior Wall',
-          'Generic Wall',
+          'Basic Wall',
           'Exterior Glass Wall',
           'Interior Glass Partition',
           'Concrete Core Wall',
         ]));
     expect(
-      initial.materials.any((material) => material.name == 'Template Glass'),
+      initial.materials.any((material) => material.name == 'Glass'),
       isTrue,
     );
     expect(
       initial.floorTypes.map((type) => type.name),
       containsAll(
-          <String>['Asphalt Floor', 'Concrete Floor', 'Residential Floor']),
+          <String>['Asphalt Surface', 'Concrete Floor', 'Residential Floor']),
     );
+    expect(initial.roofTypes.map((type) => type.name), contains('Roof'));
     final opening = initial.objects.firstWhere(
       (object) => object.kindKey == 'door' || object.kindKey == 'window',
     );
@@ -127,7 +128,7 @@ void registerEngineIntegrationTests() {
         hostWallId.toString());
     expect(unchanged.wallTypes, hasLength(initial.wallTypes.length));
     expect(
-      unchanged.materials.any((material) => material.name == 'Template Glass'),
+      unchanged.materials.any((material) => material.name == 'Glass'),
       isTrue,
     );
   });
@@ -174,7 +175,7 @@ void registerEngineIntegrationTests() {
     expect(scene.kindCounts['window'], greaterThanOrEqualTo(4));
     final saved = await repository.saveProjectJson();
     expect(saved, contains('Modern Glass Courtyard House'));
-    expect(saved, contains('Landscape Lawn Ground'));
+    expect(saved, contains('Landscape Ground'));
   });
 
   test('engine authoring creates a picked-wall floor in the render scene',
@@ -192,7 +193,7 @@ void registerEngineIntegrationTests() {
       RenderScenePoint(x: 24, y: 4, z: 0),
       RenderScenePoint(x: 20, y: 4, z: 0),
     ];
-    final assemblyId = repository.defaultAssemblyId('Floor');
+    final assemblyId = await repository.defaultAssemblyId('Floor');
     expect(assemblyId, isNotNull);
     final created = await repository.createProfile(
       targetKind: 1,

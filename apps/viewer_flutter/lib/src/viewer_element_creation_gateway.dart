@@ -71,11 +71,6 @@ abstract interface class ViewerElementCreationGateway {
     required double heightOffsetMeters,
   });
 
-  Future<RenderSceneLoadResult> setElementAssembly({
-    required int elementId,
-    required int assemblyId,
-  });
-
   Future<RenderSceneLoadResult> setStructuralWallCut({
     required int wallId,
     required int cutterId,
@@ -89,5 +84,5 @@ abstract interface class ViewerElementCreationGateway {
     required bool enabled,
   });
 
-  int? defaultAssemblyId(String kind);
+  Future<int?> defaultAssemblyId(String kind);
 }

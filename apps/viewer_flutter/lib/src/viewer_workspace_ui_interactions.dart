@@ -11,7 +11,7 @@ extension _ViewerWorkspaceInteractions on _ViewerHomePageState {
     _updateViewportState(() {
       _planViewRangeMeters = value.clamp(0.1, 20.0);
       _statusMessage =
-          'Plan view range: ${_planViewRangeMeters.toStringAsFixed(2)} m';
+          'Plan view range: ${_projectUnitSettings.formatLength(_planViewRangeMeters)}';
     });
     final scene = _scene;
     if (scene != null && _projectionMode == RenderSceneProjectionMode.topDown) {
@@ -262,9 +262,17 @@ extension _ViewerWorkspaceInteractions on _ViewerHomePageState {
           _updateViewportState(() {
             _editStatusMessage = 'Long-press a wall to place an opening.';
             _draftHostWall = null;
+            _openingGestureActive = false;
           });
           return;
         }
+        // Lock the host before any move sample is processed.  A touch can
+        // briefly hit another wall at a dense corner or through a wall cut,
+        // but moving a door/window must remain an offset along the wall that
+        // received the initial contact.
+        _updateViewportState(() {
+          _openingGestureActive = true;
+        });
         _updateOpeningDraftPreview(
           scene: scene,
           hostWall: hostWall,
@@ -408,10 +416,15 @@ extension _ViewerWorkspaceInteractions on _ViewerHomePageState {
         return;
       case RenderSceneInteractionMode.addDoor:
       case RenderSceneInteractionMode.addWindow:
-        _handleSceneHover(details);
         final scene = _scene;
         final hostWall = _draftHostWall;
         final draft = _viewportController.draftOpening;
+        // The draft already contains the last previewed wall-local offset.
+        // Do not re-pick/re-project at PointerUp: Android may deliver a
+        // delayed release sample, and a fresh hit can select a neighbouring
+        // wall.  Recomputing here was the source of the visible left/right
+        // jump between the finger preview and the committed opening.
+        _openingGestureActive = false;
         if (scene == null || hostWall == null || draft == null) return;
         if (draft.valid) {
           await _commitOpeningDraft(scene, hostWall);
@@ -459,7 +472,7 @@ extension _ViewerWorkspaceInteractions on _ViewerHomePageState {
             await _applyEngineSceneResult(
               result,
               message:
-                  'Level elevation updated to ${elevation.toStringAsFixed(2)} m.',
+                  'Level elevation updated to ${_projectUnitSettings.formatLength(elevation)}.',
             );
           }
           await _clearDraft();

@@ -136,11 +136,11 @@ Every architectural slice must pass before the next slice begins:
 5. No new feature work is mixed into a refactoring slice.
 
 The repository workflow `.github/workflows/quality-gates.yml` enforces the
-native tests, ASAN/UBSAN run, Flutter analyzer, Flutter regression suite, and
-diff hygiene on every push and pull request. `tools/check_architecture.sh`
-also rejects direct native session construction from the app shell, native
-bridge imports in presentation modules and shared sketch tools, and analysis
-methods returning to `Document.cpp`.
+native tests, a separate ASAN/UBSAN native test job, Flutter analyzer, Flutter
+regression suite, and diff hygiene on every push and pull request.
+`tools/check_architecture.sh` also rejects direct native session construction
+from the app shell, native bridge imports in presentation modules and shared
+sketch tools, and analysis methods returning to `Document.cpp`.
 
 ## Migration order
 

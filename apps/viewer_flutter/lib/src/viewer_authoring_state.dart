@@ -52,7 +52,7 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
       _sidePanelTab = WorkspaceSidePanelTab.inspector;
       _statusMessage = 'Selected ${level.name}';
       _editStatusMessage =
-          '${level.name}: ${level.elevationMeters.toStringAsFixed(2)} m. Edit it in Inspector or drag the level line.';
+          '${level.name}: ${_projectUnitSettings.formatLength(level.elevationMeters)}. Edit it in Inspector or drag the level line.';
     });
     await _selectionController.selectLevel(level.levelId);
   }
@@ -103,12 +103,28 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
         mode == RenderSceneInteractionMode.addCeiling ||
         mode == RenderSceneInteractionMode.addRoof) {
       _surfaceTool.drawMode = RenderSceneSurfaceDrawMode.pickWalls;
+      if (mode == RenderSceneInteractionMode.addFloor) {
+        _surfaceTool.floorAssemblyId = _scene?.floorTypes.firstOrNull?.id ?? 0;
+      }
+      if (mode == RenderSceneInteractionMode.addRoof) {
+        _surfaceTool.roofAssemblyId = _scene?.roofTypes.firstOrNull?.id ?? 0;
+      }
       if (mounted) {
         _updateViewportState(() {
           _editStatusMessage =
               'Pick Walls: tap each enclosing wall. Selected walls turn blue; use Undo to remove the last one.';
         });
       }
+    }
+
+    if (mode == RenderSceneInteractionMode.addStair) {
+      final base = _activeLevel(_scene);
+      final top = base == null || _scene == null
+          ? null
+          : _nextHigherLevel(_scene!, base.levelId);
+      _stairTool
+        ..setBaseLevelId(base?.levelId)
+        ..setTopLevelId(top?.levelId);
     }
 
     if (mode == RenderSceneInteractionMode.moveOpening &&
@@ -135,15 +151,16 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
         .where((object) => object.kindKey == 'wall')
         .where(
           (object) =>
-              (_metadataInt(object, 'base_level_id') ?? object.levelId) ==
+              (WallElementParameters.fromObject(object).baseLevelId ??
+                  object.levelId) ==
               baseLevelId,
         )
         .where((object) => object.elementId != null)
         .toList(growable: false);
     final topLevelIds = <int>{
       for (final wall in candidates)
-        if ((_metadataInt(wall, 'top_level_id') ?? 0) > 0)
-          _metadataInt(wall, 'top_level_id')!,
+        if ((WallElementParameters.fromObject(wall).topLevelId ?? 0) > 0)
+          WallElementParameters.fromObject(wall).topLevelId!,
     };
     final roofLevelId = topLevelIds.isNotEmpty
         ? (topLevelIds.toList()
@@ -174,7 +191,9 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
     }
     final boundWalls = candidates
         .where(
-          (wall) => (_metadataInt(wall, 'top_level_id') ?? 0) == roofLevelId,
+          (wall) =>
+              (WallElementParameters.fromObject(wall).topLevelId ?? 0) ==
+              roofLevelId,
         )
         .toList(growable: false);
     final polygon = RenderSceneEditor.surfacePolygonForWalls(boundWalls);
@@ -315,6 +334,7 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
       _draftMoveLevelId = null;
       _moveLevelOriginalElevation = null;
       _wallMoveMode = WallMoveMode.translate;
+      _openingGestureActive = false;
     });
 
     _viewportController.clearDraft();
@@ -388,6 +408,10 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
     required String message,
     bool authoritative = false,
   }) {
+    // Reserve the next presentation revision before entering the queue. This
+    // invalidates any deferred read immediately, even while the native
+    // command's scene snapshot is waiting for its turn to render.
+    ++_sceneDataRevision;
     return _sceneCommitQueue.run(
       () => _applySceneChangeNow(
         nextScene,

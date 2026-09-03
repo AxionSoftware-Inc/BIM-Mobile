@@ -15,6 +15,7 @@ class RenderScene {
     required this.materials,
     this.wallTypes = const <WallTypeDefinition>[],
     this.floorTypes = const <FloorTypeDefinition>[],
+    this.roofTypes = const <FloorTypeDefinition>[],
     required this.sections,
     required this.source,
     required this.diagnostics,
@@ -32,6 +33,7 @@ class RenderScene {
   final List<RenderSceneMaterial> materials;
   final List<WallTypeDefinition> wallTypes;
   final List<FloorTypeDefinition> floorTypes;
+  final List<FloorTypeDefinition> roofTypes;
   final List<RenderSceneSection> sections;
   final String source;
   final RenderSceneDiagnostics diagnostics;
@@ -193,6 +195,7 @@ class RenderScene {
         'wall_types': wallTypes.map((wallType) => wallType.toJson()).toList(),
         'floor_types':
             floorTypes.map((floorType) => floorType.toJson()).toList(),
+        'roof_types': roofTypes.map((roofType) => roofType.toJson()).toList(),
         'sections': sections.map((section) => section.toJson()).toList(),
         'objects': objects.map((object) => object.toJson()).toList(),
       };
@@ -359,6 +362,15 @@ RenderSceneLoadResult parseRenderSceneJson(
     }
   }
 
+  final roofTypes = <FloorTypeDefinition>[];
+  final rawRoofTypes = decoded['roof_types'] ?? decoded['roofTypes'];
+  if (rawRoofTypes is List) {
+    for (final entry in rawRoofTypes) {
+      final roofType = FloorTypeDefinition.fromJson(entry);
+      if (roofType != null) roofTypes.add(roofType);
+    }
+  }
+
   final derivedBounds = RenderSceneBounds.union(
     objects.map((object) => object.bounds),
     fallback: RenderSceneBounds.zero(),
@@ -472,6 +484,7 @@ RenderSceneLoadResult parseRenderSceneJson(
       materials: materials,
       wallTypes: wallTypes,
       floorTypes: floorTypes,
+      roofTypes: roofTypes,
       sections: sections,
       source: source,
       diagnostics: diagnostics,

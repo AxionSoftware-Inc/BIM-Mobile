@@ -450,7 +450,7 @@ extension _ViewerViewportSurfaceEditing on _ViewerHomePageState {
           await _applyEngineSceneResult(
             result,
             message:
-                'Level elevation updated to ${end.z.toStringAsFixed(2)} m.',
+                'Level elevation updated to ${_projectUnitSettings.formatLength(end.z)}.',
           );
         } else {
           final nextScene = RenderSceneEditor.setLevelElevation(
@@ -461,7 +461,7 @@ extension _ViewerViewportSurfaceEditing on _ViewerHomePageState {
           await _applySceneChange(
             nextScene,
             message:
-                'Level elevation updated to ${end.z.toStringAsFixed(2)} m.',
+                'Level elevation updated to ${_projectUnitSettings.formatLength(end.z)}.',
           );
         }
         await _clearDraft();
@@ -555,16 +555,23 @@ extension _ViewerViewportSurfaceEditing on _ViewerHomePageState {
         final repository = _engineRepository;
         if (_engineBackedMode && repository != null && _activeLevelId != null) {
           final targetKind = _surfaceTargetKind();
-          final assemblyId =
-              _interactionMode == RenderSceneInteractionMode.addRoof
-                  ? 0
-                  : _authoringCommands.defaultAssemblyId(
-                      _interactionMode == RenderSceneInteractionMode.addFloor
-                          ? 'Floor'
-                          : 'Ceiling',
-                    );
-          // assemblyId=0 is valid for a new blank project: the engine then
-          // creates a plain floor/ceiling with the requested thickness.
+          final assemblyId = _interactionMode ==
+                  RenderSceneInteractionMode.addRoof
+              ? (_surfaceTool.roofAssemblyId != 0
+                  ? _surfaceTool.roofAssemblyId
+                  : (await _authoringCommands.defaultAssemblyId('Roof') ?? 0))
+              : _interactionMode == RenderSceneInteractionMode.addFloor &&
+                      _surfaceTool.floorAssemblyId != 0
+                  ? _surfaceTool.floorAssemblyId
+                  : (await _authoringCommands.defaultAssemblyId(
+                        _interactionMode == RenderSceneInteractionMode.addFloor
+                            ? 'Floor'
+                            : 'Ceiling',
+                      ) ??
+                      0);
+          // assemblyId=0 remains valid for legacy/imported documents: the
+          // engine then creates a plain floor/ceiling with the requested
+          // thickness.
           if (_surfaceDrawMode == RenderSceneSurfaceDrawMode.autoRoom) {
             _updateViewportState(() {
               _editStatusMessage =
@@ -591,7 +598,7 @@ extension _ViewerViewportSurfaceEditing on _ViewerHomePageState {
             return;
           }
           try {
-            final result = await _authoringCommands.createProfile(
+            var result = await _authoringCommands.createProfile(
               targetKind: targetKind,
               draftMode: keepSemanticRoofWalls
                   ? 2
@@ -614,9 +621,23 @@ extension _ViewerViewportSurfaceEditing on _ViewerHomePageState {
                   : _interactionMode == RenderSceneInteractionMode.addCeiling
                       ? _draftCeilingHeightOffsetMeters
                       : 0.0,
-              assemblyId: assemblyId ?? 0,
+              assemblyId: assemblyId,
+              // Roof shape is applied in the following property mutation so
+              // slope validation happens with the created boundary in place.
+              roofType: 0,
             );
             final createdId = _authoringCommands.lastCreatedElementId;
+            if (createdId != null &&
+                _interactionMode == RenderSceneInteractionMode.addRoof) {
+              result = await _authoringCommands.updateRoofProperties(
+                roofId: createdId,
+                roofType: _surfaceTool.roofType,
+                slopeDegrees: _surfaceTool.roofType == 0
+                    ? null
+                    : _surfaceTool.roofSlopeDegrees,
+                overhangMeters: _surfaceTool.roofOverhangMeters,
+              );
+            }
             final created =
                 createdId == null ? null : result.scene?.objectById(createdId);
             if (created == null) {

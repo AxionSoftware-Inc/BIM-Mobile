@@ -1493,6 +1493,7 @@ ElementId Document::create_wall_type(std::string name, std::vector<WallAssemblyL
     if (layers.empty()) {
         throw std::invalid_argument("wall type must contain layers");
     }
+
     for (const auto& layer : layers) {
         if (!std::isfinite(layer.thickness_meters) || layer.thickness_meters <= 0.0) {
             throw std::invalid_argument("wall type layer thickness must be positive");
@@ -1806,7 +1807,15 @@ ElementId Document::create_level(std::string name, double elevation_meters, doub
     return id;
 }
 
-ElementId Document::create_wall(std::string name, Line2 axis, double thickness_meters, double height_meters, ElementId level_id, ElementId assembly_id) {
+ElementId Document::create_wall(
+    std::string name,
+    Line2 axis,
+    double thickness_meters,
+    double height_meters,
+    ElementId level_id,
+    ElementId assembly_id,
+    ElementId wall_type_id
+) {
     if (name.empty()) {
         throw std::invalid_argument("wall name must not be empty");
     }
@@ -1819,7 +1828,23 @@ ElementId Document::create_wall(std::string name, Line2 axis, double thickness_m
         if (assembly == nullptr || assembly->kind != LayeredAssemblyKind::Wall) {
             throw std::invalid_argument("wall assembly must exist and have Wall kind");
         }
-        thickness_meters = layered_assembly_total_thickness(*assembly);
+        if (wall_type_id != 0) {
+            throw std::invalid_argument("wall cannot use both a wall type and an assembly");
+        }
+        // Wall-kind assemblies are a load-time compatibility format. Convert
+        // them immediately so a newly authored wall never carries a second
+        // composition source beside WallTypeData.
+        wall_type_id = wall_type_for_assembly(*assembly);
+        assembly_id = 0;
+        thickness_meters = total_wall_type_thickness(*get_wall_type(wall_type_id));
+        validate_wall_axis(axis, thickness_meters, height_meters);
+    }
+    if (wall_type_id != 0) {
+        const auto* wall_type = get_wall_type(wall_type_id);
+        if (wall_type == nullptr) {
+            throw std::invalid_argument("wall type does not exist");
+        }
+        thickness_meters = total_wall_type_thickness(*wall_type);
         validate_wall_axis(axis, thickness_meters, height_meters);
     }
 
@@ -1827,6 +1852,7 @@ ElementId Document::create_wall(std::string name, Line2 axis, double thickness_m
     elements_.emplace_back(id, ElementKind::Wall, std::move(name), WallData{
         .level_id = level_id,
         .base_level_id = level_id,
+        .wall_type_id = wall_type_id,
         .assembly_id = assembly_id,
         .axis = axis,
         .thickness_meters = thickness_meters,
@@ -1854,18 +1880,205 @@ void Document::set_wall_type(ElementId wall_id, ElementId wall_type_id) {
             throw std::invalid_argument("doors and windows cannot be hosted by glass walls");
         }
     }
-    // A wall uses exactly one layered source at a time. Selecting a wall
-    // type must detach a previous compound assembly; otherwise the renderer
-    // would correctly receive the new type ID but still resolve old layers.
-    if (wall_type_id != 0) {
-        wall->assembly_id = 0;
-    }
+    // A wall uses exactly one layered source at a time. This also clears a
+    // legacy assembly when the user explicitly chooses Unassigned.
+    wall->assembly_id = 0;
     wall->wall_type_id = wall_type_id;
     if (const auto* wall_type = get_wall_type(wall_type_id)) {
         wall->thickness_meters = total_wall_type_thickness(*wall_type);
     }
     mark_wall_dirty(wall_element);
     refresh_dependencies_for_wall(wall_id);
+}
+
+ElementId Document::wall_type_for_assembly(const LayeredAssemblyData& assembly) {
+    const auto layers_equal = [](const auto& left, const auto& right) {
+        if (left.size() != right.size()) return false;
+        return std::equal(left.begin(), left.end(), right.begin(), [](const auto& first, const auto& second) {
+            return first.material_id == second.material_id &&
+                std::abs(first.thickness_meters - second.thickness_meters) <= epsilon &&
+                first.function == second.function &&
+                first.priority == second.priority &&
+                first.structural == second.structural &&
+                first.side == second.side &&
+                first.wraps_openings == second.wraps_openings &&
+                first.wraps_ends == second.wraps_ends;
+        });
+    };
+    for (const auto& [wall_type_id, wall_type] : wall_types_) {
+        if (wall_type.name == assembly.name && layers_equal(wall_type.layers, assembly.layers)) {
+            return wall_type_id;
+        }
+    }
+    return create_wall_type(assembly.name, assembly.layers, WallTypeCategory::Generic);
+}
+
+void Document::normalize_wall_type_sources() {
+    const auto requires_normalization = std::any_of(elements_.begin(), elements_.end(), [&](const auto& element) {
+        const auto* wall = element.wall();
+        return wall != nullptr && (
+            wall->assembly_id != 0 ||
+            (wall->wall_type_id != 0 && get_wall_type(wall->wall_type_id) == nullptr) ||
+            (wall->wall_type_id != 0 &&
+             get_wall_type(wall->wall_type_id) != nullptr &&
+             !wall->openings.empty() &&
+             wall_type_uses_glass(*get_wall_type(wall->wall_type_id))));
+    });
+    if (!requires_normalization) return;
+
+    std::set<ElementId> affected_levels;
+    for (auto& element : elements_) {
+        auto* wall = element.wall();
+        if (wall == nullptr) continue;
+
+        const auto* existing_type = wall->wall_type_id == 0
+            ? nullptr
+            : get_wall_type(wall->wall_type_id);
+        const auto* assembly = wall->assembly_id == 0
+            ? nullptr
+            : get_layered_assembly(wall->assembly_id);
+        const auto previous_wall_type_id = wall->wall_type_id;
+        const auto previous_assembly_id = wall->assembly_id;
+        const auto previous_thickness = wall->thickness_meters;
+
+        if (existing_type != nullptr &&
+            (!wall->openings.empty() && wall_type_uses_glass(*existing_type))) {
+            // A corrupted/legacy file may have assigned a glass type before
+            // opening validation existed. Keep the hosted openings usable and
+            // drop only the invalid type reference; the wall envelope stays
+            // intact until the user selects a solid type.
+            wall->wall_type_id = 0;
+            wall->assembly_id = 0;
+        } else if (existing_type != nullptr) {
+            wall->assembly_id = 0;
+            wall->thickness_meters = total_wall_type_thickness(*existing_type);
+        } else if (assembly != nullptr && assembly->kind == LayeredAssemblyKind::Wall) {
+            if (!wall->openings.empty() && layered_assembly_uses_glass(*assembly)) {
+                // Preserve a valid opening host instead of migrating an
+                // invalid glass-wall assignment into WallTypeData.
+                wall->wall_type_id = 0;
+                wall->assembly_id = 0;
+            } else {
+                const auto wall_type_id = wall_type_for_assembly(*assembly);
+                const auto* wall_type = get_wall_type(wall_type_id);
+                wall->wall_type_id = wall_type_id;
+                wall->assembly_id = 0;
+                if (wall_type != nullptr) {
+                    wall->thickness_meters = total_wall_type_thickness(*wall_type);
+                }
+            }
+        } else {
+            // A missing type/assembly must not remain as a dangling semantic
+            // reference. Keep the authored envelope as an explicit generic
+            // wall until the user assigns a catalog type.
+            wall->wall_type_id = 0;
+            wall->assembly_id = 0;
+        }
+        const auto changed = previous_wall_type_id != wall->wall_type_id ||
+            previous_assembly_id != wall->assembly_id ||
+            std::abs(previous_thickness - wall->thickness_meters) > epsilon;
+        if (!changed) continue;
+        wall->geometry.dirty = true;
+        wall->layered_geometry.dirty = true;
+        if (wall->level_id != 0) affected_levels.insert(wall->level_id);
+    }
+    for (auto& element : elements_) {
+        auto* room = element.room();
+        if (room == nullptr || !affected_levels.contains(room->level_id)) continue;
+        dirty_room_ids_.push_back(element.id());
+        element.touch();
+    }
+    for (auto& [_, system] : floor_systems_) {
+        if (affected_levels.contains(system.level_id)) system.dirty = true;
+    }
+    for (auto& [_, system] : ceiling_systems_) {
+        if (affected_levels.contains(system.level_id)) system.dirty = true;
+    }
+    invalidate_dependency_graph_cache();
+}
+
+ElementId Document::upsert_wall_type_for_wall(
+    ElementId wall_id,
+    std::string name,
+    std::vector<WallAssemblyLayer> layers,
+    WallTypeCategory category,
+    int core_start_layer,
+    int core_end_layer
+) {
+    auto& wall_element = require_wall(wall_id);
+    if (layers.empty()) {
+        throw std::invalid_argument("wall type must contain layers");
+    }
+
+    // Normalize omitted core bounds and layer sides before comparing or
+    // storing the candidate. Otherwise the same layer stack could compare
+    // differently merely because one caller supplied -1 and another supplied
+    // the inferred core range, causing catalog growth over time.
+    auto normalized_layers = layers;
+    auto normalized_core_start = core_start_layer;
+    auto normalized_core_end = core_end_layer;
+    normalize_wall_layer_semantics(normalized_layers, normalized_core_start, normalized_core_end);
+
+    // Reuse an existing semantically identical type before allocating a new
+    // record. This makes repeated Inspector edits idempotent even when the
+    // user changes away and back to a previous layer stack.
+    auto layers_equal = [](const auto& left, const auto& right) {
+        if (left.size() != right.size()) return false;
+        return std::equal(left.begin(), left.end(), right.begin(), [](const auto& first, const auto& second) {
+            return first.material_id == second.material_id &&
+                std::abs(first.thickness_meters - second.thickness_meters) <= epsilon &&
+                first.function == second.function &&
+                first.priority == second.priority &&
+                first.structural == second.structural &&
+                first.side == second.side &&
+                first.wraps_openings == second.wraps_openings &&
+                first.wraps_ends == second.wraps_ends;
+        });
+    };
+
+    const auto* wall = wall_element.wall();
+    const auto current_type_id = wall == nullptr ? 0 : wall->wall_type_id;
+    for (const auto& [candidate_id, candidate] : wall_types_) {
+        if (candidate.category == category &&
+            candidate.name == name &&
+            candidate.core_start_layer == normalized_core_start &&
+            candidate.core_end_layer == normalized_core_end &&
+            layers_equal(candidate.layers, normalized_layers)) {
+            set_wall_type(wall_id, candidate_id);
+            return candidate_id;
+        }
+    }
+
+    auto sole_user = current_type_id != 0 && get_wall_type(current_type_id) != nullptr;
+    if (sole_user) {
+        for (const auto& element : elements_) {
+            const auto* other_wall = element.wall();
+            if (other_wall != nullptr && element.id() != wall_id &&
+                other_wall->wall_type_id == current_type_id) {
+                sole_user = false;
+                break;
+            }
+        }
+    }
+
+    if (sole_user) {
+        auto edited = *get_wall_type(current_type_id);
+        edited.name = std::move(name);
+        edited.category = category;
+        edited.layers = std::move(normalized_layers);
+        edited.core_start_layer = normalized_core_start;
+        edited.core_end_layer = normalized_core_end;
+        update_wall_type(std::move(edited));
+        return current_type_id;
+    }
+
+    auto created = create_wall_type(std::move(name), std::move(normalized_layers), category);
+    auto edited = *get_wall_type(created);
+    edited.core_start_layer = normalized_core_start;
+    edited.core_end_layer = normalized_core_end;
+    update_wall_type(std::move(edited));
+    set_wall_type(wall_id, created);
+    return created;
 }
 
 void Document::set_element_assembly(ElementId element_id, ElementId assembly_id) {
@@ -1894,12 +2107,11 @@ void Document::set_element_assembly(ElementId element_id, ElementId assembly_id)
         if (!wall->openings.empty() && layered_assembly_uses_glass(*assembly)) {
             throw std::invalid_argument("doors and windows cannot be hosted by glass walls");
         }
-        wall->assembly_id = assembly_id;
-        wall->wall_type_id = 0;
-        wall->thickness_meters = layered_assembly_total_thickness(*assembly);
-        wall->layered_geometry.dirty = true;
-        mark_wall_dirty(*element);
-        refresh_dependencies_for_wall(element_id);
+        // Wall-kind assemblies are accepted only for old callers. Convert
+        // them to the canonical wall-type store immediately; no active wall
+        // is allowed to keep an assembly_id source.
+        const auto wall_type_id = wall_type_for_assembly(*assembly);
+        set_wall_type(element_id, wall_type_id);
     } else if (auto* slab = element->slab()) {
         if (assembly->kind != LayeredAssemblyKind::Floor) throw std::invalid_argument("slab requires Floor assembly");
         slab->assembly_id = assembly_id;
@@ -2033,6 +2245,11 @@ void Document::set_wall_properties(ElementId wall_id, double thickness_meters, d
     wall->thickness_meters = thickness_meters;
     wall->height_meters = height_meters;
     wall->wall_type_id = wall_type_id;
+    // Wall editing is a canonical authoring path. A property edit with no
+    // selected type must not leave a second, hidden layered source attached
+    // to the same wall; legacy assembly-only records are handled explicitly
+    // by set_element_assembly and normalized at project load.
+    wall->assembly_id = 0;
     if (const auto* wall_type = get_wall_type(wall_type_id)) {
         wall->thickness_meters = total_wall_type_thickness(*wall_type);
     }
@@ -3039,53 +3256,25 @@ void Document::move_hosted_opening(ElementId opening_id, double offset_meters) {
         throw std::invalid_argument("opening does not exist");
     }
 
-    if (auto* door = opening_element->door()) {
-        const auto host_wall_id = door->host_wall_id;
-        auto updated = HostedOpening{
-            .element_id = opening_id,
-            .kind = OpeningKind::Door,
-            .offset_meters = offset_meters,
-            .width_meters = door->width_meters,
-            .height_meters = door->height_meters,
-            .sill_height_meters = 0.0,
-            .vertical_offset_meters = door->vertical_offset_meters,
-        };
-        auto wall_copy = *require_wall(host_wall_id).wall();
-        for (auto& opening : wall_copy.openings) {
-            if (opening.element_id == opening_id) {
-                opening = updated;
-            }
-        }
-        validate_wall_openings(wall_copy);
-        door->offset_meters = offset_meters;
-        opening_element->touch();
-        update_wall_opening(host_wall_id, updated);
-        invalidate_dependency_graph_cache();
+    if (const auto* door = opening_element->door()) {
+        update_hosted_opening(
+            opening_id,
+            offset_meters,
+            door->width_meters,
+            door->height_meters,
+            0.0
+        );
         return;
     }
 
-    if (auto* window = opening_element->window()) {
-        const auto host_wall_id = window->host_wall_id;
-        auto updated = HostedOpening{
-            .element_id = opening_id,
-            .kind = OpeningKind::Window,
-            .offset_meters = offset_meters,
-            .width_meters = window->width_meters,
-            .height_meters = window->height_meters,
-            .sill_height_meters = window->sill_height_meters,
-            .vertical_offset_meters = window->vertical_offset_meters,
-        };
-        auto wall_copy = *require_wall(host_wall_id).wall();
-        for (auto& opening : wall_copy.openings) {
-            if (opening.element_id == opening_id) {
-                opening = updated;
-            }
-        }
-        validate_wall_openings(wall_copy);
-        window->offset_meters = offset_meters;
-        opening_element->touch();
-        update_wall_opening(host_wall_id, updated);
-        invalidate_dependency_graph_cache();
+    if (const auto* window = opening_element->window()) {
+        update_hosted_opening(
+            opening_id,
+            offset_meters,
+            window->width_meters,
+            window->height_meters,
+            window->sill_height_meters
+        );
         return;
     }
 
@@ -3093,56 +3282,25 @@ void Document::move_hosted_opening(ElementId opening_id, double offset_meters) {
 }
 
 void Document::resize_door(ElementId door_id, double width_meters, double height_meters) {
-    auto& door_element = require_door(door_id);
-    auto* door = door_element.door();
-    auto updated = HostedOpening{
-        .element_id = door_id,
-        .kind = OpeningKind::Door,
-        .offset_meters = door->offset_meters,
-        .width_meters = width_meters,
-        .height_meters = height_meters,
-        .sill_height_meters = 0.0,
-        .vertical_offset_meters = door->vertical_offset_meters,
-    };
-    auto wall_copy = *require_wall(door->host_wall_id).wall();
-    for (auto& opening : wall_copy.openings) {
-        if (opening.element_id == door_id) {
-            opening = updated;
-        }
-    }
-    validate_wall_openings(wall_copy);
-    door->width_meters = width_meters;
-    door->height_meters = height_meters;
-    door_element.touch();
-    update_wall_opening(door->host_wall_id, updated);
-    invalidate_dependency_graph_cache();
+    const auto& door = require_door(door_id);
+    update_hosted_opening(
+        door_id,
+        door.door()->offset_meters,
+        width_meters,
+        height_meters,
+        0.0
+    );
 }
 
 void Document::resize_window(ElementId window_id, double width_meters, double height_meters, double sill_height_meters) {
-    auto& window_element = require_window(window_id);
-    auto* window = window_element.window();
-    auto updated = HostedOpening{
-        .element_id = window_id,
-        .kind = OpeningKind::Window,
-        .offset_meters = window->offset_meters,
-        .width_meters = width_meters,
-        .height_meters = height_meters,
-        .sill_height_meters = sill_height_meters,
-        .vertical_offset_meters = window->vertical_offset_meters,
-    };
-    auto wall_copy = *require_wall(window->host_wall_id).wall();
-    for (auto& opening : wall_copy.openings) {
-        if (opening.element_id == window_id) {
-            opening = updated;
-        }
-    }
-    validate_wall_openings(wall_copy);
-    window->width_meters = width_meters;
-    window->height_meters = height_meters;
-    window->sill_height_meters = sill_height_meters;
-    window_element.touch();
-    update_wall_opening(window->host_wall_id, updated);
-    invalidate_dependency_graph_cache();
+    const auto& window = require_window(window_id);
+    update_hosted_opening(
+        window_id,
+        window.window()->offset_meters,
+        width_meters,
+        height_meters,
+        sill_height_meters
+    );
 }
 
 void Document::update_hosted_opening(
@@ -4648,9 +4806,13 @@ void Document::regenerate_dirty_geometry(GeometryDetail detail) {
             resolved.height_meters = resolved_wall_height(*wall);
             const auto* wall_assembly = wall->assembly_id == 0 ? nullptr : get_layered_assembly(wall->assembly_id);
             const auto* wall_type = wall->wall_type_id == 0 ? nullptr : get_wall_type(wall->wall_type_id);
-            const auto* layers = wall_assembly != nullptr
-                ? &wall_assembly->layers
-                : (wall_type != nullptr ? &wall_type->layers : nullptr);
+            // WallTypeData is authoritative whenever a malformed/legacy
+            // record happens to carry both references. Normal project loads
+            // remove the second reference, but regeneration must remain safe
+            // for raw documents too.
+            const auto* layers = wall_type != nullptr
+                ? &wall_type->layers
+                : (wall_assembly != nullptr ? &wall_assembly->layers : nullptr);
             const auto assembly_revision = cache_assembly_revision(wall_assembly);
             if (layers != nullptr && !layers->empty()) {
                 resolved.thickness_meters = std::accumulate(layers->begin(), layers->end(), 0.0, [](double total, const auto& layer) {

@@ -1,7 +1,9 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import 'project_unit_settings.dart';
 import 'render_scene_editor.dart';
 import 'render_scene_models.dart';
 import 'render_scene_viewport_projection.dart';
@@ -13,6 +15,7 @@ class NativeDraftOverlayPainter extends CustomPainter {
     required this.scene,
     required this.projectionMode,
     required this.interactionMode,
+    this.units = const ProjectUnitSettings.defaults(),
     required this.orbitProjectionStyle,
     required this.camera,
     required this.planCamera,
@@ -30,6 +33,7 @@ class NativeDraftOverlayPainter extends CustomPainter {
   final RenderScene scene;
   final RenderSceneProjectionMode projectionMode;
   final RenderSceneInteractionMode interactionMode;
+  final ProjectUnitSettings units;
   final RenderSceneOrbitProjectionStyle orbitProjectionStyle;
   final RenderSceneCameraState camera;
   final RenderScenePlanCameraState planCamera;
@@ -335,7 +339,10 @@ class NativeDraftOverlayPainter extends CustomPainter {
     _drawWallLengthLabel(
       canvas,
       Offset((a.dx + b.dx) * 0.5, (a.dy + b.dy) * 0.5),
-      WallAuthoringGeometry.formatWallLengthMeters(start.distanceTo(end)),
+      WallAuthoringGeometry.formatWallLengthMeters(
+        start.distanceTo(end),
+        units: units,
+      ),
     );
     if (projectionMode == RenderSceneProjectionMode.topDown &&
         (interactionMode == RenderSceneInteractionMode.addWall ||
@@ -579,5 +586,22 @@ class NativeDraftOverlayPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant NativeDraftOverlayPainter oldDelegate) => true;
+  bool shouldRepaint(covariant NativeDraftOverlayPainter oldDelegate) {
+    return oldDelegate.scene != scene ||
+        oldDelegate.projectionMode != projectionMode ||
+        oldDelegate.interactionMode != interactionMode ||
+        oldDelegate.orbitProjectionStyle != orbitProjectionStyle ||
+        oldDelegate.camera != camera ||
+        oldDelegate.planCamera != planCamera ||
+        oldDelegate.draftWallStart != draftWallStart ||
+        oldDelegate.draftWallEnd != draftWallEnd ||
+        oldDelegate.draftOpening != draftOpening ||
+        oldDelegate.draftSurface != draftSurface ||
+        !setEquals(oldDelegate.pickedWallIds, pickedWallIds) ||
+        oldDelegate.wallThicknessMeters != wallThicknessMeters ||
+        oldDelegate.units != units ||
+        oldDelegate.activeElementId != activeElementId ||
+        oldDelegate.selectedLevelId != selectedLevelId ||
+        oldDelegate.draftWallEditElementId != draftWallEditElementId;
+  }
 }

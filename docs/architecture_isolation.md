@@ -1,7 +1,7 @@
 # Viewer architecture isolation
 
-This branch establishes an explicit boundary between the authoritative BIM
-model and viewport presentation.
+This document defines the explicit boundary between the authoritative BIM
+model and viewport presentation on `main`.
 
 ## Invariants
 
@@ -31,16 +31,41 @@ The Flutter application resolves element identity and cross-cutting
 capabilities through `elements/bim_element_registry.dart`. Wall, door, window,
 floor, ceiling, roof, slab, level, room, column, beam, stair, and imported
 proxy elements each have a small module with its own aliases, display name,
-level-hosting behavior, plan participation, and type family. This replaces
-shared policy lists as the place where a new element is introduced.
+level-hosting behavior, plan participation, type family, and Inspector adapter
+route. This replaces shared policy lists as the place where a new element is
+introduced.
 
-Type records use `BimElementTypeDefinition` and `BimElementTypeCatalog`. Wall
-assembly records are exposed to the Inspector through
-`elements/wall_type_catalog.dart`; the native document remains the source of
-truth for persisted wall types and materials. The wall type command changes
-only the selected wall's semantic type and then refreshes the authoritative
-scene. A new wall type/material can therefore be added without changing
-viewport policy.
+Inspector routing is centralized in `elements/inspector_registry.dart`, but
+element parameters and their UI/apply behavior are isolated under
+`elements/inspectors/*_inspector.dart`. `PropertyEditor` owns only the common
+target shell, selection/view-range plumbing, shared controls, and the delete
+action. It does not contain an object-kind switch. Adding an editable element
+therefore means adding its element module route and one adapter file; existing
+wall, opening, surface, and roof inspectors remain untouched.
+
+Type records use `BimElementTypeDefinition` and `BimElementTypeCatalog`. The
+native `ProjectCatalog` is the single bootstrap point for standard materials,
+wall types, and floor/roof/stair assemblies; templates and the API reuse its
+document-local IDs instead of defining parallel catalogs. Flutter exposes the
+same records to the Inspector through `elements/wall_type_catalog.dart` and
+`elements/floor_type_catalog.dart`, while the native document remains the
+source of truth for persistence and geometry. A legacy Wall-kind assembly is
+accepted only as a load-time compatibility format and is normalized to one
+`WallTypeData` source before an engine scene is exposed. A wall can therefore
+never have both `wall_type_id` and `assembly_id` in a loaded authoring project.
+Inspector layer edits use one native wall-type upsert command with
+copy-on-write: a type is edited in place only while it has one wall user; a
+shared type is cloned at most once and then reused by later edits. UI code must
+not implement a create-type-then-assign sequence for an existing wall.
+
+The document deliberately separates authored instances from type definitions.
+Each wall/opening/floor keeps a lightweight identity, placement, constraints,
+relations, and edit history because selection, hosting, joins, and undo/redo
+need that identity. Repeated instances reference one shared type record by ID,
+so layers, materials, and type-level geometry inputs are stored once. A future
+render prototype cache can therefore use a key such as
+`(type/assembly revision, instance geometry parameters)` without changing the
+authoring model or collapsing logical elements into one object.
 
 Element-specific geometry and commands remain behind the authoring/repository
 boundary. The module registry owns semantics, not generated meshes, camera
@@ -78,6 +103,7 @@ boundary instead of wiring the new behavior into a widget callback.
 2. Register it in `BimElementRegistry.standardModules`.
 3. Add native payload/commands and a gateway only if the element is
    authorable; keep that code out of viewport widgets.
-4. Add an Inspector adapter and focused module test.
+4. Add the Inspector adapter under `elements/inspectors/` and register its
+   route in the element module; add a focused module test.
 5. Add a renderer branch only for genuinely new visual semantics; do not edit
    the frozen Filament host for ordinary type/catalog changes.

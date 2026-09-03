@@ -1,4 +1,5 @@
 #include "tbe/core/Project.hpp"
+#include "tbe/core/ProjectCatalog.hpp"
 
 #include <sstream>
 #include <stdexcept>
@@ -59,6 +60,10 @@ Project::Project(std::string name)
     if (name_.empty()) {
         throw std::invalid_argument("project name must not be empty");
     }
+    // Every authoring project starts with the same document-local catalog.
+    // Templates may add geometry, but they must not define a second type
+    // universe of their own.
+    ensure_default_project_catalog(document_);
 }
 
 std::string_view Project::name() const noexcept {
@@ -107,6 +112,10 @@ Project Project::from_json(std::string_view json) {
 
     Project project{unescape_json_string(json.substr(name_begin, name_end - name_begin))};
     project.document_ = Document::from_json(json.substr(doc_begin, doc_end - doc_begin));
+    project.document_.normalize_wall_type_sources();
+    // Repair old/partial projects without changing their existing IDs or
+    // replacing authored records. Missing standard records are added once.
+    ensure_default_project_catalog(project.document_);
     return project;
 }
 

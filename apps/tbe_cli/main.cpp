@@ -2,6 +2,7 @@
 #include "tbe/core/Command.hpp"
 #include "tbe/core/GeometryService.hpp"
 #include "tbe/core/Project.hpp"
+#include "tbe/core/ProjectCatalog.hpp"
 #include "tbe/core/StressModel.hpp"
 
 #include <chrono>
@@ -366,11 +367,12 @@ int run_torture_building_elements() {
     const auto level = document.create_level("Level 1", 0.0, 3.2);
     const auto upper_level = document.create_level("Level 2", 3.2, 3.2);
 
-    const auto brick = document.create_material("Brick", MaterialCategory::Structural, 1800.0, 120.0);
-    const auto plaster = document.create_material("Plaster", MaterialCategory::Finish, 950.0, 40.0);
-    const auto concrete = document.create_material("Concrete", MaterialCategory::Structural, 2400.0, 110.0);
-    const auto tile = document.create_material("Tile", MaterialCategory::Finish, 2100.0, 55.0);
-    const auto gypsum = document.create_material("Gypsum", MaterialCategory::Finish, 850.0, 28.0);
+    const auto catalog = ensure_default_project_catalog(document);
+    const auto brick = catalog.brick_material;
+    const auto plaster = catalog.gypsum_material;
+    const auto concrete = catalog.concrete_material;
+    const auto tile = catalog.stair_tile_material;
+    const auto gypsum = catalog.gypsum_material;
     const auto wall_type = document.create_wall_type("Masonry", {
         WallAssemblyLayer{.material_id = plaster, .thickness_meters = 0.02, .function = WallLayerFunction::InteriorFinish},
         WallAssemblyLayer{.material_id = brick, .thickness_meters = 0.20, .function = WallLayerFunction::Core},
@@ -813,14 +815,10 @@ int run_residential_benchmark(int stories) {
     const auto story_count = std::max(1, stories);
     Project project{"Residential Benchmark"};
     auto& document = project.active_document();
-    const auto concrete = document.create_material("Concrete", MaterialCategory::Structural, 2400.0, 110.0);
-    const auto gypsum = document.create_material("Gypsum", MaterialCategory::Finish, 850.0, 28.0);
-    const auto floor_assembly = document.create_layered_assembly(LayeredAssemblyKind::Floor, "Residential Floor", {
-        WallAssemblyLayer{.material_id = concrete, .thickness_meters = 0.18, .function = WallLayerFunction::Core},
-    });
-    const auto ceiling_assembly = document.create_layered_assembly(LayeredAssemblyKind::Ceiling, "Residential Ceiling", {
-        WallAssemblyLayer{.material_id = gypsum, .thickness_meters = 0.015, .function = WallLayerFunction::InteriorFinish},
-    });
+    const auto catalog = ensure_default_project_catalog(document);
+    const auto concrete = catalog.concrete_material;
+    const auto floor_assembly = catalog.residential_floor_assembly;
+    const auto ceiling_assembly = catalog.ceiling_assembly;
 
     std::vector<ElementId> levels;
     levels.reserve(static_cast<std::size_t>(story_count));
@@ -1070,26 +1068,11 @@ int main(int argc, char** argv) {
     commands.execute(document, level);
     const auto level_id = level.created_id();
 
-    const auto brick = document.create_material("Brick", tbe::core::MaterialCategory::Structural, 1800.0, 120.0);
-    const auto plaster = document.create_material("Plaster", tbe::core::MaterialCategory::Finish, 950.0, 40.0);
-    const auto paint = document.create_material("Paint", tbe::core::MaterialCategory::Finish, std::nullopt, 12.0);
-    const auto glass = document.create_material("Glass", tbe::core::MaterialCategory::Glass, 2500.0, 80.0);
-    const auto concrete = document.create_material("Concrete", tbe::core::MaterialCategory::Structural, 2400.0, 110.0);
-    const auto floor_tile = document.create_material("Floor Tile", tbe::core::MaterialCategory::Finish, 2100.0, 55.0);
-    const auto gypsum = document.create_material("Gypsum", tbe::core::MaterialCategory::Finish, 850.0, 28.0);
-    (void)paint;
-    const auto masonry_wall_type = document.create_wall_type("Brick Wall", {
-        tbe::core::WallAssemblyLayer{.material_id = plaster, .thickness_meters = 0.02, .function = tbe::core::WallLayerFunction::InteriorFinish},
-        tbe::core::WallAssemblyLayer{.material_id = brick, .thickness_meters = 0.20, .function = tbe::core::WallLayerFunction::Core},
-        tbe::core::WallAssemblyLayer{.material_id = plaster, .thickness_meters = 0.02, .function = tbe::core::WallLayerFunction::ExteriorFinish},
-    });
-    const auto floor_assembly = document.create_layered_assembly(tbe::core::LayeredAssemblyKind::Floor, "Tile Floor", {
-        tbe::core::WallAssemblyLayer{.material_id = floor_tile, .thickness_meters = 0.015, .function = tbe::core::WallLayerFunction::InteriorFinish},
-        tbe::core::WallAssemblyLayer{.material_id = concrete, .thickness_meters = 0.12, .function = tbe::core::WallLayerFunction::Core},
-    });
-    const auto ceiling_assembly = document.create_layered_assembly(tbe::core::LayeredAssemblyKind::Ceiling, "Gypsum Ceiling", {
-        tbe::core::WallAssemblyLayer{.material_id = gypsum, .thickness_meters = 0.015, .function = tbe::core::WallLayerFunction::InteriorFinish},
-    });
+    const auto catalog = tbe::core::ensure_default_project_catalog(document);
+    const auto concrete = catalog.concrete_material;
+    const auto masonry_wall_type = catalog.exterior_wall_type;
+    const auto floor_assembly = catalog.residential_floor_assembly;
+    const auto ceiling_assembly = catalog.ceiling_assembly;
 
     tbe::core::CreateWallCommand bottom{
         "Bottom Wall",

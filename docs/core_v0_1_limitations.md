@@ -17,7 +17,8 @@ This engine is a portable BIM-oriented core MVP, not a full production authoring
 
 ## Interop
 
-- no IFC import/export yet
+- IFC import/export is available for the current semantic and fixture scope;
+  advanced IFC entities and round-trip fidelity remain limited
 - no DWG/DXF integration yet
 - no direct Revit interoperability layer yet
 
@@ -37,8 +38,10 @@ This engine is a portable BIM-oriented core MVP, not a full production authoring
 
 ## Viewer / UI
 
-- no full viewer/UI is included yet
-- hit/snap and SDK contracts are intended to support future viewer work, but rendering/editor UX still needs to be built
+- a lightweight Flutter viewer/editor is included, with native Android
+  rendering and a tested fallback painter
+- Revit-grade hidden-line output, family editing, and complete touch authoring
+  UX are still outside v0.1 scope
 
 ## Positioning
 

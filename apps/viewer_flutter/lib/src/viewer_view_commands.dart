@@ -38,7 +38,14 @@ extension _ViewerViewCommands on _ViewerHomePageState {
       objectCount: scene?.objectCount ?? 0,
       generatedSection: wasGeneratedSection,
     );
+    final standardTabId = _standardViewTabIdForProjection(mode);
+    final shouldActivateStandardTab = standardTabId != null &&
+        standardTabId != _activeViewTabId &&
+        _viewWorkspace.tabById(standardTabId) != null;
     if (_projectionMode == mode && !wasGeneratedSection) {
+      if (shouldActivateStandardTab) {
+        _updateViewportState(() => _activeViewTabId = standardTabId);
+      }
       // A nearby-level plan snapshot can still be active even though the
       // selected tab is already 3D/elevation. Re-fetch the intended scope so
       // the roof is not lost when the user returns to the same view tab.
@@ -75,6 +82,9 @@ extension _ViewerViewCommands on _ViewerHomePageState {
       // generated section snapshot and reloads the authoritative model view.
       _activeSectionView = null;
       _projectionMode = mode;
+      if (shouldActivateStandardTab) {
+        _activeViewTabId = standardTabId;
+      }
       _statusMessage = mode.statusLabel;
       AppTelemetry.track(
         'view_changed',
@@ -144,6 +154,21 @@ extension _ViewerViewCommands on _ViewerHomePageState {
     await _viewportController.setProjectionMode(mode);
     await _viewportController.setDisplayStyle(_displayStyle);
     await _viewportController.fitCamera();
+  }
+
+  String? _standardViewTabIdForProjection(RenderSceneProjectionMode mode) {
+    switch (mode) {
+      case RenderSceneProjectionMode.topDown:
+        final levelId = _activeLevelId;
+        return levelId == null ? null : ViewWorkspaceStore.floorPlanId(levelId);
+      case RenderSceneProjectionMode.isometric:
+        return ViewWorkspaceStore.threeDViewId;
+      case RenderSceneProjectionMode.northElevation:
+      case RenderSceneProjectionMode.southElevation:
+      case RenderSceneProjectionMode.eastElevation:
+      case RenderSceneProjectionMode.westElevation:
+        return null;
+    }
   }
 
   Future<void> _activateSectionView(
@@ -285,12 +310,18 @@ extension _ViewerViewCommands on _ViewerHomePageState {
         ? 0.0
         : currentLevel.elevationMeters + currentLevel.defaultWallHeightMeters;
     final nameController = TextEditingController(text: 'Level $suggestedIndex');
-    final elevationController =
-        TextEditingController(text: defaultElevation.toStringAsFixed(2));
+    final elevationController = TextEditingController(
+      text: _projectUnitSettings.formatLength(
+        defaultElevation,
+        withUnit: false,
+      ),
+    );
     final heightController = TextEditingController(
-      text: (currentLevel?.defaultWallHeightMeters ??
-              _ViewerHomePageState._defaultWallHeightMeters)
-          .toStringAsFixed(2),
+      text: _projectUnitSettings.formatLength(
+        currentLevel?.defaultWallHeightMeters ??
+            _ViewerHomePageState._defaultWallHeightMeters,
+        withUnit: false,
+      ),
     );
 
     final payload =
@@ -314,12 +345,13 @@ extension _ViewerViewCommands on _ViewerHomePageState {
                 ),
                 const SizedBox(height: 8),
                 _NumericField(
-                  label: 'Elevation (m)',
+                  label: 'Elevation (${_projectUnitSettings.lengthSymbol})',
                   controller: elevationController,
                   onChanged: (_) {},
                 ),
                 _NumericField(
-                  label: 'Default wall height (m)',
+                  label:
+                      'Default wall height (${_projectUnitSettings.lengthSymbol})',
                   controller: heightController,
                   onChanged: (_) {},
                 ),
@@ -334,10 +366,16 @@ extension _ViewerViewCommands on _ViewerHomePageState {
             FilledButton(
               onPressed: () {
                 final name = nameController.text.trim();
-                final elevation =
+                final elevationDisplay =
                     double.tryParse(elevationController.text.trim());
-                final wallHeight =
+                final wallHeightDisplay =
                     double.tryParse(heightController.text.trim());
+                final elevation = elevationDisplay == null
+                    ? null
+                    : _projectUnitSettings.toMeters(elevationDisplay);
+                final wallHeight = wallHeightDisplay == null
+                    ? null
+                    : _projectUnitSettings.toMeters(wallHeightDisplay);
                 if (name.isEmpty ||
                     elevation == null ||
                     wallHeight == null ||
@@ -399,22 +437,22 @@ extension _ViewerViewCommands on _ViewerHomePageState {
       return;
     }
 
-    int baseLevelId = _metadataInt(object, 'base_level_id') ??
-        object.levelId ??
-        levels.first.levelId;
-    int topLevelId = _metadataInt(object, 'top_level_id') ?? 0;
-    int heightMode =
-        ((object.metadata['height_mode']?.toString() ?? 'Unconnected') ==
-                'TopLevel')
-            ? 1
-            : 0;
+    final wallParameters = WallElementParameters.fromObject(object);
+    int baseLevelId =
+        wallParameters.baseLevelId ?? object.levelId ?? levels.first.levelId;
+    int topLevelId = wallParameters.topLevelId ?? 0;
+    int heightMode = wallParameters.isTopConnected ? 1 : 0;
     final baseOffsetController = TextEditingController(
-      text: (_metadataDouble(object, 'base_offset_meters') ?? 0.0)
-          .toStringAsFixed(2),
+      text: _projectUnitSettings.formatLength(
+        wallParameters.baseOffsetMeters,
+        withUnit: false,
+      ),
     );
     final topOffsetController = TextEditingController(
-      text: (_metadataDouble(object, 'top_offset_meters') ?? 0.0)
-          .toStringAsFixed(2),
+      text: _projectUnitSettings.formatLength(
+        wallParameters.topOffsetMeters,
+        withUnit: false,
+      ),
     );
 
     final payload = await showDialog<
@@ -504,12 +542,14 @@ extension _ViewerViewCommands on _ViewerHomePageState {
                     ),
                     const SizedBox(height: 8),
                     _NumericField(
-                      label: 'Base offset (m)',
+                      label:
+                          'Base offset (${_projectUnitSettings.lengthSymbol})',
                       controller: baseOffsetController,
                       onChanged: (_) {},
                     ),
                     _NumericField(
-                      label: 'Top offset (m)',
+                      label:
+                          'Top offset (${_projectUnitSettings.lengthSymbol})',
                       controller: topOffsetController,
                       onChanged: (_) {},
                     ),
@@ -523,10 +563,16 @@ extension _ViewerViewCommands on _ViewerHomePageState {
                 ),
                 FilledButton(
                   onPressed: () {
-                    final baseOffset =
+                    final baseOffsetDisplay =
                         double.tryParse(baseOffsetController.text.trim());
-                    final topOffset =
+                    final topOffsetDisplay =
                         double.tryParse(topOffsetController.text.trim());
+                    final baseOffset = baseOffsetDisplay == null
+                        ? null
+                        : _projectUnitSettings.toMeters(baseOffsetDisplay);
+                    final topOffset = topOffsetDisplay == null
+                        ? null
+                        : _projectUnitSettings.toMeters(topOffsetDisplay);
                     if (baseOffset == null ||
                         topOffset == null ||
                         (heightMode == 1 && topLevelId == 0)) {
@@ -587,8 +633,10 @@ extension _ViewerViewCommands on _ViewerHomePageState {
     int selectedLevelId =
         object.levelId ?? _activeLevelId ?? levels.first.levelId;
     final levelOffsetController = TextEditingController(
-      text: (_metadataDouble(object, 'level_offset_meters') ?? 0.0)
-          .toStringAsFixed(2),
+      text: _projectUnitSettings.formatLength(
+        OpeningElementParameters.fromObject(object).levelOffsetMeters,
+        withUnit: false,
+      ),
     );
     final resultConstraint = await showDialog<({int levelId, double offset})>(
       context: context,
@@ -611,7 +659,7 @@ extension _ViewerViewCommands on _ViewerHomePageState {
                         .map((level) => DropdownMenuItem<int>(
                               value: level.levelId,
                               child: Text(
-                                '${level.name} (${level.elevationMeters.toStringAsFixed(2)} m)',
+                                '${level.name} (${_projectUnitSettings.formatLength(level.elevationMeters)})',
                               ),
                             ))
                         .toList(growable: false),
@@ -628,10 +676,12 @@ extension _ViewerViewCommands on _ViewerHomePageState {
                     controller: levelOffsetController,
                     keyboardType:
                         const TextInputType.numberWithOptions(decimal: true),
-                    decoration: const InputDecoration(
-                      labelText: 'Offset from level (m)',
-                      helperText: 'Masalan 0.30 = leveldan 30 sm yuqori',
-                      border: OutlineInputBorder(),
+                    decoration: InputDecoration(
+                      labelText:
+                          'Offset from level (${_projectUnitSettings.lengthSymbol})',
+                      helperText:
+                          'Enter the offset in ${_projectUnitSettings.lengthSymbol}.',
+                      border: const OutlineInputBorder(),
                       isDense: true,
                     ),
                   ),
@@ -644,10 +694,12 @@ extension _ViewerViewCommands on _ViewerHomePageState {
                 ),
                 FilledButton(
                   onPressed: () {
-                    final offset = double.tryParse(levelOffsetController.text);
-                    if (offset == null) {
+                    final offsetDisplay =
+                        double.tryParse(levelOffsetController.text);
+                    if (offsetDisplay == null) {
                       return;
                     }
+                    final offset = _projectUnitSettings.toMeters(offsetDisplay);
                     Navigator.of(context).pop(
                       (levelId: selectedLevelId, offset: offset),
                     );
@@ -674,7 +726,7 @@ extension _ViewerViewCommands on _ViewerHomePageState {
     await _applyEngineSceneResult(
       result,
       message:
-          '${prettySceneKind(object.kind)} ${scene.levelById(resultConstraint.levelId)?.name ?? 'level'} + ${resultConstraint.offset.toStringAsFixed(2)} m ga biriktirildi.',
+          '${prettySceneKind(object.kind)} ${scene.levelById(resultConstraint.levelId)?.name ?? 'level'} + ${_projectUnitSettings.formatLength(resultConstraint.offset)} ga biriktirildi.',
     );
   }
 
@@ -689,10 +741,14 @@ extension _ViewerViewCommands on _ViewerHomePageState {
     }
 
     final nameController = TextEditingController(text: level.name);
-    final elevationController =
-        TextEditingController(text: level.elevationMeters.toStringAsFixed(2));
+    final elevationController = TextEditingController(
+        text: _projectUnitSettings.formatLength(level.elevationMeters,
+            withUnit: false));
     final heightController = TextEditingController(
-      text: level.defaultWallHeightMeters.toStringAsFixed(2),
+      text: _projectUnitSettings.formatLength(
+        level.defaultWallHeightMeters,
+        withUnit: false,
+      ),
     );
 
     final payload =
@@ -716,12 +772,13 @@ extension _ViewerViewCommands on _ViewerHomePageState {
                 ),
                 const SizedBox(height: 8),
                 _NumericField(
-                  label: 'Elevation (m)',
+                  label: 'Elevation (${_projectUnitSettings.lengthSymbol})',
                   controller: elevationController,
                   onChanged: (_) {},
                 ),
                 _NumericField(
-                  label: 'Default wall height (m)',
+                  label:
+                      'Default wall height (${_projectUnitSettings.lengthSymbol})',
                   controller: heightController,
                   onChanged: (_) {},
                 ),
@@ -736,10 +793,16 @@ extension _ViewerViewCommands on _ViewerHomePageState {
             FilledButton(
               onPressed: () {
                 final name = nameController.text.trim();
-                final elevation =
+                final elevationDisplay =
                     double.tryParse(elevationController.text.trim());
-                final wallHeight =
+                final wallHeightDisplay =
                     double.tryParse(heightController.text.trim());
+                final elevation = elevationDisplay == null
+                    ? null
+                    : _projectUnitSettings.toMeters(elevationDisplay);
+                final wallHeight = wallHeightDisplay == null
+                    ? null
+                    : _projectUnitSettings.toMeters(wallHeightDisplay);
                 if (name.isEmpty ||
                     elevation == null ||
                     wallHeight == null ||
@@ -806,7 +869,8 @@ extension _ViewerViewCommands on _ViewerHomePageState {
       }
       await _applyEngineSceneResult(
         result,
-        message: '${level.name} elevation: ${elevation.toStringAsFixed(2)} m.',
+        message:
+            '${level.name} elevation: ${_projectUnitSettings.formatLength(elevation)}.',
       );
       return;
     }
@@ -824,7 +888,8 @@ extension _ViewerViewCommands on _ViewerHomePageState {
     );
     await _applySceneChange(
       nextScene,
-      message: '${level.name} elevation: ${elevation.toStringAsFixed(2)} m.',
+      message:
+          '${level.name} elevation: ${_projectUnitSettings.formatLength(elevation)}.',
       authoritative: true,
     );
   }

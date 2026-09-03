@@ -123,6 +123,47 @@ void registerEditorProjectionTests() {
     expect(projected.y, closeTo(expectedPoint.y, 1e-9));
   });
 
+  test('native string wall metadata preserves a reversed wall axis', () {
+    final result = parseRenderSceneJson(
+      '''
+{
+  "scene_version": 2,
+  "units": "meters",
+  "coordinate_system": "X/Y plan, Z up",
+  "levels": [{"level_id": 1, "name": "Level 1", "elevation_meters": 0, "default_wall_height_meters": 3}],
+  "objects": [{
+    "element_id": 10,
+    "kind": "Wall",
+    "level_id": 1,
+    "bounds": {"min": {"x": 0, "y": 0, "z": 0}, "max": {"x": 8, "y": 0.2, "z": 3}},
+    "mesh": {"positions": [], "indices": []},
+    "metadata": {
+      "start_x": "8.0",
+      "start_y": "0.0",
+      "end_x": "0.0",
+      "end_y": "0.0",
+      "thickness_meters": "0.2",
+      "height_meters": "3.0"
+    }
+  }]
+}
+''',
+      source: 'reversed native wall metadata',
+    );
+    expect(result.scene, isNotNull);
+    final wall = result.scene!.objects.single;
+    expect(RenderSceneEditor.wallStartPoint(wall)!.x, closeTo(8.0, 1e-9));
+    expect(RenderSceneEditor.wallEndPoint(wall)!.x, closeTo(0.0, 1e-9));
+    // A point at world x=2 is 6 m from the authoritative start at x=8.
+    expect(
+      RenderSceneEditor.wallOffsetMeters(
+        wall,
+        const RenderScenePoint(x: 2, y: 0, z: 0),
+      ),
+      closeTo(6.0, 1e-9),
+    );
+  });
+
   test('RenderScene editor can create and filter levels', () {
     final json =
         File('test/fixtures/render_scene_sample.json').readAsStringSync();

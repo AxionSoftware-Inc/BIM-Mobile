@@ -131,7 +131,7 @@ extension _ViewerViewportInput on _ViewerHomePageState {
         _levelTool.preview(snappedPoint);
         _updateViewportState(() {
           _editStatusMessage =
-              'Level draft: ${snappedPoint.z.toStringAsFixed(2)} m';
+              'Level draft: ${_projectUnitSettings.formatLength(snappedPoint.z)}';
         });
         _viewportController.setWallDraft(start, snappedPoint);
         return;
@@ -143,7 +143,9 @@ extension _ViewerViewportInput on _ViewerHomePageState {
         if (scene == null) {
           return;
         }
-        final hostWall = _resolveHostWall(scene, details.pickedObject);
+        final hostWall = _openingGestureActive && _draftHostWall != null
+            ? _draftHostWall
+            : _resolveHostWall(scene, details.pickedObject);
         if (hostWall == null) {
           return;
         }
@@ -274,7 +276,7 @@ extension _ViewerViewportInput on _ViewerHomePageState {
         _viewportController.setWallDraft(start, snapped);
         _updateViewportState(() {
           _editStatusMessage =
-              'Stair run: ${start.distanceTo(snapped).toStringAsFixed(2)} m';
+              'Stair run: ${_projectUnitSettings.formatLength(start.distanceTo(snapped))}';
         });
         return;
     }
@@ -306,7 +308,7 @@ extension _ViewerViewportInput on _ViewerHomePageState {
     _wallTool.preview(snappedPoint);
     _updateViewportState(() {
       _editStatusMessage =
-          'Wall segment: ${_wallTool.start!.distanceTo(snappedPoint).toStringAsFixed(2)} m. Creating...';
+          'Wall segment: ${_projectUnitSettings.formatLength(_wallTool.start!.distanceTo(snappedPoint))}. Creating...';
     });
     _viewportController.setWallDraft(_wallTool.start, snappedPoint);
     await _commitWallDraft(autoContinue: true);
@@ -345,10 +347,18 @@ extension _ViewerViewportInput on _ViewerHomePageState {
     final start = _stairTool.start;
     final end = _stairTool.end;
     final repository = _engineRepository;
-    final base = scene == null ? null : _activeLevel(scene);
-    final top = base == null || scene == null
+    final activeBase = scene == null ? null : _activeLevel(scene);
+    final base = scene == null
+        ? null
+        : scene.levelById(_stairTool.baseLevelId ?? activeBase?.levelId) ??
+            activeBase;
+    final activeTop = base == null || scene == null
         ? null
         : _nextHigherLevel(scene, base.levelId);
+    final top = scene == null
+        ? null
+        : scene.levelById(_stairTool.topLevelId ?? activeTop?.levelId) ??
+            activeTop;
     if (scene == null ||
         start == null ||
         end == null ||
@@ -370,7 +380,7 @@ extension _ViewerViewportInput on _ViewerHomePageState {
     if (preview == null) {
       final run = start.distanceTo(end);
       _updateViewportState(() => _editStatusMessage = run < 0.8
-          ? 'A stair run must be at least 0.80 m.'
+          ? 'A stair run must be at least ${_projectUnitSettings.formatLength(0.8)}.'
           : 'Top Level must be above Base Level.');
       return;
     }
@@ -420,7 +430,7 @@ extension _ViewerViewportInput on _ViewerHomePageState {
     _levelTool.preview(snappedPoint);
     _updateViewportState(() {
       _editStatusMessage =
-          'Level line ready at ${snappedPoint.z.toStringAsFixed(2)} m. Creating level...';
+          'Level line ready at ${_projectUnitSettings.formatLength(snappedPoint.z)}. Creating level...';
     });
     _viewportController.setWallDraft(_levelTool.start, snappedPoint);
     await _commitLevelDraft();
@@ -502,7 +512,7 @@ extension _ViewerViewportInput on _ViewerHomePageState {
     final mutation = SceneMutationService(
       engineRepository: _engineBackedMode ? _engineRepository : null,
     );
-    final outcome = await mutation.createWall(
+    var outcome = await mutation.createWall(
       CreateWallRequest(
         scene: scene,
         start: RenderScenePoint(x: start.x, y: start.y, z: baseElevation),
@@ -523,6 +533,31 @@ extension _ViewerViewportInput on _ViewerHomePageState {
         });
       }
       return;
+    }
+    if (_wallTool.wallTypeId != 0 && outcome.createdElementId != null) {
+      final typedScene = await _authoringCommands.setWallType(
+        wallId: outcome.createdElementId!,
+        wallTypeId: _wallTool.wallTypeId,
+      );
+      outcome = SceneMutationOutcome(
+        scene: typedScene.scene,
+        createdElementId: outcome.createdElementId,
+        success: typedScene.scene != null,
+        trace: <String>[
+          ...outcome.trace,
+          'wall type applied=${_wallTool.wallTypeId}'
+        ],
+        error: typedScene.errors.isEmpty ? null : typedScene.errors.join(' '),
+      );
+      if (!outcome.success || outcome.scene == null) {
+        if (mounted) {
+          _updateViewportState(() {
+            _editStatusMessage =
+                outcome.error ?? 'Wall type could not be applied.';
+          });
+        }
+        return;
+      }
     }
     await _applySceneChange(
       outcome.scene!,
@@ -557,7 +592,8 @@ extension _ViewerViewportInput on _ViewerHomePageState {
       );
       await _applyEngineSceneResult(
         result,
-        message: 'Level created at ${elevation.toStringAsFixed(2)} m.',
+        message:
+            'Level created at ${_projectUnitSettings.formatLength(elevation)}.',
       );
       await _clearDraft();
       return;
@@ -571,7 +607,8 @@ extension _ViewerViewportInput on _ViewerHomePageState {
     );
     await _applySceneChange(
       nextScene,
-      message: 'Level created at ${elevation.toStringAsFixed(2)} m.',
+      message:
+          'Level created at ${_projectUnitSettings.formatLength(elevation)}.',
     );
     await _clearDraft();
   }
@@ -720,7 +757,7 @@ extension _ViewerViewportInput on _ViewerHomePageState {
       _draftWallStart = preview.$1;
       _draftWallEnd = preview.$2;
       _editStatusMessage =
-          '${level.name} move preview started (${level.elevationMeters.toStringAsFixed(2)} m).';
+          '${level.name} move preview started (${_projectUnitSettings.formatLength(level.elevationMeters)}).';
     });
     _viewportController.setWallDraft(preview.$1, preview.$2);
   }

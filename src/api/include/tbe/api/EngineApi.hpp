@@ -341,6 +341,7 @@ struct RenderSceneDTO {
     std::vector<RenderSceneMaterialDTO> materials{};
     std::vector<RenderSceneWallTypeDTO> wall_types{};
     std::vector<RenderSceneFloorTypeDTO> floor_types{};
+    std::vector<RenderSceneFloorTypeDTO> roof_types{};
     std::vector<RenderSceneSectionDTO> sections{};
     std::vector<RenderSceneObjectDTO> objects{};
     std::size_t object_count{};
@@ -794,9 +795,25 @@ public:
         std::optional<double> default_wall_height_meters = std::nullopt
     );
     ApiVoidResult move_level_elevation(std::uint64_t level_id, double elevation_meters);
-    ApiResult<ElementIdDTO> create_wall(std::string name, Vec2 start, Vec2 end, double thickness_meters, double height_meters, std::uint64_t level_id = 0);
+    ApiResult<ElementIdDTO> create_wall(
+        std::string name,
+        Vec2 start,
+        Vec2 end,
+        double thickness_meters,
+        double height_meters,
+        std::uint64_t level_id = 0,
+        std::uint64_t wall_type_id = 0
+    );
     ApiVoidResult set_wall_type(std::uint64_t wall_id, std::uint64_t wall_type_id);
     ApiResult<ElementIdDTO> create_wall_type(
+        ApiWallTypeCategory category,
+        std::string name,
+        std::vector<AssemblyLayerDTO> layers,
+        int core_start_layer = -1,
+        int core_end_layer = -1
+    );
+    ApiResult<ElementIdDTO> upsert_wall_type_for_wall(
+        std::uint64_t wall_id,
         ApiWallTypeCategory category,
         std::string name,
         std::vector<AssemblyLayerDTO> layers,
