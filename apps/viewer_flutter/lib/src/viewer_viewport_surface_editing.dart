@@ -881,28 +881,40 @@ extension _ViewerViewportSurfaceEditing on _ViewerHomePageState {
     final offset = _draftOpeningOffsetMeters;
     final repository = _engineRepository;
     if (_engineBackedMode && repository != null && hostWall.elementId != null) {
-      final result = _interactionMode == RenderSceneInteractionMode.addDoor
-          ? await _authoringCommands.createDoor(
-              name: 'Door',
-              hostWallId: hostWall.elementId!,
-              offsetMeters: offset,
-              widthMeters: _draftOpeningWidthMeters,
-              heightMeters: _draftOpeningHeightMeters,
-            )
-          : await _authoringCommands.createWindow(
-              name: 'Window',
-              hostWallId: hostWall.elementId!,
-              offsetMeters: offset,
-              widthMeters: _draftOpeningWidthMeters,
-              heightMeters: _draftOpeningHeightMeters,
-              sillHeightMeters: _draftOpeningSillHeightMeters,
-            );
-      await _applyEngineSceneResult(
-        result,
-        message:
-            '${_interactionMode == RenderSceneInteractionMode.addDoor ? 'Door' : 'Window'} created.',
-      );
-      await _clearDraft();
+      try {
+        final result = _interactionMode == RenderSceneInteractionMode.addDoor
+            ? await _authoringCommands.createDoor(
+                name: 'Door',
+                hostWallId: hostWall.elementId!,
+                offsetMeters: offset,
+                widthMeters: _draftOpeningWidthMeters,
+                heightMeters: _draftOpeningHeightMeters,
+              )
+            : await _authoringCommands.createWindow(
+                name: 'Window',
+                hostWallId: hostWall.elementId!,
+                offsetMeters: offset,
+                widthMeters: _draftOpeningWidthMeters,
+                heightMeters: _draftOpeningHeightMeters,
+                sillHeightMeters: _draftOpeningSillHeightMeters,
+              );
+        await _applyEngineSceneResult(
+          result,
+          message:
+              '${_interactionMode == RenderSceneInteractionMode.addDoor ? 'Door' : 'Window'} created.',
+        );
+        await _clearDraft();
+      } catch (error) {
+        // Native overlap/host validation is expected user feedback, not an
+        // unhandled pointer-future exception. Keep the draft alive so the
+        // user can move the opening and retry without losing the preview.
+        if (mounted) {
+          _updateViewportState(() {
+            _editStatusMessage =
+                '${_interactionMode == RenderSceneInteractionMode.addDoor ? 'Door' : 'Window'} could not be created: $error';
+          });
+        }
+      }
       return;
     }
     final nextScene = _interactionMode == RenderSceneInteractionMode.addDoor

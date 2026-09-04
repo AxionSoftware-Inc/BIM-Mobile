@@ -614,6 +614,11 @@ internal class RenderSceneFilamentHostView(
   private val renderables = linkedMapOf<Long, FilamentRenderableEntry>()
   private val faceBatches = mutableListOf<FaceBatchEntry>()
   private val instanceFaceGroups = mutableListOf<InstanceFaceGroupEntry>()
+  // Keep small interactive authoring scenes element-local.  Repeated doors
+  // and windows are instanced only once the scene is large enough to use the
+  // batched renderer; this lets a single opening edit replace one renderable
+  // instead of rebuilding an instance group and all surrounding faces.
+  private var instanceGroupingEnabled = false
   private val edgeBatches = mutableListOf<EdgeBatchEntry>()
   private var staticShadowBatch: StaticShadowBatchEntry? = null
   private var gridBatch: GridBatchEntry? = null
@@ -896,6 +901,8 @@ internal class RenderSceneFilamentHostView(
     // Keep the live camera while an authoritative edit is being committed.
     // Re-fitting here makes the model jump between the preview frame and the
     // committed frame, especially on touch-driven wall/opening authoring.
+    val previousScene = currentScene
+    val previousSceneWasCompatibility = currentSceneFingerprint != null
     val preserveCamera = currentScene != null && currentSceneFingerprint != null
     val fingerprint = sceneFingerprint(newScene)
     if (currentSceneFingerprint == fingerprint && clipVolume.mode == ClipVolumeMode.NONE) {
@@ -919,7 +926,16 @@ internal class RenderSceneFilamentHostView(
     currentSceneFingerprint = fingerprint
     val liveElementIds = newScene.objects.mapNotNull { it.elementId }.toSet()
     edgeGeometryCache.keys.retainAll(liveElementIds)
-    rebuildScene()
+    val incrementalChanges = if (previousSceneWasCompatibility) {
+      applyIncrementalSceneUpdate(previousScene, newScene)
+    } else {
+      null
+    }
+    if (incrementalChanges == null) {
+      rebuildScene()
+    } else {
+      Log.i(TAG, "GPU incremental update: changedObjects=$incrementalChanges")
+    }
     selectionOverlay.setVisualScene(
       newScene.objects.map(::toVisualObject),
       newScene.levels.map { level -> level.name to level.elevationMeters },
@@ -1339,6 +1355,11 @@ internal class RenderSceneFilamentHostView(
   }
 
   fun setProjectionMode(mode: String) {
+    // Scene commits replay the current viewport state after the geometry
+    // update.  Resetting the camera when the projection did not change creates
+    // one visible frame at the default angle before Flutter's authoritative
+    // camera arrives, which reads as a jump during touch authoring.
+    if (projectionMode == mode) return
     val edgeGeometryNeedsRefresh =
       (projectionMode == "topDown") != (mode == "topDown")
     projectionMode = mode
@@ -1374,6 +1395,7 @@ internal class RenderSceneFilamentHostView(
   }
 
   fun setOrbitProjectionStyle(style: String) {
+    if (orbitProjectionStyle == style) return
     orbitProjectionStyle = style
     configureCameraProjection()
     updateOrbitCamera()
@@ -2819,6 +2841,7 @@ internal class RenderSceneFilamentHostView(
 
     var failedObjects = 0
     val batchFaces = objects.size >= 256
+    instanceGroupingEnabled = batchFaces
     val faceChunks = linkedMapOf<FaceBatchKey, MutableList<Pair<SceneObject, GeometryData>>>()
     val instanceChunks = linkedMapOf<InstanceFaceKey, MutableList<Triple<SceneObject, GeometryData, NormalizedInstanceGeometry>>>()
     val edgeChunks = linkedMapOf<EdgeBatchKey, MutableList<GeometryData>>()
@@ -2901,6 +2924,105 @@ internal class RenderSceneFilamentHostView(
       statusMessage = "Filament skipped $failedObjects invalid renderables; loaded ${renderables.size}."
       Log.w(TAG, statusMessage)
     }
+  }
+
+  /**
+   * Applies a small authoritative edit without tearing down the whole face
+   * pass.  Authoring scenes deliberately use one renderable per semantic
+   * element; large/imported scenes use face batches, instance groups or the
+   * native cache and continue through rebuildScene() so their batching
+   * invariants remain untouched.
+   *
+   * The return value is null when the scene is not safe for this path.  A
+   * non-null value is the number of element renderables replaced/added/removed.
+   */
+  private fun applyIncrementalSceneUpdate(
+    previousScene: SceneState?,
+    newScene: SceneState,
+  ): Int? {
+    val engine = engine ?: return null
+    val filamentScene = scene ?: return null
+    if (previousScene == null || nativeBimCache != null || clipVolume.active) return null
+    if (faceBatches.isNotEmpty() || staticShadowBatch != null) return null
+    // Crossing the batching threshold would change the representation of all
+    // faces. Let the existing full rebuild choose the correct layout instead.
+    if (previousScene.objects.size >= 256 || newScene.objects.size >= 256) return null
+
+    val previousObjects = previousScene.objects.mapNotNull { objectData ->
+      objectData.elementId?.let { it to objectData }
+    }
+    val nextObjects = newScene.objects.mapNotNull { objectData ->
+      objectData.elementId?.let { it to objectData }
+    }
+    if (previousObjects.size != previousScene.objects.size ||
+      nextObjects.size != newScene.objects.size
+    ) return null
+    val previousById = previousObjects.toMap()
+    val nextById = nextObjects.toMap()
+    if (previousById.size != previousObjects.size || nextById.size != nextObjects.size) return null
+
+    val changedIds = linkedSetOf<Long>()
+    changedIds.addAll(previousById.keys)
+    changedIds.addAll(nextById.keys)
+    changedIds.removeAll { id -> previousById[id] == nextById[id] }
+    if (changedIds.isEmpty()) return 0
+
+    // An unchanged instance group can stay alive while a wall/floor/roof is
+    // edited around it. Only edits that touch one of the grouped semantic
+    // elements need the representation transition handled by rebuildScene().
+    val changedInstance = changedIds.any { id ->
+      (previousById[id] ?: nextById[id])?.let(::isInstanceCandidate) == true
+    }
+    if (instanceFaceGroups.isNotEmpty() && changedInstance) return null
+
+    // Adding a second door/window/column of the same semantic kind may change
+    // the renderer from individual renderables to an instance group. Defer
+    // that representation transition to rebuildScene(); a first instance and
+    // mixed-kind edits (for example a column plus a door) stay incremental.
+    // This check is only needed when no group is currently resident; an
+    // existing, untouched group can coexist with an incremental wall edit.
+    val nextInstanceCounts = newScene.objects
+      .filter { isInstanceCandidate(it) }
+      .groupingBy { normalizeKind(it.kind) }
+      .eachCount()
+    if (instanceFaceGroups.isEmpty() && nextInstanceCounts.values.any { it > 1 }) return null
+
+    val hadGrid = gridBatch != null
+    val hadGroundReceiver = groundReceiver != null
+    if (hadGrid) destroyGridBatch(engine, filamentScene)
+    if (hadGroundReceiver) destroyGroundReceiver(engine, filamentScene)
+
+    var appliedChanges = 0
+    for (elementId in changedIds) {
+      if (renderables.containsKey(elementId)) {
+        destroyRenderable(elementId)
+        appliedChanges += 1
+      }
+      val objectData = nextById[elementId] ?: continue
+      val geometry = objectGeometry(objectData) ?: continue
+      val fallbackMaterial = material ?: return null
+      val objectMaterial = materialForObject(objectData, fallbackMaterial)
+      val entry = createRenderable(engine, objectMaterial, objectData, geometry) ?: continue
+      renderables[elementId] = entry
+      filamentScene.addEntity(entry.entity)
+      entry.attached = true
+      attachedEntities.add(entry.entity)
+      appliedChanges += 1
+    }
+
+    // Edge batches are a separate, much smaller pass. Rebuilding only this
+    // pass keeps wall joins/opening contours correct while leaving unchanged
+    // face vertex/index buffers alive on the GPU.
+    rebuildEdgeBatchesForProjection()
+    if (hadGrid && projectionMode == "isometric") {
+      createGridBatch(engine, filamentScene, newScene)
+    }
+    if (hadGroundReceiver && projectionMode == "isometric" && shadowsEnabled) {
+      createGroundReceiver(engine, filamentScene, newScene)
+    }
+    updateMetrics()
+    renderDirty = true
+    return appliedChanges
   }
 
   private fun rebuildEdgeBatchesForProjection() {
@@ -3947,7 +4069,7 @@ internal class RenderSceneFilamentHostView(
   }
 
   private fun isInstanceCandidate(objectData: SceneObject): Boolean {
-    if (clipVolume.active) return false
+    if (clipVolume.active || !instanceGroupingEnabled) return false
     return normalizeKind(objectData.kind) in setOf("door", "window", "column")
   }
 
@@ -5668,6 +5790,18 @@ internal class RenderSceneFilamentHostView(
     }
     renderables.clear()
     attachedEntities.clear()
+  }
+
+  private fun destroyRenderable(elementId: Long) {
+    val entry = renderables.remove(elementId) ?: return
+    val engine = engine ?: return
+    if (entry.attached) scene?.removeEntity(entry.entity)
+    engine.destroyEntity(entry.entity)
+    engine.destroyMaterialInstance(entry.materialInstance)
+    engine.destroyVertexBuffer(entry.vertexBuffer)
+    engine.destroyIndexBuffer(entry.indexBuffer)
+    EntityManager.get().destroy(entry.entity)
+    attachedEntities.remove(entry.entity)
   }
 
   private fun destroyFaceBatches(engine: Engine, scene: Scene?) {

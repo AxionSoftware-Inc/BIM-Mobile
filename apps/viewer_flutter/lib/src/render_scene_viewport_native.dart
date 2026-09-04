@@ -16,15 +16,20 @@ extension _RenderSceneViewportNative on RenderSceneViewportController {
     return null;
   }
 
-  Future<void> _syncNativeBridge() async {
+  Future<void> _syncNativeBridge({
+    bool includeScene = true,
+    bool includeVisibleKinds = true,
+  }) async {
     if (_backend != RenderSceneViewportBackend.native) return;
     await _loadRememberedNativeBimCache();
     final currentScene = _scene;
-    if (currentScene != null && !_nativeGeometryActive) {
+    if (includeScene && currentScene != null && !_nativeGeometryActive) {
       await _invoke('loadRenderSceneJson', jsonEncode(currentScene.toJson()));
     }
 
-    await _invoke('setVisibleKinds', _visibleKinds.toList());
+    if (includeVisibleKinds) {
+      await _invoke('setVisibleKinds', _visibleKinds.toList());
+    }
     final sectionBox = _sectionBox;
     await _invoke('setSectionBox', <String, Object?>{
       'enabled': sectionBox != null,

@@ -331,6 +331,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     RenderScene scene, {
     bool resetView = false,
     bool preserveNativeGeometry = false,
+    Set<String>? visibleKinds,
   }) async {
     final contractIssues = RenderSceneCoordinateContract.issuesForScene(scene);
     if (contractIssues.isNotEmpty) {
@@ -344,6 +345,9 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
       _nativeGeometryActive = false;
       _nativeCacheRequest = null;
       _nativeCacheNeedsReplay = false;
+    }
+    if (visibleKinds != null) {
+      _visibleKinds = visibleKinds.toSet();
     }
     _scene = scene;
     _sceneBounds = scene.bounds;
@@ -359,10 +363,23 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
 
     notifyListeners();
 
+    // Apply the category policy before the scene so the native renderer never
+    // presents a newly committed scene using the previous visibility set.
+    // This is deliberately part of the scene presentation boundary rather
+    // than a second caller-side update.
+    if (visibleKinds != null) {
+      await _invoke('setVisibleKinds', _visibleKinds.toList());
+    }
     if (!_nativeGeometryActive) {
       await _invoke('loadRenderSceneJson', jsonEncode(scene.toJson()));
     }
-    await _syncNativeBridge();
+    // The authoritative scene was just sent above.  The remaining bridge
+    // synchronization is state-only; sending the same JSON again here made
+    // every authoring commit enter the native scene loader twice.
+    await _syncNativeBridge(
+      includeScene: false,
+      includeVisibleKinds: visibleKinds == null,
+    );
   }
 
   Future<void> loadNativeSceneSummary(RenderScene scene) =>

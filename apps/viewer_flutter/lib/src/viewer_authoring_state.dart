@@ -476,6 +476,22 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
     );
     _viewWorkspace.clearSheetCache();
 
+    final nextViewportScene = _sceneForViewport(nextScene);
+    final nextVisibleKinds = _usesProjectionDefaultVisibility
+        ? _defaultVisibleKindsForProjection(nextScene)
+        : _sanitizeVisibleKinds(
+            visibleKinds: _visibleKinds,
+            scene: nextViewportScene,
+          );
+    final resolvedVisibleKinds = _ensurePlanCoreVisibility(
+      nextVisibleKinds,
+      nextScene,
+    );
+
+    // Publish the semantic scene and its presentation policy together. An
+    // intermediate frame with a new scene but stale visibility/active-level
+    // state could resize overlays while the native viewport was committing,
+    // which made a wall endpoint appear to jump on release.
     _updateViewportState(() {
       _scene = nextScene;
       _projectHasChanges = true;
@@ -484,20 +500,7 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
       _statusMessage = message;
       _editStatusMessage = message;
       _loadError = null;
-    });
-
-    final nextViewportScene = _sceneForViewport(nextScene);
-
-    _updateViewportState(() {
-      if (_usesProjectionDefaultVisibility) {
-        _visibleKinds = _defaultVisibleKindsForProjection(nextScene);
-      } else {
-        _visibleKinds = _sanitizeVisibleKinds(
-          visibleKinds: _visibleKinds,
-          scene: nextViewportScene,
-        );
-      }
-      _visibleKinds = _ensurePlanCoreVisibility(_visibleKinds, nextScene);
+      _visibleKinds = resolvedVisibleKinds;
     });
 
     // A delete can remove the active renderable. Clear its native selection
@@ -508,8 +511,11 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
       await _viewportController.highlightElement(null);
     }
 
-    await _viewportController.updateRenderScene(nextViewportScene);
-    await _viewportController.setVisibleKinds(_visibleKinds);
+    // Scene and its visibility policy are one viewport presentation commit.
+    await _viewportController.updateRenderScene(
+      nextViewportScene,
+      visibleKinds: _visibleKinds,
+    );
 
     if (previousSelectedLevelId != null &&
         nextScene.levelById(previousSelectedLevelId) != null) {

@@ -1,6 +1,48 @@
 part of 'widget_test.dart';
 
 void registerInteractionAuthoringTests() {
+  testWidgets('viewport scene commit sends one scene and one visibility policy',
+      (WidgetTester tester) async {
+    const channel = MethodChannel('tbe/render_scene_view_76');
+    final calls = <MethodCall>[];
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      return null;
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+
+    final repository = ViewerRepository(TbeViewerApi.load());
+    addTearDown(repository.dispose);
+    await repository.loadFromJson(
+      projectName: 'Viewport commit boundary',
+      json: File('assets/sample_project.json').readAsStringSync(),
+    );
+    final scene = (await repository.currentRenderScene()).scene!;
+    final controller = RenderSceneViewportController(
+      backend: RenderSceneViewportBackend.native,
+    );
+    addTearDown(controller.dispose);
+    await controller.attachNativeBridge(76);
+    await tester.pump(const Duration(milliseconds: 300));
+    calls.clear();
+
+    await controller.updateRenderScene(
+      scene,
+      visibleKinds: const <String>{'wall', 'door'},
+    );
+
+    expect(
+      calls.where((call) => call.method == 'loadRenderSceneJson'),
+      hasLength(1),
+    );
+    expect(
+      calls.where((call) => call.method == 'setVisibleKinds'),
+      hasLength(1),
+    );
+  });
+
   test('Revit-style selection controller clears, toggles and windows objects',
       () {
     final interaction = ViewportInteractionController();
