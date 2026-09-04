@@ -236,7 +236,8 @@ class SceneMutationService {
           heightMode: 1,
         );
         scene = result.scene;
-        trace.add('curved wall level constraint committed top=${request.topLevelId}');
+        trace.add(
+            'curved wall level constraint committed top=${request.topLevelId}');
       }
       if (scene == null || scene.objectById(wallId) == null) {
         return SceneMutationOutcome(

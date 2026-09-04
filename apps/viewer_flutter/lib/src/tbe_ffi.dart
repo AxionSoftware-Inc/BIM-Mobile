@@ -115,8 +115,7 @@ class TbeViewerApi {
         _createWall =
             library.lookupFunction<_CreateWallNative, _CreateWallDart>(
                 'tbe_create_wall'),
-        _createCurvedWall = library.lookupFunction<
-            _CreateCurvedWallNative,
+        _createCurvedWall = library.lookupFunction<_CreateCurvedWallNative,
             _CreateCurvedWallDart>('tbe_create_curved_wall'),
         _createStair =
             library.lookupFunction<_CreateStairNative, _CreateStairDart>(

@@ -64,8 +64,10 @@ class WallToolController extends ChangeNotifier {
           _arcControl != null &&
           _arcStart!.distanceTo(_arcEnd!) >= 0.1 &&
           ((_arcEnd!.x - _arcStart!.x) * (_arcControl!.y - _arcStart!.y) -
-                  (_arcEnd!.y - _arcStart!.y) * (_arcControl!.x - _arcStart!.x))
-              .abs() >= 1e-5
+                      (_arcEnd!.y - _arcStart!.y) *
+                          (_arcControl!.x - _arcStart!.x))
+                  .abs() >=
+              1e-5
       : _start != null && _end != null && _start!.distanceTo(_end!) >= 0.1;
 
   bool get hasArcFirstPoint => _arcStart != null;

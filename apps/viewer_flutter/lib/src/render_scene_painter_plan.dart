@@ -244,7 +244,8 @@ mixin _FallbackScenePlanPainterMixin {
         final outside = <RenderScenePoint>[];
         final inside = <RenderScenePoint>[];
         for (var index = 0; index < centerline.length; index += 1) {
-          final previous = index == 0 ? centerline[index] : centerline[index - 1];
+          final previous =
+              index == 0 ? centerline[index] : centerline[index - 1];
           final next = index == centerline.length - 1
               ? centerline[index]
               : centerline[index + 1];
@@ -269,7 +270,12 @@ mixin _FallbackScenePlanPainterMixin {
           y: axis.x / length * half,
           z: 0,
         );
-        corners.addAll(<RenderScenePoint>[start + normal, end + normal, end - normal, start - normal]);
+        corners.addAll(<RenderScenePoint>[
+          start + normal,
+          end + normal,
+          end - normal,
+          start - normal
+        ]);
       }
       final screen = corners
           .map((point) => projection.project(point).screen)
@@ -277,8 +283,7 @@ mixin _FallbackScenePlanPainterMixin {
       final id = wall.elementId?.toString();
       final selected = id != null && selectedElementIds.contains(id);
       final highlighted = id != null && id == highlightedElementId;
-      final path = Path()
-        ..moveTo(screen.first.dx, screen.first.dy);
+      final path = Path()..moveTo(screen.first.dx, screen.first.dy);
       for (final point in screen.skip(1)) {
         path.lineTo(point.dx, point.dy);
       }
@@ -547,7 +552,8 @@ mixin _FallbackScenePlanPainterMixin {
         for (var index = 0; index + 1 < centerline.length; index += 1) {
           final segment = centerline[index + 1] - centerline[index];
           final segmentLength = segment.distanceTo(RenderScenePoint.zero());
-          if (cursor + segmentLength >= distance || index == centerline.length - 2) {
+          if (cursor + segmentLength >= distance ||
+              index == centerline.length - 2) {
             final fraction = segmentLength <= 1e-8
                 ? 0.0
                 : ((distance - cursor) / segmentLength).clamp(0.0, 1.0);
@@ -557,13 +563,17 @@ mixin _FallbackScenePlanPainterMixin {
         }
         return centerline.last;
       }
+
       RenderScenePoint tangentAt(double distance) {
         final before = pointAt((distance - 0.02).clamp(0.0, length));
         final after = pointAt((distance + 0.02).clamp(0.0, length));
         final tangent = after - before;
         final tangentLength = tangent.distanceTo(RenderScenePoint.zero());
-        return tangentLength <= 1e-8 ? axis.scale(1.0 / length) : tangent.scale(1.0 / tangentLength);
+        return tangentLength <= 1e-8
+            ? axis.scale(1.0 / length)
+            : tangent.scale(1.0 / tangentLength);
       }
+
       final curved = centerline.length > 2;
       final axisUnit = curved ? tangentAt(offset) : axis.scale(1.0 / length);
       final normal = RenderScenePoint(
@@ -572,9 +582,7 @@ mixin _FallbackScenePlanPainterMixin {
         z: 0,
       );
       final halfWidth = width * 0.5;
-      final center = curved
-          ? pointAt(offset)
-          : start + axisUnit.scale(offset);
+      final center = curved ? pointAt(offset) : start + axisUnit.scale(offset);
       final first = curved
           ? pointAt((offset - halfWidth).clamp(0.0, length))
           : center - axisUnit.scale(halfWidth);

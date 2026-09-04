@@ -358,8 +358,7 @@ extension _ViewerViewportInput on _ViewerHomePageState {
       _wallTool.setArcSecond(point);
       _syncWallArcDraft();
       _updateViewportState(() {
-        _editStatusMessage =
-            'Second point set. Tap the arc radius/bend point.';
+        _editStatusMessage = 'Second point set. Tap the arc radius/bend point.';
       });
       return;
     }
@@ -391,7 +390,11 @@ extension _ViewerViewportInput on _ViewerHomePageState {
         control: control,
         center: geometry?.center,
         points: geometry?.points ??
-            <RenderScenePoint>[start, if (end != null) end, if (control != null) control],
+            <RenderScenePoint>[
+              start,
+              if (end != null) end,
+              if (control != null) control
+            ],
       ),
     );
   }
@@ -653,7 +656,8 @@ extension _ViewerViewportInput on _ViewerHomePageState {
           _traceAndroidMutation(entry);
         }
         if (!outcome.success || outcome.scene == null) {
-          throw StateError(outcome.error ?? 'Curved wall could not be created.');
+          throw StateError(
+              outcome.error ?? 'Curved wall could not be created.');
         }
         if (wallTypeId != 0 && outcome.createdElementId != null) {
           final typedScene = await _authoringCommands.setWallType(
@@ -665,10 +669,12 @@ extension _ViewerViewportInput on _ViewerHomePageState {
             createdElementId: outcome.createdElementId,
             success: typedScene.scene != null,
             trace: outcome.trace,
-            error: typedScene.errors.isEmpty ? null : typedScene.errors.join(' '),
+            error:
+                typedScene.errors.isEmpty ? null : typedScene.errors.join(' '),
           );
           if (!outcome.success || outcome.scene == null) {
-            throw StateError(outcome.error ?? 'Curved wall type could not be applied.');
+            throw StateError(
+                outcome.error ?? 'Curved wall type could not be applied.');
           }
         }
         await _applySceneChange(
@@ -679,8 +685,10 @@ extension _ViewerViewportInput on _ViewerHomePageState {
           authoritative: true,
         );
         if (outcome.createdElementId != null) {
-          await _viewportController.selectElement(outcome.createdElementId.toString());
-          await _viewportController.highlightElement(outcome.createdElementId.toString());
+          await _viewportController
+              .selectElement(outcome.createdElementId.toString());
+          await _viewportController
+              .highlightElement(outcome.createdElementId.toString());
         }
       } catch (error) {
         if (mounted) {

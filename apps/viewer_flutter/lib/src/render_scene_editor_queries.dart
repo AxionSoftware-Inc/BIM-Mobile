@@ -82,7 +82,9 @@ class RenderSceneQueries {
         if (x == null || y == null || !x.isFinite || !y.isFinite) continue;
         parsed.add(RenderScenePoint(x: x, y: y, z: 0));
       }
-      if (parsed.length >= 2) return List<RenderScenePoint>.unmodifiable(parsed);
+      if (parsed.length >= 2) {
+        return List<RenderScenePoint>.unmodifiable(parsed);
+      }
     }
     final start = wallStartPoint(wall);
     final end = wallEndPoint(wall);

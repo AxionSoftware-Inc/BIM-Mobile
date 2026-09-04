@@ -385,7 +385,8 @@ final class WallAuthoringGeometry {
     final sweep = counterClockwiseBend <= counterClockwiseEnd + 1e-7
         ? counterClockwiseEnd
         : counterClockwiseEnd - (math.pi * 2.0);
-    if (sweep.abs() < minimumSweepRadians || sweep.abs() > math.pi * 2.0 - 1e-7) {
+    if (sweep.abs() < minimumSweepRadians ||
+        sweep.abs() > math.pi * 2.0 - 1e-7) {
       return null;
     }
 
@@ -396,8 +397,10 @@ final class WallAuthoringGeometry {
     final points = <RenderScenePoint>[
       for (var index = 0; index <= segmentCount; index += 1)
         RenderScenePoint(
-          x: center.x + radius * math.cos(startAngle + sweep * index / segmentCount),
-          y: center.y + radius * math.sin(startAngle + sweep * index / segmentCount),
+          x: center.x +
+              radius * math.cos(startAngle + sweep * index / segmentCount),
+          y: center.y +
+              radius * math.sin(startAngle + sweep * index / segmentCount),
           z: first.z,
         ),
     ];
