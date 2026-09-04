@@ -123,6 +123,37 @@ void registerEditorProjectionTests() {
     expect(projected.y, closeTo(expectedPoint.y, 1e-9));
   });
 
+  test('2D opening picker follows door swing symbols', () {
+    final json =
+        File('test/fixtures/render_scene_sample.json').readAsStringSync();
+    final source = parseRenderSceneJson(
+      json,
+      source: 'test/fixtures/render_scene_sample.json',
+    ).scene!;
+    final hostWall = source.objectById(2)!;
+    final scene = RenderSceneEditor.addDoor(
+      scene: source,
+      hostWall: hostWall,
+      offsetMeters: 4.0,
+    );
+    final door = scene.objects.lastWhere((object) => object.kindKey == 'door');
+
+    final picked = RenderSceneQueries.openingAtPlanPoint(
+      scene,
+      const RenderScenePoint(x: 3.55, y: 0.45, z: 0),
+      toleranceMeters: 0.12,
+    );
+    expect(picked?.elementId, equals(door.elementId));
+    expect(
+      RenderSceneQueries.openingAtPlanPoint(
+        scene,
+        const RenderScenePoint(x: 3.55, y: 2.0, z: 0),
+        toleranceMeters: 0.12,
+      ),
+      isNull,
+    );
+  });
+
   test('native string wall metadata preserves a reversed wall axis', () {
     final result = parseRenderSceneJson(
       '''

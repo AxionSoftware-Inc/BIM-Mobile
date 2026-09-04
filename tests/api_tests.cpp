@@ -51,6 +51,7 @@ int main() {
         assert(std::stoull(typed_object->metadata.at("wall_type_id")) != 0);
         assert(typed_object->metadata.at("wall_type_name") == "Basic Wall");
         assert(typed_object->metadata.at("assembly_id") == "0");
+        assert(nearly_equal(std::stod(typed_object->metadata.at("length_meters")), 4.0));
     }
 
     {
@@ -129,6 +130,10 @@ int main() {
             [&](const auto& candidate) { return candidate.element_id.value == wall.value->value; });
         assert(object != scene.value->objects.end());
         assert(object->metadata.at("curve_kind") == "arc");
+        assert(nearly_equal(
+            std::stod(object->metadata.at("length_meters")),
+            5.0 * 1.5707963267948966,
+            1.0e-5));
         const auto count_profile_points = [](const std::string& value) {
             return value.empty()
                 ? std::size_t{0}

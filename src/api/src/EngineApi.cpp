@@ -2225,6 +2225,14 @@ RenderSceneDTO build_render_scene(
                     {"start_y", std::to_string(wall->axis.start.y)},
                     {"end_x", std::to_string(wall->axis.end.x)},
                     {"end_y", std::to_string(wall->axis.end.y)},
+                    // Keep Inspector geometry derived from the same semantic
+                    // centerline that owns hosted openings.  For an arc this
+                    // is the true arc length, not the endpoint chord.
+                    {"length_meters", std::to_string(wall->arc.has_value()
+                        ? std::abs(wall->arc->radius_meters * wall->arc->sweep_radians)
+                        : std::hypot(
+                            wall->axis.end.x - wall->axis.start.x,
+                            wall->axis.end.y - wall->axis.start.y))},
                     {"thickness_meters", std::to_string(wall->thickness_meters)},
                     {"assembly_id", std::to_string(wall->assembly_id)},
                     {"wall_type_id", std::to_string(wall->wall_type_id)},

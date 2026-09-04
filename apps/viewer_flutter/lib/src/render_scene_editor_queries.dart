@@ -100,6 +100,148 @@ class RenderSceneQueries {
     return _wallGeometry(wall)?.length;
   }
 
+  /// Resolves a hosted opening from the architectural 2D symbol, not only
+  /// from the small 3D panel bounds.  Door swings and window glazing lines
+  /// are plan graphics, so a plan tap can legitimately land outside the
+  /// opening mesh while still being clearly on that opening.
+  static RenderSceneObject? openingAtPlanPoint(
+    RenderScene scene,
+    RenderScenePoint point, {
+    double toleranceMeters = 0.45,
+  }) {
+    RenderSceneObject? best;
+    var bestDistance = double.infinity;
+    for (final opening in scene.objects) {
+      if (opening.kindKey != 'door' && opening.kindKey != 'window') {
+        continue;
+      }
+      final hostId = int.tryParse(
+        opening.metadata['host_wall_id']?.toString() ?? '',
+      );
+      final host = scene.objectById(hostId);
+      if (host == null || host.kindKey != 'wall') {
+        continue;
+      }
+      final hostGeometry = _wallGeometry(host);
+      final openingStart = RenderScenePoint.fromJson(
+        opening.metadata['axis_start'] ?? opening.metadata['axisStart'],
+      );
+      final openingEnd = RenderScenePoint.fromJson(
+        opening.metadata['axis_end'] ?? opening.metadata['axisEnd'],
+      );
+      final openingPanelThickness =
+          _toDouble(opening.metadata['panel_thickness_meters']) ??
+              _toDouble(opening.metadata['panelThicknessMeters']);
+      final resolvedThickness = hostGeometry?.thickness ??
+          (openingPanelThickness == null
+              ? null
+              : math.max(openingPanelThickness * 2.0, 0.08));
+      // Legacy fallback walls may expose only miter-expanded bounds. Hosted
+      // openings retain the authored axis, so prefer it for straight walls;
+      // curved walls keep the host centerline because endpoints alone lose
+      // the arc path needed by the symbol picker.
+      final geometry = hostGeometry?.isCurved == true ||
+              openingStart == null ||
+              openingEnd == null ||
+              resolvedThickness == null
+          ? hostGeometry
+          : _WallGeometry(
+              start: openingStart,
+              end: openingEnd,
+              thickness: resolvedThickness,
+              centerline: hostGeometry?.centerline ?? const <RenderScenePoint>[],
+            );
+      final offset = _toDouble(opening.metadata['offset_meters']);
+      final width = _toDouble(opening.metadata['width_meters']);
+      if (geometry == null || offset == null || width == null ||
+          !offset.isFinite || !width.isFinite || width <= 1e-9) {
+        continue;
+      }
+
+      final clampedOffset = offset.clamp(0.0, geometry.length);
+      final halfWidth = width * 0.5;
+      final first = _pointAlongWall(
+        geometry,
+        clampedOffset - halfWidth,
+      );
+      final second = _pointAlongWall(
+        geometry,
+        clampedOffset + halfWidth,
+      );
+      final tangent = _wallTangentAtOffset(geometry, clampedOffset);
+      final normal = RenderScenePoint(x: -tangent.y, y: tangent.x, z: 0);
+      final halfThickness = (geometry.thickness * 0.5).clamp(0.04, 0.30);
+
+      final distances = <double>[
+        _distanceToPlanSegment(point, first, second),
+        _distanceToPlanSegment(
+          point,
+          first + normal.scale(halfThickness),
+          first - normal.scale(halfThickness),
+        ),
+        _distanceToPlanSegment(
+          point,
+          second + normal.scale(halfThickness),
+          second - normal.scale(halfThickness),
+        ),
+      ];
+
+      if (opening.kindKey == 'window') {
+        final glassOffset = halfThickness * 0.70;
+        distances
+          ..add(_distanceToPlanSegment(
+            point,
+            first + normal.scale(glassOffset),
+            second + normal.scale(glassOffset),
+          ))
+          ..add(_distanceToPlanSegment(
+            point,
+            first - normal.scale(glassOffset),
+            second - normal.scale(glassOffset),
+          ));
+      } else {
+        // Match the fallback painter's simple door symbol: a leaf from the
+        // near jamb and a circular swing centered on that jamb.
+        final openEnd = first + normal.scale(width);
+        distances.add(_distanceToPlanSegment(point, first, openEnd));
+        final startAngle = math.atan2(
+          second.y - first.y,
+          second.x - first.x,
+        );
+        final endAngle = math.atan2(
+          openEnd.y - first.y,
+          openEnd.x - first.x,
+        );
+        var sweep = endAngle - startAngle;
+        while (sweep > math.pi) {
+          sweep -= math.pi * 2.0;
+        }
+        while (sweep < -math.pi) {
+          sweep += math.pi * 2.0;
+        }
+        var previous = second;
+        for (var index = 1; index <= 16; index += 1) {
+          final angle = startAngle + sweep * (index / 16.0);
+          final current = first + RenderScenePoint(
+            x: math.cos(angle) * width,
+            y: math.sin(angle) * width,
+            z: 0,
+          );
+          distances.add(_distanceToPlanSegment(point, previous, current));
+          previous = current;
+        }
+      }
+
+      final distance = distances.reduce(math.min);
+      final hitTolerance = math.max(toleranceMeters, 0.18);
+      if (distance <= hitTolerance && distance < bestDistance) {
+        bestDistance = distance;
+        best = opening;
+      }
+    }
+    return best;
+  }
+
   static int? wallLevelId(RenderSceneObject wall) {
     return wall.levelId;
   }
@@ -701,4 +843,22 @@ class RenderSceneQueries {
     nextMap['objects'] = nextObjects;
     return _parseSceneMap(nextMap, source: '${scene.source} ~ auto surfaces');
   }
+}
+
+double _distanceToPlanSegment(
+  RenderScenePoint point,
+  RenderScenePoint start,
+  RenderScenePoint end,
+) {
+  final axis = end - start;
+  final lengthSquared = axis.x * axis.x + axis.y * axis.y;
+  if (lengthSquared <= 1e-12) {
+    return point.distanceTo(start);
+  }
+  final toPoint = point - start;
+  final t = ((toPoint.x * axis.x) + (toPoint.y * axis.y)) /
+      lengthSquared;
+  final clamped = t.clamp(0.0, 1.0);
+  final projected = start + axis.scale(clamped);
+  return point.distanceTo(projected);
 }

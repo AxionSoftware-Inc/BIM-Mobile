@@ -267,6 +267,17 @@ class _ViewerHomePageState extends State<ViewerHomePage>
     final scene = _scene;
     if (!_engineBackedMode || repository == null || scene == null) return null;
     try {
+      // Plan symbols extend beyond the small opening mesh. Resolve them
+      // before the native wall-body candidate so tapping a door swing or
+      // window glazing line selects the hosted opening itself.
+      if (allowedKinds.isEmpty) {
+        final opening = RenderSceneQueries.openingAtPlanPoint(
+          scene,
+          point,
+          toleranceMeters: toleranceMeters,
+        );
+        if (opening != null) return opening;
+      }
       final candidates = repository.hitTest(
         point.x,
         point.y,
