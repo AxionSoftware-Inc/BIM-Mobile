@@ -159,6 +159,10 @@ class _DraftEditorCard extends StatefulWidget {
     required this.stairTopLevelId,
     required this.draftFloorTopElevationMeters,
     required this.surfaceDrawMode,
+    required this.surfaceControlsEnabled,
+    required this.canSurfaceUndo,
+    required this.canCloseSurfaceBoundary,
+    required this.surfaceBoundaryClosed,
     required this.wallDrawMode,
     required this.wallTypes,
     required this.wallTypeId,
@@ -177,14 +181,16 @@ class _DraftEditorCard extends StatefulWidget {
     required this.trimFirstWall,
     required this.trimSecondWall,
     required this.trimPreview,
-    required this.editStatusMessage,
-    required this.snapEnabled,
     required this.canConfirm,
-    required this.onSnapToggled,
     required this.onOpeningPresetChanged,
     required this.onSurfaceThicknessChanged,
     required this.onSurfaceHeightChanged,
     required this.onFloorTopElevationChanged,
+    required this.onSurfaceDrawModeChanged,
+    required this.onSurfaceUndo,
+    required this.onSurfaceToggleBoundaryClosed,
+    required this.onSurfaceRepairJoins,
+    required this.onSurfaceTrimExtend,
     required this.onWallDrawModeChanged,
     required this.onWallTypeChanged,
     required this.onFloorAssemblyChanged,
@@ -219,6 +225,10 @@ class _DraftEditorCard extends StatefulWidget {
   final int? stairTopLevelId;
   final double draftFloorTopElevationMeters;
   final RenderSceneSurfaceDrawMode surfaceDrawMode;
+  final bool surfaceControlsEnabled;
+  final bool canSurfaceUndo;
+  final bool canCloseSurfaceBoundary;
+  final bool surfaceBoundaryClosed;
   final WallDrawMode wallDrawMode;
   final List<WallTypeDefinition> wallTypes;
   final int wallTypeId;
@@ -237,14 +247,16 @@ class _DraftEditorCard extends StatefulWidget {
   final TrimExtendWallSelection? trimFirstWall;
   final TrimExtendWallSelection? trimSecondWall;
   final PlanSketchTrimResult? trimPreview;
-  final String? editStatusMessage;
-  final bool snapEnabled;
   final bool canConfirm;
-  final ValueChanged<bool> onSnapToggled;
   final ValueChanged<OpeningPreset> onOpeningPresetChanged;
   final ValueChanged<double> onSurfaceThicknessChanged;
   final ValueChanged<double> onSurfaceHeightChanged;
   final ValueChanged<double> onFloorTopElevationChanged;
+  final ValueChanged<RenderSceneSurfaceDrawMode> onSurfaceDrawModeChanged;
+  final VoidCallback onSurfaceUndo;
+  final VoidCallback onSurfaceToggleBoundaryClosed;
+  final VoidCallback onSurfaceRepairJoins;
+  final VoidCallback onSurfaceTrimExtend;
   final ValueChanged<WallDrawMode> onWallDrawModeChanged;
   final ValueChanged<int> onWallTypeChanged;
   final ValueChanged<int> onFloorAssemblyChanged;
@@ -370,7 +382,6 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
   @override
   Widget build(BuildContext context) {
     _ensureControllers();
-    final theme = Theme.of(context);
     final mode = widget.interactionMode;
     final wall = widget.draftHostWall;
 
@@ -378,23 +389,6 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
       title: mode.authoringLabel,
       icon: _toolIcon(mode),
       children: <Widget>[
-        if (mode != RenderSceneInteractionMode.trimExtend)
-          _InfoRow(
-            label: 'Snap',
-            value: widget.snapEnabled ? 'On' : 'Off',
-            trailing: Switch.adaptive(
-              value: widget.snapEnabled,
-              onChanged: widget.onSnapToggled,
-            ),
-          ),
-        if (widget.editStatusMessage != null)
-          Text(
-            widget.editStatusMessage!,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
-        const SizedBox(height: 8),
         if (mode == RenderSceneInteractionMode.select)
           const Text('Select mode: tap objects to inspect them.')
         else if (mode == RenderSceneInteractionMode.addLevel)
@@ -486,6 +480,20 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
                 pointCount: widget.draftSurfacePointCount,
                 wallCount: widget.draftSurfaceWallCount,
                 drawMode: widget.surfaceDrawMode,
+              ),
+              const SizedBox(height: 8),
+              _SurfaceDrawingInspectorControls(
+                mode: mode,
+                drawMode: widget.surfaceDrawMode,
+                enabled: widget.surfaceControlsEnabled,
+                canUndo: widget.canSurfaceUndo,
+                canCloseBoundary: widget.canCloseSurfaceBoundary,
+                boundaryClosed: widget.surfaceBoundaryClosed,
+                onDrawModeChanged: widget.onSurfaceDrawModeChanged,
+                onUndo: widget.onSurfaceUndo,
+                onToggleBoundaryClosed: widget.onSurfaceToggleBoundaryClosed,
+                onRepairJoins: widget.onSurfaceRepairJoins,
+                onTrimExtend: widget.onSurfaceTrimExtend,
               ),
               const SizedBox(height: 8),
               _NumericField(
@@ -587,7 +595,11 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
                 child: Text(
                   mode == RenderSceneInteractionMode.trimExtend
                       ? 'Trim / Extend'
-                      : 'Confirm',
+                      : mode == RenderSceneInteractionMode.addFloor ||
+                              mode == RenderSceneInteractionMode.addCeiling ||
+                              mode == RenderSceneInteractionMode.addRoof
+                          ? 'Finish'
+                          : 'Confirm',
                 ),
               ),
             ),
@@ -838,6 +850,154 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
     );
   }
 }
+
+class _SurfaceDrawingInspectorControls extends StatelessWidget {
+  const _SurfaceDrawingInspectorControls({
+    required this.mode,
+    required this.drawMode,
+    required this.enabled,
+    required this.canUndo,
+    required this.canCloseBoundary,
+    required this.boundaryClosed,
+    required this.onDrawModeChanged,
+    required this.onUndo,
+    required this.onToggleBoundaryClosed,
+    required this.onRepairJoins,
+    required this.onTrimExtend,
+  });
+
+  final RenderSceneInteractionMode mode;
+  final RenderSceneSurfaceDrawMode drawMode;
+  final bool enabled;
+  final bool canUndo;
+  final bool canCloseBoundary;
+  final bool boundaryClosed;
+  final ValueChanged<RenderSceneSurfaceDrawMode> onDrawModeChanged;
+  final VoidCallback onUndo;
+  final VoidCallback onToggleBoundaryClosed;
+  final VoidCallback onRepairJoins;
+  final VoidCallback onTrimExtend;
+
+  bool get _supportsAutoRoom =>
+      mode == RenderSceneInteractionMode.addFloor ||
+      mode == RenderSceneInteractionMode.addCeiling;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final modes = <RenderSceneSurfaceDrawMode>[
+      RenderSceneSurfaceDrawMode.pickWalls,
+      RenderSceneSurfaceDrawMode.polyline,
+      RenderSceneSurfaceDrawMode.rectangle,
+      if (_supportsAutoRoom) RenderSceneSurfaceDrawMode.autoRoom,
+    ];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        Text('Boundary method', style: theme.textTheme.labelMedium),
+        const SizedBox(height: 5),
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: <Widget>[
+            for (final option in modes)
+              Tooltip(
+                message: _surfaceDrawModeHint(option),
+                child: ChoiceChip(
+                  avatar: Icon(_surfaceDrawModeIcon(option), size: 16),
+                  label: Text(_surfaceDrawModeLabel(option)),
+                  selected: drawMode == option,
+                  onSelected: enabled ? (_) => onDrawModeChanged(option) : null,
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: <Widget>[
+            Tooltip(
+              message: drawMode == RenderSceneSurfaceDrawMode.polyline &&
+                      boundaryClosed
+                  ? 'Reopen the boundary before removing a point'
+                  : 'Remove the last point or picked wall',
+              child: IconButton.filledTonal(
+                onPressed: enabled && canUndo ? onUndo : null,
+                icon: const Icon(Icons.undo, size: 19),
+              ),
+            ),
+            if (drawMode == RenderSceneSurfaceDrawMode.polyline)
+              OutlinedButton.icon(
+                onPressed: enabled && (boundaryClosed || canCloseBoundary)
+                    ? onToggleBoundaryClosed
+                    : null,
+                icon: Icon(
+                  boundaryClosed
+                      ? Icons.lock_open_outlined
+                      : Icons.link_outlined,
+                  size: 18,
+                ),
+                label: Text(boundaryClosed ? 'Reopen' : 'Close contour'),
+              ),
+            PopupMenuButton<_SurfaceDrawingMoreAction>(
+              tooltip: 'More surface actions',
+              enabled: enabled,
+              icon: const Icon(Icons.more_horiz),
+              onSelected: (action) {
+                switch (action) {
+                  case _SurfaceDrawingMoreAction.repairJoins:
+                    onRepairJoins();
+                  case _SurfaceDrawingMoreAction.trimExtend:
+                    onTrimExtend();
+                }
+              },
+              itemBuilder: (context) =>
+                  const <PopupMenuEntry<_SurfaceDrawingMoreAction>>[
+                PopupMenuItem<_SurfaceDrawingMoreAction>(
+                  value: _SurfaceDrawingMoreAction.repairJoins,
+                  child: Text('Repair joins'),
+                ),
+                PopupMenuItem<_SurfaceDrawingMoreAction>(
+                  value: _SurfaceDrawingMoreAction.trimExtend,
+                  child: Text('Trim / Extend'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+enum _SurfaceDrawingMoreAction { repairJoins, trimExtend }
+
+IconData _surfaceDrawModeIcon(RenderSceneSurfaceDrawMode mode) =>
+    switch (mode) {
+      RenderSceneSurfaceDrawMode.polyline => Icons.polyline_outlined,
+      RenderSceneSurfaceDrawMode.rectangle => Icons.crop_square,
+      RenderSceneSurfaceDrawMode.pickWalls => Icons.ads_click_outlined,
+      RenderSceneSurfaceDrawMode.autoRoom => Icons.meeting_room_outlined,
+    };
+
+String _surfaceDrawModeLabel(RenderSceneSurfaceDrawMode mode) => switch (mode) {
+      RenderSceneSurfaceDrawMode.polyline => 'Boundary',
+      RenderSceneSurfaceDrawMode.rectangle => 'Rectangle',
+      RenderSceneSurfaceDrawMode.pickWalls => 'Pick Walls',
+      RenderSceneSurfaceDrawMode.autoRoom => 'Auto Room',
+    };
+
+String _surfaceDrawModeHint(RenderSceneSurfaceDrawMode mode) => switch (mode) {
+      RenderSceneSurfaceDrawMode.polyline =>
+        'Draw straight boundary segments, then close the loop',
+      RenderSceneSurfaceDrawMode.rectangle => 'Set two opposite corners',
+      RenderSceneSurfaceDrawMode.pickWalls =>
+        'Select enclosing walls to derive the footprint',
+      RenderSceneSurfaceDrawMode.autoRoom =>
+        'Select a room to create the system from its boundary',
+    };
 
 class _OpeningPresetField extends StatelessWidget {
   const _OpeningPresetField({
@@ -1129,75 +1289,41 @@ class _SurfaceDraftSummary extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final label = switch (mode) {
-      RenderSceneInteractionMode.addFloor => 'floor',
-      RenderSceneInteractionMode.addCeiling => 'ceiling',
-      RenderSceneInteractionMode.addRoof => 'roof',
-      _ => 'surface',
-    };
-    if (drawMode == RenderSceneSurfaceDrawMode.pickWalls && wallCount >= 1) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: <Widget>[
-          Text(
-            '$wallCount wall(s) selected. Confirm to create $label from the wall boundary.',
-          ),
-          if (start != null && end != null) ...<Widget>[
-            const SizedBox(height: 8),
-            _InfoRow(
-              label: 'Bounds',
-              value:
-                  '${units.formatLength((end!.x - start!.x).abs(), withUnit: false)} × '
-                  '${units.formatLength((end!.y - start!.y).abs())}',
-            ),
-          ],
-        ],
-      );
-    }
-
-    if (drawMode == RenderSceneSurfaceDrawMode.polyline) {
-      return Text(
-        pointCount < 3
-            ? '$pointCount point(s) added. Add another point.'
-            : 'Polyline boundary ready. Confirm to create $label.',
-      );
-    }
-
-    if (drawMode == RenderSceneSurfaceDrawMode.autoRoom) {
-      return Text(
+    final theme = Theme.of(context);
+    final status = switch (drawMode) {
+      RenderSceneSurfaceDrawMode.pickWalls => wallCount == 0
+          ? 'No boundary walls selected'
+          : wallCount == 1
+              ? '1 boundary wall selected'
+              : '$wallCount boundary walls selected',
+      RenderSceneSurfaceDrawMode.polyline => '$pointCount boundary points',
+      RenderSceneSurfaceDrawMode.autoRoom =>
         mode == RenderSceneInteractionMode.addRoof
-            ? 'Auto Room is not available for roofs yet. Use Rectangle, Polyline, or Pick Walls.'
-            : 'Tap inside a room to create $label.',
-      );
-    }
-
-    if (start == null || end == null) {
-      return Text(
-        'Draw in an empty area or select walls. This kernel creates $label.',
-      );
-    }
-
+            ? 'Auto Room unavailable for roofs'
+            : 'Room boundary detection',
+      RenderSceneSurfaceDrawMode.rectangle => start == null || end == null
+          ? 'Rectangle not started'
+          : 'Rectangle ready',
+    };
+    final hasBounds = start != null && end != null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
-        Text('Rectangle draft ready. Confirm to create $label.'),
-        const SizedBox(height: 8),
-        _InfoRow(
-          label: 'Start',
-          value: '(${units.formatLength(start!.x, withUnit: false)}, '
-              '${units.formatLength(start!.y, withUnit: false)})',
+        Text(
+          status,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
         ),
-        _InfoRow(
-          label: 'End',
-          value: '(${units.formatLength(end!.x, withUnit: false)}, '
-              '${units.formatLength(end!.y, withUnit: false)})',
-        ),
-        _InfoRow(
-          label: 'Size',
-          value:
-              '${units.formatLength((end!.x - start!.x).abs(), withUnit: false)} × '
-              '${units.formatLength((end!.y - start!.y).abs())}',
-        ),
+        if (hasBounds) ...<Widget>[
+          const SizedBox(height: 4),
+          _InfoRow(
+            label: 'Bounds',
+            value:
+                '${units.formatLength((end!.x - start!.x).abs(), withUnit: false)} × '
+                '${units.formatLength((end!.y - start!.y).abs())}',
+          ),
+        ],
       ],
     );
   }

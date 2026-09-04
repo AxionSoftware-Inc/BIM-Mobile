@@ -179,7 +179,7 @@ class _ViewerHomePageState extends State<ViewerHomePage>
   double? _moveLevelOriginalElevation;
   WallMoveMode _wallMoveMode = WallMoveMode.translate;
   String? _editStatusMessage;
-  bool _snapDraftToGrid = true;
+  final bool _snapDraftToGrid = true;
   bool _surfaceBoundaryMultiTouch = false;
   // A hosted opening belongs to the wall touched at gesture start.  Keeping
   // this separate from the hover preview prevents a release hit-test on a

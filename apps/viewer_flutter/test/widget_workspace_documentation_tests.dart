@@ -83,7 +83,7 @@ void registerWorkspaceDocumentationTests() {
     }
   });
 
-  testWidgets('Roof tool exposes contextual boundary and Trim controls',
+  testWidgets('Roof tool exposes boundary controls inside the Inspector',
       (WidgetTester tester) async {
     final json = File('assets/render_scene.json').readAsStringSync();
     await tester.binding.setSurfaceSize(const Size(1600, 1000));
@@ -99,16 +99,26 @@ void registerWorkspaceDocumentationTests() {
     await tester.tap(find.byTooltip('Roof'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Draw Roof'), findsOneWidget);
+    expect(find.text('Draw Roof'), findsNothing);
+    expect(find.text('Snap'), findsNothing);
+    expect(find.textContaining('This kernel creates'), findsNothing);
+    expect(find.textContaining('Pick Walls: tap each'), findsNothing);
+    expect(find.text('Boundary method'), findsOneWidget);
     expect(find.text('Boundary'), findsOneWidget);
     expect(find.text('Rectangle'), findsOneWidget);
     expect(find.text('Pick Walls'), findsOneWidget);
-    expect(find.text('Trim / Extend'), findsOneWidget);
+    expect(find.byTooltip('More surface actions'), findsOneWidget);
+    expect(find.text('Trim / Extend'), findsNothing);
     expect(find.text('Auto Room'), findsNothing);
     expect(find.text('Active tool'), findsNothing);
     expect(find.text('Select an element'), findsNothing);
     expect(find.text('Roof type'), findsOneWidget);
     expect(find.textContaining('Overhang'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('More surface actions'));
+    await tester.pumpAndSettle();
+    expect(find.text('Repair joins'), findsOneWidget);
+    expect(find.text('Trim / Extend'), findsOneWidget);
   });
 
   testWidgets('Boundary tool uses an explicit close-before-finish workflow',

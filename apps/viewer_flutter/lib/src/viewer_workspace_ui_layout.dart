@@ -559,31 +559,6 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
             units: _projectUnitSettings,
           ),
         ),
-        if (_isSurfaceAuthoring)
-          Positioned(
-            left: 16,
-            right: 16,
-            top: 16,
-            child: SurfaceDrawingContextBar(
-              mode: _interactionMode,
-              drawMode: _surfaceDrawMode,
-              enabled: _scene != null && !_workspaceBusy,
-              canFinish: _draftCanConfirm,
-              canUndo: _surfaceTool.canUndo,
-              canCloseBoundary: _draftSurfacePoints.length >= 3,
-              boundaryClosed: _surfaceTool.boundaryClosed,
-              draftPointCount: _draftSurfacePoints.length,
-              onDrawModeChanged: _setSurfaceDrawMode,
-              onUndo: _undoSurfaceDraft,
-              onToggleBoundaryClosed: _toggleBoundaryClosed,
-              onRepairJoins: () => unawaited(_repairWallJoins()),
-              onTrimExtend: () {
-                _setInteractionMode(RenderSceneInteractionMode.trimExtend);
-              },
-              onFinish: _confirmDraft,
-              onCancel: _cancelDraft,
-            ),
-          ),
         // The Section Box is drawn and manipulated in the native Filament
         // overlay so its border and clipping planes share one camera matrix.
         Positioned(
@@ -750,6 +725,12 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
                           draftFloorTopElevationMeters:
                               _draftFloorTopElevationMeters,
                           surfaceDrawMode: _surfaceDrawMode,
+                          surfaceControlsEnabled:
+                              _scene != null && !_workspaceBusy,
+                          canSurfaceUndo: _surfaceTool.canUndo,
+                          canCloseSurfaceBoundary:
+                              _draftSurfacePoints.length >= 3,
+                          surfaceBoundaryClosed: _surfaceTool.boundaryClosed,
                           wallDrawMode: _wallTool.drawMode,
                           wallTypes: scene.wallTypes,
                           wallTypeId: _wallTool.wallTypeId,
@@ -776,24 +757,7 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
                           trimFirstWall: _trimTool.first,
                           trimSecondWall: _trimTool.second,
                           trimPreview: _trimTool.preview,
-                          editStatusMessage: _editStatusMessage,
-                          snapEnabled: _snapDraftToGrid,
                           canConfirm: _draftCanConfirm,
-                          onSnapToggled: (value) {
-                            _updateViewportState(() {
-                              _snapDraftToGrid = value;
-                            });
-                            if (_interactionMode ==
-                                    RenderSceneInteractionMode.addDoor ||
-                                _interactionMode ==
-                                    RenderSceneInteractionMode.addWindow ||
-                                _interactionMode ==
-                                    RenderSceneInteractionMode.moveOpening) {
-                              _syncOpeningDraft();
-                            } else {
-                              _syncSurfaceDraftPreview();
-                            }
-                          },
                           onOpeningPresetChanged: (preset) {
                             _updateViewportState(() {
                               _draftOpeningWidthMeters = preset.widthMeters;
@@ -822,6 +786,16 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
                             _updateViewportState(() {
                               _draftFloorTopElevationMeters = value;
                             });
+                          },
+                          onSurfaceDrawModeChanged: _setSurfaceDrawMode,
+                          onSurfaceUndo: _undoSurfaceDraft,
+                          onSurfaceToggleBoundaryClosed: _toggleBoundaryClosed,
+                          onSurfaceRepairJoins: () =>
+                              unawaited(_repairWallJoins()),
+                          onSurfaceTrimExtend: () {
+                            _setInteractionMode(
+                              RenderSceneInteractionMode.trimExtend,
+                            );
                           },
                           onWallDrawModeChanged: (value) {
                             unawaited(_setWallDrawMode(value));
