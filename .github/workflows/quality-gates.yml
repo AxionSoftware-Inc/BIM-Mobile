@@ -79,6 +79,9 @@ jobs:
       - name: Run architecture guard
         run: bash tools/check_architecture.sh
 
+      - name: Check release metadata consistency
+        run: bash tools/check_release_consistency.sh
+
       - name: Install Flutter dependencies
         working-directory: apps/viewer_flutter
         run: flutter pub get
