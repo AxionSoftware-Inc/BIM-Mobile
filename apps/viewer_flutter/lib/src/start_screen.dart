@@ -10,6 +10,7 @@ class StartScreen extends StatelessWidget {
     super.key,
     required this.onOpen,
     required this.onCreate,
+    required this.onCreateFamily,
     required this.onSelectTemplate,
     required this.onSettings,
     this.onSelectIfcTemplate,
@@ -22,6 +23,7 @@ class StartScreen extends StatelessWidget {
 
   final VoidCallback onOpen;
   final VoidCallback onCreate;
+  final VoidCallback onCreateFamily;
   final ValueChanged<WorkspaceTemplate> onSelectTemplate;
   final VoidCallback onSettings;
   final ValueChanged<IfcTemplate>? onSelectIfcTemplate;
@@ -82,6 +84,7 @@ class StartScreen extends StatelessWidget {
                         busy: busy,
                         onOpen: onOpen,
                         onCreate: onCreate,
+                        onCreateFamily: onCreateFamily,
                       ),
                       if (recoveryEntry != null) ...<Widget>[
                         const SizedBox(height: 14),
@@ -652,11 +655,13 @@ class _StartHero extends StatelessWidget {
     required this.busy,
     required this.onOpen,
     required this.onCreate,
+    required this.onCreateFamily,
   });
 
   final bool busy;
   final VoidCallback onOpen;
   final VoidCallback onCreate;
+  final VoidCallback onCreateFamily;
 
   @override
   Widget build(BuildContext context) {
@@ -680,7 +685,13 @@ class _StartHero extends StatelessWidget {
                 onPressed: busy ? null : onCreate,
                 style: _startActionButtonStyle(colors.primary),
                 icon: const Icon(Icons.add_box_outlined),
-                label: const Text('Create new'),
+                label: const Text('Create project'),
+              ),
+              OutlinedButton.icon(
+                onPressed: busy ? null : onCreateFamily,
+                style: _startActionButtonStyle(colors.primary),
+                icon: const Icon(Icons.category_outlined),
+                label: const Text('Create family'),
               ),
               OutlinedButton.icon(
                 onPressed: busy ? null : onOpen,

@@ -54,6 +54,53 @@ int main() {
     }
 
     {
+        // A family instance stores only its reusable family/type reference;
+        // native geometry stays in the compact column payload.
+        auto family_result = tbe::api::create_session("Family Adapter Test");
+        assert(family_result.ok() && family_result.value.has_value());
+        auto family_session = std::move(*family_result.value);
+        assert(family_session->new_project("Family Adapter").ok());
+        const auto family_level = family_session->create_level("Level 1", 0.0, 3.2);
+        assert(family_level.ok() && family_level.value.has_value());
+        const auto family_column = family_session->create_column(
+            family_level.value->value,
+            {.x = 2.0, .y = 2.0},
+            0.3,
+            0.3,
+            3.2,
+            0
+        );
+        assert(family_column.ok() && family_column.value.has_value());
+        const auto family_reference = family_session->set_element_family_reference(
+            family_column.value->value,
+            "family-simple-column-v1",
+            "Simple Column",
+            "type-column-300",
+            "300 x 300",
+            "column",
+            "examples/families/Simple_Column.bimfamily"
+        );
+        assert(family_reference.ok());
+        const auto family_scene = family_session->get_render_scene();
+        assert(family_scene.ok() && family_scene.value.has_value());
+        const auto family_object = std::find_if(
+            family_scene.value->objects.begin(), family_scene.value->objects.end(),
+            [&](const auto& object) {
+                return object.element_id.value == family_column.value->value;
+            }
+        );
+        assert(family_object != family_scene.value->objects.end());
+        assert(family_object->kind == tbe::api::ApiElementKind::Column);
+        assert(family_object->metadata.at("property.family_asset_id") == "family-simple-column-v1");
+        assert(family_object->metadata.at("property.family_type_id") == "type-column-300");
+        assert(family_object->metadata.at("property.family_category") == "column");
+        assert(family_object->metadata.at("property.family_asset_path") == "examples/families/Simple_Column.bimfamily");
+        assert(family_object->metadata.at("width_meters") == "0.300000");
+        assert(family_object->metadata.at("depth_meters") == "0.300000");
+        assert(family_object->metadata.at("height_meters") == "3.200000");
+    }
+
+    {
         // The public authoring seam must keep the circular wall as one
         // selectable element while exposing a smooth derived render mesh.
         auto curved_result = tbe::api::create_session("Curved Wall API Test");
@@ -97,6 +144,62 @@ int main() {
         assert(std::count_if(
             scene.value->objects.begin(), scene.value->objects.end(),
             [](const auto& candidate) { return candidate.kind == tbe::api::ApiElementKind::Wall; }) == 1);
+
+        const auto l_stair = curved->create_stair_layout(
+            level.value->value,
+            0,
+            std::vector<tbe::api::Vec2>{{1.0, 0.5}, {1.0, 2.0}, {3.0, 2.0}},
+            1.1,
+            3.0,
+            17,
+            16,
+            0.9,
+            1,
+            true,
+            0
+        );
+        assert(l_stair.ok() && l_stair.value.has_value());
+        const auto stair_scene = curved->get_render_scene();
+        assert(stair_scene.ok() && stair_scene.value.has_value());
+        const auto stair_object = std::find_if(
+            stair_scene.value->objects.begin(), stair_scene.value->objects.end(),
+            [&](const auto& candidate) { return candidate.element_id.value == l_stair.value->value; });
+        assert(stair_object != stair_scene.value->objects.end());
+        assert(stair_object->metadata.at("layout_kind") == "1");
+        assert(stair_object->metadata.at("railing_enabled") == "true");
+        assert(stair_object->mesh.indices.size() > 0);
+        // The second flight must be selectable through the same semantic
+        // stair entry; a first-flight-only spatial envelope regresses this.
+        const auto second_flight_hit = curved->hit_test_point({
+            .level_id = {.value = level.value->value},
+            .point = {.x = 2.5, .y = 2.0},
+            .tolerance_meters = 0.2,
+        });
+        assert(second_flight_hit.ok() && second_flight_hit.value.has_value());
+        assert(std::any_of(
+            second_flight_hit.value->begin(),
+            second_flight_hit.value->end(),
+            [&](const auto& candidate) {
+                return candidate.element_id.value == l_stair.value->value &&
+                    candidate.hit_kind == tbe::api::HitKind::Stair;
+            }));
+        assert(curved->update_stair_layout(
+            l_stair.value->value,
+            std::vector<tbe::api::Vec2>{{1.0, 0.5}, {1.0, 2.4}, {3.4, 2.4}},
+            1.25,
+            1.1,
+            1,
+            false
+        ).ok());
+        const auto edited_stair_scene = curved->get_render_scene();
+        assert(edited_stair_scene.ok() && edited_stair_scene.value.has_value());
+        const auto edited_stair_object = std::find_if(
+            edited_stair_scene.value->objects.begin(), edited_stair_scene.value->objects.end(),
+            [&](const auto& candidate) { return candidate.element_id.value == l_stair.value->value; });
+        assert(edited_stair_object != edited_stair_scene.value->objects.end());
+        assert(edited_stair_object->metadata.at("layout_kind") == "1");
+        assert(edited_stair_object->metadata.at("railing_enabled") == "false");
+        assert(nearly_equal(std::stod(edited_stair_object->metadata.at("width_meters")), 1.25));
     }
 
     for (int iteration = 0; iteration < 5; ++iteration) {

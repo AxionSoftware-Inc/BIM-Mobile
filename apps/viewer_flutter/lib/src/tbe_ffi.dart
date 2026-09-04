@@ -104,6 +104,9 @@ class TbeViewerApi {
             _TrimExtendWallsDart>('tbe_trim_extend_walls'),
         _setElementAssembly = library.lookupFunction<_SetElementAssemblyNative,
             _SetElementAssemblyDart>('tbe_set_element_assembly'),
+        _setElementFamilyReference = library.lookupFunction<
+            _SetElementFamilyReferenceNative,
+            _SetElementFamilyReferenceDart>('tbe_set_element_family_reference'),
         _updateRoofProperties = library.lookupFunction<
             _UpdateRoofPropertiesNative,
             _UpdateRoofPropertiesDart>('tbe_update_roof_properties'),
@@ -120,12 +123,19 @@ class TbeViewerApi {
         _createStair =
             library.lookupFunction<_CreateStairNative, _CreateStairDart>(
                 'tbe_create_stair'),
+        _createStairLayout = library.lookupFunction<_CreateStairLayoutNative,
+            _CreateStairLayoutDart>('tbe_create_stair_layout'),
+        _updateStairLayout = library.lookupFunction<_UpdateStairLayoutNative,
+            _UpdateStairLayoutDart>('tbe_update_stair_layout'),
         _createDoor =
             library.lookupFunction<_CreateDoorNative, _CreateDoorDart>(
                 'tbe_create_door'),
         _createWindow =
             library.lookupFunction<_CreateWindowNative, _CreateWindowDart>(
                 'tbe_create_window'),
+        _createColumn =
+            library.lookupFunction<_CreateColumnNative, _CreateColumnDart>(
+                'tbe_create_column'),
         _setOpeningLevelLock = library.lookupFunction<
             _SetOpeningLevelLockNative,
             _SetOpeningLevelLockDart>('tbe_set_opening_level_lock'),
@@ -243,14 +253,18 @@ class TbeViewerApi {
   final _AutoJoinWallsDart _autoJoinWalls;
   final _TrimExtendWallsDart _trimExtendWalls;
   final _SetElementAssemblyDart _setElementAssembly;
+  final _SetElementFamilyReferenceDart _setElementFamilyReference;
   final _UpdateRoofPropertiesDart _updateRoofProperties;
   final _SetStructuralWallCutDart _setStructuralWallCut;
   final _SetBeamColumnJoinDart _setBeamColumnJoin;
   final _CreateWallDart _createWall;
   final _CreateCurvedWallDart _createCurvedWall;
   final _CreateStairDart _createStair;
+  final _CreateStairLayoutDart _createStairLayout;
+  final _UpdateStairLayoutDart _updateStairLayout;
   final _CreateDoorDart _createDoor;
   final _CreateWindowDart _createWindow;
+  final _CreateColumnDart _createColumn;
   final _SetOpeningLevelLockDart _setOpeningLevelLock;
   final _SetOpeningLevelDart _setOpeningLevel;
   final _SetOpeningLevelConstraintDart _setOpeningLevelConstraint;

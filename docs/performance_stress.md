@@ -54,6 +54,40 @@ save and reload, plus object/vertex/triangle counts. `Correctness gate: PASS`
 is required. The device-class geometry budget is an early review signal, not a
 substitute for Android CPU, FPS and thermal telemetry on a real tablet.
 
+For the Android renderer A/B run, install a debug build and trigger the
+existing benchmark harness with ADB. `json` measures the compatibility JSON
+path; `cache` measures the native BIM-cache path; `probe` validates the cache
+without mounting a renderer:
+
+```sh
+adb shell am start -n com.example.viewer_flutter/.MainActivity -a com.example.viewer_flutter.BENCHMARK --es mode json
+adb shell am start -n com.example.viewer_flutter/.MainActivity -a com.example.viewer_flutter.BENCHMARK --es mode cache
+adb logcat -s TbeBenchmark
+```
+
+Each renderer result records first-visible/full-ready latency, idle/orbit/zoom
+FPS, frame p95/p99 (frame-drop signal), CPU submit time, Java/native heap,
+GC delta, draw calls, chunks and the maximum Android `PowerManager` thermal
+status observed during the run. Repeat each scenario for a cold start and a
+20-minute navigation loop; thermal status `4` or a sustained p95 above the
+device refresh budget is a release blocker.
+
+### 30-storey baseline (2026-09-04)
+
+The native correctness/geometry gate was also run at the intended high-rise
+size. These are host timings, not Android acceptance numbers:
+
+| Scenario | Create | Nearby snapshot | Final compute + snapshot | Reload | Objects | Triangles |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 × 30, `mid` | 1,373.03 ms | 61.59 ms | 260.98 ms | 357.40 ms | 1,351 | 24,668 |
+| 6 × 30, `flagship` | 54,627.60 ms | 535.35 ms | 6,856.53 ms | 4,559.63 ms | 8,106 | 148,008 |
+
+Both runs reported `Correctness gate: PASS` and `Device geometry budget: PASS`.
+The 6 × 30 creation path is already a visible scalability warning, so it is
+not presented as a performance pass: Android long-session RAM, frame-pacing,
+GC and thermal runs remain a release gate before large-project support is
+claimed.
+
 ## 100k element contract
 
 Run the reproducible large-model gate with:

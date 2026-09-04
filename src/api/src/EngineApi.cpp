@@ -6,6 +6,7 @@
 #include "tbe/core/ProjectCatalog.hpp"
 #include "tbe/core/IfcExchange.hpp"
 #include "tbe/core/JobSystem.hpp"
+#include "tbe/core/GeometryService.hpp"
 #include "tbe/core/PolygonTriangulation.hpp"
 
 #include <algorithm>
@@ -601,6 +602,79 @@ std::vector<Point2> wall_body_polygon(Line2 axis, double thickness_meters) {
         Point2{.x = axis.end.x + normal.x, .y = axis.end.y + normal.y},
         Point2{.x = axis.end.x - normal.x, .y = axis.end.y - normal.y},
         Point2{.x = axis.start.x - normal.x, .y = axis.start.y - normal.y},
+    };
+}
+
+// Stairs are one semantic element even when their path has several flights.
+// The spatial index still needs one conservative plan footprint so every
+// flight remains selectable (the old straight-run-only envelope covered only
+// the first direction and made L/U stairs appear unselectable in 2D).
+std::vector<Point2> stair_plan_polygon(const tbe::core::StairData& stair) {
+    std::vector<Point2> footprint_points;
+    const auto append_segment = [&](Point2 start, Point2 end) {
+        const auto segment = wall_body_polygon(
+            Line2{.start = start, .end = end},
+            stair.width_meters);
+        footprint_points.insert(
+            footprint_points.end(),
+            segment.begin(),
+            segment.end());
+    };
+
+    if (stair.path_points.size() >= 2) {
+        for (std::size_t index = 1; index < stair.path_points.size(); ++index) {
+            append_segment(stair.path_points[index - 1], stair.path_points[index]);
+        }
+    } else {
+        const auto direction_length = std::hypot(stair.direction.x, stair.direction.y);
+        if (direction_length > 1.0e-12) {
+            const auto unit = Point2{
+                .x = stair.direction.x / direction_length,
+                .y = stair.direction.y / direction_length,
+            };
+            append_segment(
+                stair.start,
+                Point2{
+                    .x = stair.start.x + unit.x * stair.total_run_meters,
+                    .y = stair.start.y + unit.y * stair.total_run_meters,
+                });
+        }
+    }
+
+    // Include each intermediate landing in the conservative envelope.  A
+    // landing follows the next flight direction, matching the mesh builder.
+    if (stair.path_points.size() >= 3 && stair.landing_depth_meters > 0.0) {
+        for (std::size_t index = 1; index + 1 < stair.path_points.size(); ++index) {
+            const auto landing = stair.path_points[index];
+            const auto next = stair.path_points[index + 1];
+            const auto dx = next.x - landing.x;
+            const auto dy = next.y - landing.y;
+            const auto length_value = std::hypot(dx, dy);
+            if (length_value <= 1.0e-12) {
+                continue;
+            }
+            const auto unit = Point2{.x = dx / length_value, .y = dy / length_value};
+            const auto half_width = stair.width_meters / 2.0;
+            const auto half_depth = std::max(stair.landing_depth_meters, stair.width_meters) / 2.0;
+            const auto normal = Point2{.x = -unit.y, .y = unit.x};
+            for (const auto sign : {-1.0, 1.0}) {
+                const auto side = Point2{.x = normal.x * half_width * sign, .y = normal.y * half_width * sign};
+                const auto along = Point2{.x = unit.x * half_depth, .y = unit.y * half_depth};
+                footprint_points.push_back(Point2{.x = landing.x + side.x - along.x, .y = landing.y + side.y - along.y});
+                footprint_points.push_back(Point2{.x = landing.x + side.x + along.x, .y = landing.y + side.y + along.y});
+            }
+        }
+    }
+
+    if (footprint_points.empty()) {
+        return {};
+    }
+    const auto bounds = bounds_from_points(footprint_points);
+    return {
+        Point2{.x = bounds.min_x, .y = bounds.min_y},
+        Point2{.x = bounds.max_x, .y = bounds.min_y},
+        Point2{.x = bounds.max_x, .y = bounds.max_y},
+        Point2{.x = bounds.min_x, .y = bounds.max_y},
     };
 }
 
@@ -1225,86 +1299,27 @@ std::string wall_centerline_points_string(const tbe::core::WallData& wall) {
     return result.str();
 }
 
+std::string polygon_points_string(const std::vector<Point2>& polygon) {
+    std::ostringstream result;
+    result << std::setprecision(12);
+    for (std::size_t index = 0; index < polygon.size(); ++index) {
+        if (index != 0) result << ';';
+        result << polygon[index].x << ',' << polygon[index].y;
+    }
+    return result.str();
+}
+
 // GeometryService has already resolved end-to-end mitres and T-junction
 // trims by the time a render scene is built. Keep those final plan profile
 // corners available to the tablet authoring layer so boundary snapping uses
 // the same visible join geometry as the wall mesh.
 std::string wall_profile_corners(const tbe::core::WallData& wall) {
-    if (wall.arc.has_value()) {
-        // `profile_corners` is consumed by the Android plan overlay as the
-        // actual cut footprint.  Returning only the arc centerline makes the
-        // overlay close the curve with its chord, producing a filled sector
-        // (the wall looks like a split circle instead of a thin curved wall).
-        // Keep `curve_points` as the centerline and expose the two offset
-        // boundaries here, in the same outside-then-inside order used by the
-        // Flutter plan painter.
-        const auto centerline = wall_centerline_points(wall);
-        const auto half_thickness = wall.thickness_meters * 0.5;
-        if (centerline.size() < 2 || half_thickness <= 0.0) return {};
-
-        std::vector<Point2> outside;
-        std::vector<Point2> inside;
-        outside.reserve(centerline.size());
-        inside.reserve(centerline.size());
-        for (const auto& point : centerline) {
-            const auto radial = Point2{
-                .x = point.x - wall.arc->center.x,
-                .y = point.y - wall.arc->center.y,
-            };
-            const auto radial_length = std::sqrt(
-                (radial.x * radial.x) + (radial.y * radial.y));
-            if (radial_length <= 1.0e-9) return {};
-            const auto normal = Point2{
-                .x = radial.x / radial_length * half_thickness,
-                .y = radial.y / radial_length * half_thickness,
-            };
-            outside.push_back(Point2{
-                .x = point.x + normal.x,
-                .y = point.y + normal.y,
-            });
-            inside.push_back(Point2{
-                .x = point.x - normal.x,
-                .y = point.y - normal.y,
-            });
-        }
-
-        std::ostringstream profile;
-        profile << std::setprecision(12);
-        bool first_point = true;
-        const auto append_point = [&](const Point2& point) {
-            if (!first_point) profile << ';';
-            first_point = false;
-            profile << point.x << ',' << point.y;
-        };
-        for (const auto& point : outside) append_point(point);
-        for (auto point = inside.rbegin(); point != inside.rend(); ++point) {
-            append_point(*point);
-        }
-        return profile.str();
-    }
-    const auto dx = wall.axis.end.x - wall.axis.start.x;
-    const auto dy = wall.axis.end.y - wall.axis.start.y;
-    const auto length = std::sqrt((dx * dx) + (dy * dy));
-    if (length <= 1.0e-9 || wall.geometry.profile.polygon.empty()) {
-        return {};
-    }
-
-    const auto direction_x = dx / length;
-    const auto direction_y = dy / length;
-    const auto perpendicular_x = -direction_y;
-    const auto perpendicular_y = direction_x;
-    std::ostringstream profile;
-    profile << std::setprecision(12);
-    for (std::size_t index = 0; index < wall.geometry.profile.polygon.size(); ++index) {
-        if (index != 0) {
-            profile << ';';
-        }
-        const auto& point = wall.geometry.profile.polygon[index];
-        const auto world_x = wall.axis.start.x + (point.x * direction_x) + (point.y * perpendicular_x);
-        const auto world_y = wall.axis.start.y + (point.x * direction_y) + (point.y * perpendicular_y);
-        profile << world_x << ',' << world_y;
-    }
-    return profile.str();
+    // Mesh generation, plan projection and feature-edge metadata must never
+    // derive their own wall footprint.  In mixed curved/straight joins that
+    // used to make one subsystem see the raw arc while another saw a mitered
+    // cap, which produced both visible seams and unstable overlay depth.
+    return polygon_points_string(
+        tbe::core::GeometryService{}.build_wall_footprint(wall));
 }
 
 Vec3 wall_feature_point(
@@ -1340,6 +1355,8 @@ std::vector<RenderSceneFeatureEdgeDTO> wall_feature_edges(
         const auto& arc = *wall.arc;
         const auto path_length = std::abs(arc.radius_meters * arc.sweep_radians);
         const auto half_thickness = wall.thickness_meters / 2.0;
+        const auto footprint = tbe::core::GeometryService{}.build_wall_footprint(wall);
+        const auto has_footprint = footprint.size() >= 4 && footprint.size() % 2 == 0;
         const auto point_at = [&](double distance, double side, double z) {
             const auto fraction = path_length <= 1.0e-9
                 ? 0.0
@@ -1354,35 +1371,74 @@ std::vector<RenderSceneFeatureEdgeDTO> wall_feature_edges(
             };
         };
         constexpr double kBottomContourLiftMeters = 0.002;
-        for (std::size_t index = 0; index + 1 < centerline.size(); ++index) {
-            const auto first_distance = path_length * static_cast<double>(index) /
-                static_cast<double>(centerline.size() - 1);
-            const auto second_distance = path_length * static_cast<double>(index + 1) /
-                static_cast<double>(centerline.size() - 1);
-            for (const auto side : {-half_thickness, half_thickness}) {
+        const auto footprint_point = [&](const Point2& point, double elevation) {
+            return Vec3{.x = point.x, .y = point.y, .z = base_elevation + elevation};
+        };
+        if (has_footprint) {
+            const auto boundary_count = footprint.size() / 2;
+            const auto inner_index = [&](std::size_t boundary_index) {
+                return footprint.size() - 1 - boundary_index;
+            };
+            for (std::size_t index = 0; index + 1 < boundary_count; ++index) {
+                for (const auto side : {std::size_t{0}, std::size_t{1}}) {
+                    const auto first_index = side == 0 ? index : inner_index(index);
+                    const auto second_index = side == 0 ? index + 1 : inner_index(index + 1);
+                    edges.push_back({
+                        .start = footprint_point(footprint[first_index], wall.height_meters),
+                        .end = footprint_point(footprint[second_index], wall.height_meters),
+                        .role = RenderSceneFeatureEdgeRole::Silhouette,
+                    });
+                    edges.push_back({
+                        .start = footprint_point(footprint[first_index], kBottomContourLiftMeters),
+                        .end = footprint_point(footprint[second_index], kBottomContourLiftMeters),
+                        .role = RenderSceneFeatureEdgeRole::Silhouette,
+                    });
+                }
+            }
+            for (const auto boundary_index : {std::size_t{0}, boundary_count - 1}) {
+                const auto inside_index = inner_index(boundary_index);
                 edges.push_back({
-                    .start = point_at(first_distance, side, wall.height_meters),
-                    .end = point_at(second_distance, side, wall.height_meters),
+                    .start = footprint_point(footprint[boundary_index], 0.0),
+                    .end = footprint_point(footprint[boundary_index], wall.height_meters),
                     .role = RenderSceneFeatureEdgeRole::Silhouette,
                 });
                 edges.push_back({
-                    .start = point_at(first_distance, side, kBottomContourLiftMeters),
-                    .end = point_at(second_distance, side, kBottomContourLiftMeters),
+                    .start = footprint_point(footprint[inside_index], 0.0),
+                    .end = footprint_point(footprint[inside_index], wall.height_meters),
                     .role = RenderSceneFeatureEdgeRole::Silhouette,
                 });
             }
-        }
-        for (const auto distance : {0.0, path_length}) {
-            edges.push_back({
-                .start = point_at(distance, -half_thickness, 0.0),
-                .end = point_at(distance, -half_thickness, wall.height_meters),
-                .role = RenderSceneFeatureEdgeRole::Silhouette,
-            });
-            edges.push_back({
-                .start = point_at(distance, half_thickness, 0.0),
-                .end = point_at(distance, half_thickness, wall.height_meters),
-                .role = RenderSceneFeatureEdgeRole::Silhouette,
-            });
+        } else {
+            for (std::size_t index = 0; index + 1 < centerline.size(); ++index) {
+                const auto first_distance = path_length * static_cast<double>(index) /
+                    static_cast<double>(centerline.size() - 1);
+                const auto second_distance = path_length * static_cast<double>(index + 1) /
+                    static_cast<double>(centerline.size() - 1);
+                for (const auto side : {-half_thickness, half_thickness}) {
+                    edges.push_back({
+                        .start = point_at(first_distance, side, wall.height_meters),
+                        .end = point_at(second_distance, side, wall.height_meters),
+                        .role = RenderSceneFeatureEdgeRole::Silhouette,
+                    });
+                    edges.push_back({
+                        .start = point_at(first_distance, side, kBottomContourLiftMeters),
+                        .end = point_at(second_distance, side, kBottomContourLiftMeters),
+                        .role = RenderSceneFeatureEdgeRole::Silhouette,
+                    });
+                }
+            }
+            for (const auto distance : {0.0, path_length}) {
+                edges.push_back({
+                    .start = point_at(distance, -half_thickness, 0.0),
+                    .end = point_at(distance, -half_thickness, wall.height_meters),
+                    .role = RenderSceneFeatureEdgeRole::Silhouette,
+                });
+                edges.push_back({
+                    .start = point_at(distance, half_thickness, 0.0),
+                    .end = point_at(distance, half_thickness, wall.height_meters),
+                    .role = RenderSceneFeatureEdgeRole::Silhouette,
+                });
+            }
         }
         for (const auto& opening : profile.openings) {
             for (const auto side : {-half_thickness, half_thickness}) {
@@ -2299,6 +2355,7 @@ RenderSceneDTO build_render_scene(
                     {"assembly_id", std::to_string(slab->assembly_id)},
                     {"floor_type", floor_surface_key(document, assembly, slab->material_id)},
                     {"floor_type_name", assembly == nullptr ? "Generic Floor" : assembly->name},
+                    {"footprint_points", polygon_points_string(slab->boundary_polygon)},
                 }
             ));
             (void)elevation;
@@ -2325,6 +2382,7 @@ RenderSceneDTO build_render_scene(
                         : roof->roof_type == tbe::core::RoofType::AutoFootprint ? "AutoFootprint" : "Flat"},
                     {"slope_degrees", roof->slope_degrees.has_value() ? std::to_string(*roof->slope_degrees) : ""},
                     {"overhang_meters", roof->overhang_meters.has_value() ? std::to_string(*roof->overhang_meters) : ""},
+                    {"footprint_points", polygon_points_string(roof->boundary_polygon)},
                 }
             ));
             continue;
@@ -2336,7 +2394,15 @@ RenderSceneDTO build_render_scene(
                 column->level_id,
                 element.revision(),
                 mesh_for_render(column->mesh, level_elevation(elevations, column->level_id, 0.0), element),
-                material_category_name(ApiElementKind::Column)
+                material_category_name(ApiElementKind::Column),
+                {
+                    {"position_x", std::to_string(column->position.x)},
+                    {"position_y", std::to_string(column->position.y)},
+                    {"width_meters", std::to_string(column->width_meters)},
+                    {"depth_meters", std::to_string(column->depth_meters)},
+                    {"height_meters", std::to_string(column->height_meters)},
+                    {"level_locked", "true"},
+                }
             ));
             continue;
         }
@@ -2352,6 +2418,13 @@ RenderSceneDTO build_render_scene(
             continue;
         }
         if (const auto* stair = element.stair(); stair != nullptr) {
+            std::string path_points;
+            for (std::size_t point_index = 0; point_index < stair->path_points.size(); ++point_index) {
+                if (point_index != 0) path_points += ';';
+                path_points += std::to_string(stair->path_points[point_index].x);
+                path_points += ',';
+                path_points += std::to_string(stair->path_points[point_index].y);
+            }
             append_object(make_object_dto(
                 element.id(),
                 ApiElementKind::Stair,
@@ -2368,6 +2441,10 @@ RenderSceneDTO build_render_scene(
                     {"riser_count", std::to_string(stair->riser_count)},
                     {"tread_count", std::to_string(stair->tread_count)},
                     {"assembly_id", std::to_string(stair->assembly_id)},
+                    {"layout_kind", std::to_string(static_cast<int>(stair->layout_kind))},
+                    {"landing_depth_meters", std::to_string(stair->landing_depth_meters)},
+                    {"railing_enabled", stair->railing_enabled ? "true" : "false"},
+                    {"path_points", path_points},
                     {"level_locked", "true"},
                 }
             ));
@@ -2429,6 +2506,7 @@ RenderSceneDTO build_render_scene(
             {{"assembly_id", std::to_string(system.assembly_id)},
              {"floor_type", floor_surface_key(document, assembly)},
              {"floor_type_name", assembly == nullptr ? "Generic Floor" : assembly->name},
+             {"footprint_points", polygon_points_string(system.boundary_polygon)},
              {"stair_opening_count", std::to_string(system.stair_opening_ids.size())}}
         ));
     }
@@ -2444,6 +2522,7 @@ RenderSceneDTO build_render_scene(
             std::move(mesh),
             material_category_name(ApiElementKind::CeilingSystem),
             {{"assembly_id", std::to_string(system.assembly_id)},
+             {"footprint_points", polygon_points_string(system.boundary_polygon)},
              {"stair_opening_count", std::to_string(system.stair_opening_ids.size())}}
         ));
     }
@@ -3345,11 +3424,8 @@ void rebuild_spatial_index_impl(SessionImpl& impl) {
                 .thickness_meters = beam->width_meters,
             });
         } else if (const auto* stair = element.stair()) {
-            const auto direction_length = std::sqrt((stair->direction.x * stair->direction.x) + (stair->direction.y * stair->direction.y));
-            if (direction_length > 1.0e-12) {
-                const auto unit = Point2{.x = stair->direction.x / direction_length, .y = stair->direction.y / direction_length};
-                const auto end = Point2{.x = stair->start.x + (unit.x * stair->total_run_meters), .y = stair->start.y + (unit.y * stair->total_run_meters)};
-                const auto polygon = wall_body_polygon(Line2{.start = stair->start, .end = end}, stair->width_meters);
+            const auto polygon = stair_plan_polygon(*stair);
+            if (!polygon.empty()) {
                 append_entry(stair->base_level_id, SpatialEntry{
                     .element_id = element.id(),
                     .level_id = stair->base_level_id,
@@ -4694,6 +4770,28 @@ ApiVoidResult EngineSession::set_element_assembly(std::uint64_t element_id, std:
     });
 }
 
+ApiVoidResult EngineSession::set_element_family_reference(
+    std::uint64_t element_id,
+    std::string family_asset_id,
+    std::string family_name,
+    std::string family_type_id,
+    std::string family_type_name,
+    std::string family_category,
+    std::string family_asset_path
+) {
+    return apply_mutation(*impl_, "set_element_family_reference", [&](Document& document) {
+        document.set_element_family_reference(
+            element_id,
+            std::move(family_asset_id),
+            std::move(family_name),
+            std::move(family_type_id),
+            std::move(family_type_name),
+            std::move(family_category),
+            std::move(family_asset_path)
+        );
+    });
+}
+
 ApiResult<ElementIdDTO> EngineSession::create_material(
     std::string name,
     ApiMaterialCategory category,
@@ -4971,6 +5069,73 @@ ApiResult<ElementIdDTO> EngineSession::create_stair(
             tread_count,
             material_id
         ));
+    });
+}
+
+ApiResult<ElementIdDTO> EngineSession::create_stair_layout(
+    std::uint64_t base_level_id,
+    std::uint64_t top_level_id,
+    const std::vector<Vec2>& path_points,
+    double width_meters,
+    double total_rise_meters,
+    int riser_count,
+    int tread_count,
+    double landing_depth_meters,
+    int layout_kind,
+    bool railing_enabled,
+    std::uint64_t material_id
+) {
+    if (layout_kind < 0 || layout_kind > 2) {
+        return error_result<ElementIdDTO>(ApiStatus::InvalidArgument, "stair layout kind is invalid");
+    }
+    ElementIdDTO created{};
+    return apply_mutation_with_value(*impl_, "create_stair_layout", created, [&](Document& document, ElementIdDTO& out) {
+        std::vector<tbe::core::Point2> points;
+        points.reserve(path_points.size());
+        for (const auto& point : path_points) {
+            points.push_back(to_point(point));
+        }
+        out = to_id(document.create_stair_layout(
+            base_level_id,
+            top_level_id,
+            std::move(points),
+            width_meters,
+            total_rise_meters,
+            riser_count,
+            tread_count,
+            landing_depth_meters,
+            static_cast<tbe::core::StairLayoutKind>(layout_kind),
+            railing_enabled,
+            material_id
+        ));
+    });
+}
+
+ApiVoidResult EngineSession::update_stair_layout(
+    std::uint64_t stair_id,
+    const std::vector<Vec2>& path_points,
+    double width_meters,
+    double landing_depth_meters,
+    int layout_kind,
+    bool railing_enabled
+) {
+    if (layout_kind < 0 || layout_kind > 2) {
+        return error_void(ApiStatus::InvalidArgument, "stair layout kind is invalid");
+    }
+    return apply_mutation(*impl_, "update_stair_layout", [&](Document& document) {
+        std::vector<tbe::core::Point2> points;
+        points.reserve(path_points.size());
+        for (const auto& point : path_points) {
+            points.push_back(to_point(point));
+        }
+        document.update_stair_layout(
+            stair_id,
+            std::move(points),
+            width_meters,
+            landing_depth_meters,
+            static_cast<tbe::core::StairLayoutKind>(layout_kind),
+            railing_enabled
+        );
     });
 }
 

@@ -236,6 +236,12 @@ class _StartScreenGateState extends State<_StartScreenGate> {
     });
   }
 
+  Future<void> _createFamily() async {
+    if (_busy) return;
+    AppTelemetry.track('family_create_started');
+    await FamilyAuthoringModule.createFamily(context);
+  }
+
   void _selectTemplate(WorkspaceTemplate template) {
     if (_busy) return;
     AppTelemetry.track(
@@ -319,6 +325,7 @@ class _StartScreenGateState extends State<_StartScreenGate> {
     return StartScreen(
       onOpen: _openProject,
       onCreate: _createProject,
+      onCreateFamily: () => unawaited(_createFamily()),
       onSelectTemplate: _selectTemplate,
       onSelectIfcTemplate: _selectIfcTemplate,
       onSettings: () => _showSettings(context),

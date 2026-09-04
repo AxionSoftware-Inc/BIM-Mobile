@@ -733,6 +733,70 @@ int main() {
     assert(door_removed_or_invalid || opening_delete_validation.error_count() > 0);
     assert(window_removed_or_invalid || opening_delete_validation.error_count() > 0);
 
+    {
+        // Complex wall/opening stress: a joined perimeter, a T branch, a
+        // crossing service wall and several openings are regenerated twice.
+        // The important contract is idempotence: joins stay symmetric,
+        // openings stay hosted, and no derived vertex becomes non-finite.
+        tbe::core::Document complex_join_document{"Complex Wall Opening Stress"};
+        const auto stress_level = complex_join_document.create_level("Level 1", 0.0, 3.0);
+        const auto stress_walls = std::vector<tbe::core::ElementId>{
+            complex_join_document.create_wall("South", {{0.0, 0.0}, {10.0, 0.0}}, 0.24, 3.0, stress_level),
+            complex_join_document.create_wall("East", {{10.0, 0.0}, {10.0, 6.0}}, 0.24, 3.0, stress_level),
+            complex_join_document.create_wall("North", {{10.0, 6.0}, {0.0, 6.0}}, 0.24, 3.0, stress_level),
+            complex_join_document.create_wall("West", {{0.0, 6.0}, {0.0, 0.0}}, 0.24, 3.0, stress_level),
+            complex_join_document.create_wall("T Branch", {{5.0, 0.0}, {5.0, 3.0}}, 0.18, 3.0, stress_level),
+            complex_join_document.create_wall("Cross Branch", {{2.0, 2.8}, {8.0, 2.8}}, 0.18, 3.0, stress_level),
+        };
+        complex_join_document.auto_join_walls();
+        const auto stress_door = complex_join_document.create_door(
+            "South Door", stress_walls[0], 2.0, 0.95, 2.1
+        );
+        const auto stress_window_a = complex_join_document.create_window(
+            "South Window", stress_walls[0], 7.0, 1.25, 1.2, 0.9
+        );
+        const auto stress_window_b = complex_join_document.create_window(
+            "East Window", stress_walls[1], 3.0, 1.1, 1.0, 1.0
+        );
+        const auto stress_window_c = complex_join_document.create_window(
+            "Branch Window", stress_walls[4], 1.5, 0.9, 1.0, 0.9
+        );
+        complex_join_document.regenerate_dirty_geometry(tbe::core::GeometryDetail::Envelope);
+        complex_join_document.auto_join_walls();
+        complex_join_document.regenerate_dirty_geometry(tbe::core::GeometryDetail::Layered);
+
+        for (const auto wall_id : stress_walls) {
+            const auto* wall = complex_join_document.find_ptr(wall_id)->wall();
+            assert(wall != nullptr);
+            for (const auto& join : wall->joins) {
+                const auto* other = complex_join_document.find_ptr(join.other_wall_id);
+                assert(other != nullptr && other->wall() != nullptr);
+                assert(std::any_of(other->wall()->joins.begin(), other->wall()->joins.end(),
+                    [wall_id](const auto& reverse) { return reverse.other_wall_id == wall_id; }));
+            }
+            assert(wall->geometry.mesh.vertices.size() > 0);
+            assert(wall->geometry.openings_cut == wall->geometry.profile.openings.size());
+            assert(std::all_of(wall->geometry.mesh.vertices.begin(), wall->geometry.mesh.vertices.end(),
+                [](const auto& vertex) {
+                    return std::isfinite(vertex.x) && std::isfinite(vertex.y) && std::isfinite(vertex.z);
+                }));
+        }
+        assert(complex_join_document.find_ptr(stress_door)->door() != nullptr);
+        assert(complex_join_document.find_ptr(stress_window_a)->window() != nullptr);
+        assert(complex_join_document.find_ptr(stress_window_b)->window() != nullptr);
+        assert(complex_join_document.find_ptr(stress_window_c)->window() != nullptr);
+        assert(complex_join_document.validate_document().error_count() == 0);
+
+        tbe::core::Project stress_project{"Stress Project"};
+        stress_project.active_document() = complex_join_document;
+        auto reloaded_stress_project = tbe::core::Project::from_json(stress_project.to_json());
+        reloaded_stress_project.active_document().auto_join_walls();
+        reloaded_stress_project.active_document().regenerate_dirty_geometry(tbe::core::GeometryDetail::Envelope);
+        assert(reloaded_stress_project.active_document().validate_document().error_count() == 0);
+        assert(reloaded_stress_project.active_document().find_ptr(stress_door)->door() != nullptr);
+        assert(reloaded_stress_project.active_document().find_ptr(stress_window_a)->window() != nullptr);
+    }
+
     tbe::core::CreateWallCommand undo_wall{
         "Undo Wall",
         tbe::core::Line2{.start = {.x = 10.0, .y = 0.0}, .end = {.x = 12.0, .y = 0.0}},
@@ -1049,6 +1113,163 @@ int main() {
     const auto* round_trip_wall = semantic_round_trip.find_ptr(semantic_arc_wall)->wall();
     assert(round_trip_wall != nullptr && round_trip_wall->arc.has_value());
     assert(near(round_trip_wall->arc->sweep_radians, std::numbers::pi / 2.0));
+
+    // A curved endpoint and a straight endpoint share one miter plane. The
+    // straight wall must use the arc tangent, never the arc chord, and a
+    // small touch gap should be repaired on the straight wall only.
+    tbe::core::Document curved_join_document{"Curved Wall Join"};
+    const auto curved_join_level = curved_join_document.create_level("Level 1", 0.0, 3.0);
+    const auto curved_join_wall = curved_join_document.create_curved_wall(
+        "Joined Arc",
+        tbe::core::Line2{.start = {.x = 4.0, .y = 0.0}, .end = {.x = 0.0, .y = 4.0}},
+        tbe::core::WallArcData{
+            .center = {.x = 0.0, .y = 0.0},
+            .radius_meters = 4.0,
+            .start_angle_radians = 0.0,
+            .sweep_radians = std::numbers::pi / 2.0,
+        },
+        0.2,
+        3.0,
+        curved_join_level
+    );
+    const auto curved_join_straight = curved_join_document.create_wall(
+        "Joined Straight",
+        tbe::core::Line2{.start = {.x = 0.16, .y = 4.08}, .end = {.x = 0.0, .y = 8.0}},
+        0.2,
+        3.0,
+        curved_join_level
+    );
+    curved_join_document.auto_join_walls();
+    const auto* joined_arc = curved_join_document.find_ptr(curved_join_wall)->wall();
+    const auto* joined_straight = curved_join_document.find_ptr(curved_join_straight)->wall();
+    assert(joined_arc != nullptr && joined_straight != nullptr);
+    assert(joined_arc->joins.size() == 1 && joined_straight->joins.size() == 1);
+    assert(near(joined_straight->axis.start.x, 0.0));
+    assert(near(joined_straight->axis.start.y, 4.0));
+    const auto joined_arc_geometry = geometry.build_wall_geometry(*joined_arc, 1, {});
+    const auto has_miter_outer = std::any_of(
+        joined_arc_geometry.mesh.vertices.begin(),
+        joined_arc_geometry.mesh.vertices.end(),
+        [](const auto& point) { return near(point.x, -0.1) && near(point.y, 4.1); }
+    );
+    const auto has_miter_inner = std::any_of(
+        joined_arc_geometry.mesh.vertices.begin(),
+        joined_arc_geometry.mesh.vertices.end(),
+        [](const auto& point) { return near(point.x, 0.1) && near(point.y, 3.9); }
+    );
+    assert(has_miter_outer && has_miter_inner);
+    const auto joined_straight_profile = geometry.build_wall_profile(*joined_straight);
+    assert(near(joined_straight_profile.polygon[0].x, -0.1));
+    assert(near(joined_straight_profile.polygon[3].x, 0.1));
+    const auto joined_arc_footprint = geometry.build_wall_footprint(*joined_arc);
+    const auto joined_straight_footprint = geometry.build_wall_footprint(*joined_straight);
+    const auto has_shared_cap_point = [](const auto& footprint, double x, double y) {
+        return std::any_of(
+            footprint.begin(),
+            footprint.end(),
+            [&](const auto& point) { return near(point.x, x) && near(point.y, y); }
+        );
+    };
+    assert(has_shared_cap_point(joined_arc_footprint, -0.1, 4.1));
+    assert(has_shared_cap_point(joined_arc_footprint, 0.1, 3.9));
+    assert(has_shared_cap_point(joined_straight_footprint, -0.1, 4.1));
+    assert(has_shared_cap_point(joined_straight_footprint, 0.1, 3.9));
+
+    // The same contract must hold when the straight wall meets the authored
+    // arc start.  This catches endpoint-orientation regressions that can pass
+    // an end-only test while still flipping the start cap.
+    tbe::core::Document curved_start_join_document{"Curved Wall Start Join"};
+    const auto curved_start_level = curved_start_join_document.create_level("Level 1", 0.0, 3.0);
+    const auto curved_start_arc_id = curved_start_join_document.create_curved_wall(
+        "Arc Start",
+        tbe::core::Line2{.start = {.x = 4.0, .y = 0.0}, .end = {.x = 0.0, .y = 4.0}},
+        tbe::core::WallArcData{
+            .center = {.x = 0.0, .y = 0.0},
+            .radius_meters = 4.0,
+            .start_angle_radians = 0.0,
+            .sweep_radians = std::numbers::pi / 2.0,
+        },
+        0.2,
+        3.0,
+        curved_start_level
+    );
+    const auto curved_start_straight_id = curved_start_join_document.create_wall(
+        "Start Straight",
+        tbe::core::Line2{.start = {.x = 4.08, .y = 0.16}, .end = {.x = 8.0, .y = 0.0}},
+        0.2,
+        3.0,
+        curved_start_level
+    );
+    curved_start_join_document.auto_join_walls();
+    const auto* curved_start_arc = curved_start_join_document.find_ptr(curved_start_arc_id)->wall();
+    const auto* curved_start_straight = curved_start_join_document.find_ptr(curved_start_straight_id)->wall();
+    assert(curved_start_arc != nullptr && curved_start_straight != nullptr);
+    assert(curved_start_arc->joins.size() == 1 && curved_start_straight->joins.size() == 1);
+    const auto start_arc_footprint = geometry.build_wall_footprint(*curved_start_arc);
+    const auto start_straight_footprint = geometry.build_wall_footprint(*curved_start_straight);
+    assert(has_shared_cap_point(start_arc_footprint, 3.9, -0.1));
+    assert(has_shared_cap_point(start_arc_footprint, 4.1, 0.1));
+    assert(has_shared_cap_point(start_straight_footprint, 3.9, -0.1));
+    assert(has_shared_cap_point(start_straight_footprint, 4.1, 0.1));
+
+    // Curved boundaries must remain curved when a room, floor or ceiling is
+    // derived from the joined wall loop. The arc's endpoint chord is not a
+    // valid replacement for its centerline path.
+    const auto curved_room_wall_a = semantic_arc_document.create_wall(
+        "Curved Room North", {{0.0, 5.0}, {0.0, 8.0}}, 0.2, 3.0, semantic_arc_level);
+    const auto curved_room_wall_b = semantic_arc_document.create_wall(
+        "Curved Room Top", {{0.0, 8.0}, {5.0, 8.0}}, 0.2, 3.0, semantic_arc_level);
+    const auto curved_room_wall_c = semantic_arc_document.create_wall(
+        "Curved Room East", {{5.0, 8.0}, {5.0, 0.0}}, 0.2, 3.0, semantic_arc_level);
+    semantic_arc_document.auto_join_walls();
+    const auto curved_room_ids = semantic_arc_document.detect_rooms();
+    assert(curved_room_ids.size() == 1);
+    const auto* curved_room = semantic_arc_document.find_ptr(curved_room_ids.front())->room();
+    assert(curved_room != nullptr);
+    assert(curved_room->centerline_boundary_polygon.size() > 10);
+    assert(std::any_of(
+        curved_room->centerline_boundary_polygon.begin(),
+        curved_room->centerline_boundary_polygon.end(),
+        [](const auto& point) {
+            return std::hypot(point.x - 3.5355339, point.y - 3.5355339) < 0.2;
+        }
+    ));
+
+    const std::vector<tbe::core::ElementId> curved_loop_ids{
+        semantic_arc_wall,
+        curved_room_wall_a,
+        curved_room_wall_b,
+        curved_room_wall_c,
+    };
+    const auto curved_floor_ids = semantic_arc_document.create_elements_from_profile(tbe::core::ProfileDraft{
+        .mode = tbe::core::ProfileDraftMode::PickWalls,
+        .target_kind = tbe::core::ProfileTargetKind::FloorBoundary,
+        .level_id = semantic_arc_level,
+        .picked_wall_ids = curved_loop_ids,
+        .closed = true,
+        .thickness_meters = 0.18,
+    });
+    const auto curved_ceiling_ids = semantic_arc_document.create_elements_from_profile(tbe::core::ProfileDraft{
+        .mode = tbe::core::ProfileDraftMode::PickWalls,
+        .target_kind = tbe::core::ProfileTargetKind::CeilingBoundary,
+        .level_id = semantic_arc_level,
+        .picked_wall_ids = curved_loop_ids,
+        .closed = true,
+        .thickness_meters = 0.05,
+    });
+    assert(curved_floor_ids.size() == 1 && curved_ceiling_ids.size() == 1);
+    const auto contains_arc_midpoint = [](const auto& polygon) {
+        return std::any_of(
+            polygon.begin(), polygon.end(),
+            [](const auto& point) {
+                return std::hypot(point.x - 3.5355339, point.y - 3.5355339) < 0.2;
+            }
+        );
+    };
+    assert(contains_arc_midpoint(
+        semantic_arc_document.floor_systems().at(curved_floor_ids.front()).boundary_polygon));
+    assert(contains_arc_midpoint(
+        semantic_arc_document.ceiling_systems().at(curved_ceiling_ids.front()).boundary_polygon));
 
     // The previous implementation expanded an arc into many independent
     // chords. Keep this regression fixture only for straight-wall compatibility
@@ -1733,6 +1954,57 @@ int main() {
     const auto column_id = shared_wall_document.create_column(shared_level, {.x = 1.0, .y = 1.0}, 0.3, 0.4, 3.0, concrete_material);
     const auto beam_id = shared_wall_document.create_beam(shared_level, {.x = 1.0, .y = 1.0}, {.x = 7.0, .y = 1.0}, 0.25, 0.4, concrete_material);
     const auto stair_id = shared_wall_document.create_stair(shared_level, shared_level, {.x = 6.5, .y = 0.4}, {.x = 0.0, .y = 1.0}, 1.0, 3.0, 4.0, 17, 16, concrete_material);
+    const auto l_stair_id = shared_wall_document.create_stair_layout(
+        shared_level,
+        shared_level,
+        {{5.0, 0.4}, {5.0, 2.5}, {7.0, 2.5}},
+        1.1,
+        3.0,
+        17,
+        16,
+        0.9,
+        tbe::core::StairLayoutKind::LShape,
+        true,
+        concrete_material
+    );
+    const auto* l_stair = shared_wall_document.find_ptr(l_stair_id)->stair();
+    assert(l_stair != nullptr);
+    assert(l_stair->layout_kind == tbe::core::StairLayoutKind::LShape);
+    assert(l_stair->path_points.size() == 3);
+    assert(l_stair->landing_depth_meters > 0.0);
+    assert(l_stair->railing_enabled);
+    const auto u_stair_id = shared_wall_document.create_stair_layout(
+        shared_level,
+        shared_level,
+        {{1.0, 0.5}, {1.0, 2.0}, {4.0, 2.0}, {4.0, 0.5}},
+        1.0,
+        3.0,
+        18,
+        17,
+        1.0,
+        tbe::core::StairLayoutKind::UShape,
+        true,
+        concrete_material
+    );
+    const auto* u_stair = shared_wall_document.find_ptr(u_stair_id)->stair();
+    assert(u_stair != nullptr);
+    assert(u_stair->layout_kind == tbe::core::StairLayoutKind::UShape);
+    assert(u_stair->path_points.size() == 4);
+    shared_wall_document.update_stair_layout(
+        l_stair_id,
+        {{5.0, 0.4}, {5.0, 2.8}, {7.4, 2.8}},
+        1.25,
+        1.1,
+        tbe::core::StairLayoutKind::LShape,
+        false
+    );
+    const auto* edited_l_stair = shared_wall_document.find_ptr(l_stair_id)->stair();
+    assert(edited_l_stair != nullptr);
+    assert(edited_l_stair->layout_kind == tbe::core::StairLayoutKind::LShape);
+    assert(near(edited_l_stair->width_meters, 1.25));
+    assert(near(edited_l_stair->landing_depth_meters, 1.1));
+    assert(!edited_l_stair->railing_enabled);
+    assert(edited_l_stair->generated_geometry_dirty);
     shared_wall_document.regenerate_dirty_geometry();
     const auto roof_schedule = shared_wall_document.generate_roof_schedule();
     const auto column_schedule = shared_wall_document.generate_column_schedule();
@@ -1741,14 +2013,28 @@ int main() {
     assert(roof_schedule.size() == 1);
     assert(column_schedule.size() == 1);
     assert(beam_schedule.size() == 1);
-    assert(stair_schedule.size() == 1);
+    assert(stair_schedule.size() == 3);
     assert(near(roof_schedule.front().area_square_meters, 36.96));
     assert(near(roof_schedule.front().volume_cubic_meters, 6.6528));
     assert(near(column_schedule.front().volume_cubic_meters, 0.36));
     assert(near(beam_schedule.front().length_meters, 6.0));
     assert(near(beam_schedule.front().volume_cubic_meters, 0.6));
-    assert(stair_schedule.front().riser_count == 17);
-    assert(near(stair_schedule.front().total_run_meters, 4.0));
+    const auto original_stair_schedule = std::find_if(
+        stair_schedule.begin(), stair_schedule.end(),
+        [stair_id](const auto& row) { return row.stair_id == stair_id; }
+    );
+    assert(original_stair_schedule != stair_schedule.end());
+    assert(original_stair_schedule->riser_count == 17);
+    assert(near(original_stair_schedule->total_run_meters, 4.0));
+    tbe::core::Project stair_project{"Stair Layout Project"};
+    stair_project.active_document() = shared_wall_document;
+    auto stair_roundtrip = tbe::core::Project::from_json(stair_project.to_json());
+    stair_roundtrip.active_document().regenerate_dirty_geometry();
+    const auto* roundtrip_u_stair = stair_roundtrip.active_document().find_ptr(u_stair_id)->stair();
+    assert(roundtrip_u_stair != nullptr);
+    assert(roundtrip_u_stair->layout_kind == tbe::core::StairLayoutKind::UShape);
+    assert(roundtrip_u_stair->path_points.size() == 4);
+    assert(roundtrip_u_stair->railing_enabled);
     assert(std::any_of(material_takeoff.begin(), material_takeoff.end(), [brick_material](const auto& row) {
         return row.material_id == brick_material && row.quantity > 0.0;
     }));
@@ -1773,6 +2059,8 @@ int main() {
     assert(shared_wall_document.find_ptr(column_id)->column() != nullptr);
     assert(shared_wall_document.find_ptr(beam_id)->beam() != nullptr);
     assert(shared_wall_document.find_ptr(stair_id)->stair() != nullptr);
+    assert(shared_wall_document.find_ptr(l_stair_id)->stair()->mesh.indices.size() >
+           shared_wall_document.find_ptr(stair_id)->stair()->mesh.indices.size());
 
     tbe::core::Document quantity_document{"Quantity Exact"};
     const auto quantity_level = quantity_document.create_level("Level 1", 0.0, 3.0);

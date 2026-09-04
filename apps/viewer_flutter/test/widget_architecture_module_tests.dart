@@ -78,6 +78,8 @@ void registerArchitectureModuleTests() {
     final linear = LinearElementParameters.fromObject(object);
     expect(linear.heightMeters, 2.1);
     expect(linear.lengthMeters, 4.5);
+    expect(linear.widthMeters, 0.9);
+    expect(linear.depthMeters, isNull);
 
     final room = RoomElementParameters.fromObject(object);
     expect(room.areaSquareMeters, 24);

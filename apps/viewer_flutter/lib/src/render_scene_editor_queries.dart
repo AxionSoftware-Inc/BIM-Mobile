@@ -193,7 +193,11 @@ class RenderSceneQueries {
     List<RenderSceneObject> walls, {
     double toleranceMeters = 0.45,
   }) {
-    final segments = <({RenderScenePoint start, RenderScenePoint end})>[];
+    final segments = <({
+      RenderScenePoint start,
+      RenderScenePoint end,
+      List<RenderScenePoint> path,
+    })>[];
     for (final wall in walls) {
       if (wall.kindKey != 'wall') {
         continue;
@@ -203,7 +207,20 @@ class RenderSceneQueries {
       if (start == null || end == null || start.distanceTo(end) <= 1e-6) {
         continue;
       }
-      segments.add((start: start, end: end));
+      final centerline = wallCenterlinePoints(wall);
+      final path = centerline.length >= 2
+          ? List<RenderScenePoint>.from(centerline)
+          : <RenderScenePoint>[start, end];
+      // The axis endpoints are authoritative for joins. Metadata from an
+      // older scene may have been rounded independently, so pin the sampled
+      // curve to the same endpoints used by the loop tracer.
+      path[0] = start;
+      path[path.length - 1] = end;
+      segments.add((
+        start: start,
+        end: end,
+        path: List<RenderScenePoint>.unmodifiable(path),
+      ));
     }
     if (segments.length < 3) {
       return null;
@@ -211,10 +228,22 @@ class RenderSceneQueries {
 
     List<RenderScenePoint>? traceFrom(bool reverseFirst) {
       final first = segments.first;
-      final oriented = <({RenderScenePoint start, RenderScenePoint end})>[
+      final oriented = <({
+        RenderScenePoint start,
+        RenderScenePoint end,
+        List<RenderScenePoint> path,
+      })>[
         reverseFirst
-            ? (start: first.end, end: first.start)
-            : (start: first.start, end: first.end),
+            ? (
+                start: first.end,
+                end: first.start,
+                path: first.path.reversed.toList(growable: false),
+              )
+            : (
+                start: first.start,
+                end: first.end,
+                path: first.path,
+              ),
       ];
       final used = <bool>[...List<bool>.filled(segments.length, false)];
       used[0] = true;
@@ -241,8 +270,16 @@ class RenderSceneQueries {
         final segment = segments[bestIndex];
         oriented.add(
           reverse
-              ? (start: segment.end, end: segment.start)
-              : (start: segment.start, end: segment.end),
+              ? (
+                  start: segment.end,
+                  end: segment.start,
+                  path: segment.path.reversed.toList(growable: false),
+                )
+              : (
+                  start: segment.start,
+                  end: segment.end,
+                  path: segment.path,
+                ),
         );
         used[bestIndex] = true;
       }
@@ -250,6 +287,41 @@ class RenderSceneQueries {
       if (_planDistance2(oriented.last.end, oriented.first.start) >
           toleranceMeters) {
         return null;
+      }
+
+      // A curved wall is one semantic edge, not a chain of authored walls.
+      // Keep its sampled centerline in the floor/ceiling footprint so the
+      // horizontal surface follows the arc instead of closing it with the
+      // wall's endpoint chord. Straight-only loops retain the established
+      // mitered-corner path below.
+      if (oriented.any((segment) => segment.path.length > 2)) {
+        final curvedPolygon = <RenderScenePoint>[];
+        for (final segment in oriented) {
+          for (var pathIndex = 0;
+              pathIndex < segment.path.length;
+              pathIndex += 1) {
+            final point = segment.path[pathIndex];
+            if (curvedPolygon.isNotEmpty &&
+                pathIndex == 0 &&
+                _samePlanPoint(curvedPolygon.last, point, toleranceMeters)) {
+              continue;
+            }
+            curvedPolygon.add(point);
+          }
+        }
+        if (curvedPolygon.length > 1 &&
+            _samePlanPoint(
+              curvedPolygon.first,
+              curvedPolygon.last,
+              toleranceMeters,
+            )) {
+          curvedPolygon.removeLast();
+        }
+        if (curvedPolygon.length < 3 ||
+            _polygonArea2d(curvedPolygon).abs() <= 1e-6) {
+          return null;
+        }
+        return curvedPolygon;
       }
 
       final polygon = <RenderScenePoint>[];

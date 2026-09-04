@@ -48,6 +48,38 @@ internal object RenderSceneEdgeGeometry {
     return ScenePoint(normalX * offset, 0.0, normalZ * offset)
   }
 
+  private fun stableCurvedWallEdgeOffset(
+    first: ScenePoint,
+    second: ScenePoint,
+    arcCenter: ScenePoint,
+    arcRadius: Double,
+  ): ScenePoint {
+    if (!arcRadius.isFinite() || arcRadius <= 1.0e-9) {
+      return ScenePoint(0.0, 0.0, 0.0)
+    }
+    val midpointX = (first.x + second.x) * 0.5
+    val midpointZ = (first.z + second.z) * 0.5
+    val radialX = midpointX - arcCenter.x
+    val radialZ = midpointZ - arcCenter.z
+    val radialLength = kotlin.math.sqrt(radialX * radialX + radialZ * radialZ)
+    if (!radialLength.isFinite() || radialLength <= 1.0e-9) {
+      return ScenePoint(0.0, 0.0, 0.0)
+    }
+
+    // Arc edges cannot use the endpoint chord as a wall normal.  Offset them
+    // along the true radial direction instead: the outer boundary moves out,
+    // the inner boundary moves in, and both remain depth-tested.  This keeps
+    // the architectural line attached to the same curved face without the
+    // mobile depth-buffer shimmer caused by coplanar ribbons.
+    val side = if (radialLength >= arcRadius) 1.0 else -1.0
+    val offset = 0.008 * side
+    return ScenePoint(
+      radialX / radialLength * offset,
+      0.0,
+      radialZ / radialLength * offset,
+    )
+  }
+
   internal fun edgeSurfaceOffset(
     projectionMode: String,
     first: ScenePoint,
@@ -119,6 +151,8 @@ internal object RenderSceneEdgeGeometry {
     wallJunctionElevations: List<Double> = emptyList(),
     wallAxisStart: ScenePoint? = null,
     wallAxisEnd: ScenePoint? = null,
+    wallArcCenter: ScenePoint? = null,
+    wallArcRadius: Double? = null,
     radiusScale: Double = 1.0,
   ): GeometryData? {
     val validEdges = edges.filter { it.first in points.indices && it.second in points.indices }
@@ -321,12 +355,26 @@ internal object RenderSceneEdgeGeometry {
       // as disappearing/dotted lines while orbiting.  Move it a tiny amount
       // along the average adjacent face normal; it remains depth-tested and
       // is still hidden by genuinely occluding geometry.
-      val edgeWallAxis = edge.wallAxis ?: if (wallAxisStart != null && wallAxisEnd != null) {
+      // A curved wall's chord is only its authored endpoint reference. It is
+      // never a valid face normal for edge lifting; use the radial arc offset
+      // below and deliberately ignore any chord axis attached to the edge.
+      val edgeWallAxis = if (wallArcCenter != null) {
+        null
+      } else edge.wallAxis ?: if (wallAxisStart != null && wallAxisEnd != null) {
         WallAxis(wallAxisStart, wallAxisEnd)
       } else {
         null
       }
-      val surfaceOffset = if (wallEdgePass && projectionMode != "section" && edgeWallAxis != null) {
+      val surfaceOffset = if (wallEdgePass && projectionMode != "section" &&
+        wallArcCenter != null && wallArcRadius != null
+      ) {
+        stableCurvedWallEdgeOffset(
+          sourceFirst,
+          sourceSecond,
+          wallArcCenter,
+          wallArcRadius,
+        )
+      } else if (wallEdgePass && projectionMode != "section" && edgeWallAxis != null) {
         stableWallEdgeOffset(sourceFirst, sourceSecond, edgeWallAxis.start, edgeWallAxis.end)
       } else {
         edgeSurfaceOffset(

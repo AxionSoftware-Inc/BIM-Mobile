@@ -497,9 +497,17 @@ extension _ViewerWorkspaceInteractions on _ViewerHomePageState {
         }
         return;
       case RenderSceneInteractionMode.addStair:
-        _handleSceneHover(details);
-        if (_stairTool.hasRun) {
+        // Stair paths are tap-to-place points, not one continuous drag.  The
+        // viewport normally routes this mode through onSceneTap; keep this
+        // guard for native/fallback gesture implementations that still emit
+        // a drag end so an incomplete L/U path can never be committed.
+        if (_stairTool.hasCompleteLayout) {
           await _commitStairDraft();
+        } else if (mounted) {
+          _updateViewportState(() {
+            _editStatusMessage =
+                'Stair path is incomplete: add ${_stairTool.requiredPointCount - _stairTool.pathPoints.length} more point(s).';
+          });
         }
         return;
       case RenderSceneInteractionMode.select:

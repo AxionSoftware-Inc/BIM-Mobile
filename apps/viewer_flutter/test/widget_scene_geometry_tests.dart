@@ -144,6 +144,183 @@ void registerSceneGeometryTests() {
     expect(created.metadata['footprint_mode'], 'picked_wall_polygon');
   });
 
+  test('fallback keeps curved walls semantic and cuts curved openings',
+      () async {
+    final base = parseRenderSceneJson(
+      File('test/fixtures/render_scene_sample.json').readAsStringSync(),
+      source: 'curved fallback test',
+    ).scene!;
+    const geometry = WallArcGeometry(
+      center: RenderScenePoint(x: 4, y: 4, z: 0),
+      start: RenderScenePoint(x: 4, y: 0, z: 0),
+      end: RenderScenePoint(x: 8, y: 4, z: 0),
+      radiusMeters: 4,
+      sweepRadians: math.pi / 2,
+      points: <RenderScenePoint>[],
+    );
+    final created = await const SceneMutationService().createCurvedWall(
+      CreateCurvedWallRequest(
+        scene: base,
+        geometry: geometry,
+        baseLevelId: 1,
+        topLevelId: 2,
+        heightMeters: 3,
+        thicknessMeters: 0.3,
+      ),
+    );
+    expect(created.success, isTrue);
+    final curved = created.scene!.objectById(created.createdElementId)!;
+    expect(curved.kindKey, 'wall');
+    expect(
+      RenderSceneEditor.wallCenterlinePoints(curved).length,
+      greaterThan(3),
+    );
+    final opened = RenderSceneEditor.addWindow(
+      scene: created.scene!,
+      hostWall: curved,
+      offsetMeters: 3.0,
+      widthMeters: 1.0,
+      heightMeters: 1.2,
+      sillHeightMeters: 0.9,
+      levelId: 1,
+    );
+    final rebuiltWall = opened.objectById(curved.elementId)!;
+    final opening = opened.objects.lastWhere(
+      (object) => object.kindKey == 'window',
+    );
+    expect(rebuiltWall.mesh.indices.length, greaterThan(0));
+    expect(opening.metadata['host_wall_id'], curved.elementId);
+    expect(rebuiltWall.featureEdges, isNotEmpty);
+  });
+
+  test('floor and ceiling profiles follow a semantic curved wall', () async {
+    var scene = parseRenderSceneJson(
+      File('test/fixtures/render_scene_sample.json').readAsStringSync(),
+      source: 'curved surface profile test',
+    ).scene!;
+    const geometry = WallArcGeometry(
+      center: RenderScenePoint(x: 0, y: 0, z: 0),
+      start: RenderScenePoint(x: 5, y: 0, z: 0),
+      end: RenderScenePoint(x: 0, y: 5, z: 0),
+      radiusMeters: 5,
+      sweepRadians: math.pi / 2,
+      points: <RenderScenePoint>[],
+    );
+    final curvedResult = await const SceneMutationService().createCurvedWall(
+      CreateCurvedWallRequest(
+        scene: scene,
+        geometry: geometry,
+        baseLevelId: 1,
+        topLevelId: 2,
+        heightMeters: 3,
+        thicknessMeters: 0.2,
+      ),
+    );
+    expect(curvedResult.success, isTrue);
+    scene = curvedResult.scene!;
+    final wallIds = <int>[curvedResult.createdElementId!];
+    const straightEdges = <({RenderScenePoint start, RenderScenePoint end})>[
+      (
+        start: RenderScenePoint(x: 0, y: 5, z: 0),
+        end: RenderScenePoint(x: 0, y: 8, z: 0),
+      ),
+      (
+        start: RenderScenePoint(x: 0, y: 8, z: 0),
+        end: RenderScenePoint(x: 5, y: 8, z: 0),
+      ),
+      (
+        start: RenderScenePoint(x: 5, y: 8, z: 0),
+        end: RenderScenePoint(x: 5, y: 0, z: 0),
+      ),
+    ];
+    for (final edge in straightEdges) {
+      scene = RenderSceneEditor.addWall(
+        scene: scene,
+        start: edge.start,
+        end: edge.end,
+        levelId: 1,
+        topLevelId: 2,
+      );
+      wallIds.add(
+        scene.objects
+            .lastWhere((object) => object.kindKey == 'wall')
+            .elementId!,
+      );
+    }
+    final walls = wallIds
+        .map(scene.objectById)
+        .whereType<RenderSceneObject>()
+        .toList(growable: false);
+    final polygon = RenderSceneEditor.surfacePolygonForWalls(walls);
+    expect(polygon, isNotNull);
+    expect(
+      polygon!.any(
+        (point) =>
+            point.distanceTo(
+              const RenderScenePoint(x: 3.5355339, y: 3.5355339, z: 0),
+            ) <
+            0.2,
+      ),
+      isTrue,
+    );
+
+    final floor = RenderSceneEditor.addFloorFromWalls(
+      scene: scene,
+      walls: walls,
+      levelId: 1,
+    );
+    final ceiling = RenderSceneEditor.addCeilingFromWalls(
+      scene: floor,
+      walls: walls,
+      levelId: 1,
+    );
+    for (final kind in <String>['floor', 'ceiling']) {
+      final object = ceiling.objects.lastWhere((item) => item.kindKey == kind);
+      final points = (object.metadata['footprint_points'] as List)
+          .map(RenderScenePoint.fromJson)
+          .whereType<RenderScenePoint>();
+      expect(
+        points.any(
+          (point) =>
+              point.distanceTo(
+                const RenderScenePoint(x: 3.5355339, y: 3.5355339, z: 0),
+              ) <
+              0.2,
+        ),
+        isTrue,
+      );
+    }
+  });
+
+  test('fallback roof accepts a freeform footprint and preserves roof settings',
+      () {
+    final scene = parseRenderSceneJson(
+      File('test/fixtures/render_scene_sample.json').readAsStringSync(),
+      source: 'freeform roof test',
+    ).scene!;
+    final roof = RenderSceneEditor.addRoofFromPolygon(
+      scene: scene,
+      polygon: const <RenderScenePoint>[
+        RenderScenePoint(x: 0, y: 0, z: 0),
+        RenderScenePoint(x: 6, y: 0, z: 0),
+        RenderScenePoint(x: 6, y: 2, z: 0),
+        RenderScenePoint(x: 3, y: 4, z: 0),
+        RenderScenePoint(x: 0, y: 2, z: 0),
+      ],
+      levelId: 1,
+      roofType: 1,
+      slopeDegrees: 30,
+      overhangMeters: 0.25,
+    );
+    final created =
+        roof.objects.lastWhere((object) => object.kindKey == 'roof');
+    expect(created.mesh.indices, isNotEmpty);
+    expect(created.metadata['roof_type'], 1);
+    expect(created.metadata['slope_degrees'], 30);
+    expect(created.metadata['overhang_meters'], 0.25);
+    expect(created.metadata['footprint_points'], hasLength(5));
+  });
+
   test('Auto Room ignores an open wall boundary', () {
     final scene = parseRenderSceneJson(
       File('test/fixtures/render_scene_sample.json').readAsStringSync(),

@@ -103,6 +103,28 @@ widgets. Stateful tools such as `TrimExtendToolController` only collect an
 intent and preview it; `AuthoringCommandService` forwards the committed
 operation through `ViewerAuthoringGateway` to the native transaction.
 
+### Current authoring contracts
+
+- Wall and hosted opening mutations are semantic engine transactions. Complex
+  joins and openings are regenerated from the same wall graph, and the
+  Flutter fallback consumes the native curve/opening contract instead of
+  inventing a second aperture model.
+- Floor, ceiling and roof share the profile contract. Room-bound creation is a
+  convenience source; a freeform polygon is persisted as the authoritative
+  footprint and is used by both native and fallback plan rendering.
+- A stair is one semantic element. Its path, layout kind, landing depth and
+  railing flag are persisted together, so Straight/L/U geometry and Inspector
+  edits cannot fragment into unrelated flight objects.
+- The plan painter follows one depth order: surfaces/patterns, joined wall
+  footprint, opening symbols and feature edges. Sub-pixel passive outlines are
+  suppressed to reduce zoom-induced flicker.
+
+`viewer_viewport_stair_editing.dart` is the first dedicated viewport authoring
+coordinator. `viewer_viewport_input.dart` is now an event router plus wall and
+level adapters; surface, wall editing and workspace interaction remain separate
+parts. New feature families must add a coordinator/controller and a gateway
+command rather than growing the app shell or duplicating FFI calls.
+
 ## Native C++ module ownership
 
 ```text

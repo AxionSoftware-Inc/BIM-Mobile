@@ -26,6 +26,19 @@ abstract interface class ViewerElementCreationGateway {
     required int treadCount,
   });
 
+  Future<RenderSceneLoadResult> createStairLayout({
+    required int baseLevelId,
+    required int topLevelId,
+    required List<RenderScenePoint> pathPoints,
+    required double widthMeters,
+    required double totalRiseMeters,
+    required int riserCount,
+    required int treadCount,
+    required double landingDepthMeters,
+    required int layoutKind,
+    required bool railingEnabled,
+  });
+
   Future<RenderSceneLoadResult> createDoor({
     required String name,
     required int hostWallId,
@@ -41,6 +54,18 @@ abstract interface class ViewerElementCreationGateway {
     required double widthMeters,
     required double heightMeters,
     required double sillHeightMeters,
+  });
+
+  /// Creates a native column instance. Family adapters map their evaluated
+  /// type dimensions to this compact analytical element instead of storing a
+  /// separate mesh/object graph for every instance.
+  Future<RenderSceneLoadResult> createColumn({
+    required int levelId,
+    required RenderScenePoint position,
+    required double widthMeters,
+    required double depthMeters,
+    required double heightMeters,
+    int materialId = 0,
   });
 
   Future<RenderSceneLoadResult> createProfile({

@@ -214,7 +214,6 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
 
   bool get _usesDirectAuthoringDrag => switch (widget.interactionMode) {
         RenderSceneInteractionMode.addWall ||
-        RenderSceneInteractionMode.addStair ||
         RenderSceneInteractionMode.addDoor ||
         RenderSceneInteractionMode.addWindow =>
           true,

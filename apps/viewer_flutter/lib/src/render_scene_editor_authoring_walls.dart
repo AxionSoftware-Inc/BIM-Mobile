@@ -116,10 +116,131 @@ Map<String, Object?> _buildWallObject({
   };
 }
 
+Map<String, Object?> _buildCurvedWallObject({
+  required int elementId,
+  required RenderScenePoint start,
+  required RenderScenePoint end,
+  required RenderScenePoint center,
+  required double radiusMeters,
+  required double startAngleRadians,
+  required double sweepRadians,
+  required double heightMeters,
+  required double thicknessMeters,
+  required int? levelId,
+  Map<String, Object?> metadata = const <String, Object?>{},
+  int revision = 1,
+  String materialCategory = 'structural',
+}) {
+  final segmentCount =
+      ((radiusMeters.abs() * sweepRadians.abs()) / 0.28).ceil().clamp(12, 96);
+  final points = <RenderScenePoint>[];
+  for (var index = 0; index <= segmentCount; index += 1) {
+    final t = index / segmentCount;
+    final angle = startAngleRadians + sweepRadians * t;
+    points.add(
+      RenderScenePoint(
+        x: center.x + radiusMeters * math.cos(angle),
+        y: center.y + radiusMeters * math.sin(angle),
+        z: start.z,
+      ),
+    );
+  }
+  // Preserve authored endpoints when they are valid; this keeps opening
+  // placement and selection stable after a JSON round-trip.
+  if (points.length >= 2) {
+    points[0] = start;
+    points[points.length - 1] = end;
+  }
+  final geometry = _WallGeometry(
+    start: points.first,
+    end: points.last,
+    thickness: thicknessMeters,
+    centerline: points,
+  );
+  final mesh = _buildCurvedWallMeshWithOpenings(
+    geometry: geometry,
+    heightMeters: heightMeters,
+    openings: const <_OpeningCutSpec>[],
+  );
+  final bounds = mesh.bounds;
+  final mergedMetadata = <String, Object?>{
+    ...metadata,
+    'axis_start': start.toJson(),
+    'axis_end': end.toJson(),
+    'start_x': start.x,
+    'start_y': start.y,
+    'end_x': end.x,
+    'end_y': end.y,
+    'height_meters': heightMeters,
+    'thickness_meters': thicknessMeters,
+    'curve_points': points.map((point) => '${point.x},${point.y}').join(';'),
+    'curve_kind': 'arc',
+    'curve_center_x': center.x,
+    'curve_center_y': center.y,
+    'curve_radius_meters': radiusMeters,
+    'curve_start_angle_radians': startAngleRadians,
+    'curve_sweep_radians': sweepRadians,
+    'level_locked': metadata['level_locked'] ?? true,
+    'kind': 'wall',
+  };
+  return <String, Object?>{
+    'element_id': elementId,
+    'kind': 'Wall',
+    'level_id': levelId,
+    'selectable': true,
+    'visible_by_default': true,
+    'revision': revision,
+    'bounds': bounds.toJson(),
+    'mesh': mesh.mesh,
+    'material_category': materialCategory,
+    'metadata': mergedMetadata,
+  };
+}
+
 List<Map<String, Object?>> _openingContourFeatureEdges(
   _WallGeometry geometry,
   List<_OpeningCutSpec> openings,
 ) {
+  if (geometry.isCurved) {
+    final edges = <Map<String, Object?>>[];
+    Map<String, Object?> edge(RenderScenePoint start, RenderScenePoint end) =>
+        <String, Object?>{
+          'role': 'opening_contour',
+          'start': start.toJson(),
+          'end': end.toJson(),
+        };
+    for (final opening in openings) {
+      final baseZ = geometry.start.z;
+      for (final faceSign in <double>[-1.0, 1.0]) {
+        RenderScenePoint pointAt(double offset, double elevation) {
+          final point = _pointAlongWall(geometry, offset);
+          final localTangent = _wallTangentAtOffset(geometry, offset);
+          final localNormal = RenderScenePoint(
+            x: -localTangent.y,
+            y: localTangent.x,
+            z: 0.0,
+          );
+          return RenderScenePoint(
+            x: point.x + localNormal.x * geometry.thickness * 0.5 * faceSign,
+            y: point.y + localNormal.y * geometry.thickness * 0.5 * faceSign,
+            z: baseZ + elevation,
+          );
+        }
+
+        final lowerLeft = pointAt(opening.startOffset, opening.bottomZ);
+        final lowerRight = pointAt(opening.endOffset, opening.bottomZ);
+        final upperRight = pointAt(opening.endOffset, opening.topZ);
+        final upperLeft = pointAt(opening.startOffset, opening.topZ);
+        edges.addAll(<Map<String, Object?>>[
+          edge(lowerLeft, lowerRight),
+          edge(lowerRight, upperRight),
+          edge(upperRight, upperLeft),
+          edge(upperLeft, lowerLeft),
+        ]);
+      }
+    }
+    return edges;
+  }
   final axis = geometry.end - geometry.start;
   final planLength = math.sqrt((axis.x * axis.x) + (axis.y * axis.y));
   if (!planLength.isFinite || planLength <= 1e-9) {
@@ -248,8 +369,15 @@ void _rebuildAllWallObjects(List<Map<String, Object?>> objects) {
       openings: openings,
       profilePolygon: _wallProfilePolygon(wall, wallEntries),
     );
-    wall.objectMap['mesh'] = rebuilt.mesh;
-    wall.objectMap['bounds'] = rebuilt.bounds.toJson();
+    final finalRebuilt = wall.geometry.isCurved
+        ? _buildCurvedWallMeshWithOpenings(
+            geometry: wall.geometry,
+            heightMeters: wall.heightMeters,
+            openings: openings,
+          )
+        : rebuilt;
+    wall.objectMap['mesh'] = finalRebuilt.mesh;
+    wall.objectMap['bounds'] = finalRebuilt.bounds.toJson();
     final existingMetadata = wall.objectMap['metadata'] is Map
         ? Map<String, Object?>.from(
             (wall.objectMap['metadata'] as Map).cast<String, Object?>(),

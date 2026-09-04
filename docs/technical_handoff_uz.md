@@ -7,7 +7,7 @@ Bu hujjat kontekst limiti yoki agent almashganda loyihani uzmasdan davom ettiris
 Maqsad **"Revitning planshetdagi nusxasi"** emas. Maqsad — 12–14" Android/iPad planshet, stylus va ixtiyoriy klaviaturada ishlaydigan, offline-first, yengil arxitektura BIM authoring:
 
 - ko‘p qavatli arxitektura modeli: level, wall, door, window, stair, floor,
-  ceiling, flat roof va slope bilan ishlaydigan AutoFootprint roof;
+  ceiling, freeform profile va flat/slope bilan ishlaydigan AutoFootprint roof;
 - professional level constraint va authoritative save/reload;
 - plan/elevation/3D, touch/stylus selection, drag, pan/orbit/zoom;
 - IFC import/export va PDF/documentation eksporti.
@@ -51,10 +51,13 @@ Engine-first vertikal oqimlar:
 - Wall: base/top level constraint bilan create, auto-join, snapshot.
 - Door/window: host wall, level lock va vertical offset.
 - Level: Inspector input va direct edit; siljiganda bog‘langan wall/opening/surface yangilanadi.
-- Floor/ceiling/roof: profile transaction (rectangle/polyline/pick-wall; flat roof).
-- Stair: straight-run V1. Base/top level, width, run, tread/riser count. Flutter `Stair` toolida ikki nuqta qo‘yiladi; top leveldan rise olinadi. Base yoki top level siljiganda stair rise va mesh qayta quriladi.
-
-Stair cheklovi: hozircha straight run. L/U-shape, landing, railing, stair edit/type catalog keyingi milestone.
+- Floor/ceiling/roof: one profile transaction (rectangle/polyline/pick-wall);
+  freeform polygon boundary is authoritative for native and fallback rendering,
+  while AutoFootprint remains a convenience source.
+- Stair: one semantic path transaction with Straight/L/U layouts, landing,
+  optional railing and Inspector editing. Base/top level, width and rise
+  constraints remain authoritative in the engine; Flutter only collects the
+  path and presents the result.
 
 ## Interaction qoidasi
 
@@ -131,7 +134,11 @@ Sabab: touch gesture finish, coordinate conversion, FFI commit va snapshot refre
 
 ## Hozirgi qarorlar va ehtiyot bo‘ladigan joylar
 
-- `ViewerApp` hali katta. Tool controllerlar ajratilgan, ammo keyingi katta ishda `ToolCoordinator`/command adapterga bo‘lish kerak.
+- `ViewerApp` composition root sifatida part-based qolgan. Stair input va
+  native transaction oqimi alohida `viewer_viewport_stair_editing.dart`
+  coordinatorga chiqarilgan; wall/surface/Inspector oqimlari ham alohida
+  partlarda. Keyingi feature code `viewer_app.dart` yoki umumiy viewport
+  routeriga qo‘shilmaydi.
 - Eski `RenderSceneEditor` fallback production mutatsiya qilmasligi kerak. Yangi object tool engine API’siz qo‘shilmasin.
 - User worktree’da quyidagi untracked fayllar bo‘lishi mumkin; ularga tegmang: `docs/architecture_blockers_uz.md`, `docs/project_overview_uz.md`.
 - Android va macOS renderer parity har visual/interaction feature uchun tekshirilsin.
@@ -139,12 +146,12 @@ Sabab: touch gesture finish, coordinate conversion, FFI commit va snapshot refre
 
 ## Keyingi roadmap
 
-1. Stair V1 smoke: Android/macOS’da create → level move → save/reload → select/Inspector.
-2. Stair V1.1: landing va L/U-shape (bitta transaction profilidan); railing keyin.
-3. Performance renderer module: streaming, LOD, instancing, batch/material cache.
-4. Real 30 qavat architecture benchmark: faqat model, ichki bezaksiz; 8 GB RAM va 12 GB RAM qurilmalarda o‘lchash.
-5. Floor/ceiling/roof level contractini stair darajasida uniform qilish.
-6. IFC import/export, PDF sheet/documentation.
+1. Android stair smoke: create → level move → save/reload → select/Inspector
+   for Straight/L/U and railing.
+2. Performance renderer module: streaming, LOD, instancing, batch/material
+   cache, followed by real 8 GB/12 GB tablet RAM/FPS/thermal acceptance.
+3. Final hidden-line/cut-face visual tuning on native and fallback projections.
+4. IFC import/export and PDF sheet/documentation.
 
 ## Qabul mezoni
 

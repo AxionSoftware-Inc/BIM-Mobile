@@ -187,6 +187,23 @@ class AuthoringCommandService {
         overhangMeters: overhangMeters,
       );
 
+  Future<RenderSceneLoadResult> updateStairLayout({
+    required int stairId,
+    required List<RenderScenePoint> pathPoints,
+    required double widthMeters,
+    required double landingDepthMeters,
+    required int layoutKind,
+    required bool railingEnabled,
+  }) =>
+      _requireRepository().updateStairLayout(
+        stairId: stairId,
+        pathPoints: pathPoints,
+        widthMeters: widthMeters,
+        landingDepthMeters: landingDepthMeters,
+        layoutKind: layoutKind,
+        railingEnabled: railingEnabled,
+      );
+
   Future<RenderSceneLoadResult> deleteElement(int elementId) =>
       _requireRepository().deleteElement(elementId: elementId);
 
@@ -224,6 +241,31 @@ class AuthoringCommandService {
         treadCount: treadCount,
       );
 
+  Future<RenderSceneLoadResult> createStairLayout({
+    required int baseLevelId,
+    required int topLevelId,
+    required List<RenderScenePoint> pathPoints,
+    required double widthMeters,
+    required double totalRiseMeters,
+    required int riserCount,
+    required int treadCount,
+    required double landingDepthMeters,
+    required int layoutKind,
+    required bool railingEnabled,
+  }) =>
+      _requireCreationGateway().createStairLayout(
+        baseLevelId: baseLevelId,
+        topLevelId: topLevelId,
+        pathPoints: pathPoints,
+        widthMeters: widthMeters,
+        totalRiseMeters: totalRiseMeters,
+        riserCount: riserCount,
+        treadCount: treadCount,
+        landingDepthMeters: landingDepthMeters,
+        layoutKind: layoutKind,
+        railingEnabled: railingEnabled,
+      );
+
   Future<RenderSceneLoadResult> createDoor({
     required String name,
     required int hostWallId,
@@ -254,6 +296,42 @@ class AuthoringCommandService {
         widthMeters: widthMeters,
         heightMeters: heightMeters,
         sillHeightMeters: sillHeightMeters,
+      );
+
+  Future<RenderSceneLoadResult> createColumn({
+    required int levelId,
+    required RenderScenePoint position,
+    required double widthMeters,
+    required double depthMeters,
+    required double heightMeters,
+    int materialId = 0,
+  }) =>
+      _requireCreationGateway().createColumn(
+        levelId: levelId,
+        position: position,
+        widthMeters: widthMeters,
+        depthMeters: depthMeters,
+        heightMeters: heightMeters,
+        materialId: materialId,
+      );
+
+  Future<RenderSceneLoadResult> setElementFamilyReference({
+    required int elementId,
+    required String familyAssetId,
+    required String familyName,
+    required String familyTypeId,
+    required String familyTypeName,
+    required String familyCategory,
+    String familyAssetPath = '',
+  }) =>
+      _requireRepository().setElementFamilyReference(
+        elementId: elementId,
+        familyAssetId: familyAssetId,
+        familyName: familyName,
+        familyTypeId: familyTypeId,
+        familyTypeName: familyTypeName,
+        familyCategory: familyCategory,
+        familyAssetPath: familyAssetPath,
       );
 
   Future<RenderSceneLoadResult> createProfile({

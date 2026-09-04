@@ -45,6 +45,13 @@ TbeApiStatusCode null_handle_error(TbeEngineHandle* handle) {
     return TBE_API_INVALID_ARGUMENT;
 }
 
+TbeApiStatusCode invalid_argument_error(TbeEngineHandle* handle, const char* message) {
+    if (handle != nullptr) {
+        handle->last_error = message == nullptr ? "invalid argument" : message;
+    }
+    return TBE_API_INVALID_ARGUMENT;
+}
+
 bool is_valid_performance_profile(int value) {
     return value >= static_cast<int>(tbe::api::PerformanceProfile::BatterySaver) &&
         value <= static_cast<int>(tbe::api::PerformanceProfile::Performance);
@@ -565,6 +572,32 @@ TbeApiStatusCode tbe_set_element_assembly(TbeEngineHandle* handle, uint64_t elem
     return apply_result(handle, handle->session->set_element_assembly(element_id, assembly_id));
 }
 
+TbeApiStatusCode tbe_set_element_family_reference(
+    TbeEngineHandle* handle,
+    uint64_t element_id,
+    const char* family_asset_id,
+    const char* family_name,
+    const char* family_type_id,
+    const char* family_type_name,
+    const char* family_category,
+    const char* family_asset_path
+) {
+    if (handle == nullptr || handle->session == nullptr || family_asset_id == nullptr ||
+        family_name == nullptr || family_type_id == nullptr || family_type_name == nullptr ||
+        family_category == nullptr) {
+        return null_handle_error(handle);
+    }
+    return apply_result(handle, handle->session->set_element_family_reference(
+        element_id,
+        family_asset_id,
+        family_name,
+        family_type_id,
+        family_type_name,
+        family_category,
+        family_asset_path == nullptr ? std::string{} : std::string{family_asset_path}
+    ));
+}
+
 TbeApiStatusCode tbe_update_roof_properties(
     TbeEngineHandle* handle, uint64_t roof_id, int roof_type,
     int has_slope, double slope_degrees, int has_overhang, double overhang_meters
@@ -643,6 +676,33 @@ TbeApiStatusCode tbe_create_window(
     return apply_result(handle, result);
 }
 
+TbeApiStatusCode tbe_create_column(
+    TbeEngineHandle* handle,
+    uint64_t level_id,
+    TbeVec2 position,
+    double width_meters,
+    double depth_meters,
+    double height_meters,
+    uint64_t material_id,
+    uint64_t* out_column_id
+) {
+    if (handle == nullptr || handle->session == nullptr || out_column_id == nullptr) {
+        return null_handle_error(handle);
+    }
+    const auto result = handle->session->create_column(
+        level_id,
+        tbe::api::Vec2{.x = position.x, .y = position.y},
+        width_meters,
+        depth_meters,
+        height_meters,
+        material_id
+    );
+    if (result.ok() && result.value.has_value()) {
+        *out_column_id = result.value->value;
+    }
+    return apply_result(handle, result);
+}
+
 TbeApiStatusCode tbe_create_stair(
     TbeEngineHandle* handle, uint64_t base_level_id, uint64_t top_level_id,
     TbeVec2 start, TbeVec2 direction, double width_meters, double total_rise_meters,
@@ -661,6 +721,79 @@ TbeApiStatusCode tbe_create_stair(
         *out_stair_id = result.value->value;
     }
     return apply_result(handle, result);
+}
+
+TbeApiStatusCode tbe_create_stair_layout(
+    TbeEngineHandle* handle,
+    uint64_t base_level_id,
+    uint64_t top_level_id,
+    const TbeVec2* path_points,
+    size_t path_count,
+    double width_meters,
+    double total_rise_meters,
+    int riser_count,
+    int tread_count,
+    double landing_depth_meters,
+    int layout_kind,
+    int railing_enabled,
+    uint64_t* out_stair_id
+) {
+    if (handle == nullptr || handle->session == nullptr || path_points == nullptr || out_stair_id == nullptr) {
+        return null_handle_error(handle);
+    }
+    std::vector<tbe::api::Vec2> points;
+    points.reserve(path_count);
+    for (size_t index = 0; index < path_count; ++index) {
+        points.push_back(tbe::api::Vec2{.x = path_points[index].x, .y = path_points[index].y});
+    }
+    const auto result = handle->session->create_stair_layout(
+        base_level_id,
+        top_level_id,
+        points,
+        width_meters,
+        total_rise_meters,
+        riser_count,
+        tread_count,
+        landing_depth_meters,
+        layout_kind,
+        railing_enabled != 0,
+        0
+    );
+    if (result.ok() && result.value.has_value()) {
+        *out_stair_id = result.value->value;
+    }
+    return apply_result(handle, result);
+}
+
+TbeApiStatusCode tbe_update_stair_layout(
+    TbeEngineHandle* handle,
+    uint64_t stair_id,
+    const TbeVec2* path_points,
+    size_t path_count,
+    double width_meters,
+    double landing_depth_meters,
+    int layout_kind,
+    int railing_enabled
+) {
+    if (handle == nullptr || handle->session == nullptr) {
+        return null_handle_error(handle);
+    }
+    if (path_count > 0 && path_points == nullptr) {
+        return invalid_argument_error(handle, "stair path points are missing");
+    }
+    std::vector<tbe::api::Vec2> points;
+    points.reserve(path_count);
+    for (size_t index = 0; index < path_count; ++index) {
+        points.push_back(tbe::api::Vec2{.x = path_points[index].x, .y = path_points[index].y});
+    }
+    return apply_result(handle, handle->session->update_stair_layout(
+        stair_id,
+        points,
+        width_meters,
+        landing_depth_meters,
+        layout_kind,
+        railing_enabled != 0
+    ));
 }
 
 TbeApiStatusCode tbe_set_opening_level_lock(TbeEngineHandle* handle, uint64_t opening_id, int locked) {

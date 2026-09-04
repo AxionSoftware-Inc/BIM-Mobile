@@ -13,6 +13,8 @@ import android.graphics.Typeface
 import android.os.Handler
 import android.os.Looper
 import android.os.Process
+import android.os.Build
+import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
 import android.view.Choreographer
@@ -403,6 +405,7 @@ internal class RenderSceneFilamentHostView(
     var phaseStartedNanos = 0L
     var previousFrameNanos = 0L
     var gcCountAtStart: Long? = null
+    var maxThermalStatus = -1
     val frameIntervalsMs = linkedMapOf<String, MutableList<Double>>()
     val cpuSubmitMs = linkedMapOf<String, MutableList<Double>>()
 
@@ -431,6 +434,7 @@ internal class RenderSceneFilamentHostView(
   }
 
   private val renderSurface = TextureView(context)
+  private val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
   private val selectionOverlay = NativeSelectionOverlay(context)
   private val statusView = TextView(context)
   private val choreographer = Choreographer.getInstance()
@@ -2055,6 +2059,12 @@ internal class RenderSceneFilamentHostView(
       if (intervalMs in 0.1..1000.0) benchmark.samples(benchmark.frameIntervalsMs, phase).add(intervalMs)
     }
     benchmark.samples(benchmark.cpuSubmitMs, phase).add(submitMs)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+      benchmark.maxThermalStatus = max(
+        benchmark.maxThermalStatus,
+        powerManager?.currentThermalStatus ?: PowerManager.THERMAL_STATUS_NONE,
+      )
+    }
     benchmark.previousFrameNanos = frameTimeNanos
   }
 
@@ -2110,7 +2120,8 @@ internal class RenderSceneFilamentHostView(
         "drawCalls=${renderables.size + faceBatches.size + instanceFaceGroups.size + edgeBatches.size} materials=$materialCount " +
         "loadedChunks=${if (nativeBimCache != null) nativeCacheResidentChunks.size else faceBatches.size} " +
         "visibleChunks=${faceBatches.count { it.attached }} estimatedGpuBufferBytes=$estimatedGpuBufferBytes " +
-        "javaHeapMb=${processMemory.format(1)} nativeHeapMb=${nativeHeapMb.format(1)} gcDelta=$gcDelta",
+        "javaHeapMb=${processMemory.format(1)} nativeHeapMb=${nativeHeapMb.format(1)} gcDelta=$gcDelta " +
+        "thermalMaxStatus=${benchmark.maxThermalStatus}",
     )
     rendererBenchmark = null
   }
@@ -3516,8 +3527,27 @@ internal class RenderSceneFilamentHostView(
     // physical corners and opening reveals do.
     val architecturalWallEdges = stableColumnEdges
     val wallAxis = if (wallEdges) wallAxisEndpoints(objectData) else null
+    val isCurvedWall = wallEdges && objectData.metadata["curve_kind"] == "arc"
+    val wallArcCenter = if (isCurvedWall) {
+      val centerX = objectData.metadata["curve_center_x"]?.toDoubleOrNull()
+      val centerY = objectData.metadata["curve_center_y"]?.toDoubleOrNull()
+      if (centerX != null && centerY != null && centerX.isFinite() && centerY.isFinite()) {
+        ScenePoint(centerX, 0.0, -centerY)
+      } else {
+        null
+      }
+    } else {
+      null
+    }
+    val wallArcRadius = if (isCurvedWall) {
+      objectData.metadata["curve_radius_meters"]?.toDoubleOrNull()
+        ?.takeIf { it.isFinite() && it > 1.0e-9 }
+    } else {
+      null
+    }
+    val renderWallAxis = if (isCurvedWall) null else wallAxis
     val wallFaceEdges = if (wallEdges && projectionMode != "section" && !hasAuthoritativeFeatureEdges) {
-      wallAxis?.let { (axisStart, axisEnd) ->
+      renderWallAxis?.let { (axisStart, axisEnd) ->
         RenderSceneEdgeTopology.wallFaceEdges(
           points,
           architecturalWallEdges,
@@ -3542,8 +3572,10 @@ internal class RenderSceneFilamentHostView(
       wallEdgePass = wallEdges,
       wallJunctionEdges = wallEdges && isSectionLike,
       wallJunctionElevations = relevantJunctions,
-      wallAxisStart = wallAxis?.start,
-      wallAxisEnd = wallAxis?.end,
+      wallAxisStart = renderWallAxis?.start,
+      wallAxisEnd = renderWallAxis?.end,
+      wallArcCenter = wallArcCenter,
+      wallArcRadius = wallArcRadius,
     ) ?: return null
     if (!clipVolume.active && elementId != null) {
       edgeGeometryCache[elementId] = CachedEdgeGeometry(
@@ -5807,6 +5839,11 @@ internal class RenderSceneFilamentHostView(
     "residentMemoryMb" to residentMemoryMb,
     "threadCount" to nativeThreadCount,
     "cpuCores" to Runtime.getRuntime().availableProcessors(),
+    "thermalStatus" to if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+      powerManager?.currentThermalStatus ?: PowerManager.THERMAL_STATUS_NONE
+    } else {
+      -1
+    },
   )
 
   private fun sampleTelemetry() {
@@ -6923,14 +6960,15 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
           break
         }
       }
-      val centerX = (left + right) * 0.5f
-      val centerY = (top + bottom) * 0.5f
+      // A projected AABB is only a broad-phase accelerator. It is not a
+      // selectable surface: accepting it after the triangle test turns empty
+      // space near a wall into a wall tap, especially on a tablet where the
+      // old 12dp padding is visually large. The live-camera ray is the primary
+      // authority; this overlay fallback may only recover an actual projected
+      // triangle hit.
+      if (!triangleHit) continue
       val area = (right - left) * (bottom - top)
-      val score = if (triangleHit) {
-        area.toDouble() * 0.001
-      } else {
-        kotlin.math.hypot(point.x - centerX, point.y - centerY).toDouble() + area * 0.00001
-      }
+      val score = area.toDouble() * 0.001
       if (score < bestScore) {
         bestScore = score
         bestId = id
@@ -7342,23 +7380,24 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
    * readable and stable while the plan camera pans or zooms.
    */
   private fun drawPlanWallContours(canvas: Canvas) {
-    // Build one screen-space cut path for the active wall network. Drawing a
-    // separate filled polygon and outline for every wall makes coincident
-    // join edges get rasterized repeatedly; at thin zoom levels those doubled
+    // Build one model-space cut path for the active wall network. Drawing a
+    // separate screen-space polygon for every wall makes coincident join
+    // edges get rasterized repeatedly; at thin zoom levels those doubled
     // pixels shimmer while the plan camera moves. The semantic wall objects
     // remain separate for picking/editing, but the documentation contour is
-    // painted once after a 2D union.
+    // painted once after a model-space union.
     val joinedPath = Path()
     var hasJoinedPath = false
 
     fun addFootprint(profile: List<ScenePoint>): Boolean {
       if (profile.size < 2) return false
-      val projected = profile.mapNotNull(::project)
-      if (projected.size < 2) return false
       val wallPath = Path().apply {
-        moveTo(projected.first().x, projected.first().y)
-        for (point in projected.drop(1)) lineTo(point.x, point.y)
-        if (projected.size >= 3) close()
+        // Plan points are stored as ScenePoint(x, elevation, -sourceY). Keep
+        // the boolean operation in that bounded model coordinate system;
+        // only transform the already-unioned path to screen pixels below.
+        moveTo(profile.first().x.toFloat(), profile.first().z.toFloat())
+        for (point in profile.drop(1)) lineTo(point.x.toFloat(), point.z.toFloat())
+        if (profile.size >= 3) close()
       }
       if (!hasJoinedPath) {
         joinedPath.set(wallPath)
@@ -7418,10 +7457,23 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
       )
     }
     if (!hasJoinedPath) return
-    if (!wireframe) {
-      canvas.drawPath(joinedPath, planWallFill)
+    val origin = project(ScenePoint(0.0, 0.0, 0.0))
+    val unitX = project(ScenePoint(1.0, 0.0, 0.0))
+    val unitZ = project(ScenePoint(0.0, 0.0, 1.0))
+    if (origin == null || unitX == null || unitZ == null) return
+    val modelToScreen = android.graphics.Matrix().apply {
+      setValues(floatArrayOf(
+        unitX.x - origin.x, unitZ.x - origin.x, origin.x,
+        unitX.y - origin.y, unitZ.y - origin.y, origin.y,
+        0f, 0f, 1f,
+      ))
     }
-    canvas.drawPath(joinedPath, planWallOutline)
+    val screenPath = Path()
+    joinedPath.transform(modelToScreen, screenPath)
+    if (!wireframe) {
+      canvas.drawPath(screenPath, planWallFill)
+    }
+    canvas.drawPath(screenPath, planWallOutline)
   }
 
   private fun drawPlanOpeningSymbols(canvas: Canvas) {

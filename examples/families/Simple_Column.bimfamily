@@ -1,0 +1,55 @@
+{
+  "format": "tablet_bim_family",
+  "schema_version": 1,
+  "id": "family-simple-column-v1",
+  "name": "Simple Column",
+  "category": "column",
+  "description": "A compact reusable rectangular column family for project placement smoke tests.",
+  "parameters": [
+    {
+      "id": "width",
+      "label": "Width",
+      "kind": "length",
+      "default": 0.3,
+      "minimum": 0.01
+    },
+    {
+      "id": "depth",
+      "label": "Depth",
+      "kind": "length",
+      "default": 0.3,
+      "minimum": 0.01
+    },
+    {
+      "id": "height",
+      "label": "Height",
+      "kind": "length",
+      "default": 3.2,
+      "minimum": 0.01
+    }
+  ],
+  "types": [
+    {
+      "id": "type-column-300",
+      "name": "300 x 300",
+      "values": {
+        "width": 0.3,
+        "depth": 0.3,
+        "height": 3.2
+      }
+    }
+  ],
+  "features": [
+    {
+      "id": "feature-column-box",
+      "kind": "box",
+      "label": "Column solid",
+      "parameters": {
+        "width": "width",
+        "depth": "depth",
+        "height": "height"
+      }
+    }
+  ],
+  "sketches": []
+}

@@ -667,6 +667,86 @@ extension _TbeViewerApiMethods on TbeViewerApi {
     }
   }
 
+  int createStairLayout(
+    ffi.Pointer<ffi.Void> handle, {
+    required int baseLevelId,
+    required int topLevelId,
+    required List<RenderScenePoint> pathPoints,
+    required double widthMeters,
+    required double totalRiseMeters,
+    required int riserCount,
+    required int treadCount,
+    required double landingDepthMeters,
+    required int layoutKind,
+    required bool railingEnabled,
+  }) {
+    final out = calloc<ffi.Uint64>();
+    final path = calloc<TbeVec2>(pathPoints.length);
+    for (var index = 0; index < pathPoints.length; index += 1) {
+      path[index]
+        ..x = pathPoints[index].x
+        ..y = pathPoints[index].y;
+    }
+    try {
+      _check(
+        handle,
+        _createStairLayout(
+          handle,
+          baseLevelId,
+          topLevelId,
+          path,
+          pathPoints.length,
+          widthMeters,
+          totalRiseMeters,
+          riserCount,
+          treadCount,
+          landingDepthMeters,
+          layoutKind,
+          railingEnabled ? 1 : 0,
+          out,
+        ),
+      );
+      return out.value;
+    } finally {
+      calloc.free(path);
+      calloc.free(out);
+    }
+  }
+
+  void updateStairLayout(
+    ffi.Pointer<ffi.Void> handle, {
+    required int stairId,
+    required List<RenderScenePoint> pathPoints,
+    required double widthMeters,
+    required double landingDepthMeters,
+    required int layoutKind,
+    required bool railingEnabled,
+  }) {
+    final path = calloc<TbeVec2>(pathPoints.length);
+    for (var index = 0; index < pathPoints.length; index += 1) {
+      path[index]
+        ..x = pathPoints[index].x
+        ..y = pathPoints[index].y;
+    }
+    try {
+      _check(
+        handle,
+        _updateStairLayout(
+          handle,
+          stairId,
+          path,
+          pathPoints.length,
+          widthMeters,
+          landingDepthMeters,
+          layoutKind,
+          railingEnabled ? 1 : 0,
+        ),
+      );
+    } finally {
+      calloc.free(path);
+    }
+  }
+
   int createDoor(
     ffi.Pointer<ffi.Void> handle,
     String name,
@@ -726,6 +806,82 @@ extension _TbeViewerApiMethods on TbeViewerApi {
     } finally {
       calloc.free(namePtr);
       calloc.free(out);
+    }
+  }
+
+  int createColumn(
+    ffi.Pointer<ffi.Void> handle, {
+    required int levelId,
+    required double x,
+    required double y,
+    required double widthMeters,
+    required double depthMeters,
+    required double heightMeters,
+    int materialId = 0,
+  }) {
+    final position = calloc<TbeVec2>();
+    final out = calloc<ffi.Uint64>();
+    try {
+      position.ref
+        ..x = x
+        ..y = y;
+      _check(
+        handle,
+        _createColumn(
+          handle,
+          levelId,
+          position.ref,
+          widthMeters,
+          depthMeters,
+          heightMeters,
+          materialId,
+          out,
+        ),
+      );
+      return out.value;
+    } finally {
+      calloc.free(position);
+      calloc.free(out);
+    }
+  }
+
+  void setElementFamilyReference(
+    ffi.Pointer<ffi.Void> handle, {
+    required int elementId,
+    required String familyAssetId,
+    required String familyName,
+    required String familyTypeId,
+    required String familyTypeName,
+    required String familyCategory,
+    String familyAssetPath = '',
+  }) {
+    final assetId = familyAssetId.toNativeUtf8();
+    final name = familyName.toNativeUtf8();
+    final typeId = familyTypeId.toNativeUtf8();
+    final typeName = familyTypeName.toNativeUtf8();
+    final category = familyCategory.toNativeUtf8();
+    final assetPath = familyAssetPath.toNativeUtf8();
+    try {
+      _check(
+        handle,
+        _setElementFamilyReference(
+          handle,
+          elementId,
+          assetId,
+          name,
+          typeId,
+          typeName,
+          category,
+          assetPath,
+        ),
+      );
+    } finally {
+      calloc.free(assetId);
+      calloc.free(name);
+      calloc.free(typeId);
+      calloc.free(typeName);
+      calloc.free(category);
+      calloc.free(assetPath);
     }
   }
 

@@ -5,13 +5,27 @@ class _WallGeometry {
     required this.start,
     required this.end,
     required this.thickness,
+    this.centerline = const <RenderScenePoint>[],
   });
 
   final RenderScenePoint start;
   final RenderScenePoint end;
   final double thickness;
+  final List<RenderScenePoint> centerline;
 
-  double get length => start.distanceTo(end);
+  List<RenderScenePoint> get path =>
+      centerline.length >= 2 ? centerline : <RenderScenePoint>[start, end];
+
+  double get length {
+    final points = path;
+    var total = 0.0;
+    for (var index = 1; index < points.length; index += 1) {
+      total += points[index - 1].distanceTo(points[index]);
+    }
+    return total;
+  }
+
+  bool get isCurved => centerline.length >= 3;
 }
 
 class _OpeningCutSpec {

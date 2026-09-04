@@ -911,6 +911,18 @@ ValidationReport Document::validate_document() const {
             if (stair->width_meters <= 0.0 || stair->total_rise_meters <= 0.0 || stair->total_run_meters <= 0.0 || stair->riser_count <= 0 || stair->tread_count <= 0) {
                 add_issue(report, ValidationSeverity::Error, ValidationIssueCode::WallTooShort, element.id(), "stair dimensions and counts must be positive");
             }
+            const auto minimum_path_points = stair->layout_kind == StairLayoutKind::Straight ? 0U :
+                stair->layout_kind == StairLayoutKind::LShape ? 3U : 4U;
+            if (stair->landing_depth_meters < 0.0 ||
+                (minimum_path_points > 0 && stair->path_points.size() < minimum_path_points)) {
+                add_issue(report, ValidationSeverity::Error, ValidationIssueCode::WallTooShort, element.id(), "stair layout path or landing is invalid");
+            }
+            for (std::size_t point_index = 1; point_index < stair->path_points.size(); ++point_index) {
+                if (line_length(Line2{.start = stair->path_points[point_index - 1], .end = stair->path_points[point_index]}) <= epsilon) {
+                    add_issue(report, ValidationSeverity::Error, ValidationIssueCode::WallTooShort, element.id(), "stair path contains a zero-length flight");
+                    break;
+                }
+            }
             if (find_ptr(stair->base_level_id) == nullptr || find_ptr(stair->base_level_id)->level() == nullptr) {
                 add_issue(report, ValidationSeverity::Error, ValidationIssueCode::LevelMismatch, element.id(), "stair base level does not exist");
             }

@@ -21,7 +21,6 @@ RenderScene _addOpening({
     return scene;
   }
 
-  final axis = geometry.end - geometry.start;
   final axisLength = geometry.length;
   if (axisLength <= 1e-9) {
     return scene;
@@ -32,9 +31,9 @@ RenderScene _addOpening({
   final alongStart = math.max(0.0, clampedOffset - halfWidth);
   final alongEnd = math.min(axisLength, clampedOffset + halfWidth);
 
-  final axisUnit = axis.scale(1.0 / axisLength);
-  final startPoint = geometry.start + axisUnit.scale(alongStart);
-  final endPoint = geometry.start + axisUnit.scale(alongEnd);
+  final axisUnit = _wallTangentAtOffset(geometry, clampedOffset);
+  final startPoint = _pointAlongWall(geometry, alongStart);
+  final endPoint = _pointAlongWall(geometry, alongEnd);
   final wallNormal = RenderScenePoint(x: -axisUnit.y, y: axisUnit.x, z: 0);
   final panelThickness = math.min(
     math.max(geometry.thickness * 0.5, 0.05),
@@ -360,6 +359,9 @@ RenderScene _addHorizontalSystemForPolygon({
   required double thicknessMeters,
   required double baseZ,
   required int? levelId,
+  int? roofType,
+  double? roofSlopeDegrees,
+  double? roofOverhangMeters,
 }) {
   final resolvedLevelId = levelId ?? _primaryLevelId(scene);
   final footprint = polygon
@@ -412,6 +414,9 @@ RenderScene _addHorizontalSystemForPolygon({
       'kind': kind.toLowerCase(),
       'footprint_mode': 'picked_wall_polygon',
       'footprint_points': footprint.map((point) => point.toJson()).toList(),
+      if (roofType != null) 'roof_type': roofType,
+      if (roofSlopeDegrees != null) 'slope_degrees': roofSlopeDegrees,
+      if (roofOverhangMeters != null) 'overhang_meters': roofOverhangMeters,
     },
   };
 

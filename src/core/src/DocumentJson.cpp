@@ -817,8 +817,13 @@ std::string Document::to_json() const {
             ensure_finite(stair->width_meters, "stair.width");
             ensure_finite(stair->total_rise_meters, "stair.total_rise");
             ensure_finite(stair->total_run_meters, "stair.total_run");
+            ensure_finite(stair->landing_depth_meters, "stair.landing_depth");
             ensure_finite(stair->footprint_area_square_meters, "stair.footprint_area");
             ensure_finite(stair->volume_cubic_meters, "stair.volume");
+            for (const auto& point : stair->path_points) {
+                ensure_finite(point.x, "stair.path_point.x");
+                ensure_finite(point.y, "stair.path_point.y");
+            }
         }
     }
 
@@ -1223,6 +1228,15 @@ std::string Document::to_json() const {
                 << ",\"assembly_id\":" << stair->assembly_id
                  << ",\"generated_geometry_dirty\":" << (stair->generated_geometry_dirty ? "true" : "false")
                  << ",\"geometry_is_layered\":" << (stair->geometry_is_layered ? "true" : "false")
+                 << ",\"layout_kind\":" << static_cast<int>(stair->layout_kind)
+                 << ",\"landing_depth\":" << stair->landing_depth_meters
+                 << ",\"railing_enabled\":" << (stair->railing_enabled ? "true" : "false")
+                 << ",\"path_points\":[";
+            for (std::size_t point_index = 0; point_index < stair->path_points.size(); ++point_index) {
+                if (point_index != 0) out << ',';
+                write_point(out, stair->path_points[point_index]);
+            }
+            out << ']'
                 << ",\"footprint_area\":" << stair->footprint_area_square_meters
                  << ",\"volume\":" << stair->volume_cubic_meters;
             if (has_exact_ifc_geometry(element) && !stair->mesh.vertices.empty()) {
@@ -1709,6 +1723,24 @@ Document Document::from_json(std::string_view json) {
                 .footprint_area_square_meters = stair.find("footprint_area") != stair.end() ? as_number(field(stair, "footprint_area")) : 0.0,
                 .volume_cubic_meters = stair.find("volume") != stair.end() ? as_number(field(stair, "volume")) : 0.0,
             };
+            if (const auto found = stair.find("layout_kind"); found != stair.end()) {
+                const auto layout_value = static_cast<int>(as_number(found->second));
+                if (layout_value >= static_cast<int>(StairLayoutKind::Straight) &&
+                    layout_value <= static_cast<int>(StairLayoutKind::UShape)) {
+                    data.layout_kind = static_cast<StairLayoutKind>(layout_value);
+                }
+            }
+            if (const auto found = stair.find("landing_depth"); found != stair.end()) {
+                data.landing_depth_meters = as_number(found->second);
+            }
+            if (const auto found = stair.find("railing_enabled"); found != stair.end()) {
+                data.railing_enabled = as_bool(found->second);
+            }
+            if (const auto found = stair.find("path_points"); found != stair.end()) {
+                for (const auto& point_value : as_array(found->second)) {
+                    data.path_points.push_back(parse_point(point_value));
+                }
+            }
             if (!data.generated_geometry_dirty) {
                 data.geometry_is_layered = stair.find("geometry_is_layered") != stair.end() &&
                     as_bool(field(stair, "geometry_is_layered"));

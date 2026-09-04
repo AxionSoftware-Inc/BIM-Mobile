@@ -292,6 +292,16 @@ TbeApiStatusCode tbe_trim_extend_walls(
     int second_uses_start
 );
 TbeApiStatusCode tbe_set_element_assembly(TbeEngineHandle* handle, uint64_t element_id, uint64_t assembly_id);
+TbeApiStatusCode tbe_set_element_family_reference(
+    TbeEngineHandle* handle,
+    uint64_t element_id,
+    const char* family_asset_id,
+    const char* family_name,
+    const char* family_type_id,
+    const char* family_type_name,
+    const char* family_category,
+    const char* family_asset_path
+);
 TbeApiStatusCode tbe_update_roof_properties(
     TbeEngineHandle* handle, uint64_t roof_id, int roof_type,
     int has_slope, double slope_degrees, int has_overhang, double overhang_meters
@@ -322,6 +332,16 @@ TbeApiStatusCode tbe_create_window(
     double sill_height_meters,
     uint64_t* out_window_id
 );
+TbeApiStatusCode tbe_create_column(
+    TbeEngineHandle* handle,
+    uint64_t level_id,
+    TbeVec2 position,
+    double width_meters,
+    double depth_meters,
+    double height_meters,
+    uint64_t material_id,
+    uint64_t* out_column_id
+);
 TbeApiStatusCode tbe_create_stair(
     TbeEngineHandle* handle,
     uint64_t base_level_id,
@@ -334,6 +354,31 @@ TbeApiStatusCode tbe_create_stair(
     int riser_count,
     int tread_count,
     uint64_t* out_stair_id
+);
+TbeApiStatusCode tbe_create_stair_layout(
+    TbeEngineHandle* handle,
+    uint64_t base_level_id,
+    uint64_t top_level_id,
+    const TbeVec2* path_points,
+    size_t path_count,
+    double width_meters,
+    double total_rise_meters,
+    int riser_count,
+    int tread_count,
+    double landing_depth_meters,
+    int layout_kind,
+    int railing_enabled,
+    uint64_t* out_stair_id
+);
+TbeApiStatusCode tbe_update_stair_layout(
+    TbeEngineHandle* handle,
+    uint64_t stair_id,
+    const TbeVec2* path_points,
+    size_t path_count,
+    double width_meters,
+    double landing_depth_meters,
+    int layout_kind,
+    int railing_enabled
 );
 TbeApiStatusCode tbe_set_opening_level_lock(TbeEngineHandle* handle, uint64_t opening_id, int locked);
 TbeApiStatusCode tbe_set_opening_level(TbeEngineHandle* handle, uint64_t opening_id, uint64_t level_id);

@@ -284,13 +284,19 @@ extension _ViewerViewportInput on _ViewerHomePageState {
         if (start == null) {
           return;
         }
-        final snapped =
-            _draftLinePoint(rawPoint: modelPoint, referenceStart: start);
+        final referencePoint = _stairTool.pathPoints.lastOrNull ?? start;
+        final snapped = _draftLinePoint(
+          rawPoint: modelPoint,
+          referenceStart: referencePoint,
+        );
         _stairTool.preview(snapped);
-        _viewportController.setWallDraft(start, snapped);
+        _viewportController.setWallDraft(
+          _stairTool.layoutKind == 0 ? start : referencePoint,
+          snapped,
+        );
         _updateViewportState(() {
           _editStatusMessage =
-              'Stair run: ${_projectUnitSettings.formatLength(start.distanceTo(snapped))}';
+              'Stair run: ${_projectUnitSettings.formatLength(referencePoint.distanceTo(snapped))}';
         });
         return;
     }
@@ -397,96 +403,6 @@ extension _ViewerViewportInput on _ViewerHomePageState {
             ],
       ),
     );
-  }
-
-  Future<void> _handleAddStairTap(RenderScenePoint? modelPoint) async {
-    final scene = _scene;
-    if (scene == null || modelPoint == null) {
-      _updateViewportState(() =>
-          _editStatusMessage = 'Place two points on the 2D plan for a stair.');
-      return;
-    }
-    final active = _activeLevel(scene);
-    final top = active == null ? null : _nextHigherLevel(scene, active.levelId);
-    if (active == null || top == null) {
-      _updateViewportState(() => _editStatusMessage =
-          'A stair needs a Base Level and a higher Top Level.');
-      return;
-    }
-    final point =
-        _draftLinePoint(rawPoint: modelPoint, referenceStart: _stairTool.start);
-    if (!_stairTool.hasStart) {
-      _stairTool.begin(point);
-      _viewportController.setWallDraft(point, point);
-      _updateViewportState(() => _editStatusMessage =
-          'Stair start set. Ikkinchi nuqta run/directionni belgilaydi.');
-      return;
-    }
-    _stairTool.preview(point);
-    _viewportController.setWallDraft(_stairTool.start, point);
-    await _commitStairDraft();
-  }
-
-  Future<void> _commitStairDraft() async {
-    final scene = _scene;
-    final start = _stairTool.start;
-    final end = _stairTool.end;
-    final repository = _engineRepository;
-    final activeBase = scene == null ? null : _activeLevel(scene);
-    final base = scene == null
-        ? null
-        : scene.levelById(_stairTool.baseLevelId ?? activeBase?.levelId) ??
-            activeBase;
-    final activeTop = base == null || scene == null
-        ? null
-        : _nextHigherLevel(scene, base.levelId);
-    final top = scene == null
-        ? null
-        : scene.levelById(_stairTool.topLevelId ?? activeTop?.levelId) ??
-            activeTop;
-    if (scene == null ||
-        start == null ||
-        end == null ||
-        base == null ||
-        top == null) {
-      return;
-    }
-    if (!_engineBackedMode || repository == null) {
-      _updateViewportState(() => _editStatusMessage =
-          'Stair productionda engine-backed mode talab qiladi.');
-      return;
-    }
-    final preview = StairAuthoringGeometry.preview(
-      start: start,
-      end: end,
-      baseLevel: base,
-      topLevel: top,
-    );
-    if (preview == null) {
-      final run = start.distanceTo(end);
-      _updateViewportState(() => _editStatusMessage = run < 0.8
-          ? 'A stair run must be at least ${_projectUnitSettings.formatLength(0.8)}.'
-          : 'Top Level must be above Base Level.');
-      return;
-    }
-    final result = await _authoringCommands.createStair(
-      baseLevelId: base.levelId,
-      topLevelId: top.levelId,
-      start: preview.start,
-      direction: preview.direction,
-      widthMeters: _stairTool.widthMeters,
-      totalRiseMeters: preview.riseMeters,
-      totalRunMeters: preview.runMeters,
-      riserCount: preview.riserCount,
-      treadCount: preview.treadCount,
-    );
-    await _applyEngineSceneResult(result,
-        message: 'Stair created: ${base.name} → ${top.name}.');
-    final id = _authoringCommands.lastCreatedElementId;
-    await _clearDraft();
-    if (id != null) {
-      await _viewportController.selectElement(id.toString());
-    }
   }
 
   Future<void> _handleAddLevelTap(RenderScenePoint? modelPoint) async {

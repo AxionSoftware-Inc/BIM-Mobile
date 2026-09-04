@@ -187,6 +187,30 @@ double? _projectOffsetAlongWall(
   _WallGeometry wall,
   RenderScenePoint point,
 ) {
+  if (wall.isCurved) {
+    final points = wall.path;
+    var accumulated = 0.0;
+    var bestDistance = double.infinity;
+    double? bestOffset;
+    for (var index = 1; index < points.length; index += 1) {
+      final start = points[index - 1];
+      final end = points[index];
+      final axis = end - start;
+      final lengthSquared = axis.x * axis.x + axis.y * axis.y;
+      if (lengthSquared <= 1e-12) continue;
+      final t = (_dot(point - start, axis) / lengthSquared).clamp(0.0, 1.0);
+      final projected = start + axis.scale(t);
+      final distance = math.sqrt(
+        math.pow(projected.x - point.x, 2) + math.pow(projected.y - point.y, 2),
+      );
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestOffset = accumulated + math.sqrt(lengthSquared) * t;
+      }
+      accumulated += math.sqrt(lengthSquared);
+    }
+    return bestOffset;
+  }
   final axis = wall.end - wall.start;
   final lengthSquared = _dot(axis, axis);
   if (lengthSquared <= 1e-9) {
@@ -198,14 +222,56 @@ double? _projectOffsetAlongWall(
 
 RenderScenePoint _pointAlongWall(_WallGeometry wall, double offset) {
   final clamped = offset.clamp(0.0, wall.length);
+  if (wall.isCurved) {
+    var accumulated = 0.0;
+    final points = wall.path;
+    for (var index = 1; index < points.length; index += 1) {
+      final start = points[index - 1];
+      final end = points[index];
+      final segmentLength = start.distanceTo(end);
+      if (segmentLength <= 1e-9) continue;
+      if (clamped <= accumulated + segmentLength ||
+          index == points.length - 1) {
+        final t = ((clamped - accumulated) / segmentLength).clamp(0.0, 1.0);
+        return start + (end - start).scale(t);
+      }
+      accumulated += segmentLength;
+    }
+  }
   final axisUnit = _unit3(wall.end - wall.start);
   return wall.start + axisUnit.scale(clamped);
+}
+
+RenderScenePoint _wallTangentAtOffset(_WallGeometry wall, double offset) {
+  if (!wall.isCurved) {
+    return _unit3(wall.end - wall.start);
+  }
+  final points = wall.path;
+  var accumulated = 0.0;
+  for (var index = 1; index < points.length; index += 1) {
+    final start = points[index - 1];
+    final end = points[index];
+    final segmentLength = start.distanceTo(end);
+    if (segmentLength <= 1e-9) continue;
+    if (offset <= accumulated + segmentLength || index == points.length - 1) {
+      return _unit3(end - start);
+    }
+    accumulated += segmentLength;
+  }
+  return _unit3(points.last - points[points.length - 2]);
 }
 
 double _openingWidthAlongWall(
   _WallGeometry wall,
   RenderSceneBounds bounds,
 ) {
+  if (wall.isCurved) {
+    final center = bounds.center;
+    final centerOffset = _projectOffsetAlongWall(wall, center);
+    if (centerOffset == null) return 0.0;
+    final half = math.max(bounds.width, bounds.depth) * 0.5;
+    return math.max(half * 2.0, 0.0);
+  }
   final axisUnit = _unit3(wall.end - wall.start);
   final corners = _boundsCorners(bounds);
   var minAlong = double.infinity;
@@ -345,11 +411,33 @@ _BuiltMeshResult _buildWallMeshWithOpenings({
 _BuiltMeshResult _buildOpeningMesh(_ResolvedOpeningSpec spec) {
   final positions = <RenderScenePoint>[];
   final indices = <int>[];
-  final axisUnit =
-      _unit3(spec.hostWall.geometry.end - spec.hostWall.geometry.start);
+  final axisUnit = _wallTangentAtOffset(
+    spec.hostWall.geometry,
+    spec.offsetMeters,
+  );
   final normal = RenderScenePoint(x: -axisUnit.y, y: axisUnit.x, z: 0.0);
 
   RenderScenePoint worldPoint(double localX, double localY, double localZ) {
+    if (spec.hostWall.geometry.isCurved) {
+      final centerlinePoint = _pointAlongWall(
+        spec.hostWall.geometry,
+        localX,
+      );
+      final tangent = _wallTangentAtOffset(
+        spec.hostWall.geometry,
+        localX,
+      );
+      final localNormal = RenderScenePoint(
+        x: -tangent.y,
+        y: tangent.x,
+        z: 0.0,
+      );
+      return RenderScenePoint(
+        x: centerlinePoint.x + localNormal.x * localY,
+        y: centerlinePoint.y + localNormal.y * localY,
+        z: spec.hostWall.geometry.start.z + localZ,
+      );
+    }
     return RenderScenePoint(
       x: spec.hostWall.geometry.start.x +
           axisUnit.x * localX +
@@ -377,6 +465,97 @@ _BuiltMeshResult _buildOpeningMesh(_ResolvedOpeningSpec spec) {
     positions
         .map((point) => RenderSceneBounds.normalized(min: point, max: point)),
   );
+  return _BuiltMeshResult(
+    mesh: <String, Object?>{
+      'positions': positions.map((point) => point.toJson()).toList(),
+      'indices': indices,
+    },
+    bounds: bounds,
+  );
+}
+
+_BuiltMeshResult _buildCurvedWallMeshWithOpenings({
+  required _WallGeometry geometry,
+  required double heightMeters,
+  required List<_OpeningCutSpec> openings,
+}) {
+  final positions = <RenderScenePoint>[];
+  final indices = <int>[];
+  final path = geometry.path;
+  var accumulated = 0.0;
+  for (var index = 1; index < path.length; index += 1) {
+    final start = path[index - 1];
+    final end = path[index];
+    final segmentLength = start.distanceTo(end);
+    if (segmentLength <= 1e-9) continue;
+    final segmentStart = accumulated;
+    final segmentEnd = accumulated + segmentLength;
+    final breaks = _sortedUniqueBreaks(<double>[
+      segmentStart,
+      segmentEnd,
+      for (final opening in openings) ...<double>[
+        opening.startOffset.clamp(segmentStart, segmentEnd),
+        opening.endOffset.clamp(segmentStart, segmentEnd),
+      ],
+    ]);
+    final tangent = _unit3(end - start);
+    final normal = RenderScenePoint(x: -tangent.y, y: tangent.x, z: 0.0);
+    RenderScenePoint cornerBuilder(double offset, double side, double z) {
+      final t = ((offset - segmentStart) / segmentLength).clamp(0.0, 1.0);
+      final center = start + (end - start).scale(t);
+      return RenderScenePoint(
+        x: center.x + normal.x * side,
+        y: center.y + normal.y * side,
+        z: geometry.start.z + z,
+      );
+    }
+
+    for (var breakIndex = 0; breakIndex + 1 < breaks.length; breakIndex += 1) {
+      final x0 = breaks[breakIndex];
+      final x1 = breaks[breakIndex + 1];
+      if (x1 - x0 <= 1e-6) continue;
+      final segmentOpenings = openings
+          .where((opening) =>
+              opening.startOffset < x1 - 1e-6 && opening.endOffset > x0 + 1e-6)
+          .toList(growable: false);
+      final zBreaks = _sortedUniqueBreaks(<double>[
+        0.0,
+        heightMeters,
+        for (final opening in segmentOpenings) ...<double>[
+          opening.bottomZ.clamp(0.0, heightMeters),
+          opening.topZ.clamp(0.0, heightMeters),
+        ],
+      ]);
+      for (var zIndex = 0; zIndex + 1 < zBreaks.length; zIndex += 1) {
+        final z0 = zBreaks[zIndex];
+        final z1 = zBreaks[zIndex + 1];
+        if (z1 - z0 <= 1e-6) continue;
+        final sampleZ = (z0 + z1) * 0.5;
+        final blocked = segmentOpenings.any((opening) =>
+            sampleZ > opening.bottomZ + 1e-6 && sampleZ < opening.topZ - 1e-6);
+        if (blocked) continue;
+        _appendBoxMesh(
+          positions: positions,
+          indices: indices,
+          cornerBuilder: cornerBuilder,
+          x0: x0,
+          x1: x1,
+          y0: -geometry.thickness * 0.5,
+          y1: geometry.thickness * 0.5,
+          z0: z0,
+          z1: z1,
+        );
+      }
+    }
+    accumulated = segmentEnd;
+  }
+  final bounds = positions.isEmpty
+      ? RenderSceneBounds.zero()
+      : RenderSceneBounds.union(
+          positions.map(
+            (point) => RenderSceneBounds.normalized(min: point, max: point),
+          ),
+        );
   return _BuiltMeshResult(
     mesh: <String, Object?>{
       'positions': positions.map((point) => point.toJson()).toList(),

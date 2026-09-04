@@ -2,6 +2,11 @@ part of 'viewer_app.dart';
 
 /// Surface drafting, snapping and footprint handling.
 extension _ViewerViewportSurfaceEditing on _ViewerHomePageState {
+  double _levelElevationForActiveSurface(RenderScene scene) {
+    return scene.levelById(_activeLevelId)?.elevationMeters ??
+        (_activeLevelId == null ? 0.0 : _draftFloorTopElevationMeters);
+  }
+
   /// Repairs the current touch-drawn wall boundary without guessing a room
   /// rectangle. Native auto-join handles small endpoint noise first; the
   /// bounded geometry pass then trims/extends only the closest selected (or
@@ -426,7 +431,7 @@ extension _ViewerViewportSurfaceEditing on _ViewerHomePageState {
         }
         return SurfaceAuthoringGeometry.isUsableRectangle(start, end);
       case RenderSceneInteractionMode.addStair:
-        return _stairTool.hasRun;
+        return _stairTool.hasCompleteLayout;
     }
   }
 
@@ -682,13 +687,6 @@ extension _ViewerViewportSurfaceEditing on _ViewerHomePageState {
           }
           return;
         }
-        if (_interactionMode == RenderSceneInteractionMode.addRoof) {
-          _updateViewportState(() {
-            _editStatusMessage =
-                'Roof creation hozircha engine-backed mode talab qiladi.';
-          });
-          return;
-        }
         RenderScene nextScene;
         if (_surfaceDrawMode == RenderSceneSurfaceDrawMode.pickWalls) {
           final polygon = SurfaceAuthoringGeometry.wallBoundaryPolygon(
@@ -710,13 +708,27 @@ extension _ViewerViewportSurfaceEditing on _ViewerHomePageState {
                   topElevationMeters: _draftFloorTopElevationMeters,
                   levelId: _activeLevelId,
                 )
-              : RenderSceneEditor.addCeilingFromPolygon(
-                  scene: scene,
-                  polygon: polygon,
-                  thicknessMeters: _draftSurfaceThicknessMeters,
-                  heightMeters: _draftCeilingHeightOffsetMeters,
-                  levelId: _activeLevelId,
-                );
+              : _interactionMode == RenderSceneInteractionMode.addCeiling
+                  ? RenderSceneEditor.addCeilingFromPolygon(
+                      scene: scene,
+                      polygon: polygon,
+                      thicknessMeters: _draftSurfaceThicknessMeters,
+                      heightMeters: _draftCeilingHeightOffsetMeters,
+                      levelId: _activeLevelId,
+                    )
+                  : RenderSceneEditor.addRoofFromPolygon(
+                      scene: scene,
+                      thicknessMeters: _draftSurfaceThicknessMeters,
+                      polygon: polygon,
+                      baseElevationMeters:
+                          _levelElevationForActiveSurface(scene),
+                      levelId: _activeLevelId,
+                      roofType: _surfaceTool.roofType,
+                      slopeDegrees: _surfaceTool.roofType == 0
+                          ? null
+                          : _surfaceTool.roofSlopeDegrees,
+                      overhangMeters: _surfaceTool.roofOverhangMeters,
+                    );
           if (identical(nextScene, scene)) {
             _updateViewportState(() {
               _editStatusMessage = 'Closed wall loop topilmadi.';
@@ -746,13 +758,27 @@ extension _ViewerViewportSurfaceEditing on _ViewerHomePageState {
                   topElevationMeters: _draftFloorTopElevationMeters,
                   levelId: _activeLevelId,
                 )
-              : RenderSceneEditor.addCeilingFromPolygon(
-                  scene: scene,
-                  polygon: polygon,
-                  thicknessMeters: _draftSurfaceThicknessMeters,
-                  heightMeters: _draftCeilingHeightOffsetMeters,
-                  levelId: _activeLevelId,
-                );
+              : _interactionMode == RenderSceneInteractionMode.addCeiling
+                  ? RenderSceneEditor.addCeilingFromPolygon(
+                      scene: scene,
+                      polygon: polygon,
+                      thicknessMeters: _draftSurfaceThicknessMeters,
+                      heightMeters: _draftCeilingHeightOffsetMeters,
+                      levelId: _activeLevelId,
+                    )
+                  : RenderSceneEditor.addRoofFromPolygon(
+                      scene: scene,
+                      polygon: polygon,
+                      thicknessMeters: _draftSurfaceThicknessMeters,
+                      baseElevationMeters:
+                          _levelElevationForActiveSurface(scene),
+                      levelId: _activeLevelId,
+                      roofType: _surfaceTool.roofType,
+                      slopeDegrees: _surfaceTool.roofType == 0
+                          ? null
+                          : _surfaceTool.roofSlopeDegrees,
+                      overhangMeters: _surfaceTool.roofOverhangMeters,
+                    );
           if (identical(nextScene, scene)) {
             _updateViewportState(() {
               _editStatusMessage =
@@ -785,13 +811,27 @@ extension _ViewerViewportSurfaceEditing on _ViewerHomePageState {
                   topElevationMeters: _draftFloorTopElevationMeters,
                   levelId: _activeLevelId,
                 )
-              : RenderSceneEditor.addCeilingFromBounds(
-                  scene: scene,
-                  bounds: bounds,
-                  thicknessMeters: _draftSurfaceThicknessMeters,
-                  heightMeters: _draftCeilingHeightOffsetMeters,
-                  levelId: _activeLevelId,
-                );
+              : _interactionMode == RenderSceneInteractionMode.addCeiling
+                  ? RenderSceneEditor.addCeilingFromBounds(
+                      scene: scene,
+                      bounds: bounds,
+                      thicknessMeters: _draftSurfaceThicknessMeters,
+                      heightMeters: _draftCeilingHeightOffsetMeters,
+                      levelId: _activeLevelId,
+                    )
+                  : RenderSceneEditor.addRoofFromBounds(
+                      scene: scene,
+                      bounds: bounds,
+                      thicknessMeters: _draftSurfaceThicknessMeters,
+                      baseElevationMeters:
+                          _levelElevationForActiveSurface(scene),
+                      levelId: _activeLevelId,
+                      roofType: _surfaceTool.roofType,
+                      slopeDegrees: _surfaceTool.roofType == 0
+                          ? null
+                          : _surfaceTool.roofSlopeDegrees,
+                      overhangMeters: _surfaceTool.roofOverhangMeters,
+                    );
         }
         await _applySceneChange(
           nextScene,

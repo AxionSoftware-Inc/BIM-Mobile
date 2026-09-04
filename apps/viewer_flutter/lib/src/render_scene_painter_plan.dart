@@ -13,6 +13,86 @@ mixin _FallbackScenePlanPainterMixin {
   Color _materialColor(String value);
   Color _floorSurfaceColor(RenderSceneObject object);
 
+  List<RenderScenePoint> _authoritativeWallFootprint(
+    RenderSceneObject wall,
+  ) {
+    final raw = wall.metadata['profile_corners'] ??
+        wall.metadata['profileCorners'];
+    if (raw is List) {
+      final points = raw
+          .map(RenderScenePoint.fromJson)
+          .whereType<RenderScenePoint>()
+          .where((point) => point.x.isFinite && point.y.isFinite)
+          .toList(growable: false);
+      if (points.length >= 3) return points;
+    }
+    if (raw is String && raw.trim().isNotEmpty) {
+      final points = raw.split(';').map((token) {
+        final coordinates = token.split(',');
+        if (coordinates.length != 2) return null;
+        final x = double.tryParse(coordinates[0].trim());
+        final y = double.tryParse(coordinates[1].trim());
+        if (x == null || y == null || !x.isFinite || !y.isFinite) {
+          return null;
+        }
+        return RenderScenePoint(x: x, y: y, z: 0.0);
+      }).whereType<RenderScenePoint>().toList(growable: false);
+      if (points.length >= 3) return points;
+    }
+    return const <RenderScenePoint>[];
+  }
+
+  List<RenderScenePoint> _surfaceFootprint(RenderSceneObject object) {
+    final raw = object.metadata['footprint_points'];
+    if (raw is List) {
+      final points = raw
+          .map(RenderScenePoint.fromJson)
+          .whereType<RenderScenePoint>()
+          .toList(growable: false);
+      if (points.length >= 3) return points;
+    }
+    if (raw is String && raw.trim().isNotEmpty) {
+      final points = raw
+          .split(';')
+          .map((token) {
+            final coordinates = token.split(',');
+            if (coordinates.length != 2) return null;
+            final x = double.tryParse(coordinates[0].trim());
+            final y = double.tryParse(coordinates[1].trim());
+            if (x == null || y == null || !x.isFinite || !y.isFinite) {
+              return null;
+            }
+            return RenderScenePoint(x: x, y: y, z: 0.0);
+          })
+          .whereType<RenderScenePoint>()
+          .toList(growable: false);
+      if (points.length >= 3) return points;
+    }
+    return <RenderScenePoint>[
+      RenderScenePoint(x: object.bounds.min.x, y: object.bounds.min.y, z: 0.0),
+      RenderScenePoint(x: object.bounds.max.x, y: object.bounds.min.y, z: 0.0),
+      RenderScenePoint(x: object.bounds.max.x, y: object.bounds.max.y, z: 0.0),
+      RenderScenePoint(x: object.bounds.min.x, y: object.bounds.max.y, z: 0.0),
+    ];
+  }
+
+  Path _projectedSurfacePath(
+    RenderSceneObject object,
+    RenderSceneProjection projection,
+  ) {
+    final points = _surfaceFootprint(object);
+    final path = Path();
+    if (points.isEmpty) return path;
+    path.moveTo(projection.project(points.first).screen.dx,
+        projection.project(points.first).screen.dy);
+    for (final point in points.skip(1)) {
+      final screen = projection.project(point).screen;
+      path.lineTo(screen.dx, screen.dy);
+    }
+    path.close();
+    return path;
+  }
+
   void _drawFloorSurfacePatterns(
     Canvas canvas,
     RenderSceneProjection projection,
@@ -22,7 +102,8 @@ mixin _FallbackScenePlanPainterMixin {
     for (final floor in objects.where(
       (object) => object.kindKey == 'floor' || object.kindKey == 'slab',
     )) {
-      final rect = projectBoundsRect(floor.bounds, projection);
+      final footprintPath = _projectedSurfacePath(floor, projection);
+      final rect = footprintPath.getBounds();
       if (rect.width <= 1.0 || rect.height <= 1.0) continue;
       final key =
           '${floor.metadata['floor_type'] ?? ''} ${floor.metadata['floor_type_name'] ?? ''}'
@@ -47,9 +128,8 @@ mixin _FallbackScenePlanPainterMixin {
         ..strokeWidth =
             displayStyle == RenderSceneDisplayStyle.solid ? 0.75 : 0.9
         ..color = lineColor;
-      final clip = Path()..addRect(rect);
       canvas.save();
-      canvas.clipPath(clip);
+      canvas.clipPath(footprintPath);
       if (isWood) {
         final plankSpacing = math.max(7.0, math.min(22.0, rect.height / 8.0));
         for (var y = rect.top; y <= rect.bottom; y += plankSpacing) {
@@ -238,9 +318,16 @@ mixin _FallbackScenePlanPainterMixin {
       }
       if (length <= 1e-8) continue;
       final half = thickness * 0.5;
-      final curved = centerline.length > 2;
+      final authoritativeCorners = _authoritativeWallFootprint(wall);
+      final curved = wall.metadata['curve_kind'] == 'arc' ||
+          centerline.length > 2;
       final corners = <RenderScenePoint>[];
-      if (curved) {
+      if (authoritativeCorners.length >= 3) {
+        // The core has already resolved curved/straight mixed caps and tees.
+        // Use that same polygon in the fallback painter so a renderer switch
+        // cannot reintroduce a chord, a raw rectangle or a different join.
+        corners.addAll(authoritativeCorners);
+      } else if (curved) {
         final outside = <RenderScenePoint>[];
         final inside = <RenderScenePoint>[];
         for (var index = 0; index < centerline.length; index += 1) {

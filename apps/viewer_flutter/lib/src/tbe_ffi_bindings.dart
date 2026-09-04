@@ -363,6 +363,26 @@ typedef _SetElementAssemblyDart = int Function(
   int,
   int,
 );
+typedef _SetElementFamilyReferenceNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Uint64,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<Utf8>,
+);
+typedef _SetElementFamilyReferenceDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  int,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<Utf8>,
+);
 typedef _UpdateRoofPropertiesNative = ffi.Int32 Function(
   ffi.Pointer<ffi.Void>,
   ffi.Uint64,
@@ -481,6 +501,56 @@ typedef _CreateStairDart = int Function(
   int,
   ffi.Pointer<ffi.Uint64>,
 );
+typedef _CreateStairLayoutNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Uint64,
+  ffi.Uint64,
+  ffi.Pointer<TbeVec2>,
+  ffi.Size,
+  ffi.Double,
+  ffi.Double,
+  ffi.Int32,
+  ffi.Int32,
+  ffi.Double,
+  ffi.Int32,
+  ffi.Int32,
+  ffi.Pointer<ffi.Uint64>,
+);
+typedef _CreateStairLayoutDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  int,
+  int,
+  ffi.Pointer<TbeVec2>,
+  int,
+  double,
+  double,
+  int,
+  int,
+  double,
+  int,
+  int,
+  ffi.Pointer<ffi.Uint64>,
+);
+typedef _UpdateStairLayoutNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Uint64,
+  ffi.Pointer<TbeVec2>,
+  ffi.Size,
+  ffi.Double,
+  ffi.Double,
+  ffi.Int32,
+  ffi.Int32,
+);
+typedef _UpdateStairLayoutDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  int,
+  ffi.Pointer<TbeVec2>,
+  int,
+  double,
+  double,
+  int,
+  int,
+);
 typedef _CreateDoorNative = ffi.Int32 Function(
   ffi.Pointer<ffi.Void>,
   ffi.Pointer<Utf8>,
@@ -517,6 +587,26 @@ typedef _CreateWindowDart = int Function(
   double,
   double,
   double,
+  ffi.Pointer<ffi.Uint64>,
+);
+typedef _CreateColumnNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Uint64,
+  TbeVec2,
+  ffi.Double,
+  ffi.Double,
+  ffi.Double,
+  ffi.Uint64,
+  ffi.Pointer<ffi.Uint64>,
+);
+typedef _CreateColumnDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  int,
+  TbeVec2,
+  double,
+  double,
+  double,
+  int,
   ffi.Pointer<ffi.Uint64>,
 );
 typedef _SetOpeningLevelLockNative = ffi.Int32 Function(

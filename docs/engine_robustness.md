@@ -69,11 +69,13 @@ Supported:
 - Automatic sloped roofs over simple orthogonal L/U and other concave
   footprints using the engine-owned `AutoFootprint` profile solver.
 - Rectangular columns and beams.
-- Straight stairs with positive rise, run, width, riser count, and tread count.
+- Straight, L-shaped and U-shaped stairs with positive rise, run, width,
+  riser/tread counts, optional landing depth and lightweight railing.
 
 Assumptions and limitations:
 
-- Floor and ceiling systems are room-bound and assembly-driven, not freeform slabs.
+- Floor and ceiling systems can be room-derived or authored from a persisted
+  freeform polygon; both paths share the same assembly-driven profile contract.
 - AutoFootprint roofs generate a unified sloped shell for the supported
   orthogonal L footprint, with ridge planes and external overhang; other
   concave footprints use the adaptive triangulated fallback. This is not yet a

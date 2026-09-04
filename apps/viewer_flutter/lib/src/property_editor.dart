@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'authoring_command_service.dart';
 import 'elements/bim_element_registry.dart';
 import 'elements/bim_element_module.dart';
+import 'elements/element_parameter_values.dart';
 import 'elements/inspector_registry.dart';
 import 'elements/linear_parameters.dart';
 import 'elements/opening_type_catalog.dart';

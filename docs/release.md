@@ -1,7 +1,7 @@
 # Tablet BIM production release
 
 The app version is controlled by `apps/viewer_flutter/pubspec.yaml`. The current
-release line is `0.2.8+10` (`versionName` `0.2.8`, Android `versionCode` `10`).
+release line is `0.2.9+11` (`versionName` `0.2.9`, Android `versionCode` `11`).
 
 ## Required release inputs
 
@@ -23,7 +23,7 @@ secrets in the repository.
 Run from `apps/viewer_flutter`:
 
 ```powershell
-.\tool\build_release.ps1 -Artifact both -VersionName 0.2.8 -VersionCode 10
+.\tool\build_release.ps1 -Artifact both -VersionName 0.2.9 -VersionCode 11
 ```
 
 The script refuses to build a production artifact without release signing

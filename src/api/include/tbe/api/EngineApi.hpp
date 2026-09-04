@@ -867,6 +867,15 @@ public:
     );
     ApiVoidResult update_wall_properties(std::uint64_t wall_id, double thickness_meters, double height_meters, std::uint64_t wall_type_id = 0);
     ApiVoidResult set_element_assembly(std::uint64_t element_id, std::uint64_t assembly_id);
+    ApiVoidResult set_element_family_reference(
+        std::uint64_t element_id,
+        std::string family_asset_id,
+        std::string family_name,
+        std::string family_type_id,
+        std::string family_type_name,
+        std::string family_category,
+        std::string family_asset_path = {}
+    );
     ApiResult<ElementIdDTO> create_material(
         std::string name,
         ApiMaterialCategory category,
@@ -944,6 +953,27 @@ public:
         int riser_count,
         int tread_count,
         std::uint64_t material_id
+    );
+    ApiResult<ElementIdDTO> create_stair_layout(
+        std::uint64_t base_level_id,
+        std::uint64_t top_level_id,
+        const std::vector<Vec2>& path_points,
+        double width_meters,
+        double total_rise_meters,
+        int riser_count,
+        int tread_count,
+        double landing_depth_meters,
+        int layout_kind,
+        bool railing_enabled,
+        std::uint64_t material_id
+    );
+    ApiVoidResult update_stair_layout(
+        std::uint64_t stair_id,
+        const std::vector<Vec2>& path_points,
+        double width_meters,
+        double landing_depth_meters,
+        int layout_kind,
+        bool railing_enabled
     );
     ApiVoidResult undo();
     ApiVoidResult redo();

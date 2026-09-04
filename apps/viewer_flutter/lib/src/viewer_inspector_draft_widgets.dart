@@ -154,6 +154,9 @@ class _DraftEditorCard extends StatefulWidget {
     required this.draftSurfaceThicknessMeters,
     required this.draftSurfaceHeightMeters,
     required this.draftStairWidthMeters,
+    required this.draftStairLandingDepthMeters,
+    required this.stairLayoutKind,
+    required this.stairRailingEnabled,
     required this.stairLevels,
     required this.stairBaseLevelId,
     required this.stairTopLevelId,
@@ -199,6 +202,9 @@ class _DraftEditorCard extends StatefulWidget {
     required this.onRoofSlopeChanged,
     required this.onRoofOverhangChanged,
     required this.onStairWidthChanged,
+    required this.onStairLandingDepthChanged,
+    required this.onStairLayoutChanged,
+    required this.onStairRailingChanged,
     required this.onStairBaseLevelChanged,
     required this.onStairTopLevelChanged,
     required this.onConfirm,
@@ -220,6 +226,9 @@ class _DraftEditorCard extends StatefulWidget {
   final double draftSurfaceThicknessMeters;
   final double draftSurfaceHeightMeters;
   final double draftStairWidthMeters;
+  final double draftStairLandingDepthMeters;
+  final int stairLayoutKind;
+  final bool stairRailingEnabled;
   final List<RenderSceneLevel> stairLevels;
   final int? stairBaseLevelId;
   final int? stairTopLevelId;
@@ -265,6 +274,9 @@ class _DraftEditorCard extends StatefulWidget {
   final ValueChanged<double> onRoofSlopeChanged;
   final ValueChanged<double> onRoofOverhangChanged;
   final ValueChanged<double> onStairWidthChanged;
+  final ValueChanged<double> onStairLandingDepthChanged;
+  final ValueChanged<int> onStairLayoutChanged;
+  final ValueChanged<bool> onStairRailingChanged;
   final ValueChanged<int?> onStairBaseLevelChanged;
   final ValueChanged<int?> onStairTopLevelChanged;
   final VoidCallback onConfirm;
@@ -280,6 +292,7 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
   TextEditingController? _surfaceHeightController;
   TextEditingController? _floorTopController;
   TextEditingController? _stairWidthController;
+  TextEditingController? _stairLandingController;
   TextEditingController? _roofSlopeController;
   TextEditingController? _roofOverhangController;
 
@@ -298,6 +311,8 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
       _surfaceHeightController?.text = _format(widget.draftSurfaceHeightMeters);
       _floorTopController?.text = _format(widget.draftFloorTopElevationMeters);
       _stairWidthController?.text = _format(widget.draftStairWidthMeters);
+      _stairLandingController?.text =
+          _format(widget.draftStairLandingDepthMeters);
       _roofSlopeController?.text = _angleFormat(widget.roofSlopeDegrees);
       _roofOverhangController?.text = _format(widget.roofOverhangMeters);
       return;
@@ -312,6 +327,11 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
         oldWidget.draftFloorTopElevationMeters);
     _syncController(_stairWidthController, widget.draftStairWidthMeters,
         oldWidget.draftStairWidthMeters);
+    _syncController(
+      _stairLandingController,
+      widget.draftStairLandingDepthMeters,
+      oldWidget.draftStairLandingDepthMeters,
+    );
     _syncController(
       _roofSlopeController,
       widget.roofSlopeDegrees,
@@ -331,6 +351,7 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
     _surfaceHeightController?.dispose();
     _floorTopController?.dispose();
     _stairWidthController?.dispose();
+    _stairLandingController?.dispose();
     _roofSlopeController?.dispose();
     _roofOverhangController?.dispose();
     super.dispose();
@@ -361,6 +382,9 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
         text: _format(widget.draftFloorTopElevationMeters));
     _stairWidthController ??=
         TextEditingController(text: _format(widget.draftStairWidthMeters));
+    _stairLandingController ??= TextEditingController(
+      text: _format(widget.draftStairLandingDepthMeters),
+    );
     _roofSlopeController ??=
         TextEditingController(text: _angleFormat(widget.roofSlopeDegrees));
     _roofOverhangController ??= TextEditingController(
@@ -425,7 +449,21 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
               const Text(
-                  'Draw a straight stair run with two points. Rise comes from Base/Top Level.'),
+                  'Choose a layout, then tap each flight turn. Rise comes from Base/Top Level.'),
+              const SizedBox(height: 8),
+              SegmentedButton<int>(
+                segments: const <ButtonSegment<int>>[
+                  ButtonSegment<int>(value: 0, label: Text('Straight')),
+                  ButtonSegment<int>(value: 1, label: Text('L')),
+                  ButtonSegment<int>(value: 2, label: Text('U')),
+                ],
+                selected: <int>{widget.stairLayoutKind},
+                onSelectionChanged: (values) {
+                  if (values.isNotEmpty) {
+                    widget.onStairLayoutChanged(values.first);
+                  }
+                },
+              ),
               const SizedBox(height: 8),
               _stairLevelDrop(
                 label: 'Base level',
@@ -451,6 +489,26 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
                   if (parsed != null) widget.onStairWidthChanged(parsed);
                 },
               ),
+              if (widget.stairLayoutKind != 0) ...<Widget>[
+                const SizedBox(height: 6),
+                _NumericField(
+                  label: 'Landing (${widget.units.lengthSymbol})',
+                  controller: _stairLandingController!,
+                  onChanged: (value) {
+                    final parsed = _parse(value);
+                    if (parsed != null) {
+                      widget.onStairLandingDepthChanged(parsed);
+                    }
+                  },
+                ),
+                SwitchListTile.adaptive(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Railing'),
+                  value: widget.stairRailingEnabled,
+                  onChanged: widget.onStairRailingChanged,
+                ),
+              ],
             ],
           )
         else if (mode == RenderSceneInteractionMode.moveWall)

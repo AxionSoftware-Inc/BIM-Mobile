@@ -97,6 +97,7 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
       onRedo: () => unawaited(_redoProject()),
       onDocumentation: _openDocumentationWorkspace,
       onImportIfc: _importIfc,
+      onLoadFamily: _loadFamilyIntoProject,
       onExportIfc: _exportIfc,
       onProjectUnits: _showProjectUnitsDialog,
       onCreateSection: _showSectionDialog,
@@ -719,6 +720,10 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
                               ? _draftCeilingHeightOffsetMeters
                               : _draftSurfaceHeightMeters,
                           draftStairWidthMeters: _stairTool.widthMeters,
+                          draftStairLandingDepthMeters:
+                              _stairTool.landingDepthMeters,
+                          stairLayoutKind: _stairTool.layoutKind,
+                          stairRailingEnabled: _stairTool.railingEnabled,
                           stairLevels: scene.levels,
                           stairBaseLevelId: _stairTool.baseLevelId,
                           stairTopLevelId: _stairTool.topLevelId,
@@ -831,6 +836,10 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
                             });
                           },
                           onStairWidthChanged: _stairTool.setWidth,
+                          onStairLandingDepthChanged:
+                              _stairTool.setLandingDepth,
+                          onStairLayoutChanged: _stairTool.setLayoutKind,
+                          onStairRailingChanged: _stairTool.setRailingEnabled,
                           onStairBaseLevelChanged: (value) {
                             _stairTool.setBaseLevelId(value);
                             if (value == null) return;

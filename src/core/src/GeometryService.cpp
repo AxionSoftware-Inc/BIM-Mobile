@@ -78,6 +78,114 @@ Point2 direction_away_from(Point2 point, Line2 axis) {
     return Point2{.x = away.x / length, .y = away.y / length};
 }
 
+Point2 add(Point2 left, Point2 right) {
+    return Point2{.x = left.x + right.x, .y = left.y + right.y};
+}
+
+Point2 scale(Point2 value, double factor) {
+    return Point2{.x = value.x * factor, .y = value.y * factor};
+}
+
+std::optional<Point2> line_intersection(
+    Point2 first_point,
+    Point2 first_direction,
+    Point2 second_point,
+    Point2 second_direction
+) {
+    const auto denominator = cross(first_direction, second_direction);
+    if (std::abs(denominator) <= epsilon) {
+        return std::nullopt;
+    }
+    const auto delta = subtract(second_point, first_point);
+    const auto distance = cross(delta, second_direction) / denominator;
+    return add(first_point, scale(first_direction, distance));
+}
+
+double point_distance(Point2 first, Point2 second) {
+    return std::hypot(first.x - second.x, first.y - second.y);
+}
+
+struct ArcEndCap {
+    Point2 outer{};
+    Point2 inner{};
+};
+
+std::optional<ArcEndCap> arc_end_cap(
+    const WallData& wall,
+    const WallJoin& join,
+    bool at_start
+) {
+    if (!wall.arc.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto& arc = *wall.arc;
+    const auto endpoint = at_start ? wall.axis.start : wall.axis.end;
+    const auto radial_length = std::hypot(
+        endpoint.x - arc.center.x,
+        endpoint.y - arc.center.y);
+    if (radial_length <= epsilon) {
+        return std::nullopt;
+    }
+    const auto radial = Point2{
+        .x = (endpoint.x - arc.center.x) / radial_length,
+        .y = (endpoint.y - arc.center.y) / radial_length,
+    };
+    const auto tangent_forward = arc.sweep_radians >= 0.0
+        ? Point2{.x = -radial.y, .y = radial.x}
+        : Point2{.x = radial.y, .y = -radial.x};
+    const auto away = at_start
+        ? tangent_forward
+        : Point2{.x = -tangent_forward.x, .y = -tangent_forward.y};
+    const auto other = direction_away_from(join.point, join.other_axis);
+    if (std::hypot(other.x, other.y) <= epsilon) {
+        return std::nullopt;
+    }
+
+    // A tangent join already has the correct radial cap. Only a real turn
+    // needs a miter; near-parallel lines otherwise create an unstable cap.
+    const auto turn = cross(away, other);
+    if (std::abs(turn) <= 1.0e-6) {
+        return std::nullopt;
+    }
+    const auto arc_normal = Point2{.x = -away.y, .y = away.x};
+    const auto other_normal = Point2{.x = -other.y, .y = other.x};
+    const auto side_relation = turn > 0.0 ? 1.0 : -1.0;
+    const auto half_thickness = wall.thickness_meters / 2.0;
+    std::optional<Point2> positive_side;
+    std::optional<Point2> negative_side;
+    for (const auto side : {-1.0, 1.0}) {
+        const auto arc_side = add(endpoint, scale(arc_normal, half_thickness * side));
+        // The two wall strips use opposite side faces on one turn and the
+        // same side faces on the other. This is the same miter construction
+        // used by straight walls, expressed in the arc tangent frame.
+        const auto other_side = add(
+            endpoint,
+            scale(other_normal, half_thickness * side * side_relation));
+        const auto cap = line_intersection(arc_side, away, other_side, other);
+        if (!cap.has_value() || !std::isfinite(cap->x) || !std::isfinite(cap->y) ||
+            point_distance(*cap, endpoint) > half_thickness * 4.0) {
+            return std::nullopt;
+        }
+        if (side > 0.0) {
+            positive_side = cap;
+        } else {
+            negative_side = cap;
+        }
+    }
+    if (!positive_side.has_value() || !negative_side.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto outer_side = dot(radial, arc_normal) >= 0.0
+        ? positive_side.value()
+        : negative_side.value();
+    const auto inner_side = dot(radial, arc_normal) >= 0.0
+        ? negative_side.value()
+        : positive_side.value();
+    return ArcEndCap{.outer = outer_side, .inner = inner_side};
+}
+
 double local_x(Point2 point, const Line2& axis) {
     const auto direction = unit_direction(axis);
     return dot(subtract(point, axis.start), direction);
@@ -432,6 +540,77 @@ std::vector<ArcStation> arc_stations(const WallData& wall, const WallProfile2D& 
     return stations;
 }
 
+struct CurvedWallPlanBoundary {
+    std::vector<ArcStation> stations{};
+    std::vector<Point2> outer{};
+    std::vector<Point2> inner{};
+};
+
+std::optional<CurvedWallPlanBoundary> curved_wall_plan_boundary(
+    const WallData& wall,
+    const WallProfile2D& profile
+) {
+    auto stations = arc_stations(wall, profile);
+    if (stations.size() < 2) return std::nullopt;
+
+    const auto half_thickness = wall.thickness_meters / 2.0;
+    CurvedWallPlanBoundary boundary{
+        .stations = std::move(stations),
+    };
+    boundary.outer.reserve(boundary.stations.size());
+    boundary.inner.reserve(boundary.stations.size());
+    for (const auto& station : boundary.stations) {
+        boundary.outer.push_back(Point2{
+            .x = station.centerline.x + (station.radial.x * half_thickness),
+            .y = station.centerline.y + (station.radial.y * half_thickness),
+        });
+        boundary.inner.push_back(Point2{
+            .x = station.centerline.x - (station.radial.x * half_thickness),
+            .y = station.centerline.y - (station.radial.y * half_thickness),
+        });
+    }
+
+    // Curved walls cannot use the straight-wall chord for a corner. Resolve
+    // each end cap against the joined wall's tangent frame and keep these
+    // exact points as the single plan boundary consumed by mesh, overlays,
+    // snapping and native edge metadata.
+    std::optional<ArcEndCap> start_cap;
+    std::optional<ArcEndCap> end_cap;
+    auto start_cap_span = 0.0;
+    auto end_cap_span = 0.0;
+    for (const auto& join : wall.joins) {
+        const auto start_distance = point_distance(join.point, wall.axis.start);
+        const auto end_distance = point_distance(join.point, wall.axis.end);
+        const auto at_start = start_distance <= end_distance;
+        if (std::min(start_distance, end_distance) > 0.35) {
+            continue;
+        }
+        const auto cap = arc_end_cap(wall, join, at_start);
+        if (!cap.has_value()) {
+            continue;
+        }
+        const auto span = std::max(
+            point_distance(cap->outer, at_start ? wall.axis.start : wall.axis.end),
+            point_distance(cap->inner, at_start ? wall.axis.start : wall.axis.end));
+        if (at_start && (!start_cap.has_value() || span > start_cap_span)) {
+            start_cap = cap;
+            start_cap_span = span;
+        } else if (!at_start && (!end_cap.has_value() || span > end_cap_span)) {
+            end_cap = cap;
+            end_cap_span = span;
+        }
+    }
+    if (start_cap.has_value()) {
+        boundary.outer.front() = start_cap->outer;
+        boundary.inner.front() = start_cap->inner;
+    }
+    if (end_cap.has_value()) {
+        boundary.outer.back() = end_cap->outer;
+        boundary.inner.back() = end_cap->inner;
+    }
+    return boundary;
+}
+
 bool opening_contains_distance(const OpeningRectangle& opening, double distance) {
     return distance > opening.x_min + epsilon && distance < opening.x_max - epsilon;
 }
@@ -462,9 +641,9 @@ MeshBuffer build_curved_wall_mesh(
     ElementId material_id
 ) {
     MeshBuffer mesh;
-    const auto stations = arc_stations(wall, profile);
-    if (stations.size() < 2) return mesh;
-    const auto half_thickness = wall.thickness_meters / 2.0;
+    const auto boundary = curved_wall_plan_boundary(wall, profile);
+    if (!boundary.has_value()) return mesh;
+    const auto& stations = boundary->stations;
 
     struct StationVertices {
         std::uint32_t outer_bottom{};
@@ -474,15 +653,9 @@ MeshBuffer build_curved_wall_mesh(
     };
     std::vector<StationVertices> vertices;
     vertices.reserve(stations.size());
-    for (const auto& station : stations) {
-        const auto outer = Point2{
-            .x = station.centerline.x + (station.radial.x * half_thickness),
-            .y = station.centerline.y + (station.radial.y * half_thickness),
-        };
-        const auto inner = Point2{
-            .x = station.centerline.x - (station.radial.x * half_thickness),
-            .y = station.centerline.y - (station.radial.y * half_thickness),
-        };
+    for (std::size_t index = 0; index < stations.size(); ++index) {
+        const auto& outer = boundary->outer[index];
+        const auto& inner = boundary->inner[index];
         const auto base = static_cast<std::uint32_t>(mesh.vertices.size());
         mesh.vertices.push_back(Point3{.x = outer.x, .y = outer.y, .z = base_elevation});
         mesh.vertices.push_back(Point3{.x = inner.x, .y = inner.y, .z = base_elevation});
@@ -543,15 +716,10 @@ MeshBuffer build_curved_wall_mesh(
                 return std::abs(candidate.distance_meters - distance) <= 1.0e-8;
             });
             if (station == stations.end()) continue;
-            const auto radial = station->radial;
-            const auto outer = Point2{
-                .x = station->centerline.x + (radial.x * half_thickness),
-                .y = station->centerline.y + (radial.y * half_thickness),
-            };
-            const auto inner = Point2{
-                .x = station->centerline.x - (radial.x * half_thickness),
-                .y = station->centerline.y - (radial.y * half_thickness),
-            };
+            const auto station_index = static_cast<std::size_t>(
+                std::distance(stations.begin(), station));
+            const auto& outer = boundary->outer[station_index];
+            const auto& inner = boundary->inner[station_index];
             const auto base = static_cast<std::uint32_t>(mesh.vertices.size());
             mesh.vertices.push_back(Point3{.x = outer.x, .y = outer.y, .z = base_elevation + opening.z_min});
             mesh.vertices.push_back(Point3{.x = inner.x, .y = inner.y, .z = base_elevation + opening.z_min});
@@ -722,6 +890,36 @@ WallProfile2D GeometryService::build_wall_profile(const WallData& wall) const {
 
     validate_opening_rectangles(profile.openings, length, wall.height_meters);
     return profile;
+}
+
+std::vector<Point2> GeometryService::build_wall_footprint(const WallData& wall) const {
+    WallProfile2D profile;
+    try {
+        profile = build_wall_profile(wall);
+    } catch (const std::invalid_argument&) {
+        // Rendering must remain available while an authored opening is being
+        // repaired or its level constraint is in flight.  Reuse the last
+        // validated generated profile in that narrow case instead of making a
+        // metadata/overlay query fail the entire render scene.
+        profile = wall.geometry.profile;
+    }
+    if (!wall.arc.has_value()) {
+        std::vector<Point2> footprint;
+        footprint.reserve(profile.polygon.size());
+        for (const auto& point : profile.polygon) {
+            const auto world = to_world_point(
+                Point3{.x = point.x, .y = point.y, .z = 0.0},
+                wall.axis);
+            footprint.push_back(Point2{.x = world.x, .y = world.y});
+        }
+        return footprint;
+    }
+
+    const auto boundary = curved_wall_plan_boundary(wall, profile);
+    if (!boundary.has_value()) return {};
+    std::vector<Point2> footprint = boundary->outer;
+    footprint.insert(footprint.end(), boundary->inner.rbegin(), boundary->inner.rend());
+    return footprint;
 }
 
 GeneratedGeometry GeometryService::build_wall_geometry(

@@ -142,12 +142,6 @@ class FallbackRenderScenePainter extends CustomPainter
               (sum, object) => sum + object.mesh.triangleCount,
             ) >
             42000;
-    if (projectionMode == RenderSceneProjectionMode.topDown) {
-      // Engine wall meshes are predominantly vertical faces. Their triangles
-      // can collapse to zero area in a top projection, so draw the canonical
-      // wall footprint independently of mesh tessellation.
-      _drawPlanWallFootprints(canvas, projection, filteredObjects);
-    }
     final depthRange = projectionMode.isElevation
         ? _projectedObjectDepthRange(filteredObjects, projection)
         : null;
@@ -299,10 +293,17 @@ class FallbackRenderScenePainter extends CustomPainter
       }
     }
 
-    _drawFloorSurfacePatterns(canvas, projection, filteredObjects);
-
     if (projectionMode == RenderSceneProjectionMode.topDown) {
+      // Plan paint order is explicit: horizontal surfaces first, then the
+      // joined wall cut and finally opening symbols. Drawing the wall cut at
+      // the beginning let asphalt/grass/floor pattern strokes cover it in
+      // screen space; at high zoom that looked like z-fighting even though
+      // the model itself was valid.
+      _drawFloorSurfacePatterns(canvas, projection, filteredObjects);
+      _drawPlanWallFootprints(canvas, projection, filteredObjects);
       _drawPlanOpeningSymbols(canvas, projection, filteredObjects);
+    } else {
+      _drawFloorSurfacePatterns(canvas, projection, filteredObjects);
     }
 
     if (projectionMode.isElevation) {

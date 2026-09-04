@@ -121,6 +121,28 @@ public:
         ElementId material_id,
         ElementId assembly_id = 0
     );
+    ElementId create_stair_layout(
+        ElementId base_level_id,
+        ElementId top_level_id,
+        std::vector<Point2> path_points,
+        double width_meters,
+        double total_rise_meters,
+        int riser_count,
+        int tread_count,
+        double landing_depth_meters,
+        StairLayoutKind layout_kind,
+        bool railing_enabled,
+        ElementId material_id = 0,
+        ElementId assembly_id = 0
+    );
+    void update_stair_layout(
+        ElementId stair_id,
+        std::vector<Point2> path_points,
+        double width_meters,
+        double landing_depth_meters,
+        StairLayoutKind layout_kind,
+        bool railing_enabled
+    );
     /// Adds a lightweight box for a physical IFC product whose exact profile
     /// is not supported by the analytical importer.
     ElementId create_proxy(
@@ -180,6 +202,18 @@ public:
     /// assembly is accepted only for low-level legacy compatibility; wall
     /// authoring uses set_wall_type instead.
     void set_element_assembly(ElementId element_id, ElementId assembly_id);
+    /// Stores the reusable family definition reference on an instance. The
+    /// instance keeps only this small reference and its native parameters;
+    /// family geometry remains owned by the family asset/type layer.
+    void set_element_family_reference(
+        ElementId element_id,
+        std::string family_asset_id,
+        std::string family_name,
+        std::string family_type_id,
+        std::string family_type_name,
+        std::string family_category,
+        std::string family_asset_path = {}
+    );
     /// Converts legacy Wall-kind assemblies and dual-source wall records into
     /// the single canonical WallTypeData source. This is idempotent and is
     /// called after project load as well as by wall authoring adapters.

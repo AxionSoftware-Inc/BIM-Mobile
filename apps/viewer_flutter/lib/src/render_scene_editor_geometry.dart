@@ -68,6 +68,7 @@ List<double> _sortedUniqueBreaks(List<double> values) {
 _WallGeometry? _wallGeometryFromMap(Map<String, Object?> wallObject) {
   final metadata = wallObject['metadata'];
   final metadataMap = metadata is Map ? metadata : null;
+  final centerline = _curvePointsFromMetadata(metadataMap);
   final axisStart = RenderScenePoint.fromJson(
     metadataMap?['axis_start'] ?? metadataMap?['axisStart'],
   );
@@ -78,7 +79,12 @@ _WallGeometry? _wallGeometryFromMap(Map<String, Object?> wallObject) {
     metadataMap?['thickness_meters'] ?? metadataMap?['thicknessMeters'],
   );
   if (axisStart != null && axisEnd != null && thickness != null) {
-    return _WallGeometry(start: axisStart, end: axisEnd, thickness: thickness);
+    return _WallGeometry(
+      start: axisStart,
+      end: axisEnd,
+      thickness: thickness,
+      centerline: centerline,
+    );
   }
 
   // Native EngineApi serializes wall axes as scalar fields. Respecting them
@@ -98,6 +104,7 @@ _WallGeometry? _wallGeometryFromMap(Map<String, Object?> wallObject) {
       start: RenderScenePoint(x: startX, y: startY, z: 0.0),
       end: RenderScenePoint(x: endX, y: endY, z: 0.0),
       thickness: thickness,
+      centerline: centerline,
     );
   }
 
@@ -178,6 +185,7 @@ List<RenderScenePoint> _boundsCorners(RenderSceneBounds bounds) {
 
 _WallGeometry? _wallGeometry(RenderSceneObject wall) {
   final metadata = wall.metadata;
+  final centerline = _curvePointsFromMetadata(metadata);
   final axisStart = RenderScenePoint.fromJson(
       metadata['axis_start'] ?? metadata['axisStart']);
   final axisEnd =
@@ -186,7 +194,12 @@ _WallGeometry? _wallGeometry(RenderSceneObject wall) {
       _toDouble(metadata['thickness_meters'] ?? metadata['thicknessMeters']);
 
   if (axisStart != null && axisEnd != null && thickness != null) {
-    return _WallGeometry(start: axisStart, end: axisEnd, thickness: thickness);
+    return _WallGeometry(
+      start: axisStart,
+      end: axisEnd,
+      thickness: thickness,
+      centerline: centerline,
+    );
   }
 
   // Native EngineApi serializes the axis as scalar string metadata. Keep
@@ -206,6 +219,7 @@ _WallGeometry? _wallGeometry(RenderSceneObject wall) {
       start: RenderScenePoint(x: startX, y: startY, z: 0.0),
       end: RenderScenePoint(x: endX, y: endY, z: 0.0),
       thickness: thickness,
+      centerline: centerline,
     );
   }
 
@@ -234,6 +248,28 @@ _WallGeometry? _wallGeometry(RenderSceneObject wall) {
         x: (bounds.min.x + bounds.max.x) * 0.5, y: bounds.max.y, z: 0),
     thickness: width,
   );
+}
+
+List<RenderScenePoint> _curvePointsFromMetadata(Object? rawMetadata) {
+  if (rawMetadata is! Map) {
+    return const <RenderScenePoint>[];
+  }
+  final raw = rawMetadata['curve_points'] ?? rawMetadata['curvePoints'];
+  if (raw is! String || raw.isEmpty) {
+    return const <RenderScenePoint>[];
+  }
+  final points = <RenderScenePoint>[];
+  for (final token in raw.split(';')) {
+    final values = token.split(',');
+    if (values.length != 2) continue;
+    final x = double.tryParse(values[0]);
+    final y = double.tryParse(values[1]);
+    if (x == null || y == null || !x.isFinite || !y.isFinite) continue;
+    points.add(RenderScenePoint(x: x, y: y, z: 0.0));
+  }
+  return points.length >= 2
+      ? List<RenderScenePoint>.unmodifiable(points)
+      : const <RenderScenePoint>[];
 }
 
 RenderScenePoint _projectPointToSegment(

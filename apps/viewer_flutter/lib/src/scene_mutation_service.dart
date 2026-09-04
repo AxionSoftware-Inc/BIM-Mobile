@@ -91,9 +91,20 @@ class SceneMutationService {
         levelId: request.baseLevelId,
         topLevelId: request.topLevelId,
       );
-      final created = scene.objects.length > request.scene.objects.length
-          ? scene.objects.last.elementId
-          : null;
+      final previousWallIds = request.scene.objects
+          .where((object) => object.kindKey == 'wall')
+          .map((object) => object.elementId)
+          .whereType<int>()
+          .toSet();
+      final created = scene.objects
+          .where((object) =>
+              object.kindKey == 'wall' &&
+              object.elementId != null &&
+              !previousWallIds.contains(object.elementId))
+          .map((object) => object.elementId)
+          .whereType<int>()
+          .cast<int?>()
+          .lastOrNull;
       final success = created != null;
       trace.add(
           'fallback snapshot walls=${scene.kindCounts['wall'] ?? 0} id=$created');
@@ -195,12 +206,44 @@ class SceneMutationService {
     ];
     final engine = engineRepository;
     if (engine == null) {
-      return SceneMutationOutcome(
+      final scene = RenderSceneEditor.addCurvedWall(
         scene: request.scene,
-        createdElementId: null,
-        success: false,
+        start: request.geometry.start,
+        end: request.geometry.end,
+        center: request.geometry.center,
+        radiusMeters: request.geometry.radiusMeters,
+        startAngleRadians: math.atan2(
+          request.geometry.start.y - request.geometry.center.y,
+          request.geometry.start.x - request.geometry.center.x,
+        ),
+        sweepRadians: request.geometry.sweepRadians,
+        heightMeters: request.heightMeters,
+        thicknessMeters: request.thicknessMeters,
+        levelId: request.baseLevelId,
+        topLevelId: request.topLevelId,
+      );
+      final previousWallIds = request.scene.objects
+          .where((object) => object.kindKey == 'wall')
+          .map((object) => object.elementId)
+          .whereType<int>()
+          .toSet();
+      final created = scene.objects
+          .where((object) =>
+              object.kindKey == 'wall' &&
+              object.elementId != null &&
+              !previousWallIds.contains(object.elementId))
+          .map((object) => object.elementId)
+          .whereType<int>()
+          .cast<int?>()
+          .lastOrNull;
+      final success = created != null;
+      trace.add('fallback curved wall id=$created');
+      return SceneMutationOutcome(
+        scene: scene,
+        createdElementId: created,
+        success: success,
         trace: trace,
-        error: 'Curved wall requires the native authoring engine.',
+        error: success ? null : 'Fallback curved wall could not be created.',
       );
     }
     try {

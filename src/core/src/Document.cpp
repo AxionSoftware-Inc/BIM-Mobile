@@ -34,6 +34,86 @@ double wall_centerline_length(const WallData& wall) {
     return length(wall.axis);
 }
 
+// A curved wall remains one authored element, but every downstream profile
+// operation needs a bounded approximation of its centerline. Keep this
+// tessellation policy in the core so Pick Walls, room detection and their
+// dependent floor/ceiling systems use the same path rather than falling back
+// to the arc chord.
+std::vector<Point2> wall_path_points(const WallData& wall) {
+    if (!wall.arc.has_value()) {
+        return {wall.axis.start, wall.axis.end};
+    }
+
+    const auto& arc = *wall.arc;
+    const auto path_length = std::abs(arc.radius_meters * arc.sweep_radians);
+    const auto segment_count = std::clamp(
+        static_cast<int>(std::ceil(path_length / 0.18)),
+        16,
+        96
+    );
+    std::vector<Point2> points;
+    points.reserve(static_cast<std::size_t>(segment_count) + 1);
+    for (int index = 0; index <= segment_count; ++index) {
+        const auto fraction = static_cast<double>(index) /
+            static_cast<double>(segment_count);
+        const auto angle = arc.start_angle_radians +
+            (arc.sweep_radians * fraction);
+        points.push_back(Point2{
+            .x = arc.center.x + (std::cos(angle) * arc.radius_meters),
+            .y = arc.center.y + (std::sin(angle) * arc.radius_meters),
+        });
+    }
+    if (!points.empty()) {
+        points.front() = wall.axis.start;
+        points.back() = wall.axis.end;
+    }
+    return points;
+}
+
+// WallJoin stores a reference line consumed by the geometry service. For a
+// curved wall its endpoint chord is not a usable direction: a straight wall
+// joining the arc must see the arc tangent at the contact, otherwise its
+// miter cap is solved against an unrelated diagonal.
+Line2 wall_join_reference_axis(const WallData& wall, Point2 contact) {
+    if (!wall.arc.has_value()) {
+        return wall.axis;
+    }
+
+    const auto& arc = *wall.arc;
+    const auto start_distance = std::hypot(
+        contact.x - wall.axis.start.x,
+        contact.y - wall.axis.start.y);
+    const auto end_distance = std::hypot(
+        contact.x - wall.axis.end.x,
+        contact.y - wall.axis.end.y);
+    const auto endpoint = start_distance <= end_distance ? wall.axis.start : wall.axis.end;
+    const auto radial_length = std::hypot(
+        endpoint.x - arc.center.x,
+        endpoint.y - arc.center.y);
+    if (radial_length <= epsilon) {
+        return wall.axis;
+    }
+
+    const auto radial = Point2{
+        .x = (endpoint.x - arc.center.x) / radial_length,
+        .y = (endpoint.y - arc.center.y) / radial_length,
+    };
+    const auto tangent_forward = arc.sweep_radians >= 0.0
+        ? Point2{.x = -radial.y, .y = radial.x}
+        : Point2{.x = radial.y, .y = -radial.x};
+    // Keep the reference axis in the authored tangent orientation.  The
+    // straight-wall join solver already asks direction_away_from() which way
+    // to travel from the contact point; reversing the arc tangent here at its
+    // end makes that second reversal produce the opposite cap side.  That
+    // leaves the arc and straight wall with crossing, rather than shared,
+    // miter planes.
+    const auto away = tangent_forward;
+    return Line2{
+        .start = contact,
+        .end = Point2{.x = contact.x + away.x, .y = contact.y + away.y},
+    };
+}
+
 Point2 add(Point2 left, Point2 right) {
     return Point2{.x = left.x + right.x, .y = left.y + right.y};
 }
@@ -230,6 +310,10 @@ struct IntervalWallRef {
 
 struct RoomCandidate {
     std::vector<ElementId> boundary_wall_ids{};
+    // One wall id for every boundary edge in boundary_polygon. Keeping this
+    // parallel array lets the interior offset use the curved wall's actual
+    // thickness instead of guessing from its endpoint chord.
+    std::vector<ElementId> boundary_edge_wall_ids{};
     std::vector<Point2> boundary_polygon{};
     double area_square_meters{};
     double perimeter_meters{};
@@ -401,6 +485,7 @@ std::vector<RoomCandidate> graph_room_candidates(
         std::size_t to{};
         std::size_t twin{};
         ElementId wall_id{};
+        std::vector<Point2> path{};
     };
     std::vector<HalfEdge> half_edges;
     std::vector<std::vector<std::size_t>> outgoing(nodes.size());
@@ -422,17 +507,20 @@ std::vector<RoomCandidate> graph_room_candidates(
             continue;
         }
         const auto forward = half_edges.size();
+        const auto path = wall_path_points(*walls[wall_index].wall);
         half_edges.push_back(HalfEdge{
             .from = from,
             .to = to,
             .twin = forward + 1,
             .wall_id = walls[wall_index].id,
+            .path = path,
         });
         half_edges.push_back(HalfEdge{
             .from = to,
             .to = from,
             .twin = forward,
             .wall_id = walls[wall_index].id,
+            .path = std::vector<Point2>(path.rbegin(), path.rend()),
         });
         outgoing[from].push_back(forward);
         outgoing[to].push_back(forward + 1);
@@ -442,12 +530,18 @@ std::vector<RoomCandidate> graph_room_candidates(
         std::sort(edges.begin(), edges.end(), [&](std::size_t first, std::size_t second) {
             const auto& first_edge = half_edges[first];
             const auto& second_edge = half_edges[second];
+            const auto first_direction = first_edge.path.size() >= 2
+                ? subtract(first_edge.path[1], first_edge.path[0])
+                : subtract(nodes[first_edge.to].point, nodes[first_edge.from].point);
+            const auto second_direction = second_edge.path.size() >= 2
+                ? subtract(second_edge.path[1], second_edge.path[0])
+                : subtract(nodes[second_edge.to].point, nodes[second_edge.from].point);
             const auto first_angle = std::atan2(
-                nodes[first_edge.to].point.y - nodes[first_edge.from].point.y,
-                nodes[first_edge.to].point.x - nodes[first_edge.from].point.x);
+                first_direction.y,
+                first_direction.x);
             const auto second_angle = std::atan2(
-                nodes[second_edge.to].point.y - nodes[second_edge.from].point.y,
-                nodes[second_edge.to].point.x - nodes[second_edge.from].point.x);
+                second_direction.y,
+                second_direction.x);
             return first_angle < second_angle;
         });
     }
@@ -460,6 +554,7 @@ std::vector<RoomCandidate> graph_room_candidates(
         }
         std::vector<Point2> polygon;
         std::vector<ElementId> boundary_wall_ids;
+        std::vector<ElementId> boundary_edge_wall_ids;
         auto current_edge = start_edge;
         auto closed = false;
         for (std::size_t guard = 0; guard <= half_edges.size() + 2; ++guard) {
@@ -469,7 +564,15 @@ std::vector<RoomCandidate> graph_room_candidates(
             }
             visited[current_edge] = true;
             const auto& edge = half_edges[current_edge];
-            polygon.push_back(nodes[edge.from].point);
+            for (std::size_t path_index = 0; path_index < edge.path.size(); ++path_index) {
+                const auto point = edge.path[path_index];
+                if (polygon.empty() || !same_point(polygon.back(), point)) {
+                    polygon.push_back(point);
+                }
+                if (path_index + 1 < edge.path.size()) {
+                    boundary_edge_wall_ids.push_back(edge.wall_id);
+                }
+            }
             append_unique(boundary_wall_ids, edge.wall_id);
 
             const auto& next_edges = outgoing[edge.to];
@@ -482,6 +585,12 @@ std::vector<RoomCandidate> graph_room_candidates(
             current_edge = next_edges[(reverse_index + next_edges.size() - 1) % next_edges.size()];
         }
         if (!closed || polygon.size() < 3 || boundary_wall_ids.size() < 3) {
+            continue;
+        }
+        if (polygon.size() > 1 && same_point(polygon.front(), polygon.back())) {
+            polygon.pop_back();
+        }
+        if (boundary_edge_wall_ids.size() != polygon.size()) {
             continue;
         }
         const auto signed_area = polygon_signed_area(polygon);
@@ -499,6 +608,7 @@ std::vector<RoomCandidate> graph_room_candidates(
         }
         candidates.push_back(RoomCandidate{
             .boundary_wall_ids = std::move(boundary_wall_ids),
+            .boundary_edge_wall_ids = std::move(boundary_edge_wall_ids),
             .boundary_polygon = std::move(polygon),
             .area_square_meters = signed_area,
             .perimeter_meters = perimeter,
@@ -713,6 +823,7 @@ PickWallLoopResult build_pick_wall_loop(
         ElementId wall_id{};
         Point2 start{};
         Point2 end{};
+        std::vector<Point2> path{};
         std::size_t start_node{};
         std::size_t end_node{};
     };
@@ -751,6 +862,7 @@ PickWallLoopResult build_pick_wall_loop(
             .wall_id = wall_id,
             .start = wall->axis.start,
             .end = wall->axis.end,
+            .path = wall_path_points(*wall),
             .start_node = start_node,
             .end_node = end_node,
         });
@@ -782,7 +894,18 @@ PickWallLoopResult build_pick_wall_loop(
         }
         visited[current_wall_index] = true;
         const auto& wall = walls[current_wall_index];
-        polygon.push_back(nodes[current_node]);
+        const auto append_path_point = [&](Point2 point) {
+            if (polygon.empty() || !same_point(polygon.back(), point)) {
+                polygon.push_back(point);
+            }
+        };
+        if (wall.start_node == current_node) {
+            for (const auto point : wall.path) append_path_point(point);
+        } else {
+            for (auto point = wall.path.rbegin(); point != wall.path.rend(); ++point) {
+                append_path_point(*point);
+            }
+        }
         ordered_wall_ids.push_back(wall.wall_id);
 
         const auto next_node = wall.start_node == current_node ? wall.end_node : wall.start_node;
@@ -802,6 +925,10 @@ PickWallLoopResult build_pick_wall_loop(
             throw std::invalid_argument("pick-walls profile became disconnected while ordering walls");
         }
         current_wall_index = *next_wall_it;
+    }
+
+    if (polygon.size() > 1 && same_point(polygon.front(), polygon.back())) {
+        polygon.pop_back();
     }
 
     if (std::find(visited.begin(), visited.end(), false) != visited.end()) {
@@ -1273,7 +1400,7 @@ MeshBuffer extrude_beam_mesh(Point2 start, Point2 end, double width, double heig
     return extrude_polygon_mesh(polygon, height, 0.0);
 }
 
-MeshBuffer build_stair_mesh(const StairData& stair) {
+MeshBuffer build_straight_stair_mesh(const StairData& stair) {
     if (stair.width_meters <= 0.0 || stair.total_run_meters <= 0.0 || stair.total_rise_meters <= 0.0) {
         return {};
     }
@@ -1349,6 +1476,168 @@ MeshBuffer build_stair_mesh(const StairData& stair) {
         if (step > 0) {
             add_quad(point_at(run_start, -1.0, lower), point_at(run_start, 1.0, lower),
                      point_at(run_start, 1.0, upper), point_at(run_start, -1.0, upper));
+        }
+    }
+    return mesh;
+}
+
+void append_mesh_with_z_offset(MeshBuffer& target, const MeshBuffer& source, double z_offset) {
+    const auto vertex_base = static_cast<std::uint32_t>(target.vertices.size());
+    target.vertices.reserve(target.vertices.size() + source.vertices.size());
+    for (const auto& vertex : source.vertices) {
+        target.vertices.push_back(Point3{.x = vertex.x, .y = vertex.y, .z = vertex.z + z_offset});
+    }
+    target.indices.reserve(target.indices.size() + source.indices.size());
+    for (const auto index : source.indices) {
+        target.indices.push_back(vertex_base + index);
+    }
+}
+
+void append_oriented_box(
+    MeshBuffer& mesh,
+    Point2 center,
+    Point2 direction,
+    double width,
+    double depth,
+    double z0,
+    double z1
+) {
+    const auto direction_length = std::hypot(direction.x, direction.y);
+    if (direction_length <= epsilon || width <= epsilon || depth <= epsilon || z1 <= z0 + epsilon) {
+        return;
+    }
+    const auto unit = Point2{.x = direction.x / direction_length, .y = direction.y / direction_length};
+    const auto normal = perpendicular_left(unit);
+    const auto half_width = width / 2.0;
+    const auto half_depth = depth / 2.0;
+    const auto corner = [&](double along, double across, double z) {
+        const auto plan = add(add(center, scale(unit, along)), scale(normal, across));
+        return Point3{.x = plan.x, .y = plan.y, .z = z};
+    };
+    const auto base = static_cast<std::uint32_t>(mesh.vertices.size());
+    mesh.vertices.insert(mesh.vertices.end(), {
+        corner(-half_width, -half_depth, z0), corner(half_width, -half_depth, z0),
+        corner(half_width, half_depth, z0), corner(-half_width, half_depth, z0),
+        corner(-half_width, -half_depth, z1), corner(half_width, -half_depth, z1),
+        corner(half_width, half_depth, z1), corner(-half_width, half_depth, z1),
+    });
+    mesh.indices.insert(mesh.indices.end(), {
+        base + 0, base + 2, base + 1, base + 0, base + 3, base + 2,
+        base + 4, base + 5, base + 6, base + 4, base + 6, base + 7,
+        base + 0, base + 1, base + 5, base + 0, base + 5, base + 4,
+        base + 1, base + 2, base + 6, base + 1, base + 6, base + 5,
+        base + 2, base + 3, base + 7, base + 2, base + 7, base + 6,
+        base + 3, base + 0, base + 4, base + 3, base + 4, base + 7,
+    });
+}
+
+MeshBuffer build_stair_mesh(const StairData& stair) {
+    if (stair.layout_kind == StairLayoutKind::Straight || stair.path_points.size() < 3) {
+        return build_straight_stair_mesh(stair);
+    }
+    MeshBuffer mesh;
+    double total_path = 0.0;
+    for (std::size_t index = 1; index < stair.path_points.size(); ++index) {
+        total_path += std::hypot(
+            stair.path_points[index].x - stair.path_points[index - 1].x,
+            stair.path_points[index].y - stair.path_points[index - 1].y
+        );
+    }
+    if (total_path <= epsilon || stair.total_rise_meters <= epsilon) {
+        return {};
+    }
+    const auto total_steps = std::max(1, stair.tread_count);
+    auto steps_used = 0;
+    auto current_rise = 0.0;
+    for (std::size_t index = 1; index < stair.path_points.size(); ++index) {
+        const auto start = stair.path_points[index - 1];
+        const auto end = stair.path_points[index];
+        const auto run = std::hypot(end.x - start.x, end.y - start.y);
+        if (run <= epsilon) continue;
+        const auto remaining_segments = static_cast<int>(stair.path_points.size() - index - 1);
+        const auto proportional_steps = static_cast<int>(std::lround(
+            static_cast<double>(total_steps) * run / total_path
+        ));
+        const auto steps_left = total_steps - steps_used;
+        const auto step_count = index + 1 == stair.path_points.size()
+            ? std::max(1, steps_left)
+            : std::max(1, std::min(proportional_steps, steps_left - remaining_segments));
+        StairData flight = stair;
+        flight.layout_kind = StairLayoutKind::Straight;
+        flight.path_points.clear();
+        flight.start = start;
+        flight.direction = Point2{.x = end.x - start.x, .y = end.y - start.y};
+        flight.total_run_meters = run;
+        flight.total_rise_meters = stair.total_rise_meters * run / total_path;
+        flight.tread_count = step_count;
+        flight.riser_count = step_count;
+        append_mesh_with_z_offset(mesh, build_straight_stair_mesh(flight), current_rise);
+        current_rise += flight.total_rise_meters;
+        steps_used += step_count;
+
+        if (index + 1 < stair.path_points.size()) {
+            const auto next = stair.path_points[index + 1];
+            const auto landing_direction = Point2{.x = next.x - end.x, .y = next.y - end.y};
+            append_oriented_box(
+                mesh,
+                end,
+                landing_direction,
+                stair.width_meters,
+                std::max(stair.landing_depth_meters, stair.width_meters),
+                current_rise - 0.08,
+                current_rise
+            );
+        }
+    }
+
+    if (stair.railing_enabled) {
+        // Lightweight architectural railing: posts and segmented top rails
+        // follow every flight, avoiding a second semantic object per post.
+        current_rise = 0.0;
+        for (std::size_t index = 1; index < stair.path_points.size(); ++index) {
+            const auto start = stair.path_points[index - 1];
+            const auto end = stair.path_points[index];
+            const auto run = std::hypot(end.x - start.x, end.y - start.y);
+            if (run <= epsilon) continue;
+            const auto direction = Point2{.x = (end.x - start.x) / run, .y = (end.y - start.y) / run};
+            const auto normal = perpendicular_left(direction);
+            const auto flight_rise = stair.total_rise_meters * run / total_path;
+            const auto rail_offset = stair.width_meters / 2.0 + 0.06;
+            const auto post_count = std::max(2, static_cast<int>(std::ceil(run / 1.5)) + 1);
+            for (int post = 0; post < post_count; ++post) {
+                const auto t = static_cast<double>(post) / static_cast<double>(post_count - 1);
+                const auto position = Point2{
+                    .x = start.x + (end.x - start.x) * t,
+                    .y = start.y + (end.y - start.y) * t,
+                };
+                const auto z = current_rise + flight_rise * t;
+                for (const auto side : {-1.0, 1.0}) {
+                    append_oriented_box(
+                        mesh,
+                        add(position, scale(normal, rail_offset * side)),
+                        direction,
+                        0.06,
+                        0.06,
+                        z,
+                        z + 0.92
+                    );
+                }
+            }
+            const auto rail_segments = std::max(1, static_cast<int>(std::ceil(run / 0.8)));
+            for (int rail = 0; rail < rail_segments; ++rail) {
+                const auto t0 = static_cast<double>(rail) / rail_segments;
+                const auto t1 = static_cast<double>(rail + 1) / rail_segments;
+                const auto mid = (t0 + t1) / 2.0;
+                const auto position = Point2{
+                    .x = start.x + (end.x - start.x) * mid,
+                    .y = start.y + (end.y - start.y) * mid,
+                };
+                const auto z = current_rise + flight_rise * mid + 0.92;
+                for (const auto side : {-1.0, 1.0}) {
+                    append_oriented_box(mesh, add(position, scale(normal, rail_offset * side)), direction, run / rail_segments + 0.04, 0.07, z - 0.035, z + 0.035);
+                }
+            }
+            current_rise += flight_rise;
         }
     }
     return mesh;
@@ -2224,6 +2513,56 @@ void Document::set_element_assembly(ElementId element_id, ElementId assembly_id)
     invalidate_dependency_graph_cache();
 }
 
+void Document::set_element_family_reference(
+    ElementId element_id,
+    std::string family_asset_id,
+    std::string family_name,
+    std::string family_type_id,
+    std::string family_type_name,
+    std::string family_category,
+    std::string family_asset_path
+) {
+    auto* element = find_ptr(element_id);
+    if (element == nullptr) {
+        throw std::invalid_argument("element does not exist");
+    }
+    if (family_asset_id.empty() || family_name.empty() || family_type_id.empty() ||
+        family_type_name.empty() || family_category.empty()) {
+        throw std::invalid_argument("family reference fields are required");
+    }
+
+    auto& metadata = element->metadata();
+    metadata["family_asset_id"] = MetadataValue{
+        .kind = MetadataValueKind::Text,
+        .value = std::move(family_asset_id),
+    };
+    metadata["family_name"] = MetadataValue{
+        .kind = MetadataValueKind::Text,
+        .value = std::move(family_name),
+    };
+    metadata["family_type_id"] = MetadataValue{
+        .kind = MetadataValueKind::Text,
+        .value = std::move(family_type_id),
+    };
+    metadata["family_type_name"] = MetadataValue{
+        .kind = MetadataValueKind::Text,
+        .value = std::move(family_type_name),
+    };
+    metadata["family_category"] = MetadataValue{
+        .kind = MetadataValueKind::Text,
+        .value = std::move(family_category),
+    };
+    if (!family_asset_path.empty()) {
+        metadata["family_asset_path"] = MetadataValue{
+            .kind = MetadataValueKind::Text,
+            .value = std::move(family_asset_path),
+        };
+    } else {
+        metadata.erase("family_asset_path");
+    }
+    element->touch();
+}
+
 void Document::update_roof_properties(ElementId roof_id, RoofType roof_type, std::optional<double> slope_degrees, std::optional<double> overhang_meters) {
     auto* element = find_ptr(roof_id);
     auto* roof = element == nullptr ? nullptr : element->roof();
@@ -3021,12 +3360,105 @@ ElementId Document::create_stair(
             throw std::invalid_argument("stair assembly must exist and have Stair kind");
         }
     }
-    const auto footprint_area = width_meters * total_run_meters;
+    const auto direction_length = std::hypot(direction.x, direction.y);
+    if (direction_length <= epsilon) {
+        throw std::invalid_argument("stair direction must be non-zero");
+    }
+    return create_stair_layout(
+        base_level_id,
+        top_level_id,
+        {start, add(start, scale(direction, total_run_meters / direction_length))},
+        width_meters,
+        total_rise_meters,
+        riser_count,
+        tread_count,
+        0.0,
+        StairLayoutKind::Straight,
+        false,
+        material_id,
+        assembly_id
+    );
+}
+
+ElementId Document::create_stair_layout(
+    ElementId base_level_id,
+    ElementId top_level_id,
+    std::vector<Point2> path_points,
+    double width_meters,
+    double total_rise_meters,
+    int riser_count,
+    int tread_count,
+    double landing_depth_meters,
+    StairLayoutKind layout_kind,
+    bool railing_enabled,
+    ElementId material_id,
+    ElementId assembly_id
+) {
+    (void)require_level(base_level_id);
+    if (top_level_id != 0) {
+        (void)require_level(top_level_id);
+    }
+    if (top_level_id != 0 && top_level_id != base_level_id &&
+        level_elevation(top_level_id) <= level_elevation(base_level_id) + epsilon) {
+        throw std::invalid_argument("stair top level must be above base level");
+    }
+    if (layout_kind != StairLayoutKind::Straight &&
+        layout_kind != StairLayoutKind::LShape &&
+        layout_kind != StairLayoutKind::UShape) {
+        throw std::invalid_argument("stair layout kind is invalid");
+    }
+    const auto minimum_points = layout_kind == StairLayoutKind::Straight ? 2U :
+        layout_kind == StairLayoutKind::LShape ? 3U : 4U;
+    if (path_points.size() < minimum_points) {
+        throw std::invalid_argument("stair path does not match its layout kind");
+    }
+    if (width_meters <= 0.0 || total_rise_meters <= 0.0 || riser_count <= 0 || tread_count <= 0 ||
+        landing_depth_meters < 0.0) {
+        throw std::invalid_argument("stair dimensions and counts must be positive");
+    }
+    double total_run_meters = 0.0;
+    for (std::size_t index = 0; index < path_points.size(); ++index) {
+        if (!std::isfinite(path_points[index].x) || !std::isfinite(path_points[index].y)) {
+            throw std::invalid_argument("stair path points must be finite");
+        }
+        if (index > 0) {
+            const auto segment = std::hypot(
+                path_points[index].x - path_points[index - 1].x,
+                path_points[index].y - path_points[index - 1].y
+            );
+            if (segment <= epsilon) {
+                throw std::invalid_argument("stair path segments must be non-zero");
+            }
+            total_run_meters += segment;
+        }
+    }
+    if (total_run_meters <= epsilon) {
+        throw std::invalid_argument("stair path must have a positive run");
+    }
+    if (layout_kind == StairLayoutKind::Straight && path_points.size() != 2) {
+        throw std::invalid_argument("straight stair must have exactly two path points");
+    }
+    if (material_id != 0 && get_material(material_id) == nullptr) {
+        throw std::invalid_argument("stair material does not exist");
+    }
+    if (assembly_id != 0) {
+        const auto* assembly = get_layered_assembly(assembly_id);
+        if (assembly == nullptr || assembly->kind != LayeredAssemblyKind::Stair) {
+            throw std::invalid_argument("stair assembly must exist and have Stair kind");
+        }
+    }
+    const auto direction = Point2{
+        .x = path_points[1].x - path_points[0].x,
+        .y = path_points[1].y - path_points[0].y,
+    };
+    const auto landing_count = static_cast<double>(path_points.size() - 2);
+    const auto footprint_area = width_meters * total_run_meters +
+        width_meters * landing_depth_meters * landing_count;
     const auto id = allocate_id();
     StairData stair{
         .base_level_id = base_level_id,
         .top_level_id = top_level_id,
-        .start = start,
+        .start = path_points.front(),
         .direction = direction,
         .width_meters = width_meters,
         .total_rise_meters = total_rise_meters,
@@ -3039,6 +3471,10 @@ ElementId Document::create_stair(
         .mesh = {},
         .footprint_area_square_meters = footprint_area,
         .volume_cubic_meters = footprint_area * (total_rise_meters / 2.0),
+        .layout_kind = layout_kind,
+        .path_points = std::move(path_points),
+        .landing_depth_meters = landing_depth_meters,
+        .railing_enabled = railing_enabled,
     };
     stair.mesh = build_stair_mesh(stair);
     stair.envelope_geometry.dirty = false;
@@ -3048,6 +3484,90 @@ ElementId Document::create_stair(
     elements_.emplace_back(id, ElementKind::Stair, "Stair", stair);
     invalidate_dependency_graph_cache();
     return id;
+}
+
+void Document::update_stair_layout(
+    ElementId stair_id,
+    std::vector<Point2> path_points,
+    double width_meters,
+    double landing_depth_meters,
+    StairLayoutKind layout_kind,
+    bool railing_enabled
+) {
+    auto* element = find_ptr(stair_id);
+    auto* stair = element == nullptr ? nullptr : element->stair();
+    if (stair == nullptr) {
+        throw std::invalid_argument("stair does not exist");
+    }
+    if (width_meters <= 0.0 || !std::isfinite(width_meters) ||
+        landing_depth_meters < 0.0 || !std::isfinite(landing_depth_meters)) {
+        throw std::invalid_argument("stair width and landing must be finite and positive");
+    }
+    if (layout_kind != StairLayoutKind::Straight &&
+        layout_kind != StairLayoutKind::LShape &&
+        layout_kind != StairLayoutKind::UShape) {
+        throw std::invalid_argument("stair layout kind is invalid");
+    }
+
+    // Old straight stairs did not persist a centerline. Reconstruct it from
+    // the legacy start/direction/run fields so editing remains safe for v1/v2
+    // files instead of silently replacing the stair with a zero-length path.
+    if (path_points.empty() && layout_kind == StairLayoutKind::Straight) {
+        const auto direction_length = std::hypot(stair->direction.x, stair->direction.y);
+        if (direction_length > epsilon && stair->total_run_meters > epsilon) {
+            path_points = {
+                stair->start,
+                add(stair->start, scale(stair->direction, stair->total_run_meters / direction_length)),
+            };
+        }
+    }
+
+    const auto minimum_points = layout_kind == StairLayoutKind::Straight ? 2U :
+        layout_kind == StairLayoutKind::LShape ? 3U : 4U;
+    if (path_points.size() < minimum_points ||
+        (layout_kind == StairLayoutKind::Straight && path_points.size() != 2)) {
+        throw std::invalid_argument("stair path does not match its layout kind");
+    }
+    double total_run_meters = 0.0;
+    for (std::size_t index = 0; index < path_points.size(); ++index) {
+        if (!std::isfinite(path_points[index].x) || !std::isfinite(path_points[index].y)) {
+            throw std::invalid_argument("stair path points must be finite");
+        }
+        if (index > 0) {
+            const auto segment = std::hypot(
+                path_points[index].x - path_points[index - 1].x,
+                path_points[index].y - path_points[index - 1].y
+            );
+            if (segment <= epsilon) {
+                throw std::invalid_argument("stair path segments must be non-zero");
+            }
+            total_run_meters += segment;
+        }
+    }
+    if (total_run_meters <= epsilon) {
+        throw std::invalid_argument("stair path must have a positive run");
+    }
+
+    stair->start = path_points.front();
+    stair->direction = Point2{
+        .x = path_points[1].x - path_points[0].x,
+        .y = path_points[1].y - path_points[0].y,
+    };
+    stair->width_meters = width_meters;
+    stair->total_run_meters = total_run_meters;
+    stair->footprint_area_square_meters = width_meters * total_run_meters +
+        width_meters * landing_depth_meters * static_cast<double>(path_points.size() - 2);
+    stair->volume_cubic_meters = stair->footprint_area_square_meters *
+        (stair->total_rise_meters / 2.0);
+    stair->layout_kind = layout_kind;
+    stair->path_points = std::move(path_points);
+    stair->landing_depth_meters = landing_depth_meters;
+    stair->railing_enabled = railing_enabled;
+    stair->generated_geometry_dirty = true;
+    stair->envelope_geometry.dirty = true;
+    stair->layered_geometry.dirty = true;
+    element->touch();
+    invalidate_dependency_graph_cache();
 }
 
 ElementId Document::create_proxy(
@@ -3515,20 +4035,73 @@ void Document::auto_join_walls() {
                 if (!first_contact.has_value() || !second_contact.has_value()) {
                     continue;
                 }
-                const auto join_point = Point2{
-                    .x = (first_contact->x + second_contact->x) * 0.5,
-                    .y = (first_contact->y + second_contact->y) * 0.5,
-                };
+                const auto first_is_arc = first_wall->arc.has_value();
+                const auto second_is_arc = second_wall->arc.has_value();
+                // A small touch gap is repaired on the straight wall only.
+                // Moving an arc endpoint would invalidate its circle, while
+                // snapping the line endpoint preserves both authored curves
+                // and a single exact cap plane at the join.
+                auto straight_snapped = false;
+                if (first_is_arc != second_is_arc) {
+                    auto& straight_wall = first_is_arc ? *second_wall : *first_wall;
+                    const auto straight_contact = first_is_arc ? *second_contact : *first_contact;
+                    const auto arc_contact = first_is_arc ? *first_contact : *second_contact;
+                    auto snapped_axis = straight_wall.axis;
+                    const auto start_distance = length(Line2{
+                        .start = snapped_axis.start,
+                        .end = straight_contact});
+                    const auto end_distance = length(Line2{
+                        .start = snapped_axis.end,
+                        .end = straight_contact});
+                    if (start_distance <= end_distance) {
+                        snapped_axis.start = arc_contact;
+                    } else {
+                        snapped_axis.end = arc_contact;
+                    }
+                    auto candidate = straight_wall;
+                    candidate.axis = snapped_axis;
+                    try {
+                        validate_wall_axis(
+                            candidate.axis,
+                            candidate.thickness_meters,
+                            resolved_wall_height(candidate));
+                        validate_wall_openings(candidate);
+                        straight_wall.axis = snapped_axis;
+                        straight_snapped = true;
+                    } catch (const std::invalid_argument&) {
+                        // Keep the user's original line if snapping would
+                        // invalidate an opening or collapse a short wall.
+                    }
+                    if (straight_snapped) {
+                        if (first_is_arc) {
+                            second_contact = arc_contact;
+                        } else {
+                            first_contact = arc_contact;
+                        }
+                    }
+                }
+                const auto join_point = straight_snapped
+                    ? (first_is_arc ? *first_contact : *second_contact)
+                    : Point2{
+                        .x = (first_contact->x + second_contact->x) * 0.5,
+                        .y = (first_contact->y + second_contact->y) * 0.5,
+                    };
+                const auto first_other_axis = second_wall->arc.has_value()
+                    ? wall_join_reference_axis(*second_wall, *second_contact)
+                    : second_wall->axis;
+                const auto second_other_axis = first_wall->arc.has_value()
+                    ? wall_join_reference_axis(*first_wall, *first_contact)
+                    : first_wall->axis;
                 first_wall->joins.push_back(WallJoin{
                     .other_wall_id = second->id(),
                     .point = join_point,
-                    .other_axis = second_wall->axis,
+                    .other_axis = first_other_axis,
                     .kind = WallJoinKind::End,
                 });
                 second_wall->joins.push_back(WallJoin{
                     .other_wall_id = first->id(),
                     .point = join_point,
-                    .other_axis = first_wall->axis,
+                    .other_axis = second_other_axis,
                     .kind = WallJoinKind::End,
                 });
                 mark_wall_dirty(*first);
@@ -3939,7 +4512,7 @@ std::vector<ElementId> Document::detect_rooms_for_levels(const std::vector<Eleme
                 continue;
             }
             graph_walls.push_back(GraphWallRef{.id = wall.id, .wall = wall.wall});
-            has_non_orthogonal_wall = has_non_orthogonal_wall ||
+            has_non_orthogonal_wall = has_non_orthogonal_wall || wall.wall->arc.has_value() ||
                 (!is_horizontal(wall.wall->axis) && !is_vertical(wall.wall->axis));
         }
         if (!has_non_orthogonal_wall) {
@@ -3957,25 +4530,13 @@ std::vector<ElementId> Document::detect_rooms_for_levels(const std::vector<Eleme
                 continue;
             }
 
-            const auto wall_thickness_for_edge = [&](Point2 first, Point2 second) {
-                constexpr auto edge_tolerance = 0.35;
-                for (const auto wall_id : candidate.boundary_wall_ids) {
-                    const auto* boundary = find_ptr(wall_id);
-                    const auto* boundary_wall = boundary == nullptr ? nullptr : boundary->wall();
-                    if (boundary_wall == nullptr) {
-                        continue;
-                    }
-                    const auto axis = boundary_wall->axis;
-                    const auto same_axis =
-                        (std::hypot(axis.start.x - first.x, axis.start.y - first.y) <= edge_tolerance &&
-                         std::hypot(axis.end.x - second.x, axis.end.y - second.y) <= edge_tolerance) ||
-                        (std::hypot(axis.end.x - first.x, axis.end.y - first.y) <= edge_tolerance &&
-                         std::hypot(axis.start.x - second.x, axis.start.y - second.y) <= edge_tolerance);
-                    if (same_axis) {
-                        return boundary_wall->thickness_meters / 2.0;
-                    }
+            const auto wall_thickness_for_edge = [&](std::size_t edge_index) {
+                if (edge_index >= candidate.boundary_edge_wall_ids.size()) {
+                    return 0.15;
                 }
-                return 0.15;
+                const auto* boundary = find_ptr(candidate.boundary_edge_wall_ids[edge_index]);
+                const auto* boundary_wall = boundary == nullptr ? nullptr : boundary->wall();
+                return boundary_wall == nullptr ? 0.15 : boundary_wall->thickness_meters / 2.0;
             };
 
             const auto build_interior = [&](bool invert) {
@@ -3994,7 +4555,7 @@ std::vector<ElementId> Document::detect_rooms_for_levels(const std::vector<Eleme
                         .y = direction.x / edge_length,
                     };
                     auto inward = invert ? -1.0 : 1.0;
-                    const auto offset = wall_thickness_for_edge(current, next) * inward;
+                    const auto offset = wall_thickness_for_edge(index) * inward;
                     const auto shift = scale(normal, offset);
                     shifted_lines.push_back(Line2{
                         .start = add(current, shift),

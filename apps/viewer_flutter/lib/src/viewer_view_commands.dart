@@ -15,11 +15,248 @@ extension _ViewerViewCommands on _ViewerHomePageState {
   }
 
   Future<void> _fitCamera() async {
+    final requestedMode = _projectionMode;
     _updateViewportState(() {
-      _statusMessage = _projectionMode.fitLabel;
+      _statusMessage = requestedMode.fitLabel;
     });
 
     await _viewportController.fitCamera();
+    if (!mounted || _projectionMode != requestedMode) return;
+    _updateViewportState(() {
+      _statusMessage = requestedMode.statusLabel;
+    });
+  }
+
+  Future<void> _loadFamilyIntoProject() async {
+    final session = _engineRepository;
+    final scene = _scene;
+    if (!_engineBackedMode ||
+        session == null ||
+        scene == null ||
+        _workspaceBusy) {
+      return;
+    }
+
+    try {
+      final storedFamilies = await FamilyFileStore.listStored();
+      final asset = await _chooseFamilyAsset(storedFamilies);
+      if (!mounted || asset == null) return;
+      final placement = await _chooseFamilyPlacement(asset.document, scene);
+      if (!mounted || placement == null) return;
+      _updateViewportState(() {
+        _isBusy = true;
+        _loadError = null;
+        _statusMessage = 'Placing ${asset.document.name}...';
+      });
+      final result = await FamilyInstanceAdapter.place(
+        family: asset.document,
+        type: placement.type,
+        familyAssetPath: asset.path,
+        levelId: placement.levelId,
+        position: RenderScenePoint(x: placement.x, y: placement.y, z: 0.0),
+        creationGateway: session,
+        authoringGateway: session,
+        hostWallId: _selectedObject(scene)?.kindKey == 'wall'
+            ? _selectedObject(scene)?.elementId
+            : null,
+      );
+      await _applyEngineSceneResult(
+        result.scene,
+        message: '${asset.document.name} · ${result.type.name} placed.',
+      );
+      await _viewportController.selectElement(result.elementId.toString());
+      await _viewportController.highlightElement(result.elementId.toString());
+    } catch (error) {
+      if (!mounted) return;
+      _updateViewportState(() {
+        _loadError = error.toString();
+        _statusMessage = 'Family placement failed.';
+      });
+    } finally {
+      if (mounted) _updateViewportState(() => _isBusy = false);
+    }
+  }
+
+  Future<({FamilyTypeDefinition type, int levelId, double x, double y})?>
+      _chooseFamilyPlacement(FamilyDocument family, RenderScene scene) async {
+    final levels = scene.levels;
+    if (levels.isEmpty || family.types.isEmpty) return null;
+    var selectedType = family.types.first;
+    var selectedLevelId =
+        scene.levelById(_activeLevelId)?.levelId ?? levels.first.levelId;
+    final bounds =
+        scene.bounds.isFinite ? scene.bounds : RenderSceneBounds.zero();
+    final xController = TextEditingController(
+      text: bounds.center.x.toStringAsFixed(2),
+    );
+    final yController = TextEditingController(
+      text: bounds.center.y.toStringAsFixed(2),
+    );
+    final result = await showDialog<
+        ({FamilyTypeDefinition type, int levelId, double x, double y})>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setLocalState) => AlertDialog(
+          title: Text('Place ${family.name}'),
+          content: SizedBox(
+            width: 360,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    '${family.category.name} family',
+                    style: Theme.of(context).textTheme.labelMedium,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<FamilyTypeDefinition>(
+                  initialValue: selectedType,
+                  decoration: const InputDecoration(
+                    labelText: 'Family type',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                  items: family.types
+                      .map((item) => DropdownMenuItem<FamilyTypeDefinition>(
+                            value: item,
+                            child: Text(item.name),
+                          ))
+                      .toList(growable: false),
+                  onChanged: (value) {
+                    if (value != null) {
+                      setLocalState(() => selectedType = value);
+                    }
+                  },
+                ),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<int>(
+                  initialValue: selectedLevelId,
+                  decoration: const InputDecoration(
+                    labelText: 'Level',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                  items: levels
+                      .map((level) => DropdownMenuItem<int>(
+                            value: level.levelId,
+                            child: Text(level.name),
+                          ))
+                      .toList(growable: false),
+                  onChanged: (value) {
+                    if (value != null) {
+                      setLocalState(() => selectedLevelId = value);
+                    }
+                  },
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: <Widget>[
+                    Expanded(
+                      child: _NumericField(
+                        label: 'X (m)',
+                        controller: xController,
+                        onChanged: (_) {},
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _NumericField(
+                        label: 'Y (m)',
+                        controller: yController,
+                        onChanged: (_) {},
+                      ),
+                    ),
+                  ],
+                ),
+                if (family.category == FamilyCategory.door ||
+                    family.category == FamilyCategory.window)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 10),
+                    child: Text(
+                      'Select a host wall in the viewport before placing this family.',
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final x = double.tryParse(xController.text.trim());
+                final y = double.tryParse(yController.text.trim());
+                if (x == null || y == null || !x.isFinite || !y.isFinite) {
+                  return;
+                }
+                Navigator.of(dialogContext).pop((
+                  type: selectedType,
+                  levelId: selectedLevelId,
+                  x: x,
+                  y: y,
+                ));
+              },
+              child: const Text('Place'),
+            ),
+          ],
+        ),
+      ),
+    );
+    xController.dispose();
+    yController.dispose();
+    return result;
+  }
+
+  Future<FamilyAssetFile?> _chooseFamilyAsset(
+    List<FamilyAssetFile> storedFamilies,
+  ) async {
+    if (storedFamilies.isEmpty) return FamilyFileStore.open();
+    final choice = await showDialog<({FamilyAssetFile? asset, bool browse})>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Load family'),
+        content: SizedBox(
+          width: 420,
+          child: ListView.separated(
+            shrinkWrap: true,
+            itemCount: storedFamilies.length,
+            separatorBuilder: (_, __) => const Divider(height: 1),
+            itemBuilder: (context, index) {
+              final asset = storedFamilies[index];
+              return ListTile(
+                leading: const Icon(Icons.view_in_ar_outlined),
+                title: Text(asset.document.name),
+                subtitle: Text(asset.document.category.name),
+                onTap: () => Navigator.of(dialogContext).pop((
+                  asset: asset,
+                  browse: false,
+                )),
+              );
+            },
+          ),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop((
+              asset: null,
+              browse: true,
+            )),
+            child: const Text('Browse file'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+    if (choice == null) return null;
+    if (choice.browse) return FamilyFileStore.open();
+    return choice.asset;
   }
 
   Future<void> _setProjectionMode(RenderSceneProjectionMode mode) {

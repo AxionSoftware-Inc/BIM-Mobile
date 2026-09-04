@@ -68,7 +68,8 @@ void registerWorkspaceDocumentationTests() {
     }
     expect(find.text('Start a project'), findsOneWidget);
     expect(find.text('Open project'), findsOneWidget);
-    expect(find.text('Create new'), findsOneWidget);
+    expect(find.text('Create project'), findsOneWidget);
+    expect(find.text('Create family'), findsOneWidget);
     expect(find.text('Default building'), findsOneWidget);
     expect(find.text('Residential tower'), findsOneWidget);
     expect(find.text('Residential campus'), findsOneWidget);

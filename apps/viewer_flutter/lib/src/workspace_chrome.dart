@@ -21,6 +21,7 @@ class WorkspaceAppBar extends StatelessWidget implements PreferredSizeWidget {
     required this.onRedo,
     required this.onDocumentation,
     required this.onImportIfc,
+    required this.onLoadFamily,
     required this.onExportIfc,
     required this.onProjectUnits,
     required this.onCreateSection,
@@ -47,6 +48,7 @@ class WorkspaceAppBar extends StatelessWidget implements PreferredSizeWidget {
   final VoidCallback onRedo;
   final VoidCallback onDocumentation;
   final Future<void> Function() onImportIfc;
+  final Future<void> Function() onLoadFamily;
   final Future<void> Function() onExportIfc;
   final Future<void> Function() onProjectUnits;
   final VoidCallback onCreateSection;
@@ -116,6 +118,8 @@ class WorkspaceAppBar extends StatelessWidget implements PreferredSizeWidget {
                 onDocumentation();
               case _WorkspaceMoreAction.importIfc:
                 onImportIfc();
+              case _WorkspaceMoreAction.loadFamily:
+                onLoadFamily();
               case _WorkspaceMoreAction.exportIfc:
                 onExportIfc();
               case _WorkspaceMoreAction.projectUnits:
@@ -164,6 +168,14 @@ class WorkspaceAppBar extends StatelessWidget implements PreferredSizeWidget {
               child: const ListTile(
                 leading: Icon(Icons.file_open_outlined),
                 title: Text('Import IFC'),
+              ),
+            ),
+            PopupMenuItem(
+              value: _WorkspaceMoreAction.loadFamily,
+              enabled: !busy && engineBacked && hasScene,
+              child: const ListTile(
+                leading: Icon(Icons.view_in_ar_outlined),
+                title: Text('Load family'),
               ),
             ),
             PopupMenuItem(
@@ -340,6 +352,7 @@ enum _WorkspaceMoreAction {
   redo,
   documentation,
   importIfc,
+  loadFamily,
   exportIfc,
   projectUnits,
   createSection,

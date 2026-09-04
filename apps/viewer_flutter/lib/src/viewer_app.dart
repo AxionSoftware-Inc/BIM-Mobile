@@ -22,6 +22,8 @@ import 'documentation/document_models.dart';
 import 'documentation/documentation_workspace.dart';
 import 'documentation/sheet_canvas.dart';
 import 'documentation/sheet_workspace_controller.dart';
+import 'family_authoring/family_authoring_module.dart';
+import 'family_instance_adapter.dart';
 import 'elements/bim_element_registry.dart';
 import 'elements/floor_type_catalog.dart';
 import 'elements/opening_parameters.dart';
@@ -71,6 +73,7 @@ import 'async_serial_queue.dart';
 import 'viewer_viewport_scene_policy.dart';
 
 part 'viewer_viewport_input.dart';
+part 'viewer_viewport_stair_editing.dart';
 part 'viewer_form_widgets.dart';
 part 'viewer_viewport_wall_editing.dart';
 part 'viewer_viewport_surface_editing.dart';

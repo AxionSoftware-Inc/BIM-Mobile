@@ -58,6 +58,18 @@ abstract interface class ViewerAuthoringGateway {
     required int assemblyId,
   });
 
+  /// Attaches a small, stable reference to a reusable family asset/type.
+  /// Geometry and instance parameters stay in the native element payload.
+  Future<RenderSceneLoadResult> setElementFamilyReference({
+    required int elementId,
+    required String familyAssetId,
+    required String familyName,
+    required String familyTypeId,
+    required String familyTypeName,
+    required String familyCategory,
+    String familyAssetPath = '',
+  });
+
   /// Creates a wall and applies its level constraint/interactive join as one
   /// native-session transaction. The resulting snapshot is refreshed only
   /// after the complete wall state is valid.
@@ -136,6 +148,15 @@ abstract interface class ViewerAuthoringGateway {
     required int roofType,
     double? slopeDegrees,
     double? overhangMeters,
+  });
+
+  Future<RenderSceneLoadResult> updateStairLayout({
+    required int stairId,
+    required List<RenderScenePoint> pathPoints,
+    required double widthMeters,
+    required double landingDepthMeters,
+    required int layoutKind,
+    required bool railingEnabled,
   });
 
   Future<RenderSceneLoadResult> deleteElement({

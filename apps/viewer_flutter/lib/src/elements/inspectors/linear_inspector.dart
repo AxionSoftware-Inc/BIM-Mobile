@@ -9,20 +9,41 @@ Widget _buildLinearInspector(_ObjectInspectorContext context) =>
 Widget _buildLinearInspectorFromParameters(
   _ObjectInspectorContext context,
   LinearElementParameters parameters,
-) =>
-    _ReadOnlyObjectSection(
-      object: context.object,
-      title: '${_label(context.object)} properties',
-      rows: <String, String>{
-        'Level': context.object.levelId?.toString() ?? '-',
-        'Height (${context.units.lengthSymbol})':
-            parameters.heightMeters == null
-                ? '-'
-                : context.units.formatLength(parameters.heightMeters!),
-        'Length (${context.units.lengthSymbol})':
-            parameters.lengthMeters == null
-                ? '-'
-                : context.units.formatLength(parameters.lengthMeters!),
-        'Material': context.object.materialCategory,
-      },
-    );
+) {
+  final level = context.scene.levelById(context.object.levelId);
+  final familyName = elementParameterText(
+    context.object,
+    'property.family_name',
+  );
+  final familyType = elementParameterText(
+    context.object,
+    'property.family_type_name',
+  );
+  final isColumn = context.object.kindKey == 'column';
+  final rows = <String, String>{
+    if (familyName != null) 'Family': familyName,
+    if (familyType != null) 'Type': familyType,
+    'Level': level?.name ?? context.object.levelId?.toString() ?? '-',
+    if (isColumn) ...<String, String>{
+      'Width (${context.units.lengthSymbol})': parameters.widthMeters == null
+          ? '-'
+          : context.units.formatLength(parameters.widthMeters!),
+      'Depth (${context.units.lengthSymbol})': parameters.depthMeters == null
+          ? '-'
+          : context.units.formatLength(parameters.depthMeters!),
+    },
+    'Height (${context.units.lengthSymbol})': parameters.heightMeters == null
+        ? '-'
+        : context.units.formatLength(parameters.heightMeters!),
+    if (!isColumn)
+      'Length (${context.units.lengthSymbol})': parameters.lengthMeters == null
+          ? '-'
+          : context.units.formatLength(parameters.lengthMeters!),
+    'Material': context.object.materialCategory,
+  };
+  return _ReadOnlyObjectSection(
+    object: context.object,
+    title: '${_label(context.object)} properties',
+    rows: rows,
+  );
+}

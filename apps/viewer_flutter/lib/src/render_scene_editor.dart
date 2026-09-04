@@ -391,6 +391,85 @@ class RenderSceneEditor {
     return _parseSceneMap(map, source: '${scene.source} + wall');
   }
 
+  static RenderScene addCurvedWall({
+    required RenderScene scene,
+    required RenderScenePoint start,
+    required RenderScenePoint end,
+    required RenderScenePoint center,
+    required double radiusMeters,
+    required double startAngleRadians,
+    required double sweepRadians,
+    double heightMeters = defaultWallHeightMeters,
+    double thicknessMeters = defaultWallThicknessMeters,
+    int? levelId,
+    int? topLevelId,
+  }) {
+    if (!start.isFinite ||
+        !end.isFinite ||
+        !center.isFinite ||
+        !radiusMeters.isFinite ||
+        radiusMeters <= 1e-6 ||
+        !startAngleRadians.isFinite ||
+        !sweepRadians.isFinite ||
+        sweepRadians.abs() <= 1e-6 ||
+        sweepRadians.abs() > 2.0 * math.pi + 1e-6 ||
+        heightMeters <= 1e-6 ||
+        thicknessMeters <= 1e-6) {
+      return scene;
+    }
+    final resolvedLevelId = levelId ?? _primaryLevelId(scene);
+    if (resolvedLevelId == null || resolvedLevelId <= 0) return scene;
+    final map = _sceneMap(scene);
+    final objects = _objectsFromSceneMap(map);
+    final resolvedTopLevelId = topLevelId ??
+        RenderSceneLevelBinding.nearestHigherLevelId(
+          levels: _levelsFromSceneMap(map),
+          baseLevelId: resolvedLevelId,
+        );
+    final defaultWallType = scene.wallTypes.firstWhere(
+      (type) => type.name == 'Basic Wall',
+      orElse: () => scene.wallTypes.isEmpty
+          ? const WallTypeDefinition(
+              id: 0,
+              name: 'Basic Wall',
+              category: WallTypeCategory.generic,
+              totalThicknessMeters: defaultWallThicknessMeters,
+              layers: <WallTypeLayerDefinition>[],
+              coreStartLayer: -1,
+              coreEndLayer: -1,
+            )
+          : scene.wallTypes.first,
+    );
+    objects.add(
+      _buildCurvedWallObject(
+        elementId: _nextElementId(objects),
+        start: start,
+        end: end,
+        center: center,
+        radiusMeters: radiusMeters,
+        startAngleRadians: startAngleRadians,
+        sweepRadians: sweepRadians,
+        heightMeters: heightMeters,
+        thicknessMeters: thicknessMeters,
+        levelId: resolvedLevelId,
+        metadata: <String, Object?>{
+          'base_level_id': resolvedLevelId.toString(),
+          if (resolvedTopLevelId != null)
+            'top_level_id': resolvedTopLevelId.toString(),
+          'height_mode':
+              resolvedTopLevelId == null ? 'Unconnected' : 'TopLevel',
+          'wall_type_id': defaultWallType.id.toString(),
+          'wall_type_name': defaultWallType.name,
+          'wall_type_category': defaultWallType.categoryLabel,
+        },
+      ),
+    );
+    _rebuildAllWallObjects(objects);
+    _rebuildDetectedRooms(objects);
+    map['objects'] = objects;
+    return _parseSceneMap(map, source: '${scene.source} + curved wall');
+  }
+
   static RenderScene normalizeSceneGeometry(RenderScene scene) {
     final map = _sceneMap(scene);
     final objects = _objectsFromSceneMap(map);
@@ -698,6 +777,60 @@ class RenderSceneEditor {
       baseZ: _levelElevation(scene, levelId) +
           math.max(heightMeters - thicknessMeters, 0.02),
       levelId: levelId,
+    );
+  }
+
+  static RenderScene addRoofFromPolygon({
+    required RenderScene scene,
+    required List<RenderScenePoint> polygon,
+    double thicknessMeters = 0.18,
+    double baseElevationMeters = 0.0,
+    int? levelId,
+    int roofType = 0,
+    double? slopeDegrees,
+    double overhangMeters = 0.0,
+  }) {
+    return _addHorizontalSystemForPolygon(
+      scene: scene,
+      polygon: polygon,
+      kind: 'Roof',
+      materialCategory: 'roof',
+      thicknessMeters: thicknessMeters,
+      baseZ: baseElevationMeters,
+      levelId: levelId,
+      roofType: roofType,
+      roofSlopeDegrees: slopeDegrees,
+      roofOverhangMeters: overhangMeters,
+    );
+  }
+
+  static RenderScene addRoofFromBounds({
+    required RenderScene scene,
+    required RenderSceneBounds bounds,
+    double thicknessMeters = 0.18,
+    double baseElevationMeters = 0.0,
+    int? levelId,
+    int roofType = 0,
+    double? slopeDegrees,
+    double overhangMeters = 0.0,
+  }) {
+    if (!bounds.isFinite || bounds.width <= 1e-6 || bounds.depth <= 1e-6) {
+      return scene;
+    }
+    return addRoofFromPolygon(
+      scene: scene,
+      polygon: <RenderScenePoint>[
+        RenderScenePoint(x: bounds.min.x, y: bounds.min.y, z: 0.0),
+        RenderScenePoint(x: bounds.max.x, y: bounds.min.y, z: 0.0),
+        RenderScenePoint(x: bounds.max.x, y: bounds.max.y, z: 0.0),
+        RenderScenePoint(x: bounds.min.x, y: bounds.max.y, z: 0.0),
+      ],
+      thicknessMeters: thicknessMeters,
+      baseElevationMeters: baseElevationMeters,
+      levelId: levelId,
+      roofType: roofType,
+      slopeDegrees: slopeDegrees,
+      overhangMeters: overhangMeters,
     );
   }
 

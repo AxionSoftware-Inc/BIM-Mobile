@@ -409,6 +409,12 @@ struct BeamData {
     double volume_cubic_meters{};
 };
 
+enum class StairLayoutKind {
+    Straight = 0,
+    LShape = 1,
+    UShape = 2,
+};
+
 struct StairData {
     ElementId base_level_id{};
     ElementId top_level_id{};
@@ -428,6 +434,13 @@ struct StairData {
     GeneratedMeshCache envelope_geometry{};
     GeneratedMeshCache layered_geometry{};
     bool geometry_is_layered{false};
+    // A straight stair keeps this empty for backwards-compatible compact
+    // serialization. L/U layouts store one semantic centerline per flight;
+    // mesh tessellation remains derived data.
+    StairLayoutKind layout_kind{StairLayoutKind::Straight};
+    std::vector<Point2> path_points{};
+    double landing_depth_meters{0.0};
+    bool railing_enabled{false};
 };
 
 struct ProxyData {
