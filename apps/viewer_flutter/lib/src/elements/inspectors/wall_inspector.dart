@@ -163,7 +163,7 @@ class _WallPropertiesSectionState extends State<_WallPropertiesSection> {
   @override
   Widget build(BuildContext context) => _InspectorCard(
         title: 'Wall properties',
-        icon: Icons.view_week_outlined,
+        icon: _icon(widget.object.kindKey),
         children: <Widget>[
           _sectionLabel('Level & constraints'),
           _levelDrop(
@@ -234,8 +234,11 @@ class _WallPropertiesSectionState extends State<_WallPropertiesSection> {
           ExpansionTile(
             tilePadding: EdgeInsets.zero,
             childrenPadding: EdgeInsets.zero,
-            title: const Text('Edit wall assembly'),
-            subtitle: const Text('Advanced type editing'),
+            dense: true,
+            title: const Text(
+              'Edit wall assembly',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+            ),
             children: <Widget>[
               _WallLayersEditor(
                 key: ValueKey<String>(
@@ -264,11 +267,7 @@ class _WallPropertiesSectionState extends State<_WallPropertiesSection> {
     return DropdownButtonFormField<int>(
       isExpanded: true,
       initialValue: value,
-      decoration: const InputDecoration(
-        labelText: 'Wall type',
-        isDense: true,
-        border: OutlineInputBorder(),
-      ),
+      decoration: _dropdownDecoration('Wall type'),
       items: [
         const DropdownMenuItem<int>(
           value: 0,

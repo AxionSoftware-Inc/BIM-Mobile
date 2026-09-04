@@ -134,7 +134,7 @@ class _RoofPropertiesSectionState extends State<_RoofPropertiesSection> {
   @override
   Widget build(BuildContext context) => _InspectorCard(
         title: 'Roof properties',
-        icon: Icons.roofing_outlined,
+        icon: _icon(widget.object.kindKey),
         children: <Widget>[
           if (widget.scene.roofTypes.isNotEmpty)
             DropdownButtonFormField<int>(

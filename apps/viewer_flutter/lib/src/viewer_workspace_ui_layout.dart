@@ -676,7 +676,7 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
                     message: 'Load a scene to inspect diagnostics.',
                   )
                 : ListView(
-                    padding: const EdgeInsets.all(12),
+                    padding: const EdgeInsets.fromLTRB(8, 8, 8, 12),
                     children: <Widget>[
                       if (_interactionMode != RenderSceneInteractionMode.select)
                         _DraftEditorCard(

@@ -66,7 +66,7 @@ class PropertyEditor extends StatelessWidget {
     final properties = switch (target.kind) {
       InspectorTargetKind.empty => const _InspectorCard(
           title: 'Select an element',
-          icon: Icons.touch_app_outlined,
+          icon: Icons.ads_click_outlined,
           children: <Widget>[
             Text('Tap an element to inspect its properties.'),
           ],
@@ -117,7 +117,7 @@ class PropertyEditor extends StatelessWidget {
         target.kind != InspectorTargetKind.object &&
         target.kind != InspectorTargetKind.multiple) {
       sections
-        ..add(const SizedBox(height: 8))
+        ..add(const SizedBox(height: 6))
         ..add(
           _PlanViewRangeSection(
             level: activePlanLevel,
@@ -129,7 +129,7 @@ class PropertyEditor extends StatelessWidget {
     }
     if (target.kind == InspectorTargetKind.object) {
       sections
-        ..add(const SizedBox(height: 8))
+        ..add(const SizedBox(height: 6))
         ..add(
           _DeleteElementButton(
             object: target.object!,
@@ -216,7 +216,7 @@ class _PlanViewRangeSectionState extends State<_PlanViewRangeSection> {
   @override
   Widget build(BuildContext context) => _InspectorCard(
         title: 'View range · ${widget.level?.name ?? 'Active level'}',
-        icon: Icons.height,
+        icon: Icons.height_outlined,
         children: <Widget>[
           _field('Cut height (${widget.units.lengthSymbol})', _controller,
               numeric: true, onEditingComplete: _save),
@@ -341,7 +341,7 @@ class _LevelPropertiesSectionState extends State<_LevelPropertiesSection> {
   @override
   Widget build(BuildContext context) => _InspectorCard(
         title: widget.level.name,
-        icon: Icons.straighten,
+        icon: Icons.height_outlined,
         children: <Widget>[
           _field('Name', _name, onEditingComplete: _save),
           _fieldPair(
@@ -405,14 +405,14 @@ class _DeleteElementButtonState extends State<_DeleteElementButton> {
   Widget build(BuildContext context) => OutlinedButton.icon(
         style: OutlinedButton.styleFrom(
           foregroundColor: Theme.of(context).colorScheme.error,
-          minimumSize: const Size.fromHeight(38),
+          minimumSize: const Size.fromHeight(34),
           visualDensity: VisualDensity.compact,
         ),
         onPressed: _busy ? null : _delete,
         icon: _busy
             ? const SizedBox.square(
                 dimension: 16, child: CircularProgressIndicator(strokeWidth: 2))
-            : const Icon(Icons.delete_outline),
+            : const Icon(Icons.delete_outline, size: 17),
         label: const Text('Delete element'),
       );
 }
@@ -424,33 +424,61 @@ class _InspectorCard extends StatelessWidget {
   final IconData icon;
   final List<Widget> children;
   @override
-  Widget build(BuildContext context) => Card(
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    return Card(
       margin: EdgeInsets.zero,
       elevation: 0,
-      color: Theme.of(context)
-          .colorScheme
-          .surfaceContainerHighest
-          .withValues(alpha: 0.52),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      color: colors.surfaceContainerLow,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: BorderSide(
+          color: colors.outlineVariant.withValues(alpha: 0.7),
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
       child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-          child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+        padding: const EdgeInsets.fromLTRB(10, 8, 10, 9),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            Row(
               children: <Widget>[
-                Row(children: <Widget>[
-                  Icon(
-                    icon,
-                    size: 18,
-                    color: Theme.of(context).colorScheme.primary,
+                Container(
+                  width: 26,
+                  height: 26,
+                  decoration: BoxDecoration(
+                    color: colors.primaryContainer,
+                    borderRadius: BorderRadius.circular(6),
                   ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                      child: Text(title,
-                          style: Theme.of(context).textTheme.titleSmall))
-                ]),
-                const SizedBox(height: 10),
-                ...children
-              ])));
+                  alignment: Alignment.center,
+                  child: Icon(
+                    icon,
+                    size: 16,
+                    color: colors.onPrimaryContainer,
+                  ),
+                ),
+                const SizedBox(width: 7),
+                Expanded(
+                  child: Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.labelLarge?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 7),
+            ...children,
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 Widget _field(
@@ -461,27 +489,31 @@ Widget _field(
   VoidCallback? onEditingComplete,
 }) =>
     Padding(
-        padding: const EdgeInsets.only(bottom: 6),
-        child: TextField(
-            controller: controller,
-            maxLines: 1,
-            textInputAction: TextInputAction.done,
-            onChanged: onChanged,
-            onEditingComplete: onEditingComplete,
-            onTapOutside:
-                onEditingComplete == null ? null : (_) => onEditingComplete(),
-            keyboardType: numeric
-                ? const TextInputType.numberWithOptions(
-                    decimal: true, signed: true)
-                : TextInputType.text,
-            decoration: InputDecoration(
-                labelText: label,
-                labelStyle: const TextStyle(fontSize: 13),
-                isDense: true,
-                contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
-                border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8)))));
+      padding: const EdgeInsets.only(bottom: 4),
+      child: TextField(
+        controller: controller,
+        maxLines: 1,
+        textInputAction: TextInputAction.done,
+        style: const TextStyle(fontSize: 13),
+        onChanged: onChanged,
+        onEditingComplete: onEditingComplete,
+        onTapOutside:
+            onEditingComplete == null ? null : (_) => onEditingComplete(),
+        keyboardType: numeric
+            ? const TextInputType.numberWithOptions(decimal: true, signed: true)
+            : TextInputType.text,
+        decoration: InputDecoration(
+          labelText: label,
+          labelStyle: const TextStyle(fontSize: 12),
+          isDense: true,
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(6),
+          ),
+        ),
+      ),
+    );
 
 Widget _fieldPair(
   String firstLabel,
@@ -497,7 +529,7 @@ Widget _fieldPair(
         Expanded(
             child: _field(firstLabel, firstController,
                 numeric: numeric, onEditingComplete: onEditingComplete)),
-        const SizedBox(width: 8),
+        const SizedBox(width: 6),
         Expanded(
             child: _field(secondLabel, secondController,
                 numeric: numeric, onEditingComplete: onEditingComplete)),
@@ -505,11 +537,11 @@ Widget _fieldPair(
     );
 
 Widget _sectionLabel(String label) => Padding(
-      padding: const EdgeInsets.only(top: 4, bottom: 6),
+      padding: const EdgeInsets.only(top: 2, bottom: 4),
       child: Text(
-        label,
+        label.toUpperCase(),
         style: const TextStyle(
-          fontSize: 11,
+          fontSize: 10,
           fontWeight: FontWeight.w700,
           letterSpacing: 0.5,
           textBaseline: TextBaseline.alphabetic,
@@ -523,14 +555,19 @@ Widget _compactSwitch({
   required ValueChanged<bool>? onChanged,
 }) =>
     SizedBox(
-      height: 40,
+      height: 34,
       child: Row(
         children: <Widget>[
-          Expanded(child: Text(label)),
-          Switch.adaptive(
-            value: value,
-            onChanged: onChanged,
-            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          Expanded(
+            child: Text(label, style: const TextStyle(fontSize: 12)),
+          ),
+          Transform.scale(
+            scale: 0.82,
+            child: Switch.adaptive(
+              value: value,
+              onChanged: onChanged,
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
           ),
         ],
       ),
@@ -538,19 +575,19 @@ Widget _compactSwitch({
 
 InputDecoration _dropdownDecoration(String label) => InputDecoration(
       labelText: label,
-      labelStyle: const TextStyle(fontSize: 13),
+      labelStyle: const TextStyle(fontSize: 12),
       isDense: true,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
-      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
+      border: OutlineInputBorder(borderRadius: BorderRadius.circular(6)),
     );
 
 Widget _row(String label, String value) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 2),
+    padding: const EdgeInsets.symmetric(vertical: 1),
     child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: <Widget>[
       Expanded(
         child: Text(
           label,
-          style: const TextStyle(fontSize: 12),
+          style: const TextStyle(fontSize: 11.5),
         ),
       ),
       Flexible(
@@ -558,7 +595,7 @@ Widget _row(String label, String value) => Padding(
           value,
           textAlign: TextAlign.right,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+          style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600),
         ),
       )
     ]));
@@ -573,9 +610,13 @@ String _number(
 String _label(RenderSceneObject object) =>
     BimElementRegistry.standard.displayName(object.kind);
 IconData _icon(String kind) => switch (kind) {
+      'wall' => Icons.architecture_outlined,
+      'door' => Icons.door_front_door_outlined,
+      'window' => Icons.window_outlined,
       'stair' => Icons.stairs_outlined,
       'roof' => Icons.roofing_outlined,
-      'floor' || 'ceiling' || 'slab' => Icons.layers_outlined,
+      'floor' || 'slab' => Icons.layers_outlined,
+      'ceiling' => Icons.space_dashboard_outlined,
       'column' => Icons.view_column_outlined,
       'beam' => Icons.horizontal_rule,
       _ => Icons.category_outlined

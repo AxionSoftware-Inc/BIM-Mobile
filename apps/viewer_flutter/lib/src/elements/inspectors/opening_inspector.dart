@@ -135,9 +135,7 @@ class _OpeningPropertiesSectionState extends State<_OpeningPropertiesSection> {
   @override
   Widget build(BuildContext context) => _InspectorCard(
           title: _label(widget.object),
-          icon: widget.object.kindKey == 'door'
-              ? Icons.door_front_door_outlined
-              : Icons.window_outlined,
+          icon: _icon(widget.object.kindKey),
           children: <Widget>[
             _row(
               'Host wall',

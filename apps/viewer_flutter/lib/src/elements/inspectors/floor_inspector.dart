@@ -75,7 +75,7 @@ class _FloorPropertiesSectionState extends State<_FloorPropertiesSection> {
         .firstOrNull;
     return _InspectorCard(
       title: '${_label(widget.object)} properties',
-      icon: Icons.layers_outlined,
+      icon: _icon(widget.object.kindKey),
       children: <Widget>[
         if (widget.scene.floorTypes.isNotEmpty) ...<Widget>[
           DropdownButtonFormField<int>(
