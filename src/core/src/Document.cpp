@@ -21,6 +21,26 @@ namespace {
 
 constexpr auto epsilon = 1.0e-9;
 
+std::map<double, ElementId> build_level_elevation_index(const std::vector<Element>& elements) {
+    std::map<double, ElementId> index;
+    for (const auto& element : elements) {
+        const auto* level = element.level();
+        if (level == nullptr) {
+            continue;
+        }
+        const auto next = index.lower_bound(level->elevation_meters);
+        const auto conflicts = [&](const auto iterator) {
+            return iterator != index.end() &&
+                std::abs(iterator->first - level->elevation_meters) <= epsilon;
+        };
+        if (conflicts(next) || (next != index.begin() && conflicts(std::prev(next)))) {
+            throw std::invalid_argument("level elevations must be unique");
+        }
+        index.emplace(level->elevation_meters, element.id());
+    }
+    return index;
+}
+
 double length(const Line2& line) {
     const auto dx = line.end.x - line.start.x;
     const auto dy = line.end.y - line.start.y;
@@ -2085,13 +2105,7 @@ ElementId Document::create_level(std::string name, double elevation_meters, doub
     if (!std::isfinite(default_wall_height_meters) || default_wall_height_meters <= 0.0) {
         throw std::invalid_argument("default wall height must be positive");
     }
-    for (const auto& element : elements_) {
-        const auto* existing = element.level();
-        if (existing != nullptr &&
-            std::abs(existing->elevation_meters - elevation_meters) <= epsilon) {
-            throw std::invalid_argument("level elevations must be unique");
-        }
-    }
+    ensure_level_elevation_available(elevation_meters);
 
     const auto id = allocate_id();
     const auto level_name = name;
@@ -2100,6 +2114,7 @@ ElementId Document::create_level(std::string name, double elevation_meters, doub
         .elevation_meters = elevation_meters,
         .default_wall_height_meters = default_wall_height_meters,
     });
+    index_level(id, elevation_meters);
     invalidate_dependency_graph_cache();
     return id;
 }
@@ -5119,13 +5134,7 @@ void Document::move_level_elevation(ElementId level_id, double elevation_meters)
     if (std::abs(level->elevation_meters - elevation_meters) <= epsilon) {
         return;
     }
-    for (const auto& element : elements_) {
-        const auto* other = element.level();
-        if (other != nullptr && element.id() != level_id &&
-            std::abs(other->elevation_meters - elevation_meters) <= epsilon) {
-            throw std::invalid_argument("level elevations must be unique");
-        }
-    }
+    ensure_level_elevation_available(elevation_meters, level_id);
 
     const auto elevation_for = [&](ElementId candidate_id) {
         return candidate_id == level_id ? elevation_meters : level_elevation(candidate_id);
@@ -5146,7 +5155,10 @@ void Document::move_level_elevation(ElementId level_id, double elevation_meters)
             throw std::invalid_argument("moving level would invert a stair top/base constraint");
         }
     }
+    const auto previous_elevation = level->elevation_meters;
+    unindex_level(level_id, previous_elevation);
     level->elevation_meters = elevation_meters;
+    index_level(level_id, elevation_meters);
     level_element.touch();
 
     for (auto& element : elements_) {
@@ -6521,16 +6533,44 @@ Element* Document::find_ptr(ElementId id) noexcept {
 
 void Document::restore_element(Element element) {
     if (auto* existing = find_ptr(element.id())) {
+        const auto* incoming_level = element.level();
+        const auto* existing_level = existing->level();
+        const auto incoming_elevation = incoming_level == nullptr
+            ? std::optional<double>{}
+            : std::optional<double>{incoming_level->elevation_meters};
+        if (incoming_elevation.has_value()) {
+            ensure_level_elevation_available(*incoming_elevation, element.id());
+        }
+        if (existing_level != nullptr) {
+            unindex_level(existing->id(), existing_level->elevation_meters);
+        }
         *existing = std::move(element);
+        if (incoming_elevation.has_value()) {
+            index_level(existing->id(), *incoming_elevation);
+        }
         invalidate_dependency_graph_cache();
         return;
     }
 
+    if (const auto* level = element.level()) {
+        ensure_level_elevation_available(level->elevation_meters);
+    }
+    const auto level_id = element.id();
+    const auto level_elevation = element.level() == nullptr ? 0.0 : element.level()->elevation_meters;
+    const auto is_level = element.level() != nullptr;
     elements_.push_back(std::move(element));
+    if (is_level) {
+        index_level(level_id, level_elevation);
+    }
     invalidate_dependency_graph_cache();
 }
 
 void Document::remove_element(ElementId id) {
+    if (const auto* element = find_ptr(id); element != nullptr) {
+        if (const auto* level = element->level(); level != nullptr) {
+            unindex_level(id, level->elevation_meters);
+        }
+    }
     elements_.erase(std::remove_if(elements_.begin(), elements_.end(), [id](const Element& element) {
         return element.id() == id;
     }), elements_.end());
@@ -6539,6 +6579,39 @@ void Document::remove_element(ElementId id) {
 
 ElementId Document::allocate_id() noexcept {
     return next_id_++;
+}
+
+void Document::ensure_level_elevation_available(double elevation_meters, ElementId ignored_level_id) const {
+    const auto conflicts = [&](const auto iterator) {
+        return iterator != level_ids_by_elevation_.end() &&
+            iterator->second != ignored_level_id &&
+            std::abs(iterator->first - elevation_meters) <= epsilon;
+    };
+    const auto next = level_ids_by_elevation_.lower_bound(elevation_meters);
+    if (conflicts(next)) {
+        throw std::invalid_argument("level elevations must be unique");
+    }
+    if (next != level_ids_by_elevation_.begin()) {
+        const auto previous = std::prev(next);
+        if (conflicts(previous)) {
+            throw std::invalid_argument("level elevations must be unique");
+        }
+    }
+}
+
+void Document::index_level(ElementId level_id, double elevation_meters) {
+    ensure_level_elevation_available(elevation_meters, level_id);
+    const auto [iterator, inserted] = level_ids_by_elevation_.emplace(elevation_meters, level_id);
+    if (!inserted && iterator->second != level_id) {
+        throw std::invalid_argument("level elevations must be unique");
+    }
+}
+
+void Document::unindex_level(ElementId level_id, double elevation_meters) noexcept {
+    const auto iterator = level_ids_by_elevation_.find(elevation_meters);
+    if (iterator != level_ids_by_elevation_.end() && iterator->second == level_id) {
+        level_ids_by_elevation_.erase(iterator);
+    }
 }
 
 Element& Document::require_level(ElementId id) {
@@ -6902,8 +6975,13 @@ void Document::replace_state(std::string name, std::vector<Element> elements, El
         throw std::invalid_argument("next element id must be positive");
     }
 
+    // Build the derived level index before replacing live state so malformed
+    // payloads cannot leave a partially updated document behind.
+    const auto rebuilt_level_index = build_level_elevation_index(elements);
+
     name_ = std::move(name);
     elements_ = std::move(elements);
+    level_ids_by_elevation_ = std::move(rebuilt_level_index);
     next_id_ = next_id;
     invalidate_dependency_graph_cache();
 }

@@ -340,6 +340,9 @@ private:
     void remove_hosted_opening(ElementId host_wall_id, ElementId opening_id);
     void touch_related_rooms(ElementId wall_id) noexcept;
     void refresh_dependencies_for_wall(ElementId wall_id);
+    void ensure_level_elevation_available(double elevation_meters, ElementId ignored_level_id = 0) const;
+    void index_level(ElementId level_id, double elevation_meters);
+    void unindex_level(ElementId level_id, double elevation_meters) noexcept;
     void add_issue(ValidationReport& report, ValidationSeverity severity, ValidationIssueCode code, ElementId element_id, std::string message) const;
     void invalidate_dependency_graph_cache() noexcept;
     [[nodiscard]] std::vector<ElementId> detect_rooms_for_levels(const std::vector<ElementId>& level_ids);
@@ -349,6 +352,10 @@ private:
     std::string name_;
     UnitSettings unit_settings_{};
     std::vector<Element> elements_;
+    // Level elevations are unique within epsilon. Keep that invariant in an
+    // ordered index so level authoring and large-model loading stay O(log n)
+    // instead of scanning every element for each new level.
+    std::map<double, ElementId> level_ids_by_elevation_{};
     ElementId next_id_{1};
     std::map<ElementId, MaterialDefinition> materials_{};
     std::map<ElementId, WallTypeData> wall_types_{};

@@ -3444,5 +3444,37 @@ int main() {
         assert(level_validation.validate_document().error_count() == 0);
     }
 
+    {
+        // Level uniqueness must remain cheap when a large streamed document
+        // contains many lightweight levels. The ordered index also needs to
+        // stay coherent across move/delete/restore-style mutations.
+        tbe::core::Document indexed_levels{"Indexed levels"};
+        std::vector<tbe::core::ElementId> level_ids;
+        level_ids.reserve(10'000);
+        for (int index = 0; index < 10'000; ++index) {
+            level_ids.push_back(indexed_levels.create_level(
+                "Benchmark level",
+                static_cast<double>(index) * 0.01,
+                3.2
+            ));
+        }
+        assert(level_ids.size() == 10'000);
+        assert(indexed_levels.find_ptr(level_ids.back())->level() != nullptr);
+
+        bool near_duplicate_rejected = false;
+        try {
+            indexed_levels.create_level("Near duplicate", 50.0 + 5.0e-10, 3.2);
+        } catch (const std::invalid_argument&) {
+            near_duplicate_rejected = true;
+        }
+        assert(near_duplicate_rejected);
+
+        indexed_levels.move_level_elevation(level_ids.back(), 200.0);
+        assert(near(indexed_levels.find_ptr(level_ids.back())->level()->elevation_meters, 200.0));
+        indexed_levels.delete_element(level_ids[1234]);
+        const auto replacement = indexed_levels.create_level("Replacement", 12.34, 3.2);
+        assert(replacement != 0);
+    }
+
     return 0;
 }

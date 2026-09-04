@@ -651,7 +651,10 @@ ValidationReport Document::validate_document() const {
     ValidationReport report;
     (void)dependency_graph();
 
-    std::vector<std::pair<ElementId, double>> level_elevations;
+    // Keep validation linearithmic for streamed documents. A vector of all
+    // previous elevations turns duplicate checking into O(n²) when a large
+    // project contains many lightweight levels.
+    std::map<double, ElementId> level_elevations;
     for (const auto& element : elements_) {
         const auto* level = element.level();
         if (level == nullptr) continue;
@@ -664,16 +667,19 @@ ValidationReport Document::validate_document() const {
             add_issue(report, ValidationSeverity::Error, ValidationIssueCode::WallTooShort,
                 element.id(), "level default wall height must be positive and finite");
         }
-        for (const auto& [other_id, other_elevation] : level_elevations) {
-            if (std::isfinite(level->elevation_meters) &&
-                std::abs(other_elevation - level->elevation_meters) <= epsilon) {
+        if (std::isfinite(level->elevation_meters)) {
+            const auto next = level_elevations.lower_bound(level->elevation_meters);
+            const auto conflicts = [&](const auto iterator) {
+                return iterator != level_elevations.end() &&
+                    std::abs(iterator->first - level->elevation_meters) <= epsilon;
+            };
+            if (conflicts(next) ||
+                (next != level_elevations.begin() && conflicts(std::prev(next)))) {
                 add_issue(report, ValidationSeverity::Error, ValidationIssueCode::LevelMismatch,
                     element.id(), "level elevations must be unique");
-                break;
             }
-            (void)other_id;
+            level_elevations.emplace(level->elevation_meters, element.id());
         }
-        level_elevations.emplace_back(element.id(), level->elevation_meters);
     }
 
     for (const auto& [wall_type_id, wall_type] : wall_types_) {

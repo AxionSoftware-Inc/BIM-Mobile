@@ -1760,11 +1760,13 @@ Document Document::from_json(std::string_view json) {
                 .mesh = proxy.find("mesh") != proxy.end() ? parse_mesh(field(proxy, "mesh")) : MeshBuffer{},
             }, revision);
         }
-        if (auto found = std::find_if(elements.begin(), elements.end(), [id](const Element& element) {
-            return element.id() == id;
-        }); found != elements.end()) {
-            found->metadata() = std::move(element_metadata);
+        // Elements are appended in payload order. Assign metadata directly to
+        // the element just parsed instead of searching the full vector for
+        // every item; the latter made large-project loads O(n²).
+        if (elements.empty() || elements.back().id() != id) {
+            throw std::invalid_argument("element payload did not produce the declared element");
         }
+        elements.back().metadata() = std::move(element_metadata);
     }
 
     document.replace_state(as_string(field(root_object, "name")), std::move(elements), as_id(field(root_object, "next_id")));
