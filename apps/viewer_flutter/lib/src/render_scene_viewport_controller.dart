@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
+import 'async_serial_queue.dart';
 import 'render_scene_models.dart';
 import 'render_scene_viewport_planar.dart';
 import 'render_scene_viewport_projection.dart';
@@ -43,12 +44,18 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
   int _fitRevision = 0;
   int _sceneRevision = 0;
   bool _nativeCameraSyncScheduled = false;
+  bool _nativeCameraSyncPending = false;
+  bool _nativeCameraSyncSending = false;
   bool _cameraNotificationScheduled = false;
   bool _draftNotificationScheduled = false;
   bool _objectMoveBridgeScheduled = false;
   bool _objectMoveBridgePending = false;
   bool _objectMoveBridgeSending = false;
   RenderSceneObjectMoveDraft? _pendingObjectMoveBridgeDraft;
+  bool _selectionRectangleBridgeScheduled = false;
+  bool _selectionRectangleBridgePending = false;
+  bool _selectionRectangleBridgeSending = false;
+  Map<String, Object?>? _pendingSelectionRectanglePayload;
   bool _disposed = false;
   // When true, Filament owns all large geometry through a validated
   // `.bimcache`; Flutter retains only the compact semantic envelope.
@@ -96,6 +103,11 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
   bool _selectionRectangleCrossing = false;
 
   MethodChannel? _channel;
+  // Every native command, including camera/selection updates, must share one
+  // FIFO lane. MethodChannel calls can otherwise overlap while the Android
+  // renderer is rebuilding a scene, leaving old transforms or selection
+  // overlays visible over a newer model state.
+  final AsyncSerialQueue _nativeBridgeQueue = AsyncSerialQueue();
   Completer<void>? _nativeBridgeReady;
   String? _nativeBridgeError;
 
@@ -274,34 +286,36 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     required String sourceIfcPath,
     required String cachePath,
   }) async {
-    final channel = _channel;
-    if (channel == null) return null;
     _nativeCacheRequest = <String, Object?>{
       'sourceIfcPath': sourceIfcPath,
       'cachePath': cachePath,
     };
     _nativeCacheNeedsReplay = true;
     _nativeGeometryActive = false;
-    try {
-      final result = await channel.invokeMapMethod<Object?, Object?>(
-        'prepareNativeBimCache',
-        <String, Object?>{
-          'sourceIfcPath': sourceIfcPath,
-          'cachePath': cachePath,
-        },
-      );
-      if (result != null) {
-        _nativeGeometryActive = true;
-        _nativeCacheNeedsReplay = false;
-      } else {
-        _nativeCacheNeedsReplay = false;
+    return _runNativeBridgeBatch<Map<Object?, Object?>?>(() async {
+      final channel = _channel;
+      if (channel == null) return null;
+      try {
+        final result = await channel.invokeMapMethod<Object?, Object?>(
+          'prepareNativeBimCache',
+          <String, Object?>{
+            'sourceIfcPath': sourceIfcPath,
+            'cachePath': cachePath,
+          },
+        );
+        if (result != null) {
+          _nativeGeometryActive = true;
+          _nativeCacheNeedsReplay = false;
+        } else {
+          _nativeCacheNeedsReplay = false;
+        }
+        return result;
+      } on MissingPluginException {
+        return null;
+      } on PlatformException {
+        return null;
       }
-      return result;
-    } on MissingPluginException {
-      return null;
-    } on PlatformException {
-      return null;
-    }
+    });
   }
 
   Future<void> attachNativeBridge(int viewId) async {
@@ -371,26 +385,31 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
 
     notifyListeners();
 
-    // Apply the category policy before the scene so the native renderer never
-    // presents a newly committed scene using the previous visibility set.
-    // This is deliberately part of the scene presentation boundary rather
-    // than a second caller-side update.
-    if (visibleKinds != null) {
-      await _invoke('setVisibleKinds', _visibleKinds.toList());
-    }
-    if (!_nativeGeometryActive) {
-      await _invoke(
-        'loadRenderSceneJson',
-        jsonEncode(_nativeScenePayload(scene)),
+    // Apply the category policy and scene in one native transaction. Without
+    // this boundary, a visibility/camera/selection command from another
+    // gesture could land between the scene load and its state synchronization,
+    // producing a mixed frame where some elements move and others appear
+    // frozen.
+    await _runNativeBridgeBatch<void>(() async {
+      if (_backend != RenderSceneViewportBackend.native) return;
+      await _loadRememberedNativeBimCacheNow();
+      if (visibleKinds != null) {
+        await _invokeNow('setVisibleKinds', _visibleKinds.toList());
+      }
+      if (!_nativeGeometryActive) {
+        await _invokeNow(
+          'loadRenderSceneJson',
+          jsonEncode(_nativeScenePayload(scene)),
+        );
+      }
+      // The authoritative scene was just sent above. The remaining bridge
+      // synchronization is state-only; sending the same JSON again here made
+      // every authoring commit enter the native scene loader twice.
+      await _syncNativeBridgeStateNow(
+        includeScene: false,
+        includeVisibleKinds: visibleKinds == null,
       );
-    }
-    // The authoritative scene was just sent above.  The remaining bridge
-    // synchronization is state-only; sending the same JSON again here made
-    // every authoring commit enter the native scene loader twice.
-    await _syncNativeBridge(
-      includeScene: false,
-      includeVisibleKinds: visibleKinds == null,
-    );
+    });
   }
 
   Future<void> loadNativeSceneSummary(RenderScene scene) =>
@@ -653,13 +672,15 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     _selectionRectangle = rectangle;
     _selectionRectangleCrossing = rectangle == null ? false : crossing;
     notifyListeners();
-    unawaited(_invoke('setSelectionRectangle', <String, Object?>{
+    _pendingSelectionRectanglePayload = <String, Object?>{
       'left': rectangle?.left,
       'top': rectangle?.top,
       'right': rectangle?.right,
       'bottom': rectangle?.bottom,
       'crossing': _selectionRectangleCrossing,
-    }));
+    };
+    _selectionRectangleBridgePending = true;
+    _scheduleSelectionRectangleBridge();
   }
 
   @override
@@ -933,6 +954,9 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     _draftNotificationScheduled = false;
     _objectMoveBridgeScheduled = false;
     _objectMoveBridgePending = false;
+    _selectionRectangleBridgeScheduled = false;
+    _selectionRectangleBridgePending = false;
+    _nativeCameraSyncPending = false;
     super.dispose();
   }
 
@@ -976,6 +1000,36 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
         _objectMoveBridgeSending = false;
         if (_objectMoveBridgePending && !_disposed) {
           _scheduleObjectMoveBridge();
+        }
+      }),
+    );
+  }
+
+  void _scheduleSelectionRectangleBridge() {
+    if (_selectionRectangleBridgeScheduled || _disposed) return;
+    _selectionRectangleBridgeScheduled = true;
+    SchedulerBinding.instance.scheduleFrameCallback((_) {
+      _selectionRectangleBridgeScheduled = false;
+      if (!_disposed && _selectionRectangleBridgePending) {
+        _flushSelectionRectangleBridge();
+      }
+    });
+  }
+
+  void _flushSelectionRectangleBridge() {
+    if (_disposed ||
+        !_selectionRectangleBridgePending ||
+        _selectionRectangleBridgeSending) {
+      return;
+    }
+    _selectionRectangleBridgePending = false;
+    final payload = _pendingSelectionRectanglePayload;
+    _selectionRectangleBridgeSending = true;
+    unawaited(
+      _invoke('setSelectionRectangle', payload).whenComplete(() {
+        _selectionRectangleBridgeSending = false;
+        if (_selectionRectangleBridgePending && !_disposed) {
+          _scheduleSelectionRectangleBridge();
         }
       }),
     );

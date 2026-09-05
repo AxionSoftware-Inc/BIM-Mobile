@@ -6,6 +6,7 @@ export 'family_document.dart';
 export 'family_editor_page.dart';
 export 'family_file_store.dart';
 export 'family_geometry.dart';
+export 'family_library_dialog.dart';
 export 'family_plan_symbol.dart';
 export 'family_sketch_canvas.dart';
 export 'family_validation.dart';

@@ -32,6 +32,7 @@ abstract final class FamilyPlanSymbolGenerator {
             'L ${_number(halfWidth)} ${_number(crossY)} '
             'L ${_number(-halfWidth)} ${_number(crossY)} Z');
       case FamilyCategory.furniture:
+      case FamilyCategory.casework:
         final insetX = width * 0.08;
         final insetY = depth * 0.12;
         paths.add(_rectanglePath(
@@ -42,6 +43,13 @@ abstract final class FamilyPlanSymbolGenerator {
         ));
         paths.add('M 0 ${_number(-halfDepth + insetY)} '
             'L 0 ${_number(halfDepth - insetY)}');
+      case FamilyCategory.stair:
+        const treadCount = 6;
+        for (var index = 1; index < treadCount; index++) {
+          final y = -halfDepth + depth * index / treadCount;
+          paths.add('M ${_number(-halfWidth)} ${_number(y)} '
+              'L ${_number(halfWidth)} ${_number(y)}');
+        }
       case FamilyCategory.door:
       case FamilyCategory.window:
       case FamilyCategory.genericModel:

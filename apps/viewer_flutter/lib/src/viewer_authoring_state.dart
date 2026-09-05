@@ -442,12 +442,13 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
     // Reserve the next presentation revision before entering the queue. This
     // invalidates any deferred read immediately, even while the native
     // command's scene snapshot is waiting for its turn to render.
-    ++_sceneDataRevision;
+    final sceneDataRevision = ++_sceneDataRevision;
     return _sceneCommitQueue.run(
       () => _applySceneChangeNow(
         nextScene,
         message: message,
         authoritative: authoritative,
+        sceneDataRevision: sceneDataRevision,
       ),
     );
   }
@@ -456,7 +457,14 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
     RenderScene nextScene, {
     required String message,
     bool authoritative = false,
+    required int sceneDataRevision,
   }) async {
+    // Engine mutations are already serialized, so a newer queued snapshot
+    // contains every change represented by this one. Do not spend a native
+    // scene rebuild on an intermediate snapshot after several rapid edits;
+    // this is the presentation-side latest-wins rule that keeps the viewport
+    // responsive without dropping any document mutation.
+    if (sceneDataRevision != _sceneDataRevision) return;
     if (!authoritative) {
       _updateViewportState(() {
         _editStatusMessage =

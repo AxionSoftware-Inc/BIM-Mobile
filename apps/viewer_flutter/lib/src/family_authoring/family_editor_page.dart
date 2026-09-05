@@ -477,8 +477,8 @@ class _FamilyEditorPageState extends State<FamilyEditorPage> {
               const SizedBox(height: 8),
               Text(
                 hosted
-                    ? '3  Select a solid wall, then open ⋮ → Add family to project.'
-                    : '3  Open ⋮ → Add family to project and choose the placement point.',
+                    ? '3  Select a solid wall, then open Family Library.'
+                    : '3  Open Family Library and choose the placement point.',
               ),
               const SizedBox(height: 12),
               Text(
@@ -1123,8 +1123,8 @@ class _ProjectHandoffCard extends StatelessWidget {
                 const SizedBox(height: 4),
                 Text(
                   hosted
-                      ? 'Save to library → select a solid wall → ⋮ → Add family to project.'
-                      : 'Save to library → open a project → ⋮ → Add family to project.',
+                      ? 'Save to library → select a solid wall → open Family Library.'
+                      : 'Save to library → open a project → open Family Library.',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ],
@@ -1460,6 +1460,8 @@ String _categoryLabel(FamilyCategory category) {
     FamilyCategory.door => 'Door',
     FamilyCategory.window => 'Window',
     FamilyCategory.furniture => 'Furniture',
+    FamilyCategory.casework => 'Casework',
+    FamilyCategory.stair => 'Stair',
     FamilyCategory.structural => 'Structural',
   };
 }

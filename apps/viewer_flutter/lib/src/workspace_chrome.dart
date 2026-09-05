@@ -105,6 +105,11 @@ class WorkspaceAppBar extends StatelessWidget implements PreferredSizeWidget {
           onPressed: busy || !engineBacked ? null : onSave,
           icon: const Icon(Icons.save_outlined),
         ),
+        IconButton(
+          tooltip: 'Family library',
+          onPressed: busy || !engineBacked || !hasScene ? null : onLoadFamily,
+          icon: const Icon(Icons.widgets_outlined),
+        ),
         PopupMenuButton<_WorkspaceMoreAction>(
           tooltip: 'Workspace actions',
           icon: const Icon(Icons.more_vert),
@@ -174,8 +179,8 @@ class WorkspaceAppBar extends StatelessWidget implements PreferredSizeWidget {
               value: _WorkspaceMoreAction.loadFamily,
               enabled: !busy && engineBacked && hasScene,
               child: const ListTile(
-                leading: Icon(Icons.view_in_ar_outlined),
-                title: Text('Add family to project'),
+                leading: Icon(Icons.widgets_outlined),
+                title: Text('Family library'),
               ),
             ),
             PopupMenuItem(

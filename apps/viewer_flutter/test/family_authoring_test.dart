@@ -299,16 +299,50 @@ void main() {
 
   test('curated exterior column and cabinet contain usable project meshes', () {
     final families = BuiltInFamilyCatalog.families;
-    expect(families, hasLength(2));
+    expect(families, hasLength(18));
+    expect(families.map((family) => family.id).toSet(), hasLength(18));
+    expect(
+      families.where((family) => family.category == FamilyCategory.column),
+      hasLength(2),
+    );
+    expect(
+      families.where((family) => family.category == FamilyCategory.door),
+      hasLength(2),
+    );
+    expect(
+      families.where((family) => family.category == FamilyCategory.window),
+      hasLength(2),
+    );
+    expect(
+      families.where((family) => family.category == FamilyCategory.stair),
+      hasLength(2),
+    );
+    expect(
+      families.where((family) => family.category == FamilyCategory.casework),
+      hasLength(2),
+    );
+    expect(
+      families.where((family) => family.category == FamilyCategory.furniture),
+      hasLength(8),
+    );
+
+    for (final family in families) {
+      expect(FamilyDocumentValidator.validate(family).isValid, isTrue,
+          reason: family.id);
+      final mesh = FamilyGeometryEvaluator.evaluateMesh(
+        family,
+        family.types.single,
+      );
+      expect(mesh.vertices, isNotEmpty, reason: family.id);
+      expect(mesh.faces, isNotEmpty, reason: family.id);
+    }
 
     final column = families.firstWhere(
       (family) => family.category == FamilyCategory.column,
     );
     final cabinet = families.firstWhere(
-      (family) => family.category == FamilyCategory.furniture,
+      (family) => family.category == FamilyCategory.casework,
     );
-    expect(FamilyDocumentValidator.validate(column).isValid, isTrue);
-    expect(FamilyDocumentValidator.validate(cabinet).isValid, isTrue);
 
     final columnMesh = FamilyGeometryEvaluator.evaluateMesh(
       column,
@@ -323,6 +357,34 @@ void main() {
     expect(cabinetMesh.vertices.length, 104);
     expect(cabinetMesh.faces.length, 78);
     expect(cabinetMesh.isApproximate, isFalse);
+  });
+
+  testWidgets('family library previews families without opening the keyboard',
+      (WidgetTester tester) async {
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final assets = BuiltInFamilyCatalog.families
+        .map((family) => FamilyAssetFile(document: family, path: ''))
+        .toList(growable: false);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: FamilyLibraryDialog(assets: assets),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Family Library'), findsOneWidget);
+    expect(find.text('18 results'), findsOneWidget);
+    expect(find.text('Place in project'), findsOneWidget);
+    expect(find.byType(TextField), findsNothing);
+    expect(find.byType(CustomPaint), findsWidgets);
+
+    await tester.tap(find.text('Window'));
+    await tester.pump();
+    expect(find.text('2 results'), findsOneWidget);
+    expect(find.text('Window'), findsWidgets);
   });
 
   testWidgets('Create family opens the detachable authoring page',
@@ -357,7 +419,7 @@ void main() {
     await tester.tap(find.widgetWithText(OutlinedButton, 'Use in project'));
     await tester.pumpAndSettle();
     expect(find.text('Use this family in a project'), findsOneWidget);
-    expect(find.textContaining('Add family to project'), findsNWidgets(2));
+    expect(find.textContaining('Family Library'), findsNWidgets(2));
     await tester.tap(find.text('Got it'));
     await tester.pumpAndSettle();
   });

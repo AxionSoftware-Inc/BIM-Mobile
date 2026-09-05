@@ -19,46 +19,58 @@ extension _RenderSceneViewportNative on RenderSceneViewportController {
   Future<void> _syncNativeBridge({
     bool includeScene = true,
     bool includeVisibleKinds = true,
+  }) {
+    return _runNativeBridgeBatch<void>(() async {
+      await _loadRememberedNativeBimCacheNow();
+      await _syncNativeBridgeStateNow(
+        includeScene: includeScene,
+        includeVisibleKinds: includeVisibleKinds,
+      );
+    });
+  }
+
+  Future<void> _syncNativeBridgeStateNow({
+    bool includeScene = true,
+    bool includeVisibleKinds = true,
   }) async {
     if (_backend != RenderSceneViewportBackend.native) return;
-    await _loadRememberedNativeBimCache();
     final currentScene = _scene;
     if (includeScene && currentScene != null && !_nativeGeometryActive) {
-      await _invoke(
+      await _invokeNow(
         'loadRenderSceneJson',
         jsonEncode(_nativeScenePayload(currentScene)),
       );
     }
 
     if (includeVisibleKinds) {
-      await _invoke('setVisibleKinds', _visibleKinds.toList());
+      await _invokeNow('setVisibleKinds', _visibleKinds.toList());
     }
     final sectionBox = _sectionBox;
-    await _invoke('setSectionBox', <String, Object?>{
+    await _invokeNow('setSectionBox', <String, Object?>{
       'enabled': sectionBox != null,
       if (sectionBox != null) 'min': sectionBox.min.toJson(),
       if (sectionBox != null) 'max': sectionBox.max.toJson(),
     });
-    await _invoke('setDisplayStyle', _displayStyle.name);
-    await _invoke('setViewportTheme', _viewportTheme.name);
-    await _invoke('setHdriVisible', _hdriVisible);
-    await _invoke('setShadowsEnabled', _shadowsEnabled);
-    await _invoke('setProjectionMode', _projectionMode.name);
-    await _invoke('setOrbitProjectionStyle', _orbitProjectionStyle.name);
-    await _invoke('setCamera', _nativeCameraPayload());
+    await _invokeNow('setDisplayStyle', _displayStyle.name);
+    await _invokeNow('setViewportTheme', _viewportTheme.name);
+    await _invokeNow('setHdriVisible', _hdriVisible);
+    await _invokeNow('setShadowsEnabled', _shadowsEnabled);
+    await _invokeNow('setProjectionMode', _projectionMode.name);
+    await _invokeNow('setOrbitProjectionStyle', _orbitProjectionStyle.name);
+    await _invokeNow('setCamera', _nativeCameraPayload());
     final sectionView = _sectionView;
-    await _invoke('setSectionView', <String, Object?>{
+    await _invokeNow('setSectionView', <String, Object?>{
       'enabled': sectionView != null,
       if (sectionView != null) 'start': sectionView.start.toJson(),
       if (sectionView != null) 'end': sectionView.end.toJson(),
     });
-    await _invoke('setSelection', <String, Object?>{
+    await _invokeNow('setSelection', <String, Object?>{
       'ids': _selectedElementIds.toList(),
       'activeId': _activeElementId,
     });
-    await _invoke('highlightElement', _highlightedElementId);
+    await _invokeNow('highlightElement', _highlightedElementId);
     final rectangle = _selectionRectangle;
-    await _invoke('setSelectionRectangle', <String, Object?>{
+    await _invokeNow('setSelectionRectangle', <String, Object?>{
       'left': rectangle?.left,
       'top': rectangle?.top,
       'right': rectangle?.right,
@@ -105,6 +117,10 @@ extension _RenderSceneViewportNative on RenderSceneViewportController {
   }
 
   Future<void> _loadRememberedNativeBimCache() async {
+    await _runNativeBridgeBatch<void>(_loadRememberedNativeBimCacheNow);
+  }
+
+  Future<void> _loadRememberedNativeBimCacheNow() async {
     final request = _nativeCacheRequest;
     if (request == null ||
         !_nativeCacheNeedsReplay ||
@@ -115,7 +131,7 @@ extension _RenderSceneViewportNative on RenderSceneViewportController {
     }
     _nativeCacheNeedsReplay = false;
     _nativeGeometryActive = false;
-    await _invoke('loadNativeBimCache', request);
+    await _invokeNow('loadNativeBimCache', request);
     if (_backend == RenderSceneViewportBackend.native && _channel != null) {
       _nativeGeometryActive = true;
     }

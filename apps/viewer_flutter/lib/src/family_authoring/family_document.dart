@@ -11,6 +11,8 @@ enum FamilyCategory {
   door,
   window,
   furniture,
+  casework,
+  stair,
   structural,
 }
 

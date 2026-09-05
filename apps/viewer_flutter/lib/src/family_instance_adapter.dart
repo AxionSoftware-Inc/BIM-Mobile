@@ -150,6 +150,8 @@ abstract final class FamilyInstanceAdapter {
         );
       case FamilyCategory.genericModel:
       case FamilyCategory.furniture:
+      case FamilyCategory.casework:
+      case FamilyCategory.stair:
         created = await _createMeshInstance(
           family: family,
           type: type,

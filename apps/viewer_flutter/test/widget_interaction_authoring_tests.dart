@@ -43,6 +43,38 @@ void registerInteractionAuthoringTests() {
     );
   });
 
+  testWidgets('native viewport bridge serializes concurrent state commands',
+      (WidgetTester tester) async {
+    const channel = MethodChannel('tbe/render_scene_view_79');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    var inFlight = 0;
+    var maximumInFlight = 0;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      inFlight += 1;
+      if (inFlight > maximumInFlight) maximumInFlight = inFlight;
+      await Future<void>.delayed(const Duration(milliseconds: 2));
+      inFlight -= 1;
+      return null;
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+
+    final controller = RenderSceneViewportController(
+      backend: RenderSceneViewportBackend.native,
+    );
+    addTearDown(controller.dispose);
+    await tester.runAsync(() async {
+      await controller.attachNativeBridge(79);
+      await Future.wait<void>(<Future<void>>[
+        controller.setHdriVisible(true),
+        controller.setShadowsEnabled(true),
+        controller.selectElement('27'),
+      ]);
+    });
+
+    expect(maximumInFlight, 1);
+  });
+
   test('Revit-style selection controller clears, toggles and windows objects',
       () {
     final interaction = ViewportInteractionController();

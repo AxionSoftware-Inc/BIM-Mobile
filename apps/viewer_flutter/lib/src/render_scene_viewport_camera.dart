@@ -97,8 +97,24 @@ extension _RenderSceneViewportCamera on RenderSceneViewportController {
     // lag behind the finger.
     SchedulerBinding.instance.addPostFrameCallback((_) {
       _nativeCameraSyncScheduled = false;
-      unawaited(_invoke('setCamera', _nativeCameraPayload()));
+      _nativeCameraSyncPending = true;
+      if (_nativeCameraSyncSending || _disposed) return;
+      _nativeCameraSyncSending = true;
+      unawaited(_flushNativeCameraSync());
     });
+  }
+
+  Future<void> _flushNativeCameraSync() async {
+    while (_nativeCameraSyncPending && !_disposed) {
+      _nativeCameraSyncPending = false;
+      // Read the payload only after the command reaches the FIFO lane. If a
+      // scene rebuild is ahead of it, the camera command then represents the
+      // latest camera rather than another stale pointer sample.
+      await _runNativeBridgeBatch<void>(
+        () => _invokeNow('setCamera', _nativeCameraPayload()),
+      );
+    }
+    _nativeCameraSyncSending = false;
   }
 
   Map<String, Object?> _nativeCameraPayload() {
@@ -127,7 +143,17 @@ extension _RenderSceneViewportCamera on RenderSceneViewportController {
     };
   }
 
-  Future<void> _invoke(String method, [Object? arguments]) async {
+  Future<T> _runNativeBridgeBatch<T>(Future<T> Function() operation) {
+    return _nativeBridgeQueue.run<T>(operation);
+  }
+
+  Future<void> _invoke(String method, [Object? arguments]) {
+    return _runNativeBridgeBatch<void>(
+      () => _invokeNow(method, arguments),
+    );
+  }
+
+  Future<void> _invokeNow(String method, [Object? arguments]) async {
     final channel = _channel;
     if (channel == null || _backend != RenderSceneViewportBackend.native) {
       return;

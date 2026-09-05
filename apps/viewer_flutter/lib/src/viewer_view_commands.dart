@@ -266,58 +266,12 @@ extension _ViewerViewCommands on _ViewerHomePageState {
     List<FamilyAssetFile> storedFamilies,
   ) async {
     if (storedFamilies.isEmpty) return FamilyFileStore.open();
-    final choice = await showDialog<({FamilyAssetFile? asset, bool browse})>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Add family to project'),
-        content: SizedBox(
-          width: 420,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: <Widget>[
-              const Text(
-                'Choose a saved family. Columns place freely; doors and windows need a selected solid wall.',
-              ),
-              const SizedBox(height: 12),
-              ListView.separated(
-                shrinkWrap: true,
-                itemCount: storedFamilies.length,
-                separatorBuilder: (_, __) => const Divider(height: 1),
-                itemBuilder: (context, index) {
-                  final asset = storedFamilies[index];
-                  return ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.view_in_ar_outlined),
-                    title: Text(asset.document.name),
-                    subtitle: Text(asset.document.category.name),
-                    onTap: () => Navigator.of(dialogContext).pop((
-                      asset: asset,
-                      browse: false,
-                    )),
-                  );
-                },
-              ),
-            ],
-          ),
-        ),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop((
-              asset: null,
-              browse: true,
-            )),
-            child: const Text('Browse file'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('Cancel'),
-          ),
-        ],
-      ),
+    final choice = await FamilyLibraryDialog.show(
+      context,
+      assets: storedFamilies,
     );
     if (choice == null) return null;
-    if (choice.browse) return FamilyFileStore.open();
+    if (choice.browseFile) return FamilyFileStore.open();
     return choice.asset;
   }
 
