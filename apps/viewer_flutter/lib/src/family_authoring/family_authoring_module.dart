@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 
-import 'family_editor_page.dart';
+import 'family_editor_v2_page.dart';
 
 export 'family_document.dart';
 export 'family_editor_page.dart';
+export 'family_editor_v2_page.dart';
 export 'family_file_store.dart';
 export 'family_geometry.dart';
 export 'family_library_dialog.dart';
@@ -23,7 +24,7 @@ abstract final class FamilyAuthoringModule {
   static Future<void> createFamily(BuildContext context) async {
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
-        builder: (_) => const FamilyEditorPage(),
+        builder: (_) => const FamilyEditorV2Page(),
       ),
     );
   }
