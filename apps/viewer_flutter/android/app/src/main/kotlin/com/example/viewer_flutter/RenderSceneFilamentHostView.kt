@@ -21,7 +21,7 @@ import android.view.Choreographer
 import android.view.Gravity
 import android.view.Surface
 import android.view.ScaleGestureDetector
-import android.view.SurfaceView
+import android.view.TextureView
 import android.widget.FrameLayout
 import android.widget.TextView
 import com.google.android.filament.Camera
@@ -86,15 +86,6 @@ private const val EDGE_DETAIL_SHOW_WIDTH_PIXELS = 0.72
 private const val CURVED_WALL_EDGE_HIDE_DISTANCE_RATIO = 0.12
 private const val CURVED_WALL_EDGE_MIN_HIDE_DISTANCE = 1.5
 private const val CURVED_WALL_EDGE_MAX_HIDE_DISTANCE = 4.0
-// Keep the orbit camera outside the scene envelope.  Entering a wall is not
-// useful for BIM navigation: the perspective near plane then clips the same
-// facade triangles that the depth buffer is trying to resolve, which reads as
-// a television-like shimmer on mobile GPUs.
-private const val ORBIT_COLLISION_MARGIN_MIN_METERS = 0.20
-// At this scale a plan is already close enough for wall/opening authoring.
-// Below it Android Canvas starts rasterising the same model-space contour at
-// very large scale, so the last pinch samples can alternate pixels.
-private const val PLAN_MIN_HALF_HEIGHT_METERS = 0.50
 
 // External mesh formats (FBX and equivalent payloads) do not carry BIM
 // semantics that can be used to select a small architectural edge subset.
@@ -437,12 +428,7 @@ internal class RenderSceneFilamentHostView(
     }
   }
 
-  // Render directly into an Android surface on the tablet. TextureView's
-  // SurfaceTexture is copied into Flutter's compositor and, on this Adreno
-  // device, that copy can expose uninitialised tiles as full-screen TV noise
-  // while the camera is changing. SurfaceView gives Filament a native
-  // buffer queue and avoids that extra texture hand-off.
-  private val renderSurface = SurfaceView(context)
+  private val renderSurface = TextureView(context)
   private val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
   private val selectionOverlay = NativeSelectionOverlay(context)
   private val statusView = TextView(context)
@@ -483,10 +469,7 @@ internal class RenderSceneFilamentHostView(
     override fun onScale(detector: ScaleGestureDetector): Boolean {
       if (isPlanarProjection()) {
         if (projectionMode == "topDown") {
-          topDownZoom = (topDownZoom / detector.scaleFactor.toDouble()).coerceIn(
-            PLAN_MIN_HALF_HEIGHT_METERS,
-            200.0,
-          )
+          topDownZoom = (topDownZoom / detector.scaleFactor.toDouble()).coerceIn(0.5, 200.0)
         } else {
           orbitDistance = (orbitDistance / detector.scaleFactor.toDouble())
             .coerceIn(minimumPlanarOrbitDistance(), 250.0)
@@ -705,8 +688,11 @@ internal class RenderSceneFilamentHostView(
       renderSurface,
       LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT),
     )
-    // Filament's clear pass is opaque, so keep the native surface opaque.
-    uiHelper.setOpaque(true)
+    // TextureView may otherwise expose an uninitialised tile while the
+    // SurfaceTexture is handing a new frame to Flutter's compositor.  The
+    // Filament clear pass is opaque, so make that contract explicit to the
+    // Android compositor as well.
+    renderSurface.isOpaque = true
     renderSurface.setOnTouchListener { _, event -> handleTouchEvent(event) }
     addView(
       selectionOverlay,
@@ -749,8 +735,8 @@ internal class RenderSceneFilamentHostView(
       renderer = filamentEngine.createRenderer()
       renderer?.setClearOptions(Renderer.ClearOptions().apply {
         // Explicitly clear every submitted frame. This matters when the
-        // shadow receiver is removed: otherwise a platform surface can retain
-        // the previous black shadow pixels until an unrelated redraw.
+        // shadow receiver is removed: otherwise a TextureView can retain the
+        // previous black shadow pixels until an unrelated redraw.
         clear = true
         clearColor = doubleArrayOf(0.95, 0.96, 0.95, 1.0)
       })
@@ -1465,10 +1451,7 @@ internal class RenderSceneFilamentHostView(
         // directly to Filament's orthographic half-height in metres. Elevation
         // uses the same camera scale as plan; previously it silently fell back
         // to the stale orbit distance and ignored every Flutter pan/zoom.
-        val halfHeight = (planViewportHeight / (2.0 * planZoom)).coerceIn(
-          PLAN_MIN_HALF_HEIGHT_METERS,
-          200.0,
-        )
+        val halfHeight = (planViewportHeight / (2.0 * planZoom)).coerceIn(0.3, 200.0)
         if (projectionMode == "topDown") {
           topDownZoom = halfHeight
         } else {
@@ -1682,7 +1665,7 @@ internal class RenderSceneFilamentHostView(
     Log.i(TAG, "Shadow toggle: enabled=$enabled, receiver=${groundReceiver != null}, static=${staticShadowBatch != null}")
     filamentView?.setShadowingEnabled(realShadowVisible())
     syncVisibility()
-    // Native surfaces can retain the previous shadow-receiver frame after the
+    // TextureView can retain the previous shadow-receiver frame after the
     // receiver entity is removed. Submit a short burst of clean frames so the
     // cleared background is actually presented. This is only for an explicit
     // toggle; camera movement still uses the event-driven shadow pause path.
@@ -2055,15 +2038,6 @@ internal class RenderSceneFilamentHostView(
 
   override fun onNativeWindowChanged(surface: Surface) {
     val engine = engine ?: return
-    // UiHelper can call this again when the platform surface buffer is
-    // resized. Do
-    // not replace a live swap chain without releasing it first: on Adreno
-    // that leaves the old EGL buffer in the compositor and shows up as full
-    // viewport noise/flicker during a close zoom or PlatformView relayout.
-    swapChain?.let { previous ->
-      engine.destroySwapChain(previous)
-      swapChain = null
-    }
     swapChain = engine.createSwapChain(surface)
     surfaceReady = true
     statusMessage = "Surface attached."
@@ -2072,10 +2046,7 @@ internal class RenderSceneFilamentHostView(
     renderSurface.display?.let { display ->
       renderer?.let { displayHelper.attach(it, display) }
     }
-    // A newly attached platform surface may drop the first submitted buffer
-    // while Flutter's PlatformView compositor adopts it. Keep presenting
-    // briefly so the first visible frame is a real cleared Filament frame.
-    requestRender(800L)
+    requestRender()
   }
 
   override fun onDetachedFromSurface() {
@@ -2096,7 +2067,7 @@ internal class RenderSceneFilamentHostView(
     // Reserve the upper-right quadrant for Flutter's compact model card.
     // Telemetry wraps here instead of disappearing behind that card.
     statusView.maxWidth = (width * 0.60f).toInt().coerceAtLeast(220)
-    // Flutter owns every planar camera's scale and center. A platform surface
+    // Flutter owns every planar camera's scale and center. A TextureView
     // resize must only update the projection matrix; fitting here uses the
     // native 3D bounds and makes a floor plan open zoomed too far out until
     // the next Flutter gesture restores its authoritative camera.
@@ -2107,10 +2078,7 @@ internal class RenderSceneFilamentHostView(
       fitCamera()
     }
     syncVisualOverlay()
-    // A resize is also a new platform-surface buffer on some Android builds.
-    // Submit a short cadence of cleared frames after the projection update so
-    // the compositor cannot retain the pre-resize buffer.
-    requestRender(320L)
+    requestRender()
   }
 
   override fun doFrame(frameTimeNanos: Long) {
@@ -5830,9 +5798,9 @@ internal class RenderSceneFilamentHostView(
       sectionBoxHandler.postDelayed(shadowResume, 80L)
     }
     if (surfaceReady) {
-      // The platform surface does not always invalidate itself after Flutter
-      // moves or resizes the PlatformView (notably when the Inspector opens).
-      // Keep the explicit Filament frame request and the surface invalidation in
+      // TextureView does not always invalidate itself after Flutter moves or
+      // resizes the PlatformView (notably when the Inspector opens). Keep the
+      // explicit Filament frame request and the TextureView invalidation in
       // lockstep so a native camera update cannot leave the old model tile on
       // screen while the Android overlay continues to repaint.
       renderSurface.postInvalidateOnAnimation()
@@ -5848,7 +5816,7 @@ internal class RenderSceneFilamentHostView(
   }
 
   override fun onTouchEvent(event: MotionEvent): Boolean {
-    // The native render surface normally receives these events directly. This host-level
+    // The TextureView normally receives these events directly. This host-level
     // fallback covers PlatformView compositor passes where a child touch
     // target is temporarily skipped while the Inspector changes layout.
     if (projectionMode == "isometric") {
@@ -6010,7 +5978,7 @@ internal class RenderSceneFilamentHostView(
       MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
         // Flutter's viewport wrapper forwards a stationary 3D tap through
         // pickNormalized. Keeping selection on that one path prevents the
-        // native render surface and Flutter overlay from racing with different
+        // native TextureView and Flutter overlay from racing with different
         // results for the same pointer-up event.
         if (event.actionMasked == MotionEvent.ACTION_UP && touchMoved && activeSectionHandle == null) {
           startOrbitInertia()
@@ -6462,45 +6430,9 @@ internal class RenderSceneFilamentHostView(
   }
 
   private fun minimumOrbitDistance(): Double {
-    val bounds = sceneMetrics.bounds
-    val sceneSpan = max(
-      bounds.max.x - bounds.min.x,
-      max(bounds.max.y - bounds.min.y, bounds.max.z - bounds.min.z),
-    )
-    if (!sceneSpan.isFinite() || sceneSpan <= 1.0e-6) return 0.12
-
-    // Find the first point where the current orbit ray would cross the model
-    // envelope.  This is intentionally direction-aware: at a low pitch the
-    // camera may approach a facade, while at a high pitch it may approach the
-    // roof first.  A fixed radius cannot handle both without either allowing
-    // clipping or making the whole model feel too far away.
-    val direction = ScenePoint(
-      cos(orbitPitchRadians) * cos(orbitYawRadians),
-      sin(orbitPitchRadians),
-      cos(orbitPitchRadians) * sin(orbitYawRadians),
-    )
-    val margin = max(sceneSpan * 0.02, ORBIT_COLLISION_MARGIN_MIN_METERS)
-    var entry = Double.NEGATIVE_INFINITY
-    var exit = Double.POSITIVE_INFINITY
-    fun updateSlab(directionComponent: Double, minimum: Double, maximum: Double, origin: Double): Boolean {
-      val slabMin = minimum - margin
-      val slabMax = maximum + margin
-      if (kotlin.math.abs(directionComponent) <= 1.0e-9) {
-        return origin in slabMin..slabMax
-      }
-      val first = (slabMin - origin) / directionComponent
-      val second = (slabMax - origin) / directionComponent
-      entry = max(entry, min(first, second))
-      exit = min(exit, max(first, second))
-      return true
-    }
-    if (!updateSlab(direction.x, bounds.min.x, bounds.max.x, orbitCenter.x) ||
-      !updateSlab(direction.y, bounds.min.y, bounds.max.y, orbitCenter.y) ||
-      !updateSlab(direction.z, bounds.min.z, bounds.max.z, orbitCenter.z)
-    ) return 0.12
-    if (exit < max(entry, 0.0)) return 0.12
-    val hitDistance = if (entry > 0.0) entry else exit
-    return max(0.12, hitDistance.takeIf { it.isFinite() && it > 0.0 } ?: 0.12)
+    // Close inspection is allowed, but a camera inside the first 12 cm has no
+    // useful architectural view and magnifies mobile depth-buffer noise.
+    return 0.12
   }
 
   private fun minimumPlanarOrbitDistance(): Double = 0.5
@@ -6774,10 +6706,6 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
   // motion only applies the cheap model-to-screen transform.
   private var joinedPlanWallPath: Path? = null
   private var planWallPathDirty = true
-  // Keep the cached Path coordinates near zero. Android Path stores float
-  // coordinates; retaining absolute IFC/site coordinates there loses the
-  // small wall differences first when the plan is zoomed tightly.
-  private var planWallPathOrigin = ScenePoint(0.0, 0.0, 0.0)
   private var selectedIds = emptySet<Long>()
   private var activeId: Long? = null
   private var movePreviewId: Long? = null
@@ -7439,9 +7367,9 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
   private fun drawPlanWallContours(canvas: Canvas) {
     if (planWallPathDirty) rebuildPlanWallPath()
     val joinedPath = joinedPlanWallPath ?: return
-    val origin = project(planWallPathOrigin)
-    val unitX = project(planWallPathOrigin.copy(x = planWallPathOrigin.x + 1.0))
-    val unitZ = project(planWallPathOrigin.copy(z = planWallPathOrigin.z + 1.0))
+    val origin = project(ScenePoint(0.0, 0.0, 0.0))
+    val unitX = project(ScenePoint(1.0, 0.0, 0.0))
+    val unitZ = project(ScenePoint(0.0, 0.0, 1.0))
     if (origin == null || unitX == null || unitZ == null) return
     val modelToScreen = android.graphics.Matrix().apply {
       setValues(floatArrayOf(
@@ -7463,16 +7391,6 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
     joinedPlanWallPath = null
     if (visibleKinds.isNotEmpty() && !visibleKinds.contains("wall")) return
 
-    // Wall profiles are stored in Filament plan coordinates (X/-sourceY).
-    // Subtract a scene-local origin before placing them in Android's float
-    // Path so a large site coordinate cannot consume the precision needed by
-    // a close-up wall contour.
-    planWallPathOrigin = ScenePoint(
-      (sceneBounds.min.x + sceneBounds.max.x) * 0.5,
-      0.0,
-      (sceneBounds.min.z + sceneBounds.max.z) * 0.5,
-    )
-
     // Build one model-space cut path for the active wall network. Drawing a
     // separate screen-space polygon for every wall makes coincident join
     // edges get rasterized repeatedly; at thin zoom levels those doubled
@@ -7488,16 +7406,8 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
         // Plan points are stored as ScenePoint(x, elevation, -sourceY). Keep
         // the boolean operation in that bounded model coordinate system;
         // only transform the already-unioned path to screen pixels below.
-        moveTo(
-          (profile.first().x - planWallPathOrigin.x).toFloat(),
-          (profile.first().z - planWallPathOrigin.z).toFloat(),
-        )
-        for (point in profile.drop(1)) {
-          lineTo(
-            (point.x - planWallPathOrigin.x).toFloat(),
-            (point.z - planWallPathOrigin.z).toFloat(),
-          )
-        }
+        moveTo(profile.first().x.toFloat(), profile.first().z.toFloat())
+        for (point in profile.drop(1)) lineTo(point.x.toFloat(), point.z.toFloat())
         if (profile.size >= 3) close()
       }
       if (!hasJoinedPath) {
