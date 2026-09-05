@@ -45,6 +45,10 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
   bool _nativeCameraSyncScheduled = false;
   bool _cameraNotificationScheduled = false;
   bool _draftNotificationScheduled = false;
+  bool _objectMoveBridgeScheduled = false;
+  bool _objectMoveBridgePending = false;
+  bool _objectMoveBridgeSending = false;
+  RenderSceneObjectMoveDraft? _pendingObjectMoveBridgeDraft;
   bool _disposed = false;
   // When true, Filament owns all large geometry through a validated
   // `.bimcache`; Flutter retains only the compact semantic envelope.
@@ -87,6 +91,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
   RenderSceneWallArcDraft? _draftWallArc;
   RenderSceneOpeningDraft? _draftOpening;
   RenderSceneSurfaceDraft? _draftSurface;
+  RenderSceneObjectMoveDraft? _draftObjectMove;
   Rect? _selectionRectangle;
   bool _selectionRectangleCrossing = false;
 
@@ -174,6 +179,9 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
 
   @override
   RenderSceneSurfaceDraft? get draftSurface => _draftSurface;
+
+  @override
+  RenderSceneObjectMoveDraft? get draftObjectMove => _draftObjectMove;
 
   Rect? get selectionRectangle => _selectionRectangle;
   bool get selectionRectangleCrossing => _selectionRectangleCrossing;
@@ -371,7 +379,10 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
       await _invoke('setVisibleKinds', _visibleKinds.toList());
     }
     if (!_nativeGeometryActive) {
-      await _invoke('loadRenderSceneJson', jsonEncode(scene.toJson()));
+      await _invoke(
+        'loadRenderSceneJson',
+        jsonEncode(_nativeScenePayload(scene)),
+      );
     }
     // The authoritative scene was just sent above.  The remaining bridge
     // synchronization is state-only; sending the same JSON again here made
@@ -411,6 +422,8 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     _draftWallEnd = null;
     _draftOpening = null;
     _draftSurface = null;
+    _draftObjectMove = null;
+    _pendingObjectMoveBridgeDraft = null;
     _selectionRectangle = null;
     _selectionRectangleCrossing = false;
 
@@ -601,13 +614,22 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
   @override
   void setOpeningDraft(RenderSceneOpeningDraft? draft) {
     _draftOpening = draft;
-    notifyListeners();
+    _scheduleDraftNotification();
   }
 
   @override
   void setSurfaceDraft(RenderSceneSurfaceDraft? draft) {
     _draftSurface = draft;
-    notifyListeners();
+    _scheduleDraftNotification();
+  }
+
+  @override
+  void setObjectMoveDraft(RenderSceneObjectMoveDraft? draft) {
+    _draftObjectMove = draft;
+    _scheduleDraftNotification();
+    _pendingObjectMoveBridgeDraft = draft;
+    _objectMoveBridgePending = true;
+    _scheduleObjectMoveBridge();
   }
 
   @override
@@ -617,6 +639,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     _draftWallArc = null;
     _draftOpening = null;
     _draftSurface = null;
+    setObjectMoveDraft(null);
     notifyListeners();
   }
 
@@ -908,6 +931,8 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     _disposed = true;
     _cameraNotificationScheduled = false;
     _draftNotificationScheduled = false;
+    _objectMoveBridgeScheduled = false;
+    _objectMoveBridgePending = false;
     super.dispose();
   }
 
@@ -918,5 +943,41 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
       _draftNotificationScheduled = false;
       if (!_disposed) notifyListeners();
     });
+  }
+
+  /// Method-channel calls are asynchronous. Sending one call for every
+  /// pointer sample lets Android queue stale transforms behind the newest
+  /// one, which is perceived as lag even when the renderer itself is idle.
+  /// Keep one in flight and retain only the latest frame-sized sample.
+  void _scheduleObjectMoveBridge() {
+    if (_objectMoveBridgeScheduled || _disposed) return;
+    _objectMoveBridgeScheduled = true;
+    SchedulerBinding.instance.scheduleFrameCallback((_) {
+      _objectMoveBridgeScheduled = false;
+      if (!_disposed && _objectMoveBridgePending) {
+        _flushObjectMoveBridge();
+      }
+    });
+  }
+
+  void _flushObjectMoveBridge() {
+    if (_disposed || !_objectMoveBridgePending || _objectMoveBridgeSending) {
+      return;
+    }
+    _objectMoveBridgePending = false;
+    final pending = _pendingObjectMoveBridgeDraft;
+    _objectMoveBridgeSending = true;
+    unawaited(
+      _invoke('setObjectMovePreview', <String, Object?>{
+        'elementId': pending?.object.elementId,
+        'deltaX': pending?.delta.x ?? 0.0,
+        'deltaY': pending?.delta.y ?? 0.0,
+      }).whenComplete(() {
+        _objectMoveBridgeSending = false;
+        if (_objectMoveBridgePending && !_disposed) {
+          _scheduleObjectMoveBridge();
+        }
+      }),
+    );
   }
 }

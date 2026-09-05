@@ -381,6 +381,9 @@ typedef _SetElementFamilyReferenceNative = ffi.Int32 Function(
   ffi.Pointer<Utf8>,
   ffi.Pointer<Utf8>,
   ffi.Pointer<Utf8>,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<Utf8>,
 );
 typedef _SetElementFamilyReferenceDart = int Function(
   ffi.Pointer<ffi.Void>,
@@ -391,6 +394,45 @@ typedef _SetElementFamilyReferenceDart = int Function(
   ffi.Pointer<Utf8>,
   ffi.Pointer<Utf8>,
   ffi.Pointer<Utf8>,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<Utf8>,
+);
+typedef _MoveElementNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Uint64,
+  ffi.Double,
+  ffi.Double,
+);
+typedef _MoveElementDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  int,
+  double,
+  double,
+);
+typedef _UpdateFamilyInstanceNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Uint64,
+  TbeVec2,
+  ffi.Double,
+  ffi.Double,
+  ffi.Double,
+  ffi.Pointer<TbeVec3>,
+  ffi.Size,
+  ffi.Pointer<ffi.Uint32>,
+  ffi.Size,
+);
+typedef _UpdateFamilyInstanceDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  int,
+  TbeVec2,
+  double,
+  double,
+  double,
+  ffi.Pointer<TbeVec3>,
+  int,
+  ffi.Pointer<ffi.Uint32>,
+  int,
 );
 typedef _UpdateRoofPropertiesNative = ffi.Int32 Function(
   ffi.Pointer<ffi.Void>,

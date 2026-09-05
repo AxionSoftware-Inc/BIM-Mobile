@@ -35,6 +35,7 @@ final class ViewerViewportScenePolicy {
       activeLevelId: activeLevel.levelId,
       bottomMeters: activeLevel.elevationMeters,
       topMeters: activeLevel.elevationMeters + planViewRangeMeters,
+      stripFamilyMeshes: true,
     );
   }
 

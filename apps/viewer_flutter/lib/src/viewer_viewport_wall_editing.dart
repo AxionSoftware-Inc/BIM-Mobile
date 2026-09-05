@@ -205,12 +205,6 @@ extension _ViewerViewportWallEditing on _ViewerHomePageState {
       point: point,
       announce: false,
     );
-    final draft = _viewportController.draftOpening;
-    _updateViewportState(() {
-      _editStatusMessage = draft?.valid == true
-          ? 'Opening move preview is ready.'
-          : (draft?.message ?? 'Opening dimensions are invalid.');
-    });
   }
 
   void _updateOpeningDraftPreview({
@@ -225,10 +219,14 @@ extension _ViewerViewportWallEditing on _ViewerHomePageState {
         ? 'Door'
         : 'Window';
     if (RenderSceneEditor.isGlassWall(scene, hostWall)) {
-      _updateViewportState(() {
+      if (announce) {
+        _updateViewportState(() {
+          _draftHostWall = hostWall;
+          _editStatusMessage = RenderSceneQueries.glassWallOpeningMessage;
+        });
+      } else {
         _draftHostWall = hostWall;
-        _editStatusMessage = RenderSceneQueries.glassWallOpeningMessage;
-      });
+      }
       _viewportController.setOpeningDraft(
         RenderSceneOpeningDraft(
           kind: kind,
@@ -279,15 +277,21 @@ extension _ViewerViewportWallEditing on _ViewerHomePageState {
       return;
     }
 
-    _updateViewportState(() {
-      _draftHostWall = hostWall;
-      _draftOpeningOffsetMeters = snappedOffset;
-      if (announce) {
+    if (announce) {
+      _updateViewportState(() {
+        _draftHostWall = hostWall;
+        _draftOpeningOffsetMeters = snappedOffset;
         _editStatusMessage = valid
             ? '$kind preview on wall #${hostWall.elementId}'
             : (validationMessage ?? '$kind dimensions are invalid.');
-      }
-    });
+      });
+    } else {
+      // These are transactional drag fields. The lightweight viewport
+      // overlay is the only consumer during a pointer move; rebuilding the
+      // whole workspace here makes an opening drag queue stale frames.
+      _draftHostWall = hostWall;
+      _draftOpeningOffsetMeters = snappedOffset;
+    }
 
     _viewportController.setOpeningDraft(
       RenderSceneOpeningDraft(

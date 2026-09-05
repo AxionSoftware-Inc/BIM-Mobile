@@ -28,6 +28,7 @@ abstract final class BimElementInspectorKeys {
   static const stair = 'stair';
   static const ceiling = 'ceiling';
   static const linear = 'linear';
+  static const family = 'family';
   static const generic = 'generic';
 }
 

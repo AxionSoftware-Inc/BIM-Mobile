@@ -213,7 +213,23 @@ public:
         std::string family_type_id,
         std::string family_type_name,
         std::string family_category,
-        std::string family_asset_path = {}
+        std::string family_asset_path = {},
+        std::string family_parameter_definitions_json = {},
+        std::string family_parameter_values_json = {},
+        std::string family_plan_svg = {}
+    );
+    /// Translates a movable, non-hosted instance in the project plane. Hosted
+    /// openings use move_hosted_opening because their position is wall-local.
+    void move_element(ElementId element_id, Point2 delta);
+    /// Replaces the native geometry envelope of a reusable family instance
+    /// without changing its stable element id or family reference.
+    void update_family_instance(
+        ElementId element_id,
+        Point2 position,
+        double width_meters,
+        double depth_meters,
+        double height_meters,
+        MeshBuffer mesh = {}
     );
     /// Converts legacy Wall-kind assemblies and dual-source wall records into
     /// the single canonical WallTypeData source. This is idempotent and is

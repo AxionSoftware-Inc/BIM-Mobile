@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import 'family_authoring/family_plan_symbol.dart';
 import 'render_scene_editor.dart';
 import 'render_scene_level_overlay.dart';
 import 'render_scene_models.dart';
@@ -41,6 +42,7 @@ class FallbackRenderScenePainter extends CustomPainter
     this.draftWallArc,
     required this.draftOpening,
     required this.draftSurface,
+    this.draftObjectMove,
     required this.draftWallThicknessMeters,
     required this.draftWallHeightMeters,
     this.draftWallEditElementId,
@@ -86,6 +88,8 @@ class FallbackRenderScenePainter extends CustomPainter
   final RenderSceneOpeningDraft? draftOpening;
   @override
   final RenderSceneSurfaceDraft? draftSurface;
+  @override
+  final RenderSceneObjectMoveDraft? draftObjectMove;
   @override
   final double draftWallThicknessMeters;
   @override
@@ -147,6 +151,19 @@ class FallbackRenderScenePainter extends CustomPainter
         : null;
 
     for (final object in filteredObjects) {
+      if (draftObjectMove?.object.elementId != null &&
+          draftObjectMove?.object.elementId == object.elementId) {
+        // The transient overlay owns the moving footprint. Keeping the old
+        // mesh in this pass would make a drag look like a duplicate object.
+        continue;
+      }
+      if (projectionMode == RenderSceneProjectionMode.topDown &&
+          _isFamilyPlanObject(object)) {
+        // A floor plan owns a lightweight family symbol. Do not project the
+        // family mesh into the plan pass; this keeps 2D independent from the
+        // 3D family geometry and removes a large source of plan flicker.
+        continue;
+      }
       // A plan wall is already painted above as one joined horizontal cut.
       // Re-projecting the 3D wall mesh here draws its triangulation and its
       // unjoined end caps over the canonical footprint, producing diagonal
@@ -302,6 +319,7 @@ class FallbackRenderScenePainter extends CustomPainter
       _drawFloorSurfacePatterns(canvas, projection, filteredObjects);
       _drawPlanWallFootprints(canvas, projection, filteredObjects);
       _drawPlanOpeningSymbols(canvas, projection, filteredObjects);
+      _drawPlanFamilySymbols(canvas, projection, filteredObjects);
     } else {
       _drawFloorSurfacePatterns(canvas, projection, filteredObjects);
     }
@@ -540,6 +558,7 @@ class FallbackRenderScenePainter extends CustomPainter
         oldDelegate.draftWallArc != draftWallArc ||
         oldDelegate.draftOpening != draftOpening ||
         oldDelegate.draftSurface != draftSurface ||
+        oldDelegate.draftObjectMove != draftObjectMove ||
         oldDelegate.draftWallThicknessMeters != draftWallThicknessMeters ||
         oldDelegate.draftWallHeightMeters != draftWallHeightMeters ||
         oldDelegate.draftWallEditElementId != draftWallEditElementId ||

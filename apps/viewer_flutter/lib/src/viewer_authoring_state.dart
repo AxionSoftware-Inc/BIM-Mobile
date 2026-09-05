@@ -361,6 +361,7 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
       _moveAnchorPoint = null;
       _moveWallOriginalStart = null;
       _moveWallOriginalEnd = null;
+      _draftMoveElementPoint = null;
       _draftMoveLevelId = null;
       _moveLevelOriginalElevation = null;
       _wallMoveMode = WallMoveMode.translate;

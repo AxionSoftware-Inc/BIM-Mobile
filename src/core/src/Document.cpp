@@ -2535,7 +2535,10 @@ void Document::set_element_family_reference(
     std::string family_type_id,
     std::string family_type_name,
     std::string family_category,
-    std::string family_asset_path
+    std::string family_asset_path,
+    std::string family_parameter_definitions_json,
+    std::string family_parameter_values_json,
+    std::string family_plan_svg
 ) {
     auto* element = find_ptr(element_id);
     if (element == nullptr) {
@@ -2575,7 +2578,102 @@ void Document::set_element_family_reference(
     } else {
         metadata.erase("family_asset_path");
     }
+    if (!family_parameter_definitions_json.empty()) {
+        metadata["family_parameter_definitions_json"] = MetadataValue{
+            .kind = MetadataValueKind::Text,
+            .value = std::move(family_parameter_definitions_json),
+        };
+    } else {
+        metadata.erase("family_parameter_definitions_json");
+    }
+    if (!family_parameter_values_json.empty()) {
+        metadata["family_parameter_values_json"] = MetadataValue{
+            .kind = MetadataValueKind::Text,
+            .value = std::move(family_parameter_values_json),
+        };
+    } else {
+        metadata.erase("family_parameter_values_json");
+    }
+    if (!family_plan_svg.empty()) {
+        metadata["family_plan_svg"] = MetadataValue{
+            .kind = MetadataValueKind::Text,
+            .value = std::move(family_plan_svg),
+        };
+    } else {
+        metadata.erase("family_plan_svg");
+    }
     element->touch();
+}
+
+void Document::move_element(ElementId element_id, Point2 delta) {
+    if (!std::isfinite(delta.x) || !std::isfinite(delta.y)) {
+        throw std::invalid_argument("element move delta must be finite");
+    }
+    auto* element = find_ptr(element_id);
+    if (element == nullptr) throw std::invalid_argument("element does not exist");
+    if (auto* column = element->column()) {
+        column->position.x += delta.x;
+        column->position.y += delta.y;
+        column->generated_geometry_dirty = true;
+        element->touch();
+        return;
+    }
+    if (auto* proxy = element->proxy()) {
+        proxy->position.x += delta.x;
+        proxy->position.y += delta.y;
+        for (auto& vertex : proxy->mesh.vertices) {
+            vertex.x += delta.x;
+            vertex.y += delta.y;
+        }
+        element->touch();
+        return;
+    }
+    throw std::invalid_argument("element kind is not movable by plane translation");
+}
+
+void Document::update_family_instance(
+    ElementId element_id,
+    Point2 position,
+    double width_meters,
+    double depth_meters,
+    double height_meters,
+    MeshBuffer mesh
+) {
+    if (!std::isfinite(position.x) || !std::isfinite(position.y) ||
+        !std::isfinite(width_meters) || !std::isfinite(depth_meters) ||
+        !std::isfinite(height_meters) || width_meters <= 0.0 ||
+        depth_meters <= 0.0 || height_meters <= 0.0) {
+        throw std::invalid_argument("family instance geometry is invalid");
+    }
+    auto* element = find_ptr(element_id);
+    if (element == nullptr) throw std::invalid_argument("element does not exist");
+    if (auto* column = element->column()) {
+        column->position = position;
+        column->width_meters = width_meters;
+        column->depth_meters = depth_meters;
+        column->height_meters = height_meters;
+        column->generated_geometry_dirty = true;
+        element->touch();
+        return;
+    }
+    if (auto* proxy = element->proxy()) {
+        if (mesh.vertices.empty() || mesh.indices.empty() || mesh.indices.size() % 3 != 0) {
+            throw std::invalid_argument("family proxy mesh must contain triangles");
+        }
+        for (const auto index : mesh.indices) {
+            if (index >= mesh.vertices.size()) {
+                throw std::invalid_argument("family proxy mesh index is out of range");
+            }
+        }
+        proxy->position = position;
+        proxy->width_meters = width_meters;
+        proxy->depth_meters = depth_meters;
+        proxy->height_meters = height_meters;
+        proxy->mesh = std::move(mesh);
+        element->touch();
+        return;
+    }
+    throw std::invalid_argument("element kind is not a reusable family instance");
 }
 
 void Document::update_roof_properties(ElementId roof_id, RoofType roof_type, std::optional<double> slope_degrees, std::optional<double> overhang_meters) {

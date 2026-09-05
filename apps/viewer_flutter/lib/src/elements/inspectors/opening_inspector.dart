@@ -137,6 +137,14 @@ class _OpeningPropertiesSectionState extends State<_OpeningPropertiesSection> {
           title: _label(widget.object),
           icon: _icon(widget.object.kindKey),
           children: <Widget>[
+            if (_FamilyInstanceStateData.fromObject(widget.object) != null)
+              _FamilyPropertiesSection(
+                object: widget.object,
+                levels: widget.levels,
+                units: widget.units,
+                commands: widget.commands,
+                onApplied: widget.onApplied,
+              ),
             _row(
               'Host wall',
               OpeningElementParameters.fromObject(widget.object)

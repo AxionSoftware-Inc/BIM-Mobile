@@ -2485,9 +2485,12 @@ RenderSceneDTO build_render_scene(
                 std::move(proxy_mesh),
                 material_category_name(ApiElementKind::Proxy),
                 {
+                    {"position_x", std::to_string(proxy->position.x)},
+                    {"position_y", std::to_string(proxy->position.y)},
                     {"width_meters", std::to_string(proxy->width_meters)},
                     {"depth_meters", std::to_string(proxy->depth_meters)},
                     {"height_meters", std::to_string(proxy->height_meters)},
+                    {"level_locked", "true"},
                     {"ifc_proxy", "true"},
                     // Keep the source entity at the render/cache boundary.
                     // In particular, a CAD import can be a single
@@ -4786,7 +4789,10 @@ ApiVoidResult EngineSession::set_element_family_reference(
     std::string family_type_id,
     std::string family_type_name,
     std::string family_category,
-    std::string family_asset_path
+    std::string family_asset_path,
+    std::string family_parameter_definitions_json,
+    std::string family_parameter_values_json,
+    std::string family_plan_svg
 ) {
     return apply_mutation(*impl_, "set_element_family_reference", [&](Document& document) {
         document.set_element_family_reference(
@@ -4796,7 +4802,43 @@ ApiVoidResult EngineSession::set_element_family_reference(
             std::move(family_type_id),
             std::move(family_type_name),
             std::move(family_category),
-            std::move(family_asset_path)
+            std::move(family_asset_path),
+            std::move(family_parameter_definitions_json),
+            std::move(family_parameter_values_json),
+            std::move(family_plan_svg)
+        );
+    });
+}
+
+ApiVoidResult EngineSession::move_element(std::uint64_t element_id, double delta_x, double delta_y) {
+    return apply_mutation(*impl_, "move_element", [&](Document& document) {
+        document.move_element(element_id, {.x = delta_x, .y = delta_y});
+    });
+}
+
+ApiVoidResult EngineSession::update_family_instance(
+    std::uint64_t element_id,
+    Vec2 position,
+    double width_meters,
+    double depth_meters,
+    double height_meters,
+    std::vector<Vec3> vertices,
+    std::vector<std::uint32_t> indices
+) {
+    return apply_mutation(*impl_, "update_family_instance", [&](Document& document) {
+        MeshBuffer mesh{};
+        mesh.vertices.reserve(vertices.size());
+        for (const auto& vertex : vertices) {
+            mesh.vertices.push_back(Point3{.x = vertex.x, .y = vertex.y, .z = vertex.z});
+        }
+        mesh.indices = std::move(indices);
+        document.update_family_instance(
+            element_id,
+            to_point(position),
+            width_meters,
+            depth_meters,
+            height_meters,
+            std::move(mesh)
         );
     });
 }

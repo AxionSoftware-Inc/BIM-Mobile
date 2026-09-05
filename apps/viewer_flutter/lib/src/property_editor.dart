@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
@@ -15,6 +16,12 @@ import 'elements/stair_parameters.dart';
 import 'elements/surface_parameters.dart';
 import 'elements/wall_type_catalog.dart';
 import 'elements/wall_parameters.dart';
+import 'family_authoring/built_in_family_catalog.dart';
+import 'family_authoring/family_document.dart';
+import 'family_authoring/family_file_store.dart';
+import 'family_authoring/family_geometry.dart';
+import 'family_authoring/family_plan_symbol.dart';
+import 'family_instance_adapter.dart';
 import 'inspector_controller.dart';
 import 'project_unit_settings.dart';
 import 'render_scene_models.dart';
@@ -28,6 +35,7 @@ part 'elements/inspectors/stair_inspector.dart';
 part 'elements/inspectors/ceiling_inspector.dart';
 part 'elements/inspectors/linear_inspector.dart';
 part 'elements/inspectors/generic_inspector.dart';
+part 'elements/inspectors/family_inspector.dart';
 
 typedef ApplyInspectorResult = Future<void> Function(
   RenderSceneLoadResult result,

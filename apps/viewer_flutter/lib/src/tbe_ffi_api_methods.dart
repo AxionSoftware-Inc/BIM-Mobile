@@ -920,6 +920,9 @@ extension _TbeViewerApiMethods on TbeViewerApi {
     required String familyTypeName,
     required String familyCategory,
     String familyAssetPath = '',
+    String familyParameterDefinitionsJson = '',
+    String familyParameterValuesJson = '',
+    String familyPlanSvg = '',
   }) {
     final assetId = familyAssetId.toNativeUtf8();
     final name = familyName.toNativeUtf8();
@@ -927,6 +930,9 @@ extension _TbeViewerApiMethods on TbeViewerApi {
     final typeName = familyTypeName.toNativeUtf8();
     final category = familyCategory.toNativeUtf8();
     final assetPath = familyAssetPath.toNativeUtf8();
+    final parameterDefinitions = familyParameterDefinitionsJson.toNativeUtf8();
+    final parameterValues = familyParameterValuesJson.toNativeUtf8();
+    final planSvg = familyPlanSvg.toNativeUtf8();
     try {
       _check(
         handle,
@@ -939,6 +945,9 @@ extension _TbeViewerApiMethods on TbeViewerApi {
           typeName,
           category,
           assetPath,
+          parameterDefinitions,
+          parameterValues,
+          planSvg,
         ),
       );
     } finally {
@@ -948,6 +957,67 @@ extension _TbeViewerApiMethods on TbeViewerApi {
       calloc.free(typeName);
       calloc.free(category);
       calloc.free(assetPath);
+      calloc.free(parameterDefinitions);
+      calloc.free(parameterValues);
+      calloc.free(planSvg);
+    }
+  }
+
+  void moveElement(
+    ffi.Pointer<ffi.Void> handle, {
+    required int elementId,
+    required double deltaXMeters,
+    required double deltaYMeters,
+  }) {
+    _check(handle, _moveElement(handle, elementId, deltaXMeters, deltaYMeters));
+  }
+
+  void updateFamilyInstance(
+    ffi.Pointer<ffi.Void> handle, {
+    required int elementId,
+    required double x,
+    required double y,
+    required double widthMeters,
+    required double depthMeters,
+    required double heightMeters,
+    required List<RenderScenePoint> vertices,
+    required List<int> indices,
+  }) {
+    final position = calloc<TbeVec2>();
+    final vertexBuffer = calloc<TbeVec3>(vertices.length);
+    final indexBuffer = calloc<ffi.Uint32>(indices.length);
+    try {
+      position.ref
+        ..x = x
+        ..y = y;
+      for (var i = 0; i < vertices.length; i += 1) {
+        vertexBuffer[i]
+          ..x = vertices[i].x
+          ..y = vertices[i].y
+          ..z = vertices[i].z;
+      }
+      for (var i = 0; i < indices.length; i += 1) {
+        indexBuffer[i] = indices[i];
+      }
+      _check(
+        handle,
+        _updateFamilyInstance(
+          handle,
+          elementId,
+          position.ref,
+          widthMeters,
+          depthMeters,
+          heightMeters,
+          vertexBuffer,
+          vertices.length,
+          indexBuffer,
+          indices.length,
+        ),
+      );
+    } finally {
+      calloc.free(position);
+      calloc.free(vertexBuffer);
+      calloc.free(indexBuffer);
     }
   }
 

@@ -306,7 +306,28 @@ TbeApiStatusCode tbe_set_element_family_reference(
     const char* family_type_id,
     const char* family_type_name,
     const char* family_category,
-    const char* family_asset_path
+    const char* family_asset_path,
+    const char* family_parameter_definitions_json,
+    const char* family_parameter_values_json,
+    const char* family_plan_svg
+);
+TbeApiStatusCode tbe_move_element(
+    TbeEngineHandle* handle,
+    uint64_t element_id,
+    double delta_x_meters,
+    double delta_y_meters
+);
+TbeApiStatusCode tbe_update_family_instance(
+    TbeEngineHandle* handle,
+    uint64_t element_id,
+    TbeVec2 position,
+    double width_meters,
+    double depth_meters,
+    double height_meters,
+    const TbeVec3* vertices,
+    size_t vertex_count,
+    const uint32_t* indices,
+    size_t index_count
 );
 TbeApiStatusCode tbe_update_roof_properties(
     TbeEngineHandle* handle, uint64_t roof_id, int roof_type,

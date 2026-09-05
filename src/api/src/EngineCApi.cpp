@@ -580,7 +580,10 @@ TbeApiStatusCode tbe_set_element_family_reference(
     const char* family_type_id,
     const char* family_type_name,
     const char* family_category,
-    const char* family_asset_path
+    const char* family_asset_path,
+    const char* family_parameter_definitions_json,
+    const char* family_parameter_values_json,
+    const char* family_plan_svg
 ) {
     if (handle == nullptr || handle->session == nullptr || family_asset_id == nullptr ||
         family_name == nullptr || family_type_id == nullptr || family_type_name == nullptr ||
@@ -594,7 +597,50 @@ TbeApiStatusCode tbe_set_element_family_reference(
         family_type_id,
         family_type_name,
         family_category,
-        family_asset_path == nullptr ? std::string{} : std::string{family_asset_path}
+        family_asset_path == nullptr ? std::string{} : std::string{family_asset_path},
+        family_parameter_definitions_json == nullptr ? std::string{} : std::string{family_parameter_definitions_json},
+        family_parameter_values_json == nullptr ? std::string{} : std::string{family_parameter_values_json},
+        family_plan_svg == nullptr ? std::string{} : std::string{family_plan_svg}
+    ));
+}
+
+TbeApiStatusCode tbe_move_element(TbeEngineHandle* handle, uint64_t element_id, double delta_x_meters, double delta_y_meters) {
+    if (handle == nullptr || handle->session == nullptr) return null_handle_error(handle);
+    return apply_result(handle, handle->session->move_element(element_id, delta_x_meters, delta_y_meters));
+}
+
+TbeApiStatusCode tbe_update_family_instance(
+    TbeEngineHandle* handle,
+    uint64_t element_id,
+    TbeVec2 position,
+    double width_meters,
+    double depth_meters,
+    double height_meters,
+    const TbeVec3* vertices,
+    size_t vertex_count,
+    const uint32_t* indices,
+    size_t index_count
+) {
+    if (handle == nullptr || handle->session == nullptr) return null_handle_error(handle);
+    if ((vertex_count > 0 && vertices == nullptr) || (index_count > 0 && indices == nullptr)) {
+        return TBE_API_INVALID_ARGUMENT;
+    }
+    std::vector<tbe::api::Vec3> mesh_vertices;
+    mesh_vertices.reserve(vertex_count);
+    for (size_t index = 0; index < vertex_count; ++index) {
+        mesh_vertices.push_back(tbe::api::Vec3{.x = vertices[index].x, .y = vertices[index].y, .z = vertices[index].z});
+    }
+    std::vector<uint32_t> mesh_indices;
+    mesh_indices.reserve(index_count);
+    for (size_t index = 0; index < index_count; ++index) mesh_indices.push_back(indices[index]);
+    return apply_result(handle, handle->session->update_family_instance(
+        element_id,
+        tbe::api::Vec2{.x = position.x, .y = position.y},
+        width_meters,
+        depth_meters,
+        height_meters,
+        std::move(mesh_vertices),
+        std::move(mesh_indices)
     ));
 }
 

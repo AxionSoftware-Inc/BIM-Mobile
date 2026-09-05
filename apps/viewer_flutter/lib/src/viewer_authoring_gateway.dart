@@ -22,6 +22,13 @@ abstract interface class ViewerAuthoringGateway {
     required double elevationMeters,
   });
 
+  /// Moves a non-hosted project element in plan space while preserving its id.
+  Future<RenderSceneLoadResult> moveElement({
+    required int elementId,
+    required double deltaX,
+    required double deltaY,
+  });
+
   Future<RenderSceneLoadResult> createWall({
     required String name,
     required int levelId,
@@ -68,6 +75,20 @@ abstract interface class ViewerAuthoringGateway {
     required String familyTypeName,
     required String familyCategory,
     String familyAssetPath = '',
+    String familyParameterDefinitionsJson = '',
+    String familyParameterValuesJson = '',
+    String familyPlanSvg = '',
+  });
+
+  /// Applies evaluated family geometry to an existing column/proxy instance.
+  Future<RenderSceneLoadResult> updateFamilyInstance({
+    required int elementId,
+    required RenderScenePoint position,
+    required double widthMeters,
+    required double depthMeters,
+    required double heightMeters,
+    required List<RenderScenePoint> vertices,
+    required List<int> indices,
   });
 
   /// Creates a wall and applies its level constraint/interactive join as one

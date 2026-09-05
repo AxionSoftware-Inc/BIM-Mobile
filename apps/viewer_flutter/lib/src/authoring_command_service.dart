@@ -122,6 +122,17 @@ class AuthoringCommandService {
         elevationMeters: elevationMeters,
       );
 
+  Future<RenderSceneLoadResult> moveElement({
+    required int elementId,
+    required double deltaX,
+    required double deltaY,
+  }) =>
+      _requireRepository().moveElement(
+        elementId: elementId,
+        deltaX: deltaX,
+        deltaY: deltaY,
+      );
+
   Future<RenderSceneLoadResult> trimExtendWalls({
     required int firstWallId,
     required bool firstUsesStart,
@@ -323,6 +334,9 @@ class AuthoringCommandService {
     required String familyTypeName,
     required String familyCategory,
     String familyAssetPath = '',
+    String familyParameterDefinitionsJson = '',
+    String familyParameterValuesJson = '',
+    String familyPlanSvg = '',
   }) =>
       _requireRepository().setElementFamilyReference(
         elementId: elementId,
@@ -332,6 +346,28 @@ class AuthoringCommandService {
         familyTypeName: familyTypeName,
         familyCategory: familyCategory,
         familyAssetPath: familyAssetPath,
+        familyParameterDefinitionsJson: familyParameterDefinitionsJson,
+        familyParameterValuesJson: familyParameterValuesJson,
+        familyPlanSvg: familyPlanSvg,
+      );
+
+  Future<RenderSceneLoadResult> updateFamilyInstance({
+    required int elementId,
+    required RenderScenePoint position,
+    required double widthMeters,
+    required double depthMeters,
+    required double heightMeters,
+    required List<RenderScenePoint> vertices,
+    required List<int> indices,
+  }) =>
+      _requireRepository().updateFamilyInstance(
+        elementId: elementId,
+        position: position,
+        widthMeters: widthMeters,
+        depthMeters: depthMeters,
+        heightMeters: heightMeters,
+        vertices: vertices,
+        indices: indices,
       );
 
   Future<RenderSceneLoadResult> createProfile({

@@ -107,6 +107,12 @@ class TbeViewerApi {
         _setElementFamilyReference = library.lookupFunction<
             _SetElementFamilyReferenceNative,
             _SetElementFamilyReferenceDart>('tbe_set_element_family_reference'),
+        _moveElement =
+            library.lookupFunction<_MoveElementNative, _MoveElementDart>(
+                'tbe_move_element'),
+        _updateFamilyInstance = library.lookupFunction<
+            _UpdateFamilyInstanceNative,
+            _UpdateFamilyInstanceDart>('tbe_update_family_instance'),
         _updateRoofProperties = library.lookupFunction<
             _UpdateRoofPropertiesNative,
             _UpdateRoofPropertiesDart>('tbe_update_roof_properties'),
@@ -257,6 +263,8 @@ class TbeViewerApi {
   final _TrimExtendWallsDart _trimExtendWalls;
   final _SetElementAssemblyDart _setElementAssembly;
   final _SetElementFamilyReferenceDart _setElementFamilyReference;
+  final _MoveElementDart _moveElement;
+  final _UpdateFamilyInstanceDart _updateFamilyInstance;
   final _UpdateRoofPropertiesDart _updateRoofProperties;
   final _SetStructuralWallCutDart _setStructuralWallCut;
   final _SetBeamColumnJoinDart _setBeamColumnJoin;

@@ -874,7 +874,20 @@ public:
         std::string family_type_id,
         std::string family_type_name,
         std::string family_category,
-        std::string family_asset_path = {}
+        std::string family_asset_path = {},
+        std::string family_parameter_definitions_json = {},
+        std::string family_parameter_values_json = {},
+        std::string family_plan_svg = {}
+    );
+    ApiVoidResult move_element(std::uint64_t element_id, double delta_x, double delta_y);
+    ApiVoidResult update_family_instance(
+        std::uint64_t element_id,
+        Vec2 position,
+        double width_meters,
+        double depth_meters,
+        double height_meters,
+        std::vector<Vec3> vertices,
+        std::vector<std::uint32_t> indices
     );
     ApiResult<ElementIdDTO> create_material(
         std::string name,

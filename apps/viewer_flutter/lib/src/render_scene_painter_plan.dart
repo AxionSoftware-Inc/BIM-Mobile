@@ -12,12 +12,127 @@ mixin _FallbackScenePlanPainterMixin {
   );
   Color _materialColor(String value);
   Color _floorSurfaceColor(RenderSceneObject object);
+  RenderSceneObjectMoveDraft? get draftObjectMove;
+
+  bool _isFamilyPlanObject(RenderSceneObject object) {
+    if (object.kindKey != 'column' && object.kindKey != 'proxy') return false;
+    final assetId = object.metadata['family_asset_id'];
+    return assetId != null && assetId.toString().trim().isNotEmpty;
+  }
+
+  void _drawPlanFamilySymbols(
+    Canvas canvas,
+    RenderSceneProjection projection,
+    Iterable<RenderSceneObject> objects,
+  ) {
+    final movingId = draftObjectMove?.object.elementId;
+    for (final object in objects) {
+      if (!_isFamilyPlanObject(object) || object.elementId == movingId) {
+        continue;
+      }
+      _drawPlanFamilySymbol(canvas, projection, object);
+    }
+  }
+
+  void _drawPlanFamilySymbol(
+    Canvas canvas,
+    RenderSceneProjection projection,
+    RenderSceneObject object, {
+    RenderScenePoint delta = const RenderScenePoint(x: 0, y: 0, z: 0),
+  }) {
+    final id = object.elementId?.toString();
+    final color = id != null && selectedElementIds.contains(id)
+        ? const Color(0xFF2563EB)
+        : id != null && id == highlightedElementId
+            ? const Color(0xFFDC2626)
+            : const Color(0xFF475569);
+    final center = object.bounds.center;
+    final svg = object.metadata['family_plan_svg'];
+    final symbols = svg is String ? FamilyPlanSymbolPath.parse(svg) : const [];
+    if (symbols.isNotEmpty) {
+      for (final symbol in symbols) {
+        final path = Path();
+        for (final command in symbol.commands) {
+          if (command.isClose) {
+            path.close();
+            continue;
+          }
+          final point = projection
+              .project(
+                RenderScenePoint(
+                  x: center.x + command.x + delta.x,
+                  y: center.y + command.y + delta.y,
+                  z: object.bounds.min.z,
+                ),
+              )
+              .screen;
+          if (command.kind == 'M') {
+            path.moveTo(point.dx, point.dy);
+          } else {
+            path.lineTo(point.dx, point.dy);
+          }
+        }
+        canvas.drawPath(
+          path,
+          Paint()
+            ..style = PaintingStyle.fill
+            ..color = color.withValues(alpha: 0.12),
+        );
+        canvas.drawPath(
+          path,
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth =
+                id != null && selectedElementIds.contains(id) ? 2.2 : 1.25
+            ..strokeJoin = StrokeJoin.round
+            ..color = color,
+        );
+      }
+      return;
+    }
+
+    final corners = <RenderScenePoint>[
+      RenderScenePoint(
+        x: object.bounds.min.x + delta.x,
+        y: object.bounds.min.y + delta.y,
+        z: object.bounds.min.z,
+      ),
+      RenderScenePoint(
+        x: object.bounds.max.x + delta.x,
+        y: object.bounds.min.y + delta.y,
+        z: object.bounds.min.z,
+      ),
+      RenderScenePoint(
+        x: object.bounds.max.x + delta.x,
+        y: object.bounds.max.y + delta.y,
+        z: object.bounds.min.z,
+      ),
+      RenderScenePoint(
+        x: object.bounds.min.x + delta.x,
+        y: object.bounds.max.y + delta.y,
+        z: object.bounds.min.z,
+      ),
+    ].map((point) => projection.project(point).screen).toList(growable: false);
+    if (corners.length < 4) return;
+    final path = Path()..moveTo(corners.first.dx, corners.first.dy);
+    for (final point in corners.skip(1)) {
+      path.lineTo(point.dx, point.dy);
+    }
+    path.close();
+    canvas.drawPath(
+      path,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.25
+        ..color = color,
+    );
+  }
 
   List<RenderScenePoint> _authoritativeWallFootprint(
     RenderSceneObject wall,
   ) {
-    final raw = wall.metadata['profile_corners'] ??
-        wall.metadata['profileCorners'];
+    final raw =
+        wall.metadata['profile_corners'] ?? wall.metadata['profileCorners'];
     if (raw is List) {
       final points = raw
           .map(RenderScenePoint.fromJson)
@@ -27,16 +142,20 @@ mixin _FallbackScenePlanPainterMixin {
       if (points.length >= 3) return points;
     }
     if (raw is String && raw.trim().isNotEmpty) {
-      final points = raw.split(';').map((token) {
-        final coordinates = token.split(',');
-        if (coordinates.length != 2) return null;
-        final x = double.tryParse(coordinates[0].trim());
-        final y = double.tryParse(coordinates[1].trim());
-        if (x == null || y == null || !x.isFinite || !y.isFinite) {
-          return null;
-        }
-        return RenderScenePoint(x: x, y: y, z: 0.0);
-      }).whereType<RenderScenePoint>().toList(growable: false);
+      final points = raw
+          .split(';')
+          .map((token) {
+            final coordinates = token.split(',');
+            if (coordinates.length != 2) return null;
+            final x = double.tryParse(coordinates[0].trim());
+            final y = double.tryParse(coordinates[1].trim());
+            if (x == null || y == null || !x.isFinite || !y.isFinite) {
+              return null;
+            }
+            return RenderScenePoint(x: x, y: y, z: 0.0);
+          })
+          .whereType<RenderScenePoint>()
+          .toList(growable: false);
       if (points.length >= 3) return points;
     }
     return const <RenderScenePoint>[];
@@ -319,8 +438,8 @@ mixin _FallbackScenePlanPainterMixin {
       if (length <= 1e-8) continue;
       final half = thickness * 0.5;
       final authoritativeCorners = _authoritativeWallFootprint(wall);
-      final curved = wall.metadata['curve_kind'] == 'arc' ||
-          centerline.length > 2;
+      final curved =
+          wall.metadata['curve_kind'] == 'arc' || centerline.length > 2;
       final corners = <RenderScenePoint>[];
       if (authoritativeCorners.length >= 3) {
         // The core has already resolved curved/straight mixed caps and tees.

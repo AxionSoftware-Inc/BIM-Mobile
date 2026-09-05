@@ -50,6 +50,20 @@ final class TbeAuthoringMutationRepository {
     return _afterMutation();
   }
 
+  Future<RenderSceneLoadResult> moveElement({
+    required int elementId,
+    required double deltaX,
+    required double deltaY,
+  }) async {
+    _api.moveElement(
+      _requireHandle(),
+      elementId: elementId,
+      deltaXMeters: deltaX,
+      deltaYMeters: deltaY,
+    );
+    return _afterMutation();
+  }
+
   Future<RenderSceneLoadResult> updateLevel({
     required int levelId,
     String? name,
@@ -576,6 +590,9 @@ final class TbeAuthoringMutationRepository {
     required String familyTypeName,
     required String familyCategory,
     String familyAssetPath = '',
+    String familyParameterDefinitionsJson = '',
+    String familyParameterValuesJson = '',
+    String familyPlanSvg = '',
   }) async {
     _api.setElementFamilyReference(
       _requireHandle(),
@@ -586,6 +603,32 @@ final class TbeAuthoringMutationRepository {
       familyTypeName: familyTypeName,
       familyCategory: familyCategory,
       familyAssetPath: familyAssetPath,
+      familyParameterDefinitionsJson: familyParameterDefinitionsJson,
+      familyParameterValuesJson: familyParameterValuesJson,
+      familyPlanSvg: familyPlanSvg,
+    );
+    return _afterMutation();
+  }
+
+  Future<RenderSceneLoadResult> updateFamilyInstance({
+    required int elementId,
+    required RenderScenePoint position,
+    required double widthMeters,
+    required double depthMeters,
+    required double heightMeters,
+    required List<RenderScenePoint> vertices,
+    required List<int> indices,
+  }) async {
+    _api.updateFamilyInstance(
+      _requireHandle(),
+      elementId: elementId,
+      x: position.x,
+      y: position.y,
+      widthMeters: widthMeters,
+      depthMeters: depthMeters,
+      heightMeters: heightMeters,
+      vertices: vertices,
+      indices: indices,
     );
     return _afterMutation();
   }

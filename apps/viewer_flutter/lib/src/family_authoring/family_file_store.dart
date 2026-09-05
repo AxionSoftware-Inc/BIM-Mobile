@@ -83,6 +83,24 @@ abstract final class FamilyFileStore {
     return FamilyAssetFile(document: document, path: location.path);
   }
 
+  /// Loads an instance-referenced family without opening a file picker.
+  static Future<FamilyAssetFile?> loadPath(String path) async {
+    final normalized = path.trim();
+    if (normalized.isEmpty) return null;
+    final file = File(normalized);
+    try {
+      if (!await file.exists()) return null;
+      final document = FamilyDocument.fromJson(
+        jsonDecode(await file.readAsString()),
+      );
+      return document == null
+          ? null
+          : FamilyAssetFile(document: document, path: file.path);
+    } catch (_) {
+      return null;
+    }
+  }
+
   static Future<String?> save(FamilyDocument document) async {
     if (Platform.isAndroid) {
       return _saveToLibrary(document);

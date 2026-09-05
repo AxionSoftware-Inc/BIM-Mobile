@@ -41,9 +41,27 @@ Widget _buildLinearInspectorFromParameters(
           : context.units.formatLength(parameters.lengthMeters!),
     'Material': context.object.materialCategory,
   };
-  return _ReadOnlyObjectSection(
+  final card = _ReadOnlyObjectSection(
     object: context.object,
     title: '${_label(context.object)} properties',
     rows: rows,
+  );
+  if (elementParameterText(context.object, 'property.family_asset_id') ==
+      null) {
+    return card;
+  }
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: <Widget>[
+      card,
+      const SizedBox(height: 6),
+      _FamilyPropertiesSection(
+        object: context.object,
+        levels: context.levels,
+        units: context.units,
+        commands: context.commands,
+        onApplied: context.onApplied,
+      ),
+    ],
   );
 }

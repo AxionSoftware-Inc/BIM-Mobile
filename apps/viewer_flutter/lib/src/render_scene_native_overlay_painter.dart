@@ -62,10 +62,6 @@ class NativeDraftOverlayPainter extends CustomPainter {
       padding: 48.0,
     );
 
-    if (projectionMode == RenderSceneProjectionMode.topDown) {
-      _drawZoomedOutPlanWallGuides(canvas, projection);
-    }
-
     // The Android model is a platform view, so the regular fallback painter
     // is not above it. Keep the same two endpoint handles in this lightweight
     // overlay; selection and drag feedback therefore remain visible on the
@@ -513,72 +509,6 @@ class NativeDraftOverlayPainter extends CustomPainter {
       Paint()..color = const Color(0xFFF8FAFC).withValues(alpha: 0.96),
     );
     painter.paint(canvas, rect.topLeft + const Offset(8, 5));
-  }
-
-  void _drawZoomedOutPlanWallGuides(
-    Canvas canvas,
-    RenderSceneProjection projection,
-  ) {
-    // Filament's world-space edge prisms become sub-pixel at wide plan zooms.
-    // Keep this as a lightweight screen-space fallback instead of rebuilding
-    // native geometry during pinch updates. It is deliberately only enabled
-    // once the wall itself is thin enough that the native edge is unreliable.
-    final guidePath = Path();
-    var hasGuide = false;
-    for (final wall in scene.objects) {
-      if (wall.kindKey != 'wall' ||
-          (selectedLevelId != null &&
-              wall.levelId != null &&
-              wall.levelId != selectedLevelId)) {
-        continue;
-      }
-      final start = RenderSceneEditor.wallStartPoint(wall);
-      final end = RenderSceneEditor.wallEndPoint(wall);
-      final thickness = RenderSceneEditor.wallThickness(wall);
-      if (start == null || end == null || thickness == null) continue;
-
-      final delta = end - start;
-      final length = math.sqrt(delta.x * delta.x + delta.y * delta.y);
-      if (length <= 1e-6) continue;
-      final normal = RenderScenePoint(
-        x: -delta.y / length,
-        y: delta.x / length,
-        z: 0,
-      ).scale(thickness.abs() * 0.5);
-      final corners = <RenderScenePoint>[
-        start + normal,
-        end + normal,
-        end - normal,
-        start - normal,
-      ];
-      final points = corners
-          .map((point) => projection.project(point).screen)
-          .toList(growable: false);
-      final screenThickness = math.min(
-        (points[0] - points[3]).distance,
-        (points[1] - points[2]).distance,
-      );
-      if (screenThickness > 6.0) continue;
-
-      guidePath
-        ..moveTo(points[0].dx, points[0].dy)
-        ..lineTo(points[1].dx, points[1].dy)
-        ..lineTo(points[2].dx, points[2].dy)
-        ..lineTo(points[3].dx, points[3].dy)
-        ..close();
-      hasGuide = true;
-    }
-    if (!hasGuide) return;
-    canvas.drawPath(
-      guidePath,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.35
-        ..strokeCap = StrokeCap.square
-        ..strokeJoin = StrokeJoin.miter
-        ..isAntiAlias = true
-        ..color = const Color(0xCC374151),
-    );
   }
 
   void _drawWallBand(

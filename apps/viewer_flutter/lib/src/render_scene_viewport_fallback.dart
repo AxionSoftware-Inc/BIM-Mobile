@@ -210,6 +210,20 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
         pointerCount: _activePointerCount,
       );
 
+  RenderSceneTapDetails _sceneDragDetails(
+    RenderScene scene,
+    Size size,
+    Offset localPosition,
+    Offset globalPosition,
+  ) =>
+      RenderSceneTapDetails(
+        screenPosition: localPosition,
+        globalPosition: globalPosition,
+        modelPoint: controller.screenToModelPlan(localPosition, size),
+        pickedObject: null,
+        pointerCount: _activePointerCount,
+      );
+
   RenderSceneViewportController get controller => widget.controller;
 
   bool get _usesDirectAuthoringDrag => switch (widget.interactionMode) {
@@ -557,13 +571,28 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                       widget.interactionMode ==
                           RenderSceneInteractionMode.moveOpening ||
                       _usesDirectAuthoringDrag)) {
-                widget.onSceneDragUpdate?.call(_sceneDetails(
-                  scene,
-                  size,
-                  event.localPosition,
-                  event.position,
-                  touchFriendly: _usesTouchNavigation(event),
-                ));
+                final details = widget.interactionMode ==
+                            RenderSceneInteractionMode.select ||
+                        widget.interactionMode ==
+                            RenderSceneInteractionMode.moveWall ||
+                        widget.interactionMode ==
+                            RenderSceneInteractionMode.moveLevel ||
+                        widget.interactionMode ==
+                            RenderSceneInteractionMode.moveOpening
+                    ? _sceneDragDetails(
+                        scene,
+                        size,
+                        event.localPosition,
+                        event.position,
+                      )
+                    : _sceneDetails(
+                        scene,
+                        size,
+                        event.localPosition,
+                        event.position,
+                        touchFriendly: _usesTouchNavigation(event),
+                      );
+                widget.onSceneDragUpdate?.call(details);
               } else if (widget.interactionMode !=
                   RenderSceneInteractionMode.select) {
                 _emitHover(
@@ -665,13 +694,28 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                       widget.interactionMode ==
                           RenderSceneInteractionMode.moveOpening ||
                       _usesDirectAuthoringDrag)) {
-                widget.onSceneDragEnd?.call(_sceneDetails(
-                  scene,
-                  size,
-                  releasePosition,
-                  event.position,
-                  touchFriendly: _usesTouchNavigation(event),
-                ));
+                final details = widget.interactionMode ==
+                            RenderSceneInteractionMode.select ||
+                        widget.interactionMode ==
+                            RenderSceneInteractionMode.moveWall ||
+                        widget.interactionMode ==
+                            RenderSceneInteractionMode.moveLevel ||
+                        widget.interactionMode ==
+                            RenderSceneInteractionMode.moveOpening
+                    ? _sceneDragDetails(
+                        scene,
+                        size,
+                        releasePosition,
+                        event.position,
+                      )
+                    : _sceneDetails(
+                        scene,
+                        size,
+                        releasePosition,
+                        event.position,
+                        touchFriendly: _usesTouchNavigation(event),
+                      );
+                widget.onSceneDragEnd?.call(details);
                 _sceneDragStarted = false;
                 _clearPointerState();
                 return;
@@ -767,6 +811,7 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                           draftWallArc: controller.draftWallArc,
                           draftOpening: controller.draftOpening,
                           draftSurface: controller.draftSurface,
+                          draftObjectMove: controller.draftObjectMove,
                           draftWallThicknessMeters:
                               widget.draftWallThicknessMeters,
                           draftWallHeightMeters: widget.draftWallHeightMeters,

@@ -14,6 +14,7 @@ mixin _FallbackSceneOverlayMixin {
   ProjectUnitSettings get units;
   RenderSceneOpeningDraft? get draftOpening;
   RenderSceneSurfaceDraft? get draftSurface;
+  RenderSceneObjectMoveDraft? get draftObjectMove;
   RenderScenePoint? get draftWallStart;
   RenderScenePoint? get draftWallEnd;
   RenderSceneWallArcDraft? get draftWallArc;
@@ -22,6 +23,10 @@ mixin _FallbackSceneOverlayMixin {
   int? get draftWallEditElementId;
 
   void _drawDraftOverlay(Canvas canvas, RenderSceneProjection projection) {
+    final objectMove = draftObjectMove;
+    if (objectMove != null) {
+      _drawObjectMovePreview(canvas, projection, objectMove);
+    }
     final wallStart = draftWallStart;
     final wallEnd = draftWallEnd;
     final opening = draftOpening;
@@ -376,6 +381,105 @@ mixin _FallbackSceneOverlayMixin {
       maxLines: 2,
     )..layout(maxWidth: 160);
     messagePainter.paint(canvas, rect.topLeft + const Offset(4, -18));
+  }
+
+  void _drawObjectMovePreview(
+    Canvas canvas,
+    RenderSceneProjection projection,
+    RenderSceneObjectMoveDraft draft,
+  ) {
+    final object = draft.object;
+    final delta = draft.delta;
+    const color = Color(0xFF2563EB);
+    final isPlan = projectionMode == RenderSceneProjectionMode.topDown;
+    final svg = object.metadata['family_plan_svg'];
+    if (isPlan &&
+        (object.kindKey == 'column' || object.kindKey == 'proxy') &&
+        svg is String &&
+        svg.isNotEmpty) {
+      final center = object.bounds.center;
+      for (final symbol in FamilyPlanSymbolPath.parse(svg)) {
+        final path = Path();
+        for (final command in symbol.commands) {
+          if (command.isClose) {
+            path.close();
+            continue;
+          }
+          final point = projection
+              .project(
+                RenderScenePoint(
+                  x: center.x + command.x + delta.x,
+                  y: center.y + command.y + delta.y,
+                  z: object.bounds.min.z,
+                ),
+              )
+              .screen;
+          if (command.kind == 'M') {
+            path.moveTo(point.dx, point.dy);
+          } else {
+            path.lineTo(point.dx, point.dy);
+          }
+        }
+        canvas.drawPath(
+          path,
+          Paint()
+            ..style = PaintingStyle.fill
+            ..color = color.withValues(alpha: 0.16),
+        );
+        canvas.drawPath(
+          path,
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 2.0
+            ..strokeJoin = StrokeJoin.round
+            ..color = color,
+        );
+      }
+      return;
+    }
+
+    final corners = <RenderScenePoint>[
+      RenderScenePoint(
+        x: object.bounds.min.x + delta.x,
+        y: object.bounds.min.y + delta.y,
+        z: object.bounds.min.z,
+      ),
+      RenderScenePoint(
+        x: object.bounds.max.x + delta.x,
+        y: object.bounds.min.y + delta.y,
+        z: object.bounds.min.z,
+      ),
+      RenderScenePoint(
+        x: object.bounds.max.x + delta.x,
+        y: object.bounds.max.y + delta.y,
+        z: object.bounds.min.z,
+      ),
+      RenderScenePoint(
+        x: object.bounds.min.x + delta.x,
+        y: object.bounds.max.y + delta.y,
+        z: object.bounds.min.z,
+      ),
+    ].map((point) => projection.project(point).screen).toList(growable: false);
+    if (corners.length < 4) return;
+    final path = Path()..moveTo(corners.first.dx, corners.first.dy);
+    for (final point in corners.skip(1)) {
+      path.lineTo(point.dx, point.dy);
+    }
+    path.close();
+    canvas.drawPath(
+      path,
+      Paint()
+        ..style = PaintingStyle.fill
+        ..color = color.withValues(alpha: 0.14),
+    );
+    canvas.drawPath(
+      path,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.2
+        ..strokeJoin = StrokeJoin.round
+        ..color = color,
+    );
   }
 
   void _drawDraftWallAngle(

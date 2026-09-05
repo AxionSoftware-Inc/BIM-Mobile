@@ -545,6 +545,20 @@ class ViewerRepository
       );
 
   @override
+  Future<RenderSceneLoadResult> moveElement({
+    required int elementId,
+    required double deltaX,
+    required double deltaY,
+  }) =>
+      _authoringQueue.run(
+        () => _mutations.moveElement(
+          elementId: elementId,
+          deltaX: deltaX,
+          deltaY: deltaY,
+        ),
+      );
+
+  @override
   Future<RenderSceneLoadResult> updateLevel({
     required int levelId,
     String? name,
@@ -857,6 +871,28 @@ class ViewerRepository
       );
 
   @override
+  Future<RenderSceneLoadResult> updateFamilyInstance({
+    required int elementId,
+    required RenderScenePoint position,
+    required double widthMeters,
+    required double depthMeters,
+    required double heightMeters,
+    required List<RenderScenePoint> vertices,
+    required List<int> indices,
+  }) =>
+      _authoringQueue.run(
+        () => _mutations.updateFamilyInstance(
+          elementId: elementId,
+          position: position,
+          widthMeters: widthMeters,
+          depthMeters: depthMeters,
+          heightMeters: heightMeters,
+          vertices: vertices,
+          indices: indices,
+        ),
+      );
+
+  @override
   Future<RenderSceneLoadResult> setOpeningLevelLock({
     required int openingId,
     required bool locked,
@@ -1026,6 +1062,9 @@ class ViewerRepository
     required String familyTypeName,
     required String familyCategory,
     String familyAssetPath = '',
+    String familyParameterDefinitionsJson = '',
+    String familyParameterValuesJson = '',
+    String familyPlanSvg = '',
   }) =>
       _authoringQueue.run(
         () => _mutations.setElementFamilyReference(
@@ -1036,6 +1075,9 @@ class ViewerRepository
           familyTypeName: familyTypeName,
           familyCategory: familyCategory,
           familyAssetPath: familyAssetPath,
+          familyParameterDefinitionsJson: familyParameterDefinitionsJson,
+          familyParameterValuesJson: familyParameterValuesJson,
+          familyPlanSvg: familyPlanSvg,
         ),
       );
 

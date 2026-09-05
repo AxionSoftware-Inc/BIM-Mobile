@@ -104,12 +104,89 @@ abstract final class FamilyGeometryEvaluator {
     FamilyDocument document,
     FamilyTypeDefinition type,
   ) {
+    late final FamilyEvaluatedMesh mesh;
     for (var index = document.features.length - 1; index >= 0; index--) {
       if (_isSolidFeature(document.features[index])) {
-        return _evaluateMeshFeature(document, type, index);
+        mesh = _evaluateMeshFeature(document, type, index);
+        return _fitMeshToTypeParameters(document, type, mesh);
       }
     }
-    return _boxMesh(document, type);
+    return _fitMeshToTypeParameters(document, type, _boxMesh(document, type));
+  }
+
+  /// Freeform/revolve meshes are authored in family coordinates.  Their
+  /// dimensions must still follow the same type parameters as a box family;
+  /// otherwise Inspector edits change labels only and leave the instance
+  /// geometry stale.  Fit each axis around a stable base/origin so family
+  /// instances resize without drifting in the project.
+  static FamilyEvaluatedMesh _fitMeshToTypeParameters(
+    FamilyDocument document,
+    FamilyTypeDefinition type,
+    FamilyEvaluatedMesh mesh,
+  ) {
+    if (mesh.vertices.isEmpty) return mesh;
+    final width = _parameterLength(document, type, 'width');
+    final depth = _parameterLength(document, type, 'depth');
+    final height = _parameterLength(document, type, 'height');
+    if (width == null && depth == null && height == null) return mesh;
+
+    var minX = double.infinity;
+    var minY = double.infinity;
+    var minZ = double.infinity;
+    var maxX = -double.infinity;
+    var maxY = -double.infinity;
+    var maxZ = -double.infinity;
+    for (final vertex in mesh.vertices) {
+      minX = math.min(minX, vertex.x);
+      minY = math.min(minY, vertex.y);
+      minZ = math.min(minZ, vertex.z);
+      maxX = math.max(maxX, vertex.x);
+      maxY = math.max(maxY, vertex.y);
+      maxZ = math.max(maxZ, vertex.z);
+    }
+    final sourceWidth = maxX - minX;
+    final sourceHeight = maxY - minY;
+    final sourceDepth = maxZ - minZ;
+    final scaleX =
+        width != null && sourceWidth > 1e-9 ? width / sourceWidth : 1.0;
+    final scaleY =
+        height != null && sourceHeight > 1e-9 ? height / sourceHeight : 1.0;
+    final scaleZ =
+        depth != null && sourceDepth > 1e-9 ? depth / sourceDepth : 1.0;
+    if (scaleX == 1.0 && scaleY == 1.0 && scaleZ == 1.0) return mesh;
+    // Box/profile families conventionally start at the local origin, while
+    // authored furniture and revolved solids are commonly centered around
+    // it. Preserve that authored convention so changing a parameter does not
+    // teleport an existing instance.
+    final anchorX = minX < -1e-9 ? (minX + maxX) * 0.5 : minX;
+    final anchorY = minY;
+    final anchorZ = minZ < -1e-9 ? (minZ + maxZ) * 0.5 : minZ;
+    final vertices = <FamilyMeshVertex>[
+      for (final vertex in mesh.vertices)
+        FamilyMeshVertex(
+          x: anchorX + (vertex.x - anchorX) * scaleX,
+          y: anchorY + (vertex.y - anchorY) * scaleY,
+          z: anchorZ + (vertex.z - anchorZ) * scaleZ,
+        ),
+    ];
+    return mesh.copyWith(
+        vertices: List<FamilyMeshVertex>.unmodifiable(vertices));
+  }
+
+  static double? _parameterLength(
+    FamilyDocument document,
+    FamilyTypeDefinition type,
+    String id,
+  ) {
+    for (final parameter in document.parameters) {
+      if (parameter.id != id || parameter.kind != FamilyParameterKind.length) {
+        continue;
+      }
+      final raw = type.valueFor(parameter);
+      final value = raw is num ? raw.toDouble() : double.tryParse('$raw');
+      if (value != null && value.isFinite && value > 0.0) return value;
+    }
+    return null;
   }
 
   static FamilyEvaluatedMesh _evaluateMeshFeature(

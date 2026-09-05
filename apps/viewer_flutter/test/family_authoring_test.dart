@@ -1,8 +1,13 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:viewer_flutter/src/family_authoring/family_authoring_module.dart';
 import 'package:viewer_flutter/src/family_authoring/built_in_family_catalog.dart';
+import 'package:viewer_flutter/src/render_scene_models.dart';
+import 'package:viewer_flutter/src/render_scene_viewport_types.dart';
+import 'package:viewer_flutter/src/viewer_viewport_scene_policy.dart';
 
 void main() {
   test('starter family is an independent parametric document', () {
@@ -85,6 +90,102 @@ void main() {
     expect(shape.source, 'Triangle profile');
     expect(shape.profile, hasLength(3));
     expect(shape.depth, 2.5);
+  });
+
+  test('family type dimensions drive curated mesh geometry', () {
+    final family = BuiltInFamilyCatalog.families.last;
+    final sourceType = family.types.single;
+    final type = sourceType.copyWith(values: <String, Object?>{
+      ...sourceType.values,
+      'width': 3.2,
+      'depth': 1.1,
+      'height': 2.0,
+    });
+    final mesh = FamilyGeometryEvaluator.evaluateMesh(family, type);
+    final xs = mesh.vertices.map((vertex) => vertex.x);
+    final ys = mesh.vertices.map((vertex) => vertex.y);
+    final zs = mesh.vertices.map((vertex) => vertex.z);
+    expect(
+        xs.reduce((a, b) => a > b ? a : b) - xs.reduce((a, b) => a < b ? a : b),
+        closeTo(3.2, 1e-9));
+    expect(
+        ys.reduce((a, b) => a > b ? a : b) - ys.reduce((a, b) => a < b ? a : b),
+        closeTo(2.0, 1e-9));
+    expect(
+        zs.reduce((a, b) => a > b ? a : b) - zs.reduce((a, b) => a < b ? a : b),
+        closeTo(1.1, 1e-9));
+  });
+
+  test('family plan symbol is compact and independent from the 3D mesh', () {
+    final family = BuiltInFamilyCatalog.families.last;
+    final svg = FamilyPlanSymbolGenerator.svgFor(family, family.types.single);
+    final paths = FamilyPlanSymbolPath.parse(svg);
+
+    expect(svg, contains('<svg'));
+    expect(svg, contains('data-family-category="furniture"'));
+    expect(paths, isNotEmpty);
+    expect(paths.expand((path) => path.commands), isNotEmpty);
+    // The plan contract contains strokes only; no family feature vertices are
+    // embedded in the instance symbol.
+    expect(svg, isNot(contains('vertices')));
+  });
+
+  test('floor-plan scene keeps family bounds and SVG but drops its 3D mesh',
+      () {
+    final family = FamilyDocument.starter(
+      name: 'Plan Column',
+      category: FamilyCategory.column,
+    );
+    final svg = FamilyPlanSymbolGenerator.svgFor(family, family.types.single);
+    final loaded = parseRenderSceneJson(jsonEncode(<String, Object?>{
+      'scene_version': 1,
+      'units': 'meters',
+      'coordinate_system': 'X/Y plan, Z up',
+      'levels': <Object?>[
+        <String, Object?>{
+          'level_id': 1,
+          'name': 'Level 1',
+          'elevation_meters': 0.0,
+          'default_wall_height_meters': 3.0,
+        },
+      ],
+      'materials': <Object?>[],
+      'sections': <Object?>[],
+      'objects': <Object?>[
+        <String, Object?>{
+          'element_id': 7,
+          'kind': 'Column',
+          'level_id': 1,
+          'bounds': <String, Object?>{
+            'min': <String, double>{'x': 0, 'y': 0, 'z': 0},
+            'max': <String, double>{'x': 1, 'y': 1, 'z': 2},
+          },
+          'mesh': <String, Object?>{
+            'positions': <Object?>[
+              <String, double>{'x': 0, 'y': 0, 'z': 0},
+              <String, double>{'x': 1, 'y': 0, 'z': 0},
+              <String, double>{'x': 0, 'y': 1, 'z': 0},
+            ],
+            'indices': <int>[0, 1, 2],
+          },
+          'material_category': 'generic',
+          'metadata': <String, Object?>{
+            'family_asset_id': 'plan-column',
+            'family_plan_svg': svg,
+          },
+        },
+      ],
+    }));
+    final source = loaded.scene!;
+    final plan = const ViewerViewportScenePolicy(
+      projectionMode: RenderSceneProjectionMode.topDown,
+      activeLevelId: 1,
+    ).sceneForViewport(source);
+
+    expect(source.objects.single.mesh.hasGeometry, isTrue);
+    expect(plan.objects.single.mesh.hasGeometry, isFalse);
+    expect(plan.objects.single.bounds.width, closeTo(1.0, 1e-9));
+    expect(plan.objects.single.metadata['family_plan_svg'], svg);
   });
 
   test('family validation rejects an open profile used by a solid', () {

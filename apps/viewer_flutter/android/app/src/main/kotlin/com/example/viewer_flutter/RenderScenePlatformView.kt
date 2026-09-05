@@ -456,6 +456,11 @@ internal class RenderScenePlatformView(
         result.success(null)
       }
 
+      "setObjectMovePreview" -> {
+        view.setObjectMovePreview(call.arguments as? Map<*, *>)
+        result.success(null)
+      }
+
       "setSelectionRectangle" -> {
         view.setSelectionRectangle(call.arguments as? Map<*, *>)
         result.success(null)

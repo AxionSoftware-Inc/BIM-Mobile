@@ -883,6 +883,30 @@ extension _ViewerViewportInput on _ViewerHomePageState {
     }
   }
 
+  void _handleMoveElementStart(
+    RenderScene scene,
+    RenderSceneObject element,
+    RenderScenePoint? modelPoint,
+  ) {
+    final elementId = element.elementId;
+    final anchor = modelPoint ?? element.bounds.center;
+    if (elementId == null) return;
+    unawaited(_selectObject(element));
+    _updateViewportState(() {
+      _draftMoveTarget = element;
+      _moveAnchorPoint = anchor;
+      _draftMoveElementPoint = anchor;
+      _editStatusMessage =
+          'Drag the selected ${prettySceneKind(element.kind)} and release to place it.';
+    });
+    _viewportController.setObjectMoveDraft(
+      RenderSceneObjectMoveDraft(
+        object: element,
+        delta: RenderScenePoint.zero(),
+      ),
+    );
+  }
+
   void _handleMoveLevelStart(
     RenderScene scene,
     RenderScenePoint? modelPoint, {

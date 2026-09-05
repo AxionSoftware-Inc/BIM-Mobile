@@ -1,5 +1,8 @@
+import 'dart:convert';
+
 import 'family_authoring/family_document.dart';
 import 'family_authoring/family_geometry.dart';
+import 'family_authoring/family_plan_symbol.dart';
 import 'family_authoring/family_validation.dart';
 import 'render_scene_models.dart';
 import 'viewer_authoring_gateway.dart';
@@ -24,6 +27,42 @@ final class FamilyInstancePlacementResult {
 /// and the project gateways. Keeping this outside `family_authoring/` makes
 /// the family editor detachable while still allowing project placement.
 abstract final class FamilyInstanceAdapter {
+  static List<int> triangleIndices(FamilyEvaluatedMesh mesh) {
+    final result = <int>[];
+    for (final face in mesh.faces) {
+      if (face.indices.length < 3) continue;
+      for (var index = 1; index < face.indices.length - 1; index++) {
+        result
+          ..add(face.indices[0])
+          ..add(face.indices[index])
+          ..add(face.indices[index + 1]);
+      }
+    }
+    return result;
+  }
+
+  static List<RenderScenePoint> projectVertices(
+    FamilyEvaluatedMesh mesh,
+    RenderScenePoint position,
+  ) {
+    return <RenderScenePoint>[
+      for (final vertex in mesh.vertices)
+        RenderScenePoint(
+          x: position.x + vertex.x,
+          y: position.y + vertex.z,
+          z: position.z + vertex.y,
+        ),
+    ];
+  }
+
+  static double lengthValue(
+    FamilyDocument family,
+    FamilyTypeDefinition type,
+    String parameterId, {
+    double? fallback,
+  }) =>
+      _lengthValue(family, type, parameterId, fallback: fallback);
+
   static Future<FamilyInstancePlacementResult> place({
     required FamilyDocument family,
     required FamilyTypeDefinition type,
@@ -140,6 +179,16 @@ abstract final class FamilyInstanceAdapter {
       familyTypeName: type.name,
       familyCategory: family.category.name,
       familyAssetPath: familyAssetPath,
+      familyParameterDefinitionsJson: jsonEncode(
+        family.parameters.map((parameter) => parameter.toJson()).toList(),
+      ),
+      familyParameterValuesJson: jsonEncode(
+        <String, Object?>{
+          for (final parameter in family.parameters)
+            parameter.id: type.valueFor(parameter),
+        },
+      ),
+      familyPlanSvg: FamilyPlanSymbolGenerator.svgFor(family, type),
     );
     if (withReference.scene == null || withReference.errors.isNotEmpty) {
       throw StateError(
@@ -163,18 +212,11 @@ abstract final class FamilyInstanceAdapter {
     required FamilyEvaluatedMesh evaluatedMesh,
     required ViewerElementCreationGateway creationGateway,
   }) {
-    final indices = _triangleIndices(evaluatedMesh);
+    final indices = triangleIndices(evaluatedMesh);
     if (indices.isEmpty) {
       throw const FormatException('Family mesh has no renderable triangles.');
     }
-    final vertices = <RenderScenePoint>[
-      for (final vertex in evaluatedMesh.vertices)
-        RenderScenePoint(
-          x: position.x + vertex.x,
-          y: position.y + vertex.z,
-          z: position.z + vertex.y,
-        ),
-    ];
+    final vertices = projectVertices(evaluatedMesh, position);
     return creationGateway.createFamilyProxy(
       name: '${family.name} · ${type.name}',
       levelId: levelId,
@@ -185,20 +227,6 @@ abstract final class FamilyInstanceAdapter {
       vertices: vertices,
       indices: indices,
     );
-  }
-
-  static List<int> _triangleIndices(FamilyEvaluatedMesh mesh) {
-    final result = <int>[];
-    for (final face in mesh.faces) {
-      if (face.indices.length < 3) continue;
-      for (var index = 1; index < face.indices.length - 1; index++) {
-        result
-          ..add(face.indices[0])
-          ..add(face.indices[index])
-          ..add(face.indices[index + 1]);
-      }
-    }
-    return result;
   }
 
   static double _lengthValue(

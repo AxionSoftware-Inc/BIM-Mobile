@@ -79,9 +79,21 @@ int main() {
             "type-column-300",
             "300 x 300",
             "column",
-            "examples/families/Simple_Column.bimfamily"
+            "examples/families/Simple_Column.bimfamily",
+            "[{\"id\":\"width\",\"label\":\"Width\",\"kind\":\"length\",\"default\":0.3}]",
+            "{\"width\":0.3}"
         );
         assert(family_reference.ok());
+        assert(family_session->move_element(family_column.value->value, 1.25, -0.5).ok());
+        assert(family_session->update_family_instance(
+            family_column.value->value,
+            {.x = 3.25, .y = 1.5},
+            0.5,
+            0.45,
+            3.6,
+            {{0.0, 0.0, 0.0}, {0.5, 0.0, 0.0}, {0.0, 3.6, 0.0}},
+            {0, 1, 2}
+        ).ok());
         const auto family_scene = family_session->get_render_scene();
         assert(family_scene.ok() && family_scene.value.has_value());
         const auto family_object = std::find_if(
@@ -96,9 +108,12 @@ int main() {
         assert(family_object->metadata.at("property.family_type_id") == "type-column-300");
         assert(family_object->metadata.at("property.family_category") == "column");
         assert(family_object->metadata.at("property.family_asset_path") == "examples/families/Simple_Column.bimfamily");
-        assert(family_object->metadata.at("width_meters") == "0.300000");
-        assert(family_object->metadata.at("depth_meters") == "0.300000");
-        assert(family_object->metadata.at("height_meters") == "3.200000");
+        assert(family_object->metadata.at("property.family_parameter_values_json") == "{\"width\":0.3}");
+        assert(family_object->metadata.at("position_x") == "3.250000");
+        assert(family_object->metadata.at("position_y") == "1.500000");
+        assert(family_object->metadata.at("width_meters") == "0.500000");
+        assert(family_object->metadata.at("depth_meters") == "0.450000");
+        assert(family_object->metadata.at("height_meters") == "3.600000");
     }
 
     {

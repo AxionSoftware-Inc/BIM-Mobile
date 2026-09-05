@@ -70,6 +70,7 @@ class _ObjectInspectorRouter extends StatelessWidget {
     BimElementInspectorKeys.stair: _buildStairInspector,
     BimElementInspectorKeys.ceiling: _buildCeilingInspector,
     BimElementInspectorKeys.linear: _buildLinearInspector,
+    BimElementInspectorKeys.family: _buildFamilyInspector,
     BimElementInspectorKeys.generic: _buildGenericInspector,
   };
 

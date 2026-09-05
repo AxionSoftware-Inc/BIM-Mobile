@@ -32,6 +32,19 @@ enum RenderSceneDisplayStyle {
   wireframe,
 }
 
+/// Transient transform used while moving a non-hosted object. It is never
+/// written to the document until the pointer is released.
+@immutable
+class RenderSceneObjectMoveDraft {
+  const RenderSceneObjectMoveDraft({
+    required this.object,
+    required this.delta,
+  });
+
+  final RenderSceneObject object;
+  final RenderScenePoint delta;
+}
+
 enum RenderSceneOrbitProjectionStyle {
   perspective,
   orthographic,
@@ -327,6 +340,7 @@ abstract class RenderSceneViewportActions extends ChangeNotifier
   RenderSceneWallArcDraft? get draftWallArc;
   RenderSceneOpeningDraft? get draftOpening;
   RenderSceneSurfaceDraft? get draftSurface;
+  RenderSceneObjectMoveDraft? get draftObjectMove;
 
   Future<void> loadRenderScene(RenderScene scene);
   Future<void> clearScene();
@@ -344,6 +358,7 @@ abstract class RenderSceneViewportActions extends ChangeNotifier
   void setWallArcDraft(RenderSceneWallArcDraft? draft);
   void setOpeningDraft(RenderSceneOpeningDraft? draft);
   void setSurfaceDraft(RenderSceneSurfaceDraft? draft);
+  void setObjectMoveDraft(RenderSceneObjectMoveDraft? draft);
   void clearDraft();
   void setViewportSize(Size size);
   @override

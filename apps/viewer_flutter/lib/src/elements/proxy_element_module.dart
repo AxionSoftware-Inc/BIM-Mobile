@@ -6,6 +6,7 @@ final class ProxyElementModule extends BimElementModule {
           kindKey: 'proxy',
           displayName: 'Imported element',
           typeFamily: BimElementTypeFamily.none,
+          inspectorAdapterKey: BimElementInspectorKeys.family,
           aliases: const <String>{
             'proxy',
             'fbx',

@@ -135,6 +135,7 @@ class RenderScene {
     required int activeLevelId,
     required double bottomMeters,
     required double topMeters,
+    bool stripFamilyMeshes = false,
   }) {
     const tolerance = 1e-6;
     final filteredObjects = objects.where(
@@ -161,25 +162,56 @@ class RenderScene {
         return crossesCutBand || isActiveLevelBaseObject;
       },
     ).toList(growable: false);
-    final vertexCount = filteredObjects.fold<int>(
-      0,
-      (sum, object) => sum + object.mesh.positions.length,
-    );
-    final indexCount = filteredObjects.fold<int>(
-      0,
-      (sum, object) => sum + object.mesh.indices.length,
-    );
+    final encodedObjects = filteredObjects.map((object) {
+      if (!stripFamilyMeshes || !_isFamilyPlanObject(object)) {
+        return object.toJson();
+      }
+      final encoded = Map<String, Object?>.from(object.toJson());
+      encoded['mesh'] = RenderSceneMesh.empty().toJson();
+      encoded.remove('feature_edges');
+      return encoded;
+    }).toList(growable: false);
+    final vertexCount = stripFamilyMeshes
+        ? filteredObjects.fold<int>(
+            0,
+            (sum, object) =>
+                sum +
+                (_isFamilyPlanObject(object)
+                    ? 0
+                    : object.mesh.positions.length),
+          )
+        : filteredObjects.fold<int>(
+            0,
+            (sum, object) => sum + object.mesh.positions.length,
+          );
+    final indexCount = stripFamilyMeshes
+        ? filteredObjects.fold<int>(
+            0,
+            (sum, object) =>
+                sum +
+                (_isFamilyPlanObject(object) ? 0 : object.mesh.indices.length),
+          )
+        : filteredObjects.fold<int>(
+            0,
+            (sum, object) => sum + object.mesh.indices.length,
+          );
     final result = parseRenderSceneJson(
       jsonEncode(<String, Object?>{
         ...toJson(),
         'object_count': filteredObjects.length,
         'vertex_count': vertexCount,
         'index_count': indexCount,
-        'objects': filteredObjects.map((object) => object.toJson()).toList(),
+        'objects': encodedObjects,
       }),
       source: '$source @ view range',
     );
     return result.scene ?? this;
+  }
+
+  static bool _isFamilyPlanObject(RenderSceneObject object) {
+    if (object.kindKey != 'column' && object.kindKey != 'proxy') return false;
+    final assetId = object.metadata['family_asset_id'];
+    return assetId != null && assetId.toString().trim().isNotEmpty;
   }
 
   Map<String, Object?> toJson() => <String, Object?>{

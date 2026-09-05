@@ -24,7 +24,10 @@ extension _RenderSceneViewportNative on RenderSceneViewportController {
     await _loadRememberedNativeBimCache();
     final currentScene = _scene;
     if (includeScene && currentScene != null && !_nativeGeometryActive) {
-      await _invoke('loadRenderSceneJson', jsonEncode(currentScene.toJson()));
+      await _invoke(
+        'loadRenderSceneJson',
+        jsonEncode(_nativeScenePayload(currentScene)),
+      );
     }
 
     if (includeVisibleKinds) {
@@ -62,6 +65,43 @@ extension _RenderSceneViewportNative on RenderSceneViewportController {
       'bottom': rectangle?.bottom,
       'crossing': _selectionRectangleCrossing,
     });
+  }
+
+  /// Keep the Android plan representation semantic and cheap. Family
+  /// instances still keep their bounds and metadata for picking, but their
+  /// 3D mesh is deliberately omitted while the native projection is 2D. The
+  /// selection overlay draws the persisted family plan symbol instead. When
+  /// switching to 3D this method returns the authoritative scene unchanged.
+  Map<String, Object?> _nativeScenePayload(RenderScene scene) {
+    final payload = Map<String, Object?>.from(scene.toJson());
+    if (_projectionMode != RenderSceneProjectionMode.topDown) {
+      return payload;
+    }
+
+    final objects = <Map<String, Object?>>[];
+    var vertexCount = 0;
+    var indexCount = 0;
+    for (final object in scene.objects) {
+      final encoded = Map<String, Object?>.from(object.toJson());
+      final assetId = object.metadata['family_asset_id'];
+      final isFamilyPlanObject =
+          (object.kindKey == 'column' || object.kindKey == 'proxy') &&
+              assetId != null &&
+              assetId.toString().trim().isNotEmpty;
+      if (isFamilyPlanObject) {
+        encoded['mesh'] = RenderSceneMesh.empty().toJson();
+        encoded.remove('feature_edges');
+      } else {
+        vertexCount += object.mesh.positions.length;
+        indexCount += object.mesh.indices.length;
+      }
+      objects.add(encoded);
+    }
+    payload['object_count'] = objects.length;
+    payload['vertex_count'] = vertexCount;
+    payload['index_count'] = indexCount;
+    payload['objects'] = objects;
+    return payload;
   }
 
   Future<void> _loadRememberedNativeBimCache() async {

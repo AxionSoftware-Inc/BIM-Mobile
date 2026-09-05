@@ -313,10 +313,17 @@ private data class NativeVisualObject(
   val elementId: Long?,
   val kind: String,
   val selectable: Boolean,
+  val bounds: SceneBounds,
   val metadata: Map<String, String>,
   val points: List<ScenePoint>,
   val triangles: List<IntArray>,
   val featureEdges: List<NativeVisualEdge>,
+)
+
+private data class NativePlanSymbolCommand(
+  val kind: Char,
+  val x: Double = 0.0,
+  val y: Double = 0.0,
 )
 
 private data class NativeCameraRay(
@@ -562,6 +569,11 @@ internal class RenderSceneFilamentHostView(
   private var selectedElementId: Long? = null
   private var selectedElementIds = emptySet<Long>()
   private var highlightedElementId: Long? = null
+  // A move preview is a renderer-local transform. It is cleared as soon as
+  // the Flutter authoring flow commits/cancels, so it never becomes a second
+  // document state or forces a scene reload for every pointer sample.
+  private var movePreviewElementId: Long? = null
+  private var movePreviewDelta = ScenePoint(0.0, 0.0, 0.0)
   private var framePosted = false
   private var renderDirty = true
   private var renderedFrameCount = 0L
@@ -892,6 +904,12 @@ internal class RenderSceneFilamentHostView(
   }
 
   fun loadScene(newScene: SceneState?) {
+    movePreviewElementId?.let { previousId ->
+      applyMovePreviewTransform(previousId, ScenePoint(0.0, 0.0, 0.0))
+    }
+    movePreviewElementId = null
+    movePreviewDelta = ScenePoint(0.0, 0.0, 0.0)
+    selectionOverlay.setMovePreview(null, 0.0, 0.0)
     nativeCacheLoadRevision += 1L
     closeNativeBimCache()
     if (newScene == null) {
@@ -1231,6 +1249,7 @@ internal class RenderSceneFilamentHostView(
       elementId = primitive.elementId,
       kind = primitive.kind,
       selectable = true,
+      bounds = transformBounds(primitive.sourceBounds),
       metadata = buildMap {
         put("native_cache", "true")
         put("level_id", primitive.levelId.toString())
@@ -1270,7 +1289,10 @@ internal class RenderSceneFilamentHostView(
     selectedElementId = null
     selectedElementIds = emptySet()
     highlightedElementId = null
+    movePreviewElementId = null
+    movePreviewDelta = ScenePoint(0.0, 0.0, 0.0)
     selectionOverlay.clear()
+    selectionOverlay.setMovePreview(null, 0.0, 0.0)
     selectionOverlay.clearVisualScene()
     destroyRenderables()
     edgeGeometryCache.clear()
@@ -1362,13 +1384,25 @@ internal class RenderSceneFilamentHostView(
     if (projectionMode == mode) return
     val edgeGeometryNeedsRefresh =
       (projectionMode == "topDown") != (mode == "topDown")
+    val familyFaceRepresentationNeedsRefresh =
+      edgeGeometryNeedsRefresh &&
+        currentScene?.objects?.any { objectData ->
+          normalizeKind(objectData.kind) in setOf("column", "proxy") &&
+            !objectData.metadata["family_asset_id"].isNullOrBlank()
+        } == true &&
+        nativeBimCache == null
     projectionMode = mode
     nativeOrbitCameraActive = false
     filamentView?.setShadowingEnabled(realShadowVisible(mode))
     if (mode == "isometric" && shadowsEnabled && groundReceiver == null && currentScene != null && materialBuilderReady) {
       createGroundReceiver(engine ?: return, scene ?: return, currentScene!!)
     }
-    if (edgeGeometryNeedsRefresh && currentScene != null && materialBuilderReady) {
+    if (familyFaceRepresentationNeedsRefresh && materialBuilderReady) {
+      // Top-down family instances are symbol-only and therefore do not
+      // allocate their 3D mesh. Rebuild once when crossing the plan/3D
+      // boundary; pointer moves never enter this path.
+      rebuildScene()
+    } else if (edgeGeometryNeedsRefresh && currentScene != null && materialBuilderReady) {
       // Edge prisms are projection-aware: top-down uses a light line weight
       // and omits section-only reconstruction segments that become diagonal
       // seams in a floor plan. Rebuild only the native edge batches when
@@ -1376,6 +1410,15 @@ internal class RenderSceneFilamentHostView(
       rebuildEdgeBatchesForProjection()
       syncVisibility()
       refreshTintState()
+    }
+    if (edgeGeometryNeedsRefresh && nativeBimCache == null) {
+      currentScene?.let { sceneState ->
+        selectionOverlay.setVisualScene(
+          sceneState.objects.map(::toVisualObject),
+          sceneState.levels.map { level -> level.name to level.elevationMeters },
+          sceneMetrics.bounds,
+        )
+      }
     }
     if (mode == "isometric" && gridBatch == null && currentScene != null && materialBuilderReady) {
       createGridBatch(engine ?: return, scene ?: return, currentScene!!)
@@ -1926,6 +1969,63 @@ internal class RenderSceneFilamentHostView(
     refreshTintState()
     updateStatus()
     invalidate()
+  }
+
+  fun setObjectMovePreview(payload: Map<*, *>?) {
+    val nextId = toLong(payload?.get("elementId"))
+    val nextDelta = ScenePoint(
+      toDouble(payload?.get("deltaX"))?.takeIf { it.isFinite() } ?: 0.0,
+      0.0,
+      toDouble(payload?.get("deltaY"))?.takeIf { it.isFinite() } ?: 0.0,
+    )
+    val previousId = movePreviewElementId
+    if (previousId != null && previousId != nextId) {
+      applyMovePreviewTransform(previousId, ScenePoint(0.0, 0.0, 0.0))
+    }
+    movePreviewElementId = nextId
+    movePreviewDelta = if (nextId == null) {
+      ScenePoint(0.0, 0.0, 0.0)
+    } else {
+      nextDelta
+    }
+    if (nextId != null) {
+      applyMovePreviewTransform(nextId, movePreviewDelta)
+    }
+    selectionOverlay.setMovePreview(
+      nextId,
+      movePreviewDelta.x,
+      movePreviewDelta.z,
+    )
+    // A family in a floor plan has no Filament renderable by design. Its
+    // preview lives entirely in the Canvas symbol overlay, so submitting a
+    // full GPU frame for every finger sample only adds latency. Keep the
+    // render path for 3D and for transitions to/from ordinary geometry.
+    val symbolOnlyPlanPreview = projectionMode == "topDown" &&
+      (nextId != null && isFamilyPlanObject(nextId) &&
+        (previousId == null || isFamilyPlanObject(previousId)) ||
+        nextId == null && previousId != null && isFamilyPlanObject(previousId))
+    if (symbolOnlyPlanPreview) {
+      selectionOverlay.invalidate()
+    } else {
+      renderDirty = true
+      requestRender()
+      invalidate()
+    }
+  }
+
+  private fun applyMovePreviewTransform(elementId: Long, delta: ScenePoint) {
+    val entry = renderables[elementId] ?: return
+    val activeEngine = engine ?: return
+    var transformInstance = activeEngine.transformManager.getInstance(entry.entity)
+    if (transformInstance == 0) {
+      transformInstance = activeEngine.transformManager.create(entry.entity)
+    }
+    val transform = FloatArray(16)
+    Matrix.setIdentityM(transform, 0)
+    // Document plane X/Y maps to Filament X/-Z. The preview changes only the
+    // entity transform; vertex/index buffers remain untouched.
+    Matrix.translateM(transform, 0, delta.x.toFloat(), 0.0f, -delta.z.toFloat())
+    activeEngine.transformManager.setTransform(transformInstance, transform)
   }
 
   fun setSelectionRectangle(payload: Map<*, *>?) {
@@ -2847,6 +2947,7 @@ internal class RenderSceneFilamentHostView(
     val edgeChunks = linkedMapOf<EdgeBatchKey, MutableList<GeometryData>>()
     resetImportedMeshEdgeBudget()
     for (objectData in objects) {
+      if (isFamilyPlanObject(objectData)) continue
       try {
         val geometry = objectGeometry(objectData) ?: continue
         val normalizedInstance = if (isInstanceCandidate(objectData)) {
@@ -3044,6 +3145,7 @@ internal class RenderSceneFilamentHostView(
       .distinct()
     val edgeChunks = linkedMapOf<EdgeBatchKey, MutableList<GeometryData>>()
     for (objectData in sceneState.objects) {
+      if (isFamilyPlanObject(objectData)) continue
       try {
         val geometry = objectGeometry(objectData) ?: continue
         edgeGeometryFor(objectData, geometry, wallJunctionElevations)?.let { edge ->
@@ -3256,6 +3358,7 @@ internal class RenderSceneFilamentHostView(
   private fun faceVisible(objectData: SceneObject): Boolean =
     displayStyle != "wireframe" && kindVisible(normalizeKind(objectData.kind)) &&
       openingVisibleInPlan(normalizeKind(objectData.kind)) &&
+      !isFamilyPlanObject(objectData) &&
       // Floorplan walls are drawn once by NativeSelectionOverlay as a 2D
       // profile. Keeping the layered 3D wall caps in this pass makes joined
       // layers/opening reveals share a depth value and shimmer during a fast
@@ -4933,6 +5036,16 @@ internal class RenderSceneFilamentHostView(
 
   private fun kindVisible(kind: String): Boolean =
     visibleKinds.isEmpty() || visibleKinds.contains(normalizeKind(kind))
+
+  private fun isFamilyPlanObject(objectData: SceneObject): Boolean =
+    projectionMode == "topDown" &&
+      normalizeKind(objectData.kind) in setOf("column", "proxy") &&
+      !objectData.metadata["family_asset_id"].isNullOrBlank()
+
+  private fun isFamilyPlanObject(elementId: Long?): Boolean =
+    elementId != null && currentScene?.objects?.any { objectData ->
+      objectData.elementId == elementId && isFamilyPlanObject(objectData)
+    } == true
 
   private fun createRenderable(
     engine: Engine,
@@ -6740,7 +6853,11 @@ internal class RenderSceneFilamentHostView(
     val largeIfcProxy = normalizeKind(objectData.kind) == "proxy" &&
       !isImportedMeshObject(objectData) &&
       (currentScene?.objects?.size ?: 0) >= 256
-    val meshGeometry = if (largeIfcProxy) null else meshGeometryFor(objectData, overlayBudget)
+    val meshGeometry = if (largeIfcProxy || isFamilyPlanObject(objectData)) {
+      null
+    } else {
+      meshGeometryFor(objectData, overlayBudget)
+    }
     val sourcePoints = meshGeometry?.first ?: boxCorners(objectData.bounds).map(::toFilamentPoint)
     val sourceTriangles = meshGeometry?.second ?: run {
       listOf(
@@ -6771,6 +6888,7 @@ internal class RenderSceneFilamentHostView(
         elementId = objectData.elementId,
         kind = normalizeKind(objectData.kind),
         selectable = objectData.selectable,
+        bounds = boundsForPoints(sourcePoints),
         metadata = objectData.metadata,
         points = points,
         triangles = sourceTriangles,
@@ -6845,6 +6963,7 @@ internal class RenderSceneFilamentHostView(
       elementId = objectData.elementId,
       kind = normalizeKind(objectData.kind),
       selectable = objectData.selectable,
+      bounds = boundsForPoints(points),
       metadata = buildMap {
         putAll(objectData.metadata)
         if (isImportedMeshObject(objectData)) put("external_mesh", "true")
@@ -6884,6 +7003,10 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
   private var allObjects = emptyList<NativeVisualObject>()
   private var selectedIds = emptySet<Long>()
   private var activeId: Long? = null
+  private var movePreviewId: Long? = null
+  private var movePreviewDx = 0.0
+  private var movePreviewDy = 0.0
+  private val familySymbolCache = mutableMapOf<String, List<List<NativePlanSymbolCommand>>>()
   private var visibleKinds = emptySet<String>()
   private var levels = emptyList<Pair<String, Double>>()
   private val openingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -7314,6 +7437,10 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
     hasExternalMeshEdges = false
     visibleKinds = emptySet()
     planOpeningSpecs = emptyList()
+    movePreviewId = null
+    movePreviewDx = 0.0
+    movePreviewDy = 0.0
+    familySymbolCache.clear()
     levels = emptyList()
     invalidate()
   }
@@ -7323,6 +7450,13 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
     activeId = active
     val selected = allObjects.filter { it.elementId != null && ids.contains(it.elementId) }
     objects = (objects + selected).distinctBy { it.elementId ?: it.hashCode().toLong() }
+    invalidate()
+  }
+
+  fun setMovePreview(elementId: Long?, deltaX: Double, deltaY: Double) {
+    movePreviewId = elementId
+    movePreviewDx = if (deltaX.isFinite()) deltaX else 0.0
+    movePreviewDy = if (deltaY.isFinite()) deltaY else 0.0
     invalidate()
   }
 
@@ -7400,6 +7534,7 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
   override fun onDraw(canvas: Canvas) {
     super.onDraw(canvas)
     drawAuthoringEdges(canvas)
+    drawPlanFamilySymbols(canvas)
     // NativeSelectionOverlay is the single owner of committed 2D opening
     // symbols on Android. Flutter keeps only draft/selection overlays, so
     // doors and windows are not painted twice on every plan frame.
@@ -7460,6 +7595,13 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
         !visibleKinds.contains(normalizeKind(objectData.kind))
       ) continue
       val selected = objectData.elementId != null && selectedIds.contains(objectData.elementId)
+      // Family instances use their compact semantic plan symbol in 2D. Their
+      // fallback bounds are retained for picking, but must not be painted as
+      // a second outline over the symbol (or it becomes a noisy rectangle).
+      val familyPlanObject = topDown &&
+        (normalizeKind(objectData.kind) == "column" || normalizeKind(objectData.kind) == "proxy") &&
+        !objectData.metadata["family_asset_id"].isNullOrBlank()
+      if (familyPlanObject) continue
       val externalMesh = objectData.metadata["external_mesh"] == "true"
       // The Android overlay is a semantic interaction layer, not a second
       // renderer. In Solid/Shaded it must never paint native-cache bounds:
@@ -7608,6 +7750,148 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
       canvas.drawPath(screenPath, planWallFill)
     }
     canvas.drawPath(screenPath, planWallOutline)
+  }
+
+  private fun drawPlanFamilySymbols(canvas: Canvas) {
+    if (!topDown) return
+    for (objectData in allObjects) {
+      if (objectData.kind != "column" && objectData.kind != "proxy") continue
+      if (objectData.metadata["family_asset_id"].isNullOrBlank()) continue
+      if (visibleKinds.isNotEmpty() && !visibleKinds.contains(objectData.kind)) continue
+      val center = ScenePoint(
+        (objectData.bounds.min.x + objectData.bounds.max.x) * 0.5 +
+          if (objectData.elementId == movePreviewId) movePreviewDx else 0.0,
+        0.0,
+        (objectData.bounds.min.z + objectData.bounds.max.z) * 0.5 -
+          if (objectData.elementId == movePreviewId) movePreviewDy else 0.0,
+      )
+      val width = objectData.metadata["width_meters"]?.toDoubleOrNull()
+        ?.takeIf { it.isFinite() && it > 1.0e-6 }
+        ?: (objectData.bounds.max.x - objectData.bounds.min.x).coerceAtLeast(0.1)
+      val depth = objectData.metadata["depth_meters"]?.toDoubleOrNull()
+        ?.takeIf { it.isFinite() && it > 1.0e-6 }
+        ?: (objectData.bounds.max.z - objectData.bounds.min.z).coerceAtLeast(0.1)
+      val halfWidth = width * 0.5
+      val halfDepth = depth * 0.5
+      val selected = objectData.elementId != null && selectedIds.contains(objectData.elementId)
+      val color = if (selected) Color.rgb(37, 99, 235) else Color.rgb(71, 85, 105)
+      val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        this.color = Color.argb(if (selected) 42 else 18, Color.red(color), Color.green(color), Color.blue(color))
+      }
+      val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = if (selected) 2.4f else 1.15f
+        this.color = color
+        strokeJoin = Paint.Join.ROUND
+      }
+
+      // The project stores one compact plan symbol beside the family
+      // reference. Parse only the generator's M/L/Z subset; never load the
+      // family mesh or a general SVG renderer in a floor plan.
+      val svgPaths = familyPlanPaths(objectData.metadata["family_plan_svg"])
+      var drewSvgPath = false
+      for (commands in svgPaths) {
+        val path = Path()
+        var hasPoint = false
+        for (command in commands) {
+          when (command.kind) {
+            'M' -> {
+              val screen = project(sourcePlanPoint(center.x + command.x, -center.z + command.y))
+                ?: continue
+              path.moveTo(screen.x, screen.y)
+              hasPoint = true
+            }
+            'L' -> {
+              val screen = project(sourcePlanPoint(center.x + command.x, -center.z + command.y))
+                ?: continue
+              path.lineTo(screen.x, screen.y)
+              hasPoint = true
+            }
+            'Z' -> if (hasPoint) path.close()
+          }
+        }
+        if (!hasPoint) continue
+        canvas.drawPath(path, fill)
+        canvas.drawPath(path, stroke)
+        drewSvgPath = true
+      }
+      if (drewSvgPath) continue
+
+      val corners = listOf(
+        project(sourcePlanPoint(center.x - halfWidth, -center.z + halfDepth)),
+        project(sourcePlanPoint(center.x + halfWidth, -center.z + halfDepth)),
+        project(sourcePlanPoint(center.x + halfWidth, -center.z - halfDepth)),
+        project(sourcePlanPoint(center.x - halfWidth, -center.z - halfDepth)),
+      )
+      if (corners.any { it == null }) continue
+      val points = corners.filterNotNull()
+      val path = Path().apply {
+        moveTo(points.first().x, points.first().y)
+        for (point in points.drop(1)) lineTo(point.x, point.y)
+        close()
+      }
+      canvas.drawPath(path, fill)
+      canvas.drawPath(path, stroke)
+      if (objectData.kind == "column") {
+        val horizontal = listOf(
+          project(sourcePlanPoint(center.x - halfWidth, -center.z)),
+          project(sourcePlanPoint(center.x + halfWidth, -center.z)),
+        )
+        val vertical = listOf(
+          project(sourcePlanPoint(center.x, -center.z + halfDepth)),
+          project(sourcePlanPoint(center.x, -center.z - halfDepth)),
+        )
+        if (horizontal.all { it != null }) {
+          val first = horizontal[0]!!
+          val second = horizontal[1]!!
+          canvas.drawLine(first.x, first.y, second.x, second.y, stroke)
+        }
+        if (vertical.all { it != null }) {
+          val first = vertical[0]!!
+          val second = vertical[1]!!
+          canvas.drawLine(first.x, first.y, second.x, second.y, stroke)
+        }
+      }
+    }
+  }
+
+  private fun familyPlanPaths(svg: String?): List<List<NativePlanSymbolCommand>> {
+    val rawSvg = svg?.trim().orEmpty()
+    if (rawSvg.isEmpty()) return emptyList()
+    return familySymbolCache.getOrPut(rawSvg) {
+      val pathPattern = Regex("<path\\b[^>]*\\bd=\"([^\"]+)\"")
+      val numberOrCommand = Regex("[MLZmlz]|[-+]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][-+]?\\d+)?")
+      pathPattern.findAll(rawSvg).mapNotNull { match ->
+        val commands = mutableListOf<NativePlanSymbolCommand>()
+        val tokens = numberOrCommand.findAll(match.groupValues[1]).map { it.value }.toList()
+        var index = 0
+        var valid = true
+        while (index < tokens.size) {
+          when (val token = tokens[index++].uppercase()) {
+            "M", "L" -> {
+              if (index + 1 >= tokens.size) {
+                valid = false
+                break
+              }
+              val x = tokens[index++].toDoubleOrNull()
+              val y = tokens[index++].toDoubleOrNull()
+              if (x == null || y == null || !x.isFinite() || !y.isFinite()) {
+                valid = false
+                break
+              }
+              commands += NativePlanSymbolCommand(token[0], x, y)
+            }
+            "Z" -> commands += NativePlanSymbolCommand('Z')
+            else -> {
+              valid = false
+              break
+            }
+          }
+        }
+        commands.takeIf { valid && it.isNotEmpty() }
+      }.toList()
+    }
   }
 
   private fun drawPlanOpeningSymbols(canvas: Canvas) {

@@ -228,6 +228,8 @@ extension _ViewerWorkspaceInteractions on _ViewerHomePageState {
             unawaited(_handleMoveWallTap(scene, object, details.modelPoint));
           } else if (object.kindKey == 'door' || object.kindKey == 'window') {
             unawaited(_handleMoveOpeningTap(scene, object, details.modelPoint));
+          } else if (object.kindKey == 'column' || object.kindKey == 'proxy') {
+            _handleMoveElementStart(scene, object, details.modelPoint);
           } else {
             unawaited(_selectObject(object));
           }
@@ -391,6 +393,18 @@ extension _ViewerWorkspaceInteractions on _ViewerHomePageState {
           } else if (target?.kindKey == 'door' || target?.kindKey == 'window') {
             _updateMoveOpeningPreview(
                 scene: scene, opening: target!, point: point);
+          } else if (target?.kindKey == 'column' ||
+              target?.kindKey == 'proxy') {
+            _draftMoveElementPoint = point;
+            final anchor = _moveAnchorPoint;
+            if (anchor != null) {
+              _viewportController.setObjectMoveDraft(
+                RenderSceneObjectMoveDraft(
+                  object: target!,
+                  delta: point - anchor,
+                ),
+              );
+            }
           }
         }
         return;
@@ -559,6 +573,27 @@ extension _ViewerWorkspaceInteractions on _ViewerHomePageState {
             await _applyEngineSceneResult(
               result,
               message: '${prettySceneKind(opening.kind)} moved.',
+            );
+          }
+          await _clearDraft();
+        } else if ((_draftMoveTarget?.kindKey == 'column' ||
+                _draftMoveTarget?.kindKey == 'proxy') &&
+            _draftMoveTarget?.elementId != null &&
+            _moveAnchorPoint != null &&
+            _draftMoveElementPoint != null) {
+          final target = _draftMoveTarget!;
+          final delta = _draftMoveElementPoint! - _moveAnchorPoint!;
+          if (_engineBackedMode &&
+              _engineRepository != null &&
+              (delta.x.abs() > 1e-6 || delta.y.abs() > 1e-6)) {
+            final result = await _authoringCommands.moveElement(
+              elementId: target.elementId!,
+              deltaX: delta.x,
+              deltaY: delta.y,
+            );
+            await _applyEngineSceneResult(
+              result,
+              message: '${prettySceneKind(target.kind)} moved.',
             );
           }
           await _clearDraft();
