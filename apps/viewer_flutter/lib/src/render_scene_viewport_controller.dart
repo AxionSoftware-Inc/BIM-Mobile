@@ -735,7 +735,17 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     }
 
     final oldZoom = _planCamera.zoom;
-    final nextZoom = (oldZoom * scaleDelta).clamp(0.1, 1500.0);
+    // Match the Android renderer's lower orthographic half-height.  Keeping
+    // the two cameras on the same final zoom value prevents the native wall
+    // contour and Flutter authoring overlays from landing on different pixels
+    // when the user holds the pinch at its maximum.
+    const minimumPlanHalfHeight = 0.50;
+    final maximumPlanZoom = math.max(
+      targetSize.height / (2.0 * minimumPlanHalfHeight),
+      1.0,
+    );
+    final nextZoom =
+        (oldZoom * scaleDelta).clamp(0.1, maximumPlanZoom).toDouble();
     if ((nextZoom - oldZoom).abs() < 1e-9) {
       return;
     }
@@ -783,6 +793,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     _orbitPitchRadians =
         (_orbitPitchRadians + delta.dy / minDimension * math.pi * 0.95)
             .clamp(-math.pi / 2.0 + 0.12, math.pi / 2.0 - 0.12);
+    _clampOrbitZoomToSceneBounds();
     notifyListeners();
     _scheduleNativeCameraSync();
   }
@@ -802,6 +813,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     final moveRight = scalePoint(basis.right, -delta.dx * worldScale);
     final moveUp = scalePoint(basis.up, delta.dy * worldScale);
     _orbitCenter = addPoint(_orbitCenter, addPoint(moveRight, moveUp));
+    _clampOrbitZoomToSceneBounds();
     notifyListeners();
     _scheduleNativeCameraSync();
   }
@@ -812,12 +824,64 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
       return;
     }
 
-    // Close inspection is intentional. Keep only a tiny positive lower bound
-    // so the camera scale never reaches zero; native camera code applies the
-    // matching epsilon to the orbit distance.
+    // Close inspection is intentional, but do not allow the orbit eye to
+    // enter the model envelope. Once the eye crosses a wall/roof, perspective
+    // near-clipping and coplanar BIM faces produce the familiar mobile
+    // viewport shimmer. Native Android applies the same direction-aware limit.
     _orbitZoomScale = math.max(_orbitZoomScale * scaleDelta, 0.005);
+    _clampOrbitZoomToSceneBounds();
     notifyListeners();
     _scheduleNativeCameraSync();
+  }
+
+  void _clampOrbitZoomToSceneBounds() {
+    final minimumDistance = _minimumOrbitDistanceForScene();
+    final maximumScale = math.max(_orbitDistance / minimumDistance, 0.005);
+    _orbitZoomScale = math.min(_orbitZoomScale, maximumScale);
+  }
+
+  double _minimumOrbitDistanceForScene() {
+    final bounds = _sceneBounds;
+    final sceneSpan = math.max(
+      bounds.width,
+      math.max(bounds.height, bounds.depth),
+    );
+    if (!sceneSpan.isFinite || sceneSpan <= 1e-6) return 0.12;
+
+    final direction = RenderScenePoint(
+      x: math.cos(_orbitPitchRadians) * math.cos(_orbitYawRadians),
+      y: math.sin(_orbitPitchRadians),
+      z: math.cos(_orbitPitchRadians) * math.sin(_orbitYawRadians),
+    );
+    final margin = math.max(sceneSpan * 0.02, 0.20);
+    var entry = -double.infinity;
+    var exit = double.infinity;
+
+    bool updateSlab(
+        double component, double minimum, double maximum, double origin) {
+      final slabMin = minimum - margin;
+      final slabMax = maximum + margin;
+      if (component.abs() <= 1e-9) {
+        return origin >= slabMin && origin <= slabMax;
+      }
+      final first = (slabMin - origin) / component;
+      final second = (slabMax - origin) / component;
+      entry = math.max(entry, math.min(first, second));
+      exit = math.min(exit, math.max(first, second));
+      return true;
+    }
+
+    if (!updateSlab(direction.x, bounds.min.x, bounds.max.x, _orbitCenter.x) ||
+        !updateSlab(direction.y, bounds.min.y, bounds.max.y, _orbitCenter.y) ||
+        !updateSlab(direction.z, bounds.min.z, bounds.max.z, _orbitCenter.z)) {
+      return 0.12;
+    }
+    if (exit < math.max(entry, 0.0)) return 0.12;
+    final hitDistance = entry > 0 ? entry : exit;
+    return math.max(
+      0.12,
+      hitDistance.isFinite && hitDistance > 0 ? hitDistance : 0.12,
+    );
   }
 
   @override
