@@ -360,13 +360,15 @@ extension _ViewerViewCommands on _ViewerHomePageState {
     });
 
     final repository = _engineRepository;
-    if (_viewportController.hasNativeGeometry) {
-      // A plan scene intentionally strips family meshes before it reaches
-      // Filament.  Therefore a 2D <-> 3D transition is also a geometry
-      // boundary: rehydrate the authoritative scene once so 3D families are
-      // visible again, and strip them again when returning to plan view.
-      // Staying within the same projection still uses the resident native
-      // geometry and keeps ordinary view changes cheap.
+    if (_viewportController.backend == RenderSceneViewportBackend.native) {
+      // Native rendering owns projection changes even when the current scene
+      // came from the compatibility JSON path and has no native BIM cache.
+      // Falling through to the repository scope reload here can reset an
+      // explicit "show all" filter (represented by an empty visibleKinds
+      // set), and can temporarily drop family instances from the new view.
+      // Preserve native geometry only when a native BIM cache is actually
+      // active; ordinary JSON scenes are rehydrated from their semantic scene
+      // without going through the repository reload path.
       if (scene != null) {
         await _viewportController.setVisibleKinds(_visibleKinds);
       }
@@ -374,6 +376,7 @@ extension _ViewerViewCommands on _ViewerHomePageState {
         await _viewportController.setProjectionMode(mode);
         await _viewportController.updateRenderScene(
           _sceneForViewport(scene),
+          preserveNativeGeometry: _viewportController.hasNativeGeometry,
           visibleKinds: _visibleKinds,
         );
       }

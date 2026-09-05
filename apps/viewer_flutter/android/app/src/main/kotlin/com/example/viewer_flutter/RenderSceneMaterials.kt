@@ -21,23 +21,6 @@ void material(inout MaterialInputs material) {
 }
 """
 
-internal const val WALL_BRICK_MAT = """
-void material(inout MaterialInputs material) {
-    prepareMaterial(material);
-    float3 world = getWorldPosition();
-    material.normal = normalize(cross(dFdx(world), dFdy(world)));
-    float row = floor(world.y / 0.075);
-    float jointY = step(fract(world.y / 0.075), 0.018);
-    float jointX = step(fract((world.x + mod(row, 2.0) * 0.12) / 0.24), 0.014);
-    // Keep this subtle enough for a working BIM view, but distinct on a
-    // tablet-sized wall face; the prior 16% contrast disappeared in Solid.
-    float mortar = max(jointY, jointX) * 0.58 * materialParams.displayShade;
-    float3 brick = materialParams.baseColor.rgb * (1.0 - mortar);
-    float shade = mix(1.0, 0.82 + 0.18 * sin(world.x * 0.45 + world.z * 0.31), materialParams.displayShade);
-    material.baseColor = float4(brick * shade, materialParams.baseColor.a);
-}
-"""
-
 internal const val PLASTER_MAT = """
 void material(inout MaterialInputs material) {
     prepareMaterial(material);

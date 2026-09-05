@@ -216,6 +216,30 @@ int main() {
         assert(std::count_if(
             scene.value->objects.begin(), scene.value->objects.end(),
             [](const auto& candidate) { return candidate.kind == tbe::api::ApiElementKind::Wall; }) == 1);
+        // A curved wall's tessellated top/bottom stations are surface detail,
+        // not architectural 3D edges. Only its four real end-cap edges are
+        // exported when there are no hosted openings; otherwise zooming the
+        // native viewport would draw a ribbon for every arc station.
+        assert(object->feature_edges.size() == 4);
+
+        const auto arc_door = curved->create_door("Arc Door", wall.value->value, 2.0, 0.9, 2.1);
+        assert(arc_door.ok() && arc_door.value.has_value());
+        const auto opened_scene = curved->get_render_scene();
+        assert(opened_scene.ok() && opened_scene.value.has_value());
+        const auto opened_wall = std::find_if(
+            opened_scene.value->objects.begin(), opened_scene.value->objects.end(),
+            [&](const auto& candidate) { return candidate.element_id.value == wall.value->value; });
+        assert(opened_wall != opened_scene.value->objects.end());
+        // Hosted opening contours stay explicit on both curved wall faces,
+        // while the arc tessellation stations remain absent from the 3D edge
+        // stream.
+        assert(opened_wall->feature_edges.size() == 12);
+        assert(std::count_if(
+            opened_wall->feature_edges.begin(),
+            opened_wall->feature_edges.end(),
+            [](const auto& edge) {
+                return edge.role == tbe::api::RenderSceneFeatureEdgeRole::OpeningContour;
+            }) == 8);
 
         // Picking must follow the visible curved centerline, not the
         // endpoint chord. The chord midpoint is intentionally inside the

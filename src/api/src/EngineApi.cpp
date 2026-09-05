@@ -1422,31 +1422,21 @@ std::vector<RenderSceneFeatureEdgeDTO> wall_feature_edges(
                 .z = base_elevation + z,
             };
         };
-        constexpr double kBottomContourLiftMeters = 0.002;
         const auto footprint_point = [&](const Point2& point, double elevation) {
             return Vec3{.x = point.x, .y = point.y, .z = base_elevation + elevation};
         };
         if (has_footprint) {
+            // v0.2.15 curved-wall shimmer guard: the curved wall body already
+            // owns its smooth top/bottom
+            // silhouette through the mesh. Do not export every tessellation
+            // station as a 3D edge: those dozens of coplanar ribbons are not
+            // architectural corners and shimmer when the mobile camera is
+            // zoomed repeatedly. Keep only the four true end-cap edges here;
+            // hosted opening contours are appended below and remain explicit.
             const auto boundary_count = footprint.size() / 2;
             const auto inner_index = [&](std::size_t boundary_index) {
                 return footprint.size() - 1 - boundary_index;
             };
-            for (std::size_t index = 0; index + 1 < boundary_count; ++index) {
-                for (const auto side : {std::size_t{0}, std::size_t{1}}) {
-                    const auto first_index = side == 0 ? index : inner_index(index);
-                    const auto second_index = side == 0 ? index + 1 : inner_index(index + 1);
-                    edges.push_back({
-                        .start = footprint_point(footprint[first_index], wall.height_meters),
-                        .end = footprint_point(footprint[second_index], wall.height_meters),
-                        .role = RenderSceneFeatureEdgeRole::Silhouette,
-                    });
-                    edges.push_back({
-                        .start = footprint_point(footprint[first_index], kBottomContourLiftMeters),
-                        .end = footprint_point(footprint[second_index], kBottomContourLiftMeters),
-                        .role = RenderSceneFeatureEdgeRole::Silhouette,
-                    });
-                }
-            }
             for (const auto boundary_index : {std::size_t{0}, boundary_count - 1}) {
                 const auto inside_index = inner_index(boundary_index);
                 edges.push_back({
@@ -1460,25 +1450,10 @@ std::vector<RenderSceneFeatureEdgeDTO> wall_feature_edges(
                     .role = RenderSceneFeatureEdgeRole::Silhouette,
                 });
             }
-        } else {
-            for (std::size_t index = 0; index + 1 < centerline.size(); ++index) {
-                const auto first_distance = path_length * static_cast<double>(index) /
-                    static_cast<double>(centerline.size() - 1);
-                const auto second_distance = path_length * static_cast<double>(index + 1) /
-                    static_cast<double>(centerline.size() - 1);
-                for (const auto side : {-half_thickness, half_thickness}) {
-                    edges.push_back({
-                        .start = point_at(first_distance, side, wall.height_meters),
-                        .end = point_at(second_distance, side, wall.height_meters),
-                        .role = RenderSceneFeatureEdgeRole::Silhouette,
-                    });
-                    edges.push_back({
-                        .start = point_at(first_distance, side, kBottomContourLiftMeters),
-                        .end = point_at(second_distance, side, kBottomContourLiftMeters),
-                        .role = RenderSceneFeatureEdgeRole::Silhouette,
-                    });
-                }
-            }
+        } else if (centerline.size() >= 2) {
+            // Invalid/legacy arc snapshots may not have a footprint. The
+            // fallback still emits only the two end-cap pairs, never a line
+            // for each sampled centerline chord.
             for (const auto distance : {0.0, path_length}) {
                 edges.push_back({
                     .start = point_at(distance, -half_thickness, 0.0),

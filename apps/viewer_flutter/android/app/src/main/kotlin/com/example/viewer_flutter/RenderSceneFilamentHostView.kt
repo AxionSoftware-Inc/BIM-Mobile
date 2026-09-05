@@ -105,7 +105,7 @@ private val EXTERNAL_MESH_KIND_ALIASES = setOf(
 
 // Viewport wall-display contract:
 //   * Solid is an achromatic coordination view.  It must never inherit wall
-//     type colors; only neutral face fill, brick joint lines, and glass alpha
+//     type colors; only neutral face fill, the embedded brick cue, and glass alpha
 //     are allowed there.
 //   * Shaded is the only mode that owns semantic material colors, and those
 //     colors stay deliberately light so they do not overpower the model.
@@ -124,7 +124,7 @@ void material(inout MaterialInputs material) {
     float glassMask = step(2.5, variant);
 
     // Solid keeps the wall achromatic, so its only semantic cue is the
-    // readable brick joint pattern. Use wider, slightly stronger joints in
+    // readable brick pattern. Use wider, slightly stronger joints in
     // Solid; Shaded retains the finer light brick pattern used previously.
     float brickRowSpacing = mix(0.18, 0.075, materialParams.displayShade);
     float brickWidth = mix(0.48, 0.24, materialParams.displayShade);
@@ -154,8 +154,8 @@ void material(inout MaterialInputs material) {
 
 // Solid wall faces have their own unlit family. Keeping this separate from
 // the generic solid material prevents face-orientation shading from making a
-// white wall read as a dark slab; the architectural and brick-joint lines are
-// still rendered by their independent depth-tested edge batches.
+// white wall read as a dark slab; architectural borders are rendered by their
+// independent depth-tested edge batches.
 private const val SOLID_WALL_MAT = """
 void material(inout MaterialInputs material) {
     prepareMaterial(material);
@@ -185,7 +185,6 @@ private data class EdgeBatchKey(
   val tileX: Int,
   val tileZ: Int,
   val nativeKindMask: Long? = null,
-  val solidBrickPattern: Boolean = false,
 )
 
 private data class EdgePointKey(val x: Long, val y: Long, val z: Long)
@@ -330,39 +329,6 @@ private data class NativeCameraRay(
   val origin: ScenePoint,
   val direction: ScenePoint,
 )
-
-private data class BrickOpeningInterval(
-  val start: Double,
-  val end: Double,
-  val bottom: Double,
-  val top: Double,
-)
-
-/** A wall-local horizontal plane in Filament coordinates for brick courses. */
-private data class BrickWallPlane(
-  val origin: ScenePoint,
-  val directionX: Double,
-  val directionZ: Double,
-  val normalX: Double,
-  val normalZ: Double,
-  val longMin: Double,
-  val longMax: Double,
-  val normalMin: Double,
-  val normalMax: Double,
-) {
-  fun along(point: ScenePoint): Double =
-    (point.x - origin.x) * directionX + (point.z - origin.z) * directionZ
-
-  fun normalOffset(point: ScenePoint): Double =
-    (point.x - origin.x) * normalX + (point.z - origin.z) * normalZ
-
-  fun point(along: Double, elevation: Double, normalOffset: Double): ScenePoint =
-    ScenePoint(
-      x = origin.x + directionX * along + normalX * normalOffset,
-      y = elevation,
-      z = origin.z + directionZ * along + normalZ * normalOffset,
-    )
-}
 
 /** A convex clipping volume shared by the interactive box and section views. */
 private data class ClipPlane(
@@ -1636,15 +1602,6 @@ internal class RenderSceneFilamentHostView(
     } else {
       floatArrayOf(0.72f, 0.77f, 0.80f, 1.0f)
     }
-  }
-
-  private fun solidBrickLineColor(): FloatArray = if (viewportTheme == "light") {
-    // Brick joints are a semantic cue, not a second silhouette. Keep them
-    // softer than the architectural border so Solid remains a filled,
-    // Revit-like coordination view rather than reading as wireframe.
-    floatArrayOf(0.06f, 0.07f, 0.08f, 1.0f)
-  } else {
-    floatArrayOf(0.22f, 0.24f, 0.26f, 1.0f)
   }
 
   private fun viewportGridColor(): FloatArray = if (viewportTheme == "light") {
@@ -2977,10 +2934,6 @@ internal class RenderSceneFilamentHostView(
         edgeGeometryFor(objectData, geometry, wallJunctionElevations)?.let { edge ->
           edgeChunks.getOrPut(edgeBatchKey(objectData, geometry.bounds)) { mutableListOf() }.add(edge)
         }
-        solidBrickJointGeometryFor(objectData, geometry)?.let { edge ->
-          edgeChunks.getOrPut(edgeBatchKey(objectData, geometry.bounds, solidBrickPattern = true)) { mutableListOf() }
-            .add(edge)
-        }
       } catch (error: Throwable) {
         failedObjects += 1
         Log.e(TAG, "Failed to create Filament renderable for ${objectData.kind}", error)
@@ -3152,10 +3105,6 @@ internal class RenderSceneFilamentHostView(
           edgeChunks.getOrPut(edgeBatchKey(objectData, geometry.bounds)) { mutableListOf() }
             .add(edge)
         }
-        solidBrickJointGeometryFor(objectData, geometry)?.let { edge ->
-          edgeChunks.getOrPut(edgeBatchKey(objectData, geometry.bounds, solidBrickPattern = true)) { mutableListOf() }
-            .add(edge)
-        }
       } catch (error: Throwable) {
         Log.w(TAG, "Failed to refresh edge geometry for ${objectData.kind}", error)
       }
@@ -3169,7 +3118,8 @@ internal class RenderSceneFilamentHostView(
     val kind = normalizeKind(objectData.kind)
     // DISPLAY-STYLE CONTRACT: Solid/Shaded changes the material family and
     // displayBaseColor() together. Keep semantic colors in Shaded only;
-    // Solid relies on achromatic faces plus the separate native edge passes.
+    // Solid relies on achromatic faces plus native edge passes; brick walls
+    // also keep their procedural cue on the actual wall mesh.
     // A material swap here without the corresponding alpha/parameter update
     // below is a common way to regress glass transparency or make Solid look
     // like Wireframe on tablet GPUs.
@@ -3179,12 +3129,21 @@ internal class RenderSceneFilamentHostView(
       } else if (kind == "floor" || kind == "slab") {
         solidFloorMaterial ?: solidMaterial ?: fallback
       } else if (kind == "wall") {
-        if (wallSurfaceVariant(objectData) == "glass") {
+        val variant = wallSurfaceVariant(objectData)
+        if (variant == "glass") {
           // Solid glass still uses a transparent material, but it must not
           // borrow the lit Shaded material. Keeping the family explicit
           // prevents a display-style change from leaking blend state into
           // opaque walls and floors.
           solidWallGlassMaterial ?: wallGlassMaterial ?: fallback
+        } else if (variant == "brick") {
+          // Brick is still an opaque Solid surface, but its procedural
+          // pattern must be evaluated by the real wall mesh. The old
+          // straight-wall prism overlay detached from curved walls and could
+          // z-fight while zooming. Reusing the opaque wall shader keeps the
+          // neutral Solid palette while binding every course/joint to the
+          // curved surface itself.
+          wallMaterial ?: solidWallMaterial ?: fallback
         } else {
           solidWallMaterial ?: fallback
         }
@@ -3374,12 +3333,7 @@ internal class RenderSceneFilamentHostView(
   // Filament edge batches enabled for Solid/Shaded; NativeSelectionOverlay is
   // only for selection/feedback and must not become the Solid renderer.
   private fun edgeVisible(key: EdgeBatchKey): Boolean =
-    // The brick pattern is deliberately a Solid-only 3D decoration. It must
-    // not leak into plan views or Wireframe, where the authored wall edges
-    // already provide the complete line language and duplicate strokes make
-    // openings look filled again.
     (displayStyle == "wireframe" || displayStyle == "solid" || displayStyle == "shaded") &&
-      (!key.solidBrickPattern || (displayStyle == "solid" && projectionMode != "topDown")) &&
       (key.nativeKindMask?.let(::nativeCacheKindMaskVisible)
         ?: kindVisible(key.kind)) &&
       openingVisibleInPlan(key.kind) &&
@@ -3812,326 +3766,9 @@ internal class RenderSceneFilamentHostView(
     return generated
   }
 
-  /**
-   * Solid keeps wall faces achromatic, so exterior brick identity is carried
-   * by a lightweight line-only pass. Filament's unlit material is deliberately
-   * kept stable for the tablet; generating these few architectural course
-   * lines as depth-tested prisms avoids relying on procedural fragment
-   * coordinates that differ across mobile OpenGL drivers.
-   */
-  private fun solidBrickJointGeometryFor(
-    objectData: SceneObject,
-    geometry: GeometryData,
-  ): GeometryData? {
-    val variant = wallSurfaceVariant(objectData)
-    if (normalizeKind(objectData.kind) != "wall" ||
-      variant != "brick" || geometry.points.isEmpty()
-    ) {
-      return null
-    }
-    // This pass never owns the wall surface. The C++ wall mesh owns the real
-    // void; this pass only adds neutral course/joint prisms on the two long
-    // faces. Clip those prisms against the engine-authored opening contours,
-    // not a separately serialized texture/profile rectangle. That keeps the
-    // brick pattern locked to the same geometry when a hosted opening moves,
-    // resizes, joins a wall, or is regenerated from an IFC source.
-    val points = geometry.points.toMutableList()
-    val edges = mutableListOf<NativeVisualEdge>()
-    appendSolidBrickJointEdges(
-      objectData,
-      points,
-      edges,
-      brickOpeningIntervalsFromFeatureEdges(objectData, geometry),
-    )
-    if (edges.isEmpty()) return null
-    // Generate the same readable 3D line weight even if a view transition
-    // starts while the native projection is still top-down. The batch is
-    // hidden in top-down by edgeVisible() and becomes visible immediately
-    // when the native camera reaches isometric mode.
-    return edgeGeometry(
-      points,
-      edges,
-      emptyList(),
-      radiusScale = 1.0,
-      solidBrickPattern = true,
-    )
-  }
-
-  private fun appendSolidBrickJointEdges(
-    objectData: SceneObject,
-    points: MutableList<ScenePoint>,
-    edges: MutableList<NativeVisualEdge>,
-    openingIntervals: List<BrickOpeningInterval>,
-  ) {
-    val bounds = boundsForPoints(points)
-    val height = bounds.max.y - bounds.min.y
-    if (height <= 0.30) return
-    val wallPlane = brickWallPlaneFor(objectData, points) ?: return
-    val longMin = wallPlane.longMin
-    val longMax = wallPlane.longMax
-    // Put the line prisms just outside each long wall face. Their depth test
-    // stays enabled, but centering a synthetic edge exactly on the source
-    // face can make GLES keep the face fragment and discard the line.
-    val faceOffset = 0.018
-    val faceOffsets = listOf(
-      wallPlane.normalMin - faceOffset,
-      wallPlane.normalMax + faceOffset,
-    )
-    val rowSpacing = 0.18
-    val brickWidth = 0.48
-    val lineLengthMinimum = 0.03
-    val epsilon = 1.0e-5
-    val clippedOpeningIntervals = openingIntervals
-      .mapNotNull { opening ->
-        val start = max(longMin, min(longMax, opening.start))
-        val end = max(longMin, min(longMax, opening.end))
-        val bottom = max(bounds.min.y, min(bounds.max.y, opening.bottom))
-        val top = max(bounds.min.y, min(bounds.max.y, opening.top))
-        if (end - start <= epsilon || top - bottom <= epsilon) {
-          null
-        } else {
-          BrickOpeningInterval(start = start, end = end, bottom = bottom, top = top)
-        }
-      }
-      .sortedBy { it.start }
-
-    fun addLine(first: ScenePoint, second: ScenePoint) {
-      val firstIndex = points.size
-      points.add(first)
-      points.add(second)
-      edges.add(
-        NativeVisualEdge(
-          first = firstIndex,
-          second = firstIndex + 1,
-          triangleIndices = intArrayOf(),
-          sharp = true,
-        ),
-      )
-    }
-
-    fun addHorizontalLine(offset: Double, y: Double) {
-      // A horizontal course is split in the wall-axis direction whenever its
-      // elevation lies inside an opening. The jamb/head boundary itself is
-      // intentionally allowed to remain visible as a clean architectural
-      // edge; only the brick course inside the void is removed.
-      var cursor = longMin
-      for (opening in clippedOpeningIntervals) {
-        if (y <= opening.bottom + epsilon || y >= opening.top - epsilon) continue
-        val start = max(cursor, opening.start)
-        val end = min(longMax, opening.end)
-        if (end - cursor >= lineLengthMinimum) {
-          addLine(wallPlane.point(cursor, y, offset), wallPlane.point(start, y, offset))
-        }
-        cursor = max(cursor, end)
-        if (cursor >= longMax - epsilon) return
-      }
-      if (longMax - cursor >= lineLengthMinimum) {
-        addLine(wallPlane.point(cursor, y, offset), wallPlane.point(longMax, y, offset))
-      }
-    }
-
-    fun addVerticalLine(offset: Double, longCoordinate: Double, bottom: Double, top: Double) {
-      // Vertical brick joints use the inverse split: a joint that crosses an
-      // opening is emitted above and below the void, never through its glass
-      // or door opening. This is why the opening interval includes both the
-      // plan-axis range and its wall-base-relative vertical range.
-      var cursor = bottom
-      for (opening in clippedOpeningIntervals) {
-        if (longCoordinate <= opening.start + epsilon || longCoordinate >= opening.end - epsilon) continue
-        if (opening.top <= bottom + epsilon || opening.bottom >= top - epsilon) continue
-        val start = max(bottom, opening.bottom)
-        val end = min(top, opening.top)
-        if (start - cursor >= lineLengthMinimum) {
-          addLine(
-            wallPlane.point(longCoordinate, cursor, offset),
-            wallPlane.point(longCoordinate, start, offset),
-          )
-        }
-        cursor = max(cursor, end)
-        if (cursor >= top - epsilon) return
-      }
-      if (top - cursor >= lineLengthMinimum) {
-        addLine(
-          wallPlane.point(longCoordinate, cursor, offset),
-          wallPlane.point(longCoordinate, top, offset),
-        )
-      }
-    }
-
-    var row = 0
-    while (bounds.min.y + row * rowSpacing < bounds.max.y - 0.02) {
-      val rowBottom = bounds.min.y + row * rowSpacing
-      val rowTop = min(rowBottom + rowSpacing, bounds.max.y)
-      if (rowTop - rowBottom >= 0.06) {
-        // Horizontal course joints run across the two long faces.
-        if (rowTop < bounds.max.y - 0.02) {
-          for (offset in faceOffsets) {
-            addHorizontalLine(offset, rowTop)
-          }
-        }
-
-        // Offset every other course so the pattern reads as masonry instead
-        // of a stack of horizontal bands at fit-to-view scale.
-        val start = longMin + brickWidth * if (row % 2 == 0) 1.0 else 0.5
-        var joint = start
-        val verticalBottom = rowBottom + 0.025
-        val verticalTop = rowTop - 0.025
-        while (joint < longMax - 0.025 && verticalTop - verticalBottom >= 0.03) {
-          for (offset in faceOffsets) {
-            addVerticalLine(offset, joint, verticalBottom, verticalTop)
-          }
-          joint += brickWidth
-        }
-      }
-      row += 1
-    }
-  }
-
-  /**
-   * Uses the model's wall axis when it is available, then projects the real
-   * mesh onto that axis to find the two exterior faces. The geometric fallback
-   * is deliberately derived from the mesh rather than from any opening data.
-   */
-  private fun brickWallPlaneFor(
-    objectData: SceneObject,
-    points: List<ScenePoint>,
-  ): BrickWallPlane? {
-    if (points.isEmpty()) return null
-    val axis = wallAxisEndpoints(objectData)
-    val fallbackBounds = boundsForPoints(points)
-    val origin: ScenePoint
-    val directionX: Double
-    val directionZ: Double
-    if (axis != null) {
-      val dx = axis.end.x - axis.start.x
-      val dz = axis.end.z - axis.start.z
-      val length = kotlin.math.sqrt(dx * dx + dz * dz)
-      if (length > 1.0e-9 && length.isFinite()) {
-        origin = axis.start
-        directionX = dx / length
-        directionZ = dz / length
-      } else {
-        return null
-      }
-    } else if ((fallbackBounds.max.x - fallbackBounds.min.x) >=
-      (fallbackBounds.max.z - fallbackBounds.min.z)
-    ) {
-      origin = ScenePoint(
-        fallbackBounds.min.x,
-        0.0,
-        (fallbackBounds.min.z + fallbackBounds.max.z) * 0.5,
-      )
-      directionX = 1.0
-      directionZ = 0.0
-    } else {
-      origin = ScenePoint(
-        (fallbackBounds.min.x + fallbackBounds.max.x) * 0.5,
-        0.0,
-        fallbackBounds.min.z,
-      )
-      directionX = 0.0
-      directionZ = 1.0
-    }
-    val normalX = -directionZ
-    val normalZ = directionX
-    val longCoordinates = points.map { point ->
-      (point.x - origin.x) * directionX + (point.z - origin.z) * directionZ
-    }
-    val normalCoordinates = points.map { point ->
-      (point.x - origin.x) * normalX + (point.z - origin.z) * normalZ
-    }
-    val longMin = longCoordinates.minOrNull() ?: return null
-    val longMax = longCoordinates.maxOrNull() ?: return null
-    val normalMin = normalCoordinates.minOrNull() ?: return null
-    val normalMax = normalCoordinates.maxOrNull() ?: return null
-    if (longMax - longMin <= 1.0e-5 || normalMax - normalMin <= 1.0e-5) return null
-    return BrickWallPlane(
-      origin = origin,
-      directionX = directionX,
-      directionZ = directionZ,
-      normalX = normalX,
-      normalZ = normalZ,
-      longMin = longMin,
-      longMax = longMax,
-      normalMin = normalMin,
-      normalMax = normalMax,
-    )
-  }
-
-  /**
-   * Projects the engine's real opening-contour edges into the two dimensions
-   * used by the brick line pass. A contour is emitted once per wall face, so
-   * the two identical sill/head segments intentionally collapse into one
-   * opening interval here. No legacy visual profile participates in clipping.
-   */
-  private fun brickOpeningIntervalsFromFeatureEdges(
-    objectData: SceneObject,
-    geometry: GeometryData,
-  ): List<BrickOpeningInterval> {
-    if (objectData.featureEdges.isEmpty() || geometry.points.isEmpty()) return emptyList()
-    val wallPlane = brickWallPlaneFor(objectData, geometry.points) ?: return emptyList()
-    val tolerance = 1.0e-4
-    data class HorizontalContour(
-      val start: Double,
-      val end: Double,
-      val elevation: Double,
-    )
-
-    val contours = objectData.featureEdges.asSequence()
-      .filter { edge -> edge.role.equals("opening_contour", ignoreCase = true) }
-      .mapNotNull { edge ->
-        val first = toFilamentPoint(edge.start)
-        val second = toFilamentPoint(edge.end)
-        val firstAlong = wallPlane.along(first)
-        val secondAlong = wallPlane.along(second)
-        // Only the sill and head run along the wall. Jambs are vertical and
-        // merely complete the source contour; they do not define a clip band.
-        if (kotlin.math.abs(first.y - second.y) > tolerance ||
-          kotlin.math.abs(secondAlong - firstAlong) <= tolerance
-        ) {
-          null
-        } else {
-          HorizontalContour(
-            start = min(firstAlong, secondAlong),
-            end = max(firstAlong, secondAlong),
-            elevation = (first.y + second.y) * 0.5,
-          )
-        }
-      }
-      .toList()
-
-    val intervals = mutableListOf<BrickOpeningInterval>()
-    for (contour in contours) {
-      val matching = contours.asSequence()
-        .filter { candidate ->
-          candidate.elevation > contour.elevation + tolerance &&
-            kotlin.math.abs(candidate.start - contour.start) <= tolerance &&
-            kotlin.math.abs(candidate.end - contour.end) <= tolerance
-        }
-        .minByOrNull { candidate -> candidate.elevation }
-        ?: continue
-      val interval = BrickOpeningInterval(
-        start = contour.start,
-        end = contour.end,
-        bottom = contour.elevation,
-        top = matching.elevation,
-      )
-      if (intervals.none { existing ->
-          kotlin.math.abs(existing.start - interval.start) <= tolerance &&
-            kotlin.math.abs(existing.end - interval.end) <= tolerance &&
-            kotlin.math.abs(existing.bottom - interval.bottom) <= tolerance &&
-            kotlin.math.abs(existing.top - interval.top) <= tolerance
-        }) {
-        intervals.add(interval)
-      }
-    }
-    return intervals
-  }
-
   private fun edgeBatchKey(
     objectData: SceneObject,
     bounds: SceneBounds,
-    solidBrickPattern: Boolean = false,
   ): EdgeBatchKey {
     val tileSizeMeters = 24.0
     val centerX = (bounds.min.x + bounds.max.x) * 0.5
@@ -4141,7 +3778,6 @@ internal class RenderSceneFilamentHostView(
       levelId = objectData.levelId,
       tileX = kotlin.math.floor(centerX / tileSizeMeters).toInt(),
       tileZ = kotlin.math.floor(centerZ / tileSizeMeters).toInt(),
-      solidBrickPattern = solidBrickPattern,
     )
   }
 
@@ -4424,11 +4060,7 @@ internal class RenderSceneFilamentHostView(
       val entity = EntityManager.get().create()
       val materialInstance = activeEdgeMaterial.createInstance().also { instance ->
         applyDisplayStyle(instance)
-        val edgeColor = if (key.solidBrickPattern) {
-          solidBrickLineColor()
-        } else {
-          viewportEdgeColor()
-        }
+        val edgeColor = viewportEdgeColor()
         instance.setParameter(
           "baseColor",
           Colors.RgbaType.LINEAR,
@@ -5358,7 +4990,6 @@ internal class RenderSceneFilamentHostView(
     wallJunctionEdges: Boolean = false,
     wallJunctionElevations: List<Double> = emptyList(),
     radiusScale: Double = 1.0,
-    solidBrickPattern: Boolean = false,
   ): GeometryData? {
     val validEdges = edges.filter { it.first in points.indices && it.second in points.indices }
     val isFloorPlan = projectionMode == "topDown"
@@ -5371,7 +5002,6 @@ internal class RenderSceneFilamentHostView(
     // 6 mm radius becomes sub-pixel on a tablet, so the edge can alternate
     // between covered and visible fragments as the camera moves.
     val normalRadius = when {
-      solidBrickPattern -> 0.0045
       isFloorPlan -> 0.004
       projectionMode != "isometric" -> 0.009
       else -> 0.010
@@ -5844,11 +5474,7 @@ internal class RenderSceneFilamentHostView(
     }
     for (batch in edgeBatches) {
       applyDisplayStyle(batch.materialInstance)
-      val edgeColor = if (batch.key.solidBrickPattern) {
-        solidBrickLineColor()
-      } else {
-        viewportEdgeColor()
-      }
+      val edgeColor = viewportEdgeColor()
       batch.materialInstance.setParameter(
         "baseColor",
         Colors.RgbaType.LINEAR,
@@ -8144,7 +7770,15 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
     // The manual orbit formula below is retained only for the short startup
     // window before the camera has a valid viewport. This prevents Inspector
     // and level annotations from drifting while the real model rotates.
-    visualViewProjection?.let { matrix ->
+    //
+    // A plan is different: the wall documentation contour is intentionally
+    // painted by this Canvas overlay while Filament hides the 3D wall faces.
+    // Reading the live GPU matrix for that contour can be one frame behind the
+    // pinch gesture, so the linework briefly lands on two adjacent raster
+    // positions and shimmers. The deterministic top-down camera formula below
+    // shares the same center/zoom state as updateOrbitCamera and keeps the
+    // entire plan overlay in one coordinate space during motion.
+    if (!topDown) visualViewProjection?.let { matrix ->
       if (matrix.size >= 16) {
         val clip = FloatArray(4)
         Matrix.multiplyMV(

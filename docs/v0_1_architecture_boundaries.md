@@ -1,7 +1,7 @@
 # v0.1 Architecture Boundaries
 
 The engine/BIM baseline is `0.1.0`. The Flutter package has an independent
-mobile release version (currently `0.2.13+15`), so Play Store version codes never
+mobile release version (currently `0.2.15+17`), so Play Store version codes never
 need to be reduced when engine contracts evolve. A project document keeps
 schema version `1`; the render-scene contract is version `2`. These versions
 intentionally move independently: a rendering change must not mutate BIM

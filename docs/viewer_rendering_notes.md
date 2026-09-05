@@ -41,6 +41,7 @@ This file tracks rendering-specific issues we hit in the Flutter fallback CAD/3D
   - The edge mesh is visual-only; it never changes engine geometry, selection, quantities, joins, or persistence.
   - It contains only boundary / sharp architectural edges, not tessellation seams.
   - It is shown only in `solid`; `wireframe` continues to use its full edge representation.
+  - Curved walls keep their smooth arc mesh, but the 3D feature-edge stream exports only real end caps and hosted opening contours. Arc tessellation stations are surface detail, not architectural edges; exporting each station created coplanar ribbons that shimmered during deep zoom and repeated 2D/3D switches.
   - The active/selected object may still use the overlay for feedback, but the normal Solid border must remain GPU depth-tested.
 - The edge renderable's culling bounds must include the visual prism radius. Using only the source face bounds can cull a border during a close interior orbit even when its wall face remains visible.
   - Wall top/bottom contacts use a dedicated junction-border subset derived
