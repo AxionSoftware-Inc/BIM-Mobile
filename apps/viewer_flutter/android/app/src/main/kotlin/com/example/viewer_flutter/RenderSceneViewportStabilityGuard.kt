@@ -34,8 +34,25 @@ import kotlin.math.sin
  *     floor smoothly with the orbit distance. This is not a camera collision
  *     limit: the camera may still enter geometry and leave it again.
  *
+ * Historical false leads — DO NOT reintroduce these as generic flicker fixes:
+ *
+ *  - Camera-vs-wall collision/minimum-distance clamps. The reproduced bug also
+ *    happened in 2D and while the camera was far from walls, so physical wall
+ *    contact cannot be the common cause. A clamp can only hide one close view.
+ *  - TextureView -> SurfaceView plus aggressive swap-chain recreation. That
+ *    experiment was tested on-device and did not improve the shimmer; it also
+ *    adds presentation churn. Recreate a swap chain only when the native
+ *    surface itself actually changes.
+ *  - Arbitrary AABB padding. Generated geometry must report the bounds of the
+ *    vertices it really uploads. Padding is not a substitute for a correct
+ *    coordinate-space invariant.
+ *  - Wider edge ribbons. These ribbons are triangle geometry; widening them
+ *    until they straddle the lifted source face recreates a competing surface
+ *    and can bring z-fighting back.
+ *
  * The normal camera range is left untouched, so the depth precision that made
- * ordinary 2D/3D navigation stable is preserved.
+ * ordinary 2D/3D navigation stable is preserved. See
+ * docs/viewport_stability_postmortem.md before changing this policy.
  */
 internal class RenderSceneViewportStabilityGuardFactory(
   private val messenger: BinaryMessenger,
