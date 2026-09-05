@@ -404,7 +404,7 @@ void registerInteractionAuthoringTests() {
     expect(tool.arcStart, firstEnd);
     expect(tool.hasArcFirstPoint, isTrue);
     tool.setArcSecond(arcSecond);
-    tool.previewArcControl(arcBend);
+    tool.beginArcControlAdjustment(arcBend);
     expect(tool.hasSegment, isTrue);
 
     tool.continueFrom(arcSecond);
@@ -462,7 +462,7 @@ void registerInteractionAuthoringTests() {
     );
   });
 
-  test('wall arc tool keeps first, second and bend as separate stages', () {
+  test('wall arc tool shows a standard midpoint before radius adjustment', () {
     final tool = WallToolController()..drawMode = WallDrawMode.arc;
     addTearDown(tool.dispose);
     const start = RenderScenePoint(x: 5, y: 0, z: 0);
@@ -474,9 +474,33 @@ void registerInteractionAuthoringTests() {
     expect(tool.hasArcSecondPoint, isFalse);
     tool.preview(end);
     expect(tool.hasArcSecondPoint, isTrue);
-    expect(tool.hasArcControlPoint, isFalse);
-    tool.preview(bend);
     expect(tool.hasArcControlPoint, isTrue);
+    expect(tool.isArcControlAdjustmentActive, isFalse);
+    tool.beginArcControlAdjustment(bend);
+    expect(tool.hasArcControlPoint, isTrue);
+    expect(tool.isArcControlAdjustmentActive, isTrue);
+    expect(tool.hasSegment, isTrue);
+  });
+
+  test('wall arc second endpoint stays draggable until release', () {
+    final tool = WallToolController()..drawMode = WallDrawMode.arc;
+    addTearDown(tool.dispose);
+    const start = RenderScenePoint(x: 1, y: 1, z: 0);
+    const touchDown = RenderScenePoint(x: 4, y: 1, z: 0);
+    const released = RenderScenePoint(x: 6, y: 2, z: 0);
+
+    tool.beginArcFirstAdjustment(start);
+    expect(tool.isArcFirstPointAdjustmentActive, isTrue);
+    tool.commitArcFirst();
+    tool.beginArcSecondAdjustment(touchDown);
+    expect(tool.isArcSecondPointAdjustmentActive, isTrue);
+    tool.previewArcSecond(released);
+
+    expect(tool.arcEnd, released);
+    expect(tool.hasArcControlPoint, isTrue);
+    expect(tool.isArcControlAdjustmentActive, isFalse);
+    tool.commitArcSecond();
+    expect(tool.isArcSecondPointAdjustmentActive, isFalse);
     expect(tool.hasSegment, isTrue);
   });
 

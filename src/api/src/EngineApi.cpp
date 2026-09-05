@@ -71,6 +71,7 @@ struct SpatialEntry {
     std::vector<Point2> polygon{};
     Line2 axis{};
     double thickness_meters{};
+    bool curved_wall{false};
 };
 
 struct LevelSpatialIndex {
@@ -604,6 +605,56 @@ std::vector<Point2> wall_body_polygon(Line2 axis, double thickness_meters) {
         Point2{.x = axis.end.x - normal.x, .y = axis.end.y - normal.y},
         Point2{.x = axis.start.x - normal.x, .y = axis.start.y - normal.y},
     };
+}
+
+// Declared here because the spatial index is built before the scene
+// serialization helpers below. Curved walls must use their authored arc path
+// for picking; the endpoint chord is only a compatibility axis and does not
+// cover the visible wall body.
+std::vector<Point2> wall_centerline_points(const tbe::core::WallData& wall);
+
+std::vector<Point2> curved_wall_body_polygon(const tbe::core::WallData& wall) {
+    const auto centerline = wall_centerline_points(wall);
+    if (centerline.size() < 2 || wall.thickness_meters <= 1.0e-12) {
+        return wall_body_polygon(wall.axis, wall.thickness_meters);
+    }
+
+    const auto half_thickness = wall.thickness_meters * 0.5;
+    std::vector<Point2> outside;
+    std::vector<Point2> inside;
+    outside.reserve(centerline.size());
+    inside.reserve(centerline.size());
+    for (std::size_t index = 0; index < centerline.size(); ++index) {
+        const auto previous = index == 0 ? centerline[index] : centerline[index - 1];
+        const auto next = index + 1 == centerline.size() ? centerline[index] : centerline[index + 1];
+        const auto dx = next.x - previous.x;
+        const auto dy = next.y - previous.y;
+        const auto tangent_length = std::hypot(dx, dy);
+        if (tangent_length <= 1.0e-12) {
+            continue;
+        }
+        const auto normal = Point2{
+            .x = -dy / tangent_length * half_thickness,
+            .y = dx / tangent_length * half_thickness,
+        };
+        outside.push_back(Point2{
+            .x = centerline[index].x + normal.x,
+            .y = centerline[index].y + normal.y,
+        });
+        inside.push_back(Point2{
+            .x = centerline[index].x - normal.x,
+            .y = centerline[index].y - normal.y,
+        });
+    }
+    if (outside.size() < 2 || inside.size() != outside.size()) {
+        return wall_body_polygon(wall.axis, wall.thickness_meters);
+    }
+
+    std::vector<Point2> polygon;
+    polygon.reserve(outside.size() + inside.size());
+    polygon.insert(polygon.end(), outside.begin(), outside.end());
+    polygon.insert(polygon.end(), inside.rbegin(), inside.rend());
+    return polygon;
 }
 
 // Stairs are one semantic element even when their path has several flights.
@@ -3344,7 +3395,9 @@ void rebuild_spatial_index_impl(SessionImpl& impl) {
 
     for (const auto& element : impl.document().elements()) {
         if (const auto* wall = element.wall()) {
-            const auto polygon = wall_body_polygon(wall->axis, wall->thickness_meters);
+            const auto polygon = wall->arc.has_value()
+                ? curved_wall_body_polygon(*wall)
+                : wall_body_polygon(wall->axis, wall->thickness_meters);
             append_entry(wall->level_id, SpatialEntry{
                 .element_id = element.id(),
                 .level_id = wall->level_id,
@@ -3354,6 +3407,7 @@ void rebuild_spatial_index_impl(SessionImpl& impl) {
                 .polygon = polygon,
                 .axis = wall->axis,
                 .thickness_meters = wall->thickness_meters,
+                .curved_wall = wall->arc.has_value(),
             });
             const auto length_value = line_length(wall->axis);
             const auto direction = length_value <= 1.0e-12 ? Point2{} : Point2{.x = (wall->axis.end.x - wall->axis.start.x) / length_value, .y = (wall->axis.end.y - wall->axis.start.y) / length_value};
@@ -4754,6 +4808,29 @@ ApiVoidResult EngineSession::set_wall_axis(std::uint64_t wall_id, Vec2 start, Ve
     });
 }
 
+ApiVoidResult EngineSession::set_curved_wall_geometry(
+    std::uint64_t wall_id,
+    Vec2 start,
+    Vec2 end,
+    Vec2 center,
+    double radius_meters,
+    double start_angle_radians,
+    double sweep_radians
+) {
+    return apply_mutation(*impl_, "set_curved_wall_geometry", [&](Document& document) {
+        document.set_curved_wall_geometry(
+            wall_id,
+            Line2{.start = to_point(start), .end = to_point(end)},
+            tbe::core::WallArcData{
+                .center = to_point(center),
+                .radius_meters = radius_meters,
+                .start_angle_radians = start_angle_radians,
+                .sweep_radians = sweep_radians,
+            }
+        );
+    });
+}
+
 ApiVoidResult EngineSession::trim_extend_walls(
     std::uint64_t first_wall_id,
     bool first_uses_start,
@@ -5616,7 +5693,10 @@ ApiResult<std::vector<HitTestCandidateDTO>> EngineSession::hit_test_point(HitTes
                 if (!entry.polygon.empty() && point_in_polygon(point, entry.polygon)) {
                     push_candidate(HitKind::WallBody, axis_distance);
                 }
-                if (axis_distance <= query.tolerance_meters) {
+                // The endpoint chord is not a visible axis for a curved
+                // wall. Accepting it here makes the empty area inside an arc
+                // selectable even after its body footprint is corrected.
+                if (!entry.curved_wall && axis_distance <= query.tolerance_meters) {
                     push_candidate(HitKind::WallAxis, axis_distance);
                 }
                 break;

@@ -787,8 +787,13 @@ mixin _FallbackSceneOverlayMixin {
     if (start == null || end == null) {
       return;
     }
-    final startScreen = projection.project(start).screen;
-    final endScreen = projection.project(end).screen;
+    // During an arc edit the transient third point is authoritative for the
+    // handle position; using the committed midpoint as well would paint a
+    // second, jumping handle under the finger.
+    final midpoint = draftWallArc?.control ??
+        RenderSceneEditor.wallMidpointPoint(object);
+    final handles = <RenderScenePoint>[start, end];
+    if (midpoint != null) handles.add(midpoint);
     final fill = Paint()
       ..style = PaintingStyle.fill
       ..color = const Color(0xFFFFFFFF);
@@ -796,10 +801,11 @@ mixin _FallbackSceneOverlayMixin {
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2.0
       ..color = const Color(0xFF2563EB);
-    canvas.drawCircle(startScreen, 6.5, fill);
-    canvas.drawCircle(startScreen, 6.5, stroke);
-    canvas.drawCircle(endScreen, 6.5, fill);
-    canvas.drawCircle(endScreen, 6.5, stroke);
+    for (final point in handles) {
+      final screen = projection.project(point).screen;
+      canvas.drawCircle(screen, 6.5, fill);
+      canvas.drawCircle(screen, 6.5, stroke);
+    }
   }
 
   void _drawActiveObjectGizmo(

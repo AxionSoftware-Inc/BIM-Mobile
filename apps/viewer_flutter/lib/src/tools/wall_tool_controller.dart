@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/foundation.dart';
 
 import '../render_scene_models.dart';
@@ -7,6 +9,7 @@ enum WallMoveMode {
   translate,
   startHandle,
   endHandle,
+  arcControl,
 }
 
 /// Construction method for new walls.
@@ -31,7 +34,7 @@ extension WallDrawModeLabel on WallDrawMode {
         WallDrawMode.rectangle =>
           'Create four straight walls from two opposite corners.',
         WallDrawMode.arc =>
-          'Create one smooth wall: first point, second point, then bend/radius.',
+          'Create one smooth wall: first point, second point, then adjust the midpoint handle.',
       };
 }
 
@@ -46,6 +49,9 @@ class WallToolController extends ChangeNotifier {
   RenderScenePoint? _arcStart;
   RenderScenePoint? _arcEnd;
   RenderScenePoint? _arcControl;
+  bool _arcFirstPointAdjustmentActive = false;
+  bool _arcSecondPointAdjustmentActive = false;
+  bool _arcControlAdjustmentActive = false;
   RenderScenePoint? _chainEndpoint;
   int _wallTypeId = 0;
   WallDrawMode _drawMode = WallDrawMode.straight;
@@ -73,6 +79,9 @@ class WallToolController extends ChangeNotifier {
   bool get hasArcFirstPoint => _arcStart != null;
   bool get hasArcSecondPoint => _arcEnd != null;
   bool get hasArcControlPoint => _arcControl != null;
+  bool get isArcFirstPointAdjustmentActive => _arcFirstPointAdjustmentActive;
+  bool get isArcSecondPointAdjustmentActive => _arcSecondPointAdjustmentActive;
+  bool get isArcControlAdjustmentActive => _arcControlAdjustmentActive;
 
   int get wallTypeId => _wallTypeId;
   set wallTypeId(int value) {
@@ -88,7 +97,7 @@ class WallToolController extends ChangeNotifier {
 
   /// Switches construction method without breaking a committed wall chain.
   /// When an existing endpoint is available it becomes Arc's first point, so
-  /// the next two gestures are the second point and the bend point.
+  /// the next gestures are the second point and the midpoint-handle radius.
   void switchDrawMode(WallDrawMode value) {
     if (_drawMode == value) return;
 
@@ -99,6 +108,9 @@ class WallToolController extends ChangeNotifier {
     _arcStart = null;
     _arcEnd = null;
     _arcControl = null;
+    _arcFirstPointAdjustmentActive = false;
+    _arcSecondPointAdjustmentActive = false;
+    _arcControlAdjustmentActive = false;
 
     if (anchor != null) {
       if (value == WallDrawMode.arc) {
@@ -128,7 +140,7 @@ class WallToolController extends ChangeNotifier {
       } else if (_arcEnd == null) {
         setArcSecond(point);
       } else {
-        previewArcControl(point);
+        beginArcControlAdjustment(point);
       }
       return;
     }
@@ -145,6 +157,7 @@ class WallToolController extends ChangeNotifier {
     _arcStart = _drawMode == WallDrawMode.arc ? point : null;
     _arcEnd = null;
     _arcControl = null;
+    _arcControlAdjustmentActive = false;
     notifyListeners();
   }
 
@@ -152,13 +165,79 @@ class WallToolController extends ChangeNotifier {
     _arcStart = point;
     _arcEnd = null;
     _arcControl = null;
+    _arcFirstPointAdjustmentActive = false;
+    _arcSecondPointAdjustmentActive = false;
+    _arcControlAdjustmentActive = false;
+    notifyListeners();
+  }
+
+  /// Starts a first-point drag. The point remains provisional until the
+  /// gesture ends, so a touch can be held and moved without leaking the
+  /// initial contact into the next arc stage.
+  void beginArcFirstAdjustment(RenderScenePoint point) {
+    beginArcFirst(point);
+    _arcFirstPointAdjustmentActive = true;
+  }
+
+  void previewArcFirst(RenderScenePoint point) {
+    if (!_arcFirstPointAdjustmentActive || _arcStart == point) return;
+    _arcStart = point;
+    notifyListeners();
+  }
+
+  void commitArcFirst() {
+    if (!_arcFirstPointAdjustmentActive) return;
+    _arcFirstPointAdjustmentActive = false;
     notifyListeners();
   }
 
   void setArcSecond(RenderScenePoint point) {
     if (_arcStart == null || _arcStart == point) return;
     _arcEnd = point;
-    _arcControl = null;
+    _arcControl = _defaultArcControl(_arcStart!, point);
+    _arcFirstPointAdjustmentActive = false;
+    _arcSecondPointAdjustmentActive = false;
+    _arcControlAdjustmentActive = false;
+    notifyListeners();
+  }
+
+  /// Starts the second endpoint drag without committing its initial contact.
+  /// The endpoint and standard-radius midpoint are visible immediately, but
+  /// [previewArcSecond] keeps moving them until [commitArcSecond] on release.
+  void beginArcSecondAdjustment(RenderScenePoint point) {
+    if (_arcStart == null || _arcStart == point) return;
+    _arcEnd = point;
+    _arcControl = _defaultArcControl(_arcStart!, point);
+    _arcFirstPointAdjustmentActive = false;
+    _arcSecondPointAdjustmentActive = true;
+    _arcControlAdjustmentActive = false;
+    notifyListeners();
+  }
+
+  void previewArcSecond(RenderScenePoint point) {
+    if (!_arcSecondPointAdjustmentActive || _arcStart == null) return;
+    if (_arcEnd == point) return;
+    _arcEnd = point;
+    _arcControl = _defaultArcControl(_arcStart!, point);
+    notifyListeners();
+  }
+
+  void commitArcSecond() {
+    if (!_arcSecondPointAdjustmentActive) return;
+    _arcSecondPointAdjustmentActive = false;
+    notifyListeners();
+  }
+
+  /// Arms the third point of the three-point arc. The control point is
+  /// already present after [setArcSecond], so the user can see a valid,
+  /// standard-radius arc before touching the handle. A subsequent drag/tap
+  /// only changes this point and does not alter either endpoint.
+  void beginArcControlAdjustment(RenderScenePoint point) {
+    if (_arcStart == null || _arcEnd == null) return;
+    _arcFirstPointAdjustmentActive = false;
+    _arcSecondPointAdjustmentActive = false;
+    _arcControlAdjustmentActive = true;
+    _arcControl = point;
     notifyListeners();
   }
 
@@ -186,6 +265,9 @@ class WallToolController extends ChangeNotifier {
     _arcStart = null;
     _arcEnd = null;
     _arcControl = null;
+    _arcFirstPointAdjustmentActive = false;
+    _arcSecondPointAdjustmentActive = false;
+    _arcControlAdjustmentActive = false;
     if (!preserveChainEndpoint) {
       _chainEndpoint = null;
     }
@@ -208,9 +290,38 @@ class WallToolController extends ChangeNotifier {
     _arcStart = null;
     _arcEnd = null;
     _arcControl = null;
+    _arcFirstPointAdjustmentActive = false;
+    _arcSecondPointAdjustmentActive = false;
+    _arcControlAdjustmentActive = false;
     _chainEndpoint = null;
     _wallTypeId = 0;
     _drawMode = WallDrawMode.straight;
     notifyListeners();
+  }
+
+  static RenderScenePoint _defaultArcControl(
+    RenderScenePoint first,
+    RenderScenePoint second,
+  ) {
+    final dx = second.x - first.x;
+    final dy = second.y - first.y;
+    final chord = math.sqrt(dx * dx + dy * dy);
+    if (chord <= 1e-9) return second;
+
+    // A 90-degree arc is a predictable architectural starting point. For
+    // short chords, keep the radius above the kernel's 0.25 m minimum so the
+    // automatically created preview is valid as soon as the second point is
+    // placed.
+    final radius = math.max(chord / math.sqrt2, 0.25);
+    final halfChord = chord * 0.5;
+    final sagitta = radius -
+        math.sqrt(math.max(radius * radius - halfChord * halfChord, 0.0));
+    final midpointX = (first.x + second.x) * 0.5;
+    final midpointY = (first.y + second.y) * 0.5;
+    return RenderScenePoint(
+      x: midpointX - dy / chord * sagitta,
+      y: midpointY + dx / chord * sagitta,
+      z: first.z,
+    );
   }
 }

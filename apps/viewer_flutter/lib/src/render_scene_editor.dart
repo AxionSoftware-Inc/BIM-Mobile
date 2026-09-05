@@ -5,6 +5,7 @@ import 'elements/bim_element_registry.dart';
 import 'elements/wall_type_catalog.dart';
 import 'render_scene_level_binding.dart';
 import 'render_scene_models.dart';
+import 'tools/wall_authoring_geometry.dart';
 
 part 'render_scene_editor_scene_helpers.dart';
 part 'render_scene_editor_support.dart';
@@ -980,6 +981,12 @@ class RenderSceneEditor {
   static List<RenderScenePoint> wallCenterlinePoints(RenderSceneObject wall) =>
       RenderSceneQueries.wallCenterlinePoints(wall);
 
+  static RenderScenePoint? wallMidpointPoint(RenderSceneObject wall) =>
+      RenderSceneQueries.wallMidpointPoint(wall);
+
+  static WallArcGeometry? wallArcGeometry(RenderSceneObject wall) =>
+      RenderSceneQueries.wallArcGeometry(wall);
+
   static double? wallThickness(RenderSceneObject wall) =>
       RenderSceneQueries.wallThickness(wall);
 
@@ -1035,6 +1042,17 @@ class RenderSceneEditor {
         wall: wall,
         start: start,
         end: end,
+      );
+
+  static RenderScene setCurvedWallGeometry({
+    required RenderScene scene,
+    required RenderSceneObject wall,
+    required WallArcGeometry geometry,
+  }) =>
+      RenderSceneQueries.setCurvedWallGeometry(
+        scene: scene,
+        wall: wall,
+        geometry: geometry,
       );
 
   static Map<int, ({RenderScenePoint start, RenderScenePoint end})>

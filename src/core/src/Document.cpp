@@ -2827,6 +2827,52 @@ void Document::set_wall_axis(ElementId wall_id, Line2 axis) {
     invalidate_dependency_graph_cache();
 }
 
+void Document::set_curved_wall_geometry(ElementId wall_id, Line2 chord, WallArcData arc) {
+    auto& wall_element = require_wall(wall_id);
+    auto* wall = wall_element.wall();
+    if (wall == nullptr || !wall->arc.has_value()) {
+        throw std::invalid_argument("wall is not curved");
+    }
+    validate_wall_axis(chord, wall->thickness_meters, resolved_wall_height(*wall));
+
+    const auto distance_to_center = [&](Point2 point) {
+        return std::hypot(point.x - arc.center.x, point.y - arc.center.y);
+    };
+    if (!std::isfinite(arc.center.x) || !std::isfinite(arc.center.y) ||
+        !std::isfinite(arc.radius_meters) || !std::isfinite(arc.start_angle_radians) ||
+        !std::isfinite(arc.sweep_radians) || arc.radius_meters <= epsilon ||
+        std::abs(arc.sweep_radians) <= epsilon ||
+        std::abs(arc.sweep_radians) > (2.0 * std::numbers::pi) + 1.0e-6) {
+        throw std::invalid_argument("curved wall arc geometry is invalid");
+    }
+    const auto endpoint_tolerance = std::max(1.0e-5, arc.radius_meters * 1.0e-4);
+    if (std::abs(distance_to_center(chord.start) - arc.radius_meters) > endpoint_tolerance ||
+        std::abs(distance_to_center(chord.end) - arc.radius_meters) > endpoint_tolerance) {
+        throw std::invalid_argument("curved wall endpoints must lie on the arc");
+    }
+
+    auto updated = *wall;
+    updated.axis = chord;
+    updated.arc = arc;
+    validate_wall_openings(updated);
+
+    wall->axis = chord;
+    wall->arc = std::move(arc);
+    mark_wall_dirty(wall_element);
+    for (auto& element : elements_) {
+        auto* roof = element.roof();
+        if (roof != nullptr && std::find(roof->source_wall_ids.begin(), roof->source_wall_ids.end(), wall_id) != roof->source_wall_ids.end()) {
+            roof->generated_geometry_dirty = true;
+            element.touch();
+        }
+    }
+    refresh_dependencies_for_wall(wall_id);
+    if (automatic_wall_join_enabled_) {
+        auto_join_walls();
+    }
+    invalidate_dependency_graph_cache();
+}
+
 void Document::set_wall_axis_with_joins(ElementId wall_id, Line2 axis) {
     auto& wall_element = require_wall(wall_id);
     auto* wall = wall_element.wall();

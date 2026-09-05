@@ -110,6 +110,15 @@ class AuthoringCommandService {
         end: end,
       );
 
+  Future<RenderSceneLoadResult> setCurvedWallGeometry({
+    required int wallId,
+    required WallArcGeometry geometry,
+  }) =>
+      _requireRepository().setCurvedWallGeometry(
+        wallId: wallId,
+        geometry: geometry,
+      );
+
   Future<RenderSceneLoadResult> autoJoinWalls() =>
       _requireRepository().autoJoinWalls();
 

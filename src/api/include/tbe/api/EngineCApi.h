@@ -289,6 +289,16 @@ TbeApiStatusCode tbe_set_wall_axis(
     TbeVec2 start,
     TbeVec2 end
 );
+TbeApiStatusCode tbe_set_curved_wall_geometry(
+    TbeEngineHandle* handle,
+    uint64_t wall_id,
+    TbeVec2 start,
+    TbeVec2 end,
+    TbeVec2 center,
+    double radius_meters,
+    double start_angle_radians,
+    double sweep_radians
+);
 TbeApiStatusCode tbe_auto_join_walls(TbeEngineHandle* handle);
 TbeApiStatusCode tbe_trim_extend_walls(
     TbeEngineHandle* handle,

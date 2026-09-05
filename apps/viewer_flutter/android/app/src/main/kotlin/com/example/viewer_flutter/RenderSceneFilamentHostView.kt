@@ -7001,6 +7001,13 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
   private var crossing = false
   private var objects = emptyList<NativeVisualObject>()
   private var allObjects = emptyList<NativeVisualObject>()
+  // The joined plan contour is scene geometry, not camera geometry. Repeating
+  // Path.Op(UNION) from onDraw made every pinch sample redo boolean work on the
+  // UI thread and could produce unstable rasterization at thin zoom levels.
+  // Build it only when the visual scene or category filter changes; camera
+  // motion only applies the cheap model-to-screen transform.
+  private var joinedPlanWallPath: Path? = null
+  private var planWallPathDirty = true
   private var selectedIds = emptySet<Long>()
   private var activeId: Long? = null
   private var movePreviewId: Long? = null
@@ -7185,6 +7192,7 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
     planOpeningSpecs = buildPlanOpeningSpecs(value)
     levels = levelValues
     sceneBounds = bounds
+    planWallPathDirty = true
     invalidate()
   }
 
@@ -7434,6 +7442,8 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
   fun clearVisualScene() {
     objects = emptyList()
     allObjects = emptyList()
+    joinedPlanWallPath = null
+    planWallPathDirty = true
     hasExternalMeshEdges = false
     visibleKinds = emptySet()
     planOpeningSpecs = emptyList()
@@ -7481,6 +7491,7 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
 
   fun setVisibleKinds(kinds: Set<String>) {
     visibleKinds = kinds.map(::normalizeKind).toSet()
+    planWallPathDirty = true
     invalidate()
   }
 
@@ -7656,6 +7667,32 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
    * readable and stable while the plan camera pans or zooms.
    */
   private fun drawPlanWallContours(canvas: Canvas) {
+    if (planWallPathDirty) rebuildPlanWallPath()
+    val joinedPath = joinedPlanWallPath ?: return
+    val origin = project(ScenePoint(0.0, 0.0, 0.0))
+    val unitX = project(ScenePoint(1.0, 0.0, 0.0))
+    val unitZ = project(ScenePoint(0.0, 0.0, 1.0))
+    if (origin == null || unitX == null || unitZ == null) return
+    val modelToScreen = android.graphics.Matrix().apply {
+      setValues(floatArrayOf(
+        unitX.x - origin.x, unitZ.x - origin.x, origin.x,
+        unitX.y - origin.y, unitZ.y - origin.y, origin.y,
+        0f, 0f, 1f,
+      ))
+    }
+    val screenPath = Path()
+    joinedPath.transform(modelToScreen, screenPath)
+    if (!wireframe) {
+      canvas.drawPath(screenPath, planWallFill)
+    }
+    canvas.drawPath(screenPath, planWallOutline)
+  }
+
+  private fun rebuildPlanWallPath() {
+    planWallPathDirty = false
+    joinedPlanWallPath = null
+    if (visibleKinds.isNotEmpty() && !visibleKinds.contains("wall")) return
+
     // Build one model-space cut path for the active wall network. Drawing a
     // separate screen-space polygon for every wall makes coincident join
     // edges get rasterized repeatedly; at thin zoom levels those doubled
@@ -7688,9 +7725,7 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
     }
 
     for (objectData in allObjects) {
-      if (normalizeKind(objectData.kind) != "wall" ||
-        (visibleKinds.isNotEmpty() && !visibleKinds.contains("wall"))
-      ) continue
+      if (normalizeKind(objectData.kind) != "wall") continue
       val rawProfile = objectData.metadata["profile_corners"]
       val profile = rawProfile
         ?.split(';')
@@ -7732,24 +7767,7 @@ private class NativeSelectionOverlay(context: Context) : android.view.View(conte
         ),
       )
     }
-    if (!hasJoinedPath) return
-    val origin = project(ScenePoint(0.0, 0.0, 0.0))
-    val unitX = project(ScenePoint(1.0, 0.0, 0.0))
-    val unitZ = project(ScenePoint(0.0, 0.0, 1.0))
-    if (origin == null || unitX == null || unitZ == null) return
-    val modelToScreen = android.graphics.Matrix().apply {
-      setValues(floatArrayOf(
-        unitX.x - origin.x, unitZ.x - origin.x, origin.x,
-        unitX.y - origin.y, unitZ.y - origin.y, origin.y,
-        0f, 0f, 1f,
-      ))
-    }
-    val screenPath = Path()
-    joinedPath.transform(modelToScreen, screenPath)
-    if (!wireframe) {
-      canvas.drawPath(screenPath, planWallFill)
-    }
-    canvas.drawPath(screenPath, planWallOutline)
+    if (hasJoinedPath) joinedPlanWallPath = joinedPath
   }
 
   private fun drawPlanFamilySymbols(canvas: Canvas) {

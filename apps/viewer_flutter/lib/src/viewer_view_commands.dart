@@ -69,9 +69,9 @@ extension _ViewerViewCommands on _ViewerHomePageState {
       await _applyEngineSceneResult(
         result.scene,
         message: '${asset.document.name} · ${result.type.name} placed.',
+        revealElementId: result.elementId,
+        selectElementId: result.elementId,
       );
-      await _viewportController.selectElement(result.elementId.toString());
-      await _viewportController.highlightElement(result.elementId.toString());
     } catch (error) {
       if (!mounted) return;
       _updateViewportState(() {
@@ -361,14 +361,25 @@ extension _ViewerViewCommands on _ViewerHomePageState {
 
     final repository = _engineRepository;
     if (_viewportController.hasNativeGeometry) {
-      // Native IFC geometry is already resident in Filament. Keep the
-      // compact semantic scene in Flutter for levels/metadata, but never
-      // reload a full JSON mesh when switching the initial or subsequent
-      // viewport projection.
+      // A plan scene intentionally strips family meshes before it reaches
+      // Filament.  Therefore a 2D <-> 3D transition is also a geometry
+      // boundary: rehydrate the authoritative scene once so 3D families are
+      // visible again, and strip them again when returning to plan view.
+      // Staying within the same projection still uses the resident native
+      // geometry and keeps ordinary view changes cheap.
       if (scene != null) {
         await _viewportController.setVisibleKinds(_visibleKinds);
       }
-      await _viewportController.setProjectionMode(mode);
+      if (_viewportController.projectionMode != mode && scene != null) {
+        await _viewportController.setProjectionMode(mode);
+        await _viewportController.updateRenderScene(
+          _sceneForViewport(scene),
+          visibleKinds: _visibleKinds,
+        );
+      }
+      if (_viewportController.projectionMode != mode) {
+        await _viewportController.setProjectionMode(mode);
+      }
       await _viewportController.setDisplayStyle(_displayStyle);
       await _viewportController.fitCamera();
       return;

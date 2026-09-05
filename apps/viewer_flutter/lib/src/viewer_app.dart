@@ -178,6 +178,7 @@ class _ViewerHomePageState extends State<ViewerHomePage>
   RenderScenePoint? _moveAnchorPoint;
   RenderScenePoint? _moveWallOriginalStart;
   RenderScenePoint? _moveWallOriginalEnd;
+  WallArcGeometry? _draftWallArcGeometry;
   RenderScenePoint? _draftMoveElementPoint;
   int? _draftMoveLevelId;
   double? _moveLevelOriginalElevation;

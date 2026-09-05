@@ -243,22 +243,22 @@ extension _ViewerWorkspaceInteractions on _ViewerHomePageState {
             rawPoint: point,
             referenceStart: _wallTool.arcEnd ?? _wallTool.arcStart,
           );
-          if (!_wallTool.hasArcFirstPoint) {
-            _wallTool.beginArcFirst(snapped);
-          } else if (!_wallTool.hasArcSecondPoint) {
-            _wallTool.setArcSecond(snapped);
+          final hadFirstPoint = _wallTool.hasArcFirstPoint;
+          final hadSecondPoint = _wallTool.hasArcSecondPoint;
+          if (!hadFirstPoint) {
+            _wallTool.beginArcFirstAdjustment(snapped);
+          } else if (!hadSecondPoint) {
+            _wallTool.beginArcSecondAdjustment(snapped);
           } else {
-            _wallTool.previewArcControl(snapped);
+            _wallTool.beginArcControlAdjustment(snapped);
           }
           _syncWallArcDraft();
           _updateViewportState(() {
-            _editStatusMessage = !_wallTool.hasArcFirstPoint
+            _editStatusMessage = !hadFirstPoint
                 ? 'Drag to set the first point.'
-                : !_wallTool.hasArcSecondPoint
-                    ? 'Drag to set the second point.'
-                    : !_wallTool.hasArcControlPoint
-                        ? 'Drag to set the arc radius/bend.'
-                        : 'Release to create one curved wall.';
+                : !hadSecondPoint
+                    ? 'Drag to set the second point. Release to lock it; the midpoint handle is ready next.'
+                    : 'Drag the midpoint handle to set the radius, then release.';
           });
           return;
         }
@@ -452,12 +452,16 @@ extension _ViewerWorkspaceInteractions on _ViewerHomePageState {
     switch (_interactionMode) {
       case RenderSceneInteractionMode.addWall:
         if (_wallTool.drawMode == WallDrawMode.arc) {
-          // The direct authoring surface calls dragStart for every touch,
-          // including a stationary tap. Arc stages are already advanced by
-          // dragStart; only real move samples should update the preview. If
-          // we hover again at PointerUp, the first center tap becomes a zero
-          // radius and the three-tap arc can never be completed.
-          if (_wallTool.hasSegment) {
+          // First and second endpoint gestures are provisional until release.
+          // The third gesture is the only one that commits a curved wall.
+          if (_wallTool.isArcFirstPointAdjustmentActive) {
+            _wallTool.commitArcFirst();
+            _syncWallArcDraft();
+          } else if (_wallTool.isArcSecondPointAdjustmentActive) {
+            _wallTool.commitArcSecond();
+            _syncWallArcDraft();
+          } else if (_wallTool.hasSegment &&
+              _wallTool.isArcControlAdjustmentActive) {
             await _commitWallArc();
           }
           return;
@@ -538,6 +542,34 @@ extension _ViewerWorkspaceInteractions on _ViewerHomePageState {
               result,
               message:
                   'Level elevation updated to ${_projectUnitSettings.formatLength(elevation)}.',
+            );
+          }
+          await _clearDraft();
+        } else if (_draftMoveTarget?.kindKey == 'wall' &&
+            _draftWallArcGeometry != null &&
+            _draftMoveTarget?.elementId != null) {
+          final wall = _draftMoveTarget!;
+          final geometry = _draftWallArcGeometry!;
+          final repository = _engineRepository;
+          if (_engineBackedMode && repository != null) {
+            final result = await _authoringCommands.setCurvedWallGeometry(
+              wallId: wall.elementId!,
+              geometry: geometry,
+            );
+            await _applyEngineSceneResult(
+              result,
+              message: 'Curved wall updated.',
+            );
+          } else if (_scene != null) {
+            final nextScene = RenderSceneEditor.setCurvedWallGeometry(
+              scene: _scene!,
+              wall: wall,
+              geometry: geometry,
+            );
+            await _applySceneChange(
+              nextScene,
+              message: 'Curved wall updated.',
+              authoritative: true,
             );
           }
           await _clearDraft();

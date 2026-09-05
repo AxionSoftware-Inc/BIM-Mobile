@@ -749,6 +749,18 @@ class ViewerRepository
       );
 
   @override
+  Future<RenderSceneLoadResult> setCurvedWallGeometry({
+    required int wallId,
+    required WallArcGeometry geometry,
+  }) =>
+      _authoringQueue.run(
+        () => _mutations.setCurvedWallGeometry(
+          wallId: wallId,
+          geometry: geometry,
+        ),
+      );
+
+  @override
   Future<RenderSceneLoadResult> autoJoinWalls() =>
       _authoringQueue.run(_mutations.autoJoinWalls);
 

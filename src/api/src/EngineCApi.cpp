@@ -542,6 +542,30 @@ TbeApiStatusCode tbe_set_wall_axis(
     ));
 }
 
+TbeApiStatusCode tbe_set_curved_wall_geometry(
+    TbeEngineHandle* handle,
+    uint64_t wall_id,
+    TbeVec2 start,
+    TbeVec2 end,
+    TbeVec2 center,
+    double radius_meters,
+    double start_angle_radians,
+    double sweep_radians
+) {
+    if (handle == nullptr || handle->session == nullptr) {
+        return null_handle_error(handle);
+    }
+    return apply_result(handle, handle->session->set_curved_wall_geometry(
+        wall_id,
+        tbe::api::Vec2{.x = start.x, .y = start.y},
+        tbe::api::Vec2{.x = end.x, .y = end.y},
+        tbe::api::Vec2{.x = center.x, .y = center.y},
+        radius_meters,
+        start_angle_radians,
+        sweep_radians
+    ));
+}
+
 TbeApiStatusCode tbe_auto_join_walls(TbeEngineHandle* handle) {
     if (handle == nullptr || handle->session == nullptr) {
         return null_handle_error(handle);

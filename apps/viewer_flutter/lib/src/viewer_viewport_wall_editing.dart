@@ -92,6 +92,103 @@ extension _ViewerViewportWallEditing on _ViewerHomePageState {
     if (anchor == null || originalStart == null || originalEnd == null) {
       return;
     }
+    final originalArc = RenderSceneEditor.wallArcGeometry(wall);
+    if (originalArc != null && originalArc.points.length >= 3) {
+      final originalControl =
+          originalArc.points[originalArc.points.length ~/ 2];
+      RenderScenePoint control;
+      if (_wallMoveMode == WallMoveMode.translate) {
+        final constrainedPoint = WallAuthoringGeometry.projectToWallNormal(
+          point,
+          anchor: anchor,
+          start: originalStart,
+          end: originalEnd,
+        );
+        final delta = constrainedPoint - anchor;
+        control = originalControl + delta;
+      } else if (_wallMoveMode == WallMoveMode.startHandle) {
+        var nextStart = _draftLinePoint(
+          rawPoint: point,
+          referenceStart: originalEnd,
+          excludeWallId: wall.elementId,
+        );
+        nextStart = WallAuthoringGeometry.snapMovedWallPoint(
+          scene,
+          wall,
+          nextStart,
+          originalStart,
+          snapIndex: _wallSnapIndexFor(excludeWallId: wall.elementId),
+        );
+        final nextArc = WallAuthoringGeometry.arcFromThreePoints(
+          first: nextStart,
+          second: originalEnd,
+          bend: originalControl,
+        );
+        if (nextArc == null) return;
+        _draftWallArcGeometry = nextArc;
+        _viewportController.setWallArcDraft(
+          RenderSceneWallArcDraft(
+            start: nextArc.start,
+            end: nextArc.end,
+            control: originalControl,
+            center: nextArc.center,
+            points: nextArc.points,
+          ),
+        );
+        return;
+      } else if (_wallMoveMode == WallMoveMode.endHandle) {
+        var nextEnd = _draftLinePoint(
+          rawPoint: point,
+          referenceStart: originalStart,
+          excludeWallId: wall.elementId,
+        );
+        nextEnd = WallAuthoringGeometry.snapMovedWallPoint(
+          scene,
+          wall,
+          nextEnd,
+          originalEnd,
+          snapIndex: _wallSnapIndexFor(excludeWallId: wall.elementId),
+        );
+        final nextArc = WallAuthoringGeometry.arcFromThreePoints(
+          first: originalStart,
+          second: nextEnd,
+          bend: originalControl,
+        );
+        if (nextArc == null) return;
+        _draftWallArcGeometry = nextArc;
+        _viewportController.setWallArcDraft(
+          RenderSceneWallArcDraft(
+            start: nextArc.start,
+            end: nextArc.end,
+            control: originalControl,
+            center: nextArc.center,
+            points: nextArc.points,
+          ),
+        );
+        return;
+      } else {
+        // The midpoint is the true third point of the circular authoring
+        // gesture. Do not convert it into a line move or tessellated walls.
+        control = point;
+      }
+      final nextArc = WallAuthoringGeometry.arcFromThreePoints(
+        first: originalStart,
+        second: originalEnd,
+        bend: control,
+      );
+      if (nextArc == null) return;
+      _draftWallArcGeometry = nextArc;
+      _viewportController.setWallArcDraft(
+        RenderSceneWallArcDraft(
+          start: nextArc.start,
+          end: nextArc.end,
+          control: control,
+          center: nextArc.center,
+          points: nextArc.points,
+        ),
+      );
+      return;
+    }
     RenderScenePoint nextStart;
     RenderScenePoint nextEnd;
     // A body drag is a wall offset: movement along the wall changes neither

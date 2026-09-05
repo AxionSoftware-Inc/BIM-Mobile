@@ -109,9 +109,11 @@ extension _ViewerViewportInput on _ViewerHomePageState {
             rawPoint: modelPoint,
             referenceStart: _wallTool.arcEnd ?? _wallTool.arcStart,
           );
-          if (!_wallTool.hasArcSecondPoint) {
-            _wallTool.setArcSecond(snappedPoint);
-          } else {
+          if (_wallTool.isArcFirstPointAdjustmentActive) {
+            _wallTool.previewArcFirst(snappedPoint);
+          } else if (_wallTool.isArcSecondPointAdjustmentActive) {
+            _wallTool.previewArcSecond(snappedPoint);
+          } else if (_wallTool.isArcControlAdjustmentActive) {
             _wallTool.previewArcControl(snappedPoint);
           }
           _syncWallArcDraft();
@@ -364,12 +366,13 @@ extension _ViewerViewportInput on _ViewerHomePageState {
       _wallTool.setArcSecond(point);
       _syncWallArcDraft();
       _updateViewportState(() {
-        _editStatusMessage = 'Second point set. Tap the arc radius/bend point.';
+        _editStatusMessage =
+            'Second point set. Midpoint handle is ready; drag it to set the radius.';
       });
       return;
     }
 
-    _wallTool.previewArcControl(point);
+    _wallTool.beginArcControlAdjustment(point);
     _syncWallArcDraft();
     await _commitWallArc();
   }
@@ -843,8 +846,13 @@ extension _ViewerViewportInput on _ViewerHomePageState {
       if (start == null || end == null || anchor == null) {
         return;
       }
+      final arcGeometry = RenderSceneEditor.wallArcGeometry(wall);
+      final midpoint = arcGeometry == null
+          ? RenderSceneEditor.wallMidpointPoint(wall)
+          : arcGeometry.points[arcGeometry.points.length ~/ 2];
       final startDistance = anchor.distanceTo(start);
       final endDistance = anchor.distanceTo(end);
+      final midpointDistance = midpoint?.distanceTo(anchor) ?? double.infinity;
       var moveMode = WallMoveMode.translate;
       final wallLength = start.distanceTo(end);
       // A fixed 45 cm hit radius made the middle of short walls look like an
@@ -854,7 +862,13 @@ extension _ViewerViewportInput on _ViewerHomePageState {
         0.32,
         math.max(0.12, wallLength * 0.22),
       );
-      if (startDistance <= handleTolerance && startDistance <= endDistance) {
+      if (midpoint != null &&
+          midpointDistance <= handleTolerance &&
+          midpointDistance <= startDistance &&
+          midpointDistance <= endDistance) {
+        moveMode = WallMoveMode.arcControl;
+      } else if (startDistance <= handleTolerance &&
+          startDistance <= endDistance) {
         moveMode = WallMoveMode.startHandle;
       } else if (endDistance <= handleTolerance &&
           endDistance < startDistance) {
@@ -864,17 +878,34 @@ extension _ViewerViewportInput on _ViewerHomePageState {
         _draftMoveTarget = wall;
         _moveAnchorPoint = moveMode == WallMoveMode.translate
             ? anchor
-            : (moveMode == WallMoveMode.startHandle ? start : end);
+            : moveMode == WallMoveMode.arcControl
+                ? midpoint
+                : (moveMode == WallMoveMode.startHandle ? start : end);
         _moveWallOriginalStart = start;
         _moveWallOriginalEnd = end;
         _wallMoveMode = moveMode;
-        _draftWallStart = start;
-        _draftWallEnd = end;
+        _draftWallArcGeometry = arcGeometry;
+        _draftWallStart = arcGeometry == null ? start : null;
+        _draftWallEnd = arcGeometry == null ? end : null;
         _editStatusMessage = moveMode == WallMoveMode.translate
             ? 'Wall move preview started. Drag the wall.'
-            : 'Wall endpoint preview started. Drag the endpoint.';
+            : moveMode == WallMoveMode.arcControl
+                ? 'Arc radius preview started. Drag the midpoint handle.'
+                : 'Wall endpoint preview started. Drag the endpoint.';
       });
-      _viewportController.setWallDraft(start, end);
+      if (arcGeometry != null && midpoint != null) {
+        _viewportController.setWallArcDraft(
+          RenderSceneWallArcDraft(
+            start: arcGeometry.start,
+            end: arcGeometry.end,
+            control: midpoint,
+            center: arcGeometry.center,
+            points: arcGeometry.points,
+          ),
+        );
+      } else {
+        _viewportController.setWallDraft(start, end);
+      }
       return;
     }
 

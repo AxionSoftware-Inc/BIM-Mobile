@@ -864,6 +864,7 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                         draftOpening: controller.draftOpening,
                         draftSurface: controller.draftSurface,
                         pickedWallIds: widget.draftSurfaceWallIds,
+                        visibleKinds: controller.visibleKinds,
                         wallThicknessMeters: widget.draftWallThicknessMeters,
                         activeElementId: controller.activeElementId,
                         selectedLevelId: controller.selectedLevelId,

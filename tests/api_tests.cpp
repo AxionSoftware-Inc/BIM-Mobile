@@ -217,6 +217,62 @@ int main() {
             scene.value->objects.begin(), scene.value->objects.end(),
             [](const auto& candidate) { return candidate.kind == tbe::api::ApiElementKind::Wall; }) == 1);
 
+        // Picking must follow the visible curved centerline, not the
+        // endpoint chord. The chord midpoint is intentionally inside the
+        // quarter-circle and must not become a false wall hit.
+        const auto arc_midpoint_hit = curved->hit_test_point({
+            .level_id = {.value = level.value->value},
+            .point = {.x = 3.535533906, .y = 3.535533906},
+            .tolerance_meters = 0.2,
+        });
+        assert(arc_midpoint_hit.ok() && arc_midpoint_hit.value.has_value());
+        assert(std::any_of(
+            arc_midpoint_hit.value->begin(),
+            arc_midpoint_hit.value->end(),
+            [&](const auto& candidate) {
+                return candidate.element_id.value == wall.value->value &&
+                    candidate.hit_kind == tbe::api::HitKind::WallBody;
+            }));
+        const auto arc_chord_midpoint_hit = curved->hit_test_point({
+            .level_id = {.value = level.value->value},
+            .point = {.x = 2.5, .y = 2.5},
+            .tolerance_meters = 0.2,
+        });
+        assert(arc_chord_midpoint_hit.ok() && arc_chord_midpoint_hit.value.has_value());
+        assert(std::none_of(
+            arc_chord_midpoint_hit.value->begin(),
+            arc_chord_midpoint_hit.value->end(),
+            [&](const auto& candidate) {
+                return candidate.element_id.value == wall.value->value;
+            }));
+
+        // Editing the midpoint must update the analytic arc in place. The
+        // element id stays stable and the wall is never replaced by line
+        // segments, which is the contract used by the viewport midpoint
+        // handle.
+        const auto updated_sweep = std::atan2(4.0, -1.0) - std::atan2(-1.0, 4.0);
+        const auto curved_update = curved->set_curved_wall_geometry(
+            wall.value->value,
+            {.x = 5.0, .y = 0.0},
+            {.x = 0.0, .y = 5.0},
+            {.x = 1.0, .y = 1.0},
+            std::sqrt(17.0),
+            std::atan2(-1.0, 4.0),
+            updated_sweep
+        );
+        assert(curved_update.ok());
+        const auto updated_scene = curved->get_render_scene();
+        assert(updated_scene.ok() && updated_scene.value.has_value());
+        const auto updated_object = std::find_if(
+            updated_scene.value->objects.begin(), updated_scene.value->objects.end(),
+            [&](const auto& candidate) { return candidate.element_id.value == wall.value->value; });
+        assert(updated_object != updated_scene.value->objects.end());
+        assert(updated_object->metadata.at("curve_kind") == "arc");
+        assert(nearly_equal(
+            std::stod(updated_object->metadata.at("curve_radius_meters")),
+            std::sqrt(17.0),
+            1.0e-5));
+
         const auto l_stair = curved->create_stair_layout(
             level.value->value,
             0,

@@ -92,6 +92,79 @@ class RenderSceneQueries {
     return <RenderScenePoint>[start, end];
   }
 
+  /// Returns the editable visual midpoint of a curved wall. The persisted
+  /// arc definition is authoritative, while its sampled centerline gives
+  /// both fallback and Android overlays the same stable handle location.
+  static RenderScenePoint? wallMidpointPoint(RenderSceneObject wall) {
+    final centerline = wallCenterlinePoints(wall);
+    if (centerline.length <= 2) return null;
+    return centerline[centerline.length ~/ 2];
+  }
+
+  /// Reads the authoritative circular definition kept in wall metadata.
+  /// Centerline samples are retained only as a lightweight control-handle
+  /// fallback; edits are committed with center/radius/sweep, never as small
+  /// replacement wall segments.
+  static WallArcGeometry? wallArcGeometry(RenderSceneObject wall) {
+    if (wall.kindKey != 'wall') return null;
+    final metadata = wall.metadata;
+    if (metadata['curve_kind']?.toString().toLowerCase() != 'arc') {
+      return null;
+    }
+    final start = wallStartPoint(wall);
+    final end = wallEndPoint(wall);
+    final centerX = _toDouble(
+      metadata['curve_center_x'] ?? metadata['curveCenterX'],
+    );
+    final centerY = _toDouble(
+      metadata['curve_center_y'] ?? metadata['curveCenterY'],
+    );
+    final radius = _toDouble(
+      metadata['curve_radius_meters'] ?? metadata['curveRadiusMeters'],
+    );
+    final sweep = _toDouble(
+      metadata['curve_sweep_radians'] ?? metadata['curveSweepRadians'],
+    );
+    if (start == null ||
+        end == null ||
+        centerX == null ||
+        centerY == null ||
+        radius == null ||
+        sweep == null ||
+        !radius.isFinite ||
+        radius <= 1e-6 ||
+        !sweep.isFinite ||
+        sweep.abs() <= 1e-6 ||
+        sweep.abs() > 2.0 * math.pi + 1e-6) {
+      return null;
+    }
+    final center = RenderScenePoint(x: centerX, y: centerY, z: start.z);
+    var points = wallCenterlinePoints(wall);
+    if (points.length < 3) {
+      final startAngle = math.atan2(start.y - center.y, start.x - center.x);
+      final count =
+          math.max(8, math.min(48, (radius * sweep.abs() / 0.18).ceil()));
+      points = <RenderScenePoint>[
+        for (var index = 0; index <= count; index += 1)
+          RenderScenePoint(
+            x: center.x + radius * math.cos(startAngle + sweep * index / count),
+            y: center.y + radius * math.sin(startAngle + sweep * index / count),
+            z: start.z,
+          ),
+      ];
+      points[0] = start;
+      points[points.length - 1] = end;
+    }
+    return WallArcGeometry(
+      center: center,
+      start: start,
+      end: end,
+      radiusMeters: radius,
+      sweepRadians: sweep,
+      points: List<RenderScenePoint>.unmodifiable(points),
+    );
+  }
+
   static double? wallThickness(RenderSceneObject wall) {
     return _wallGeometry(wall)?.thickness;
   }
@@ -149,12 +222,17 @@ class RenderSceneQueries {
               start: openingStart,
               end: openingEnd,
               thickness: resolvedThickness,
-              centerline: hostGeometry?.centerline ?? const <RenderScenePoint>[],
+              centerline:
+                  hostGeometry?.centerline ?? const <RenderScenePoint>[],
             );
       final offset = _toDouble(opening.metadata['offset_meters']);
       final width = _toDouble(opening.metadata['width_meters']);
-      if (geometry == null || offset == null || width == null ||
-          !offset.isFinite || !width.isFinite || width <= 1e-9) {
+      if (geometry == null ||
+          offset == null ||
+          width == null ||
+          !offset.isFinite ||
+          !width.isFinite ||
+          width <= 1e-9) {
         continue;
       }
 
@@ -222,11 +300,12 @@ class RenderSceneQueries {
         var previous = second;
         for (var index = 1; index <= 16; index += 1) {
           final angle = startAngle + sweep * (index / 16.0);
-          final current = first + RenderScenePoint(
-            x: math.cos(angle) * width,
-            y: math.sin(angle) * width,
-            z: 0,
-          );
+          final current = first +
+              RenderScenePoint(
+                x: math.cos(angle) * width,
+                y: math.sin(angle) * width,
+                z: 0,
+              );
           distances.add(_distanceToPlanSegment(point, previous, current));
           previous = current;
         }
@@ -636,6 +715,74 @@ class RenderSceneQueries {
     return _parseSceneMap(map, source: '${scene.source} ~ wall');
   }
 
+  static RenderScene setCurvedWallGeometry({
+    required RenderScene scene,
+    required RenderSceneObject wall,
+    required WallArcGeometry geometry,
+  }) {
+    if (wall.kindKey != 'wall' ||
+        wall.elementId == null ||
+        wallArcGeometry(wall) == null ||
+        !geometry.start.isFinite ||
+        !geometry.end.isFinite ||
+        !geometry.center.isFinite ||
+        !geometry.radiusMeters.isFinite ||
+        geometry.radiusMeters <= 1e-6 ||
+        !geometry.sweepRadians.isFinite ||
+        geometry.sweepRadians.abs() <= 1e-6 ||
+        geometry.sweepRadians.abs() > 2.0 * math.pi + 1e-6) {
+      return scene;
+    }
+
+    final map = _sceneMap(scene);
+    final objects = _objectsFromSceneMap(map);
+    final wallId = wall.elementId!;
+    final startAngle = math.atan2(
+      geometry.start.y - geometry.center.y,
+      geometry.start.x - geometry.center.x,
+    );
+    for (var index = 0; index < objects.length; index += 1) {
+      final objectId = _toInt(objects[index]['element_id']) ??
+          _toInt(objects[index]['elementId']);
+      final kind = (objects[index]['kind']?.toString() ?? '').toLowerCase();
+      if (objectId != wallId || kind != 'wall') continue;
+      final metadata = objects[index]['metadata'] is Map
+          ? Map<String, Object?>.from(
+              (objects[index]['metadata'] as Map).cast<String, Object?>(),
+            )
+          : <String, Object?>{};
+      final bounds = RenderSceneBounds.fromJson(objects[index]['bounds']);
+      final heightMeters = _toDouble(metadata['height_meters']) ??
+          (bounds == null ? null : bounds.max.z - bounds.min.z) ??
+          RenderSceneEditor.defaultWallHeightMeters;
+      final thicknessMeters = _wallGeometryFromMap(objects[index])?.thickness ??
+          RenderSceneEditor.defaultWallThicknessMeters;
+      final levelId = _toInt(objects[index]['level_id']) ??
+          _toInt(objects[index]['levelId']);
+      objects[index] = _buildCurvedWallObject(
+        elementId: wallId,
+        start: geometry.start,
+        end: geometry.end,
+        center: geometry.center,
+        radiusMeters: geometry.radiusMeters,
+        startAngleRadians: startAngle,
+        sweepRadians: geometry.sweepRadians,
+        heightMeters: heightMeters,
+        thicknessMeters: thicknessMeters,
+        levelId: levelId,
+        metadata: metadata,
+        revision: _toInt(objects[index]['revision']) ?? 1,
+        materialCategory:
+            objects[index]['material_category']?.toString() ?? 'structural',
+      );
+      break;
+    }
+    _rebuildAllWallObjects(objects);
+    _rebuildDetectedRooms(objects);
+    map['objects'] = objects;
+    return _parseSceneMap(map, source: '${scene.source} ~ curved wall');
+  }
+
   /// Returns the selected wall axis and, for a rigid body translation, only
   /// the immediately connected wall endpoints that must follow it.
   ///
@@ -856,8 +1003,7 @@ double _distanceToPlanSegment(
     return point.distanceTo(start);
   }
   final toPoint = point - start;
-  final t = ((toPoint.x * axis.x) + (toPoint.y * axis.y)) /
-      lengthSquared;
+  final t = ((toPoint.x * axis.x) + (toPoint.y * axis.y)) / lengthSquared;
   final clamped = t.clamp(0.0, 1.0);
   final projected = start + axis.scale(clamped);
   return point.distanceTo(projected);

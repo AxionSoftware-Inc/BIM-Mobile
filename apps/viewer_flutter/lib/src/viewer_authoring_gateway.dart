@@ -120,6 +120,11 @@ abstract interface class ViewerAuthoringGateway {
     required RenderScenePoint end,
   });
 
+  Future<RenderSceneLoadResult> setCurvedWallGeometry({
+    required int wallId,
+    required WallArcGeometry geometry,
+  });
+
   Future<RenderSceneLoadResult> autoJoinWalls();
 
   Future<RenderSceneLoadResult> trimExtendWalls({

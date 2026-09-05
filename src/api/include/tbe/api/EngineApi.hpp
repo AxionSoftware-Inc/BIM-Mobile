@@ -859,6 +859,15 @@ public:
     ApiResult<std::vector<RoomDTO>> detect_rooms();
     ApiVoidResult auto_join_walls();
     ApiVoidResult set_wall_axis(std::uint64_t wall_id, Vec2 start, Vec2 end);
+    ApiVoidResult set_curved_wall_geometry(
+        std::uint64_t wall_id,
+        Vec2 start,
+        Vec2 end,
+        Vec2 center,
+        double radius_meters,
+        double start_angle_radians,
+        double sweep_radians
+    );
     ApiVoidResult trim_extend_walls(
         std::uint64_t first_wall_id,
         bool first_uses_start,

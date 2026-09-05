@@ -1192,7 +1192,8 @@ class _WallDraftSummary extends StatelessWidget {
             label: 'Chord',
             value: units.formatLength(firstPoint.distanceTo(secondPoint)),
           ),
-          const Text('Tap/drag the radius or bend point.'),
+          const Text(
+              'The midpoint handle is ready. Drag it to set the radius.'),
         ],
       );
     }

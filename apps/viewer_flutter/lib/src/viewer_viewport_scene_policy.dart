@@ -41,9 +41,22 @@ final class ViewerViewportScenePolicy {
 
   Set<String> defaultVisibleKinds(RenderScene scene) {
     final available = scene.kindCounts.keys.toSet();
+    // Family instances are semantic elements, but generic categories are
+    // intentionally represented by the lightweight `proxy` kind. Keep their
+    // plan/3D visibility tied to the actual scene contents instead of making
+    // every imported proxy architectural (or hiding newly placed families).
+    final familyKinds = <String>{
+      for (final object in scene.objects)
+        if ((object.kindKey == 'column' || object.kindKey == 'proxy') &&
+            (object.metadata['family_asset_id']?.toString().trim().isNotEmpty ??
+                false))
+          object.kindKey,
+    };
     if (projectionMode == RenderSceneProjectionMode.topDown) {
-      final visible =
-          BimElementRegistry.standard.planCoreKinds.intersection(available);
+      final visible = <String>{
+        ...BimElementRegistry.standard.planCoreKinds,
+        ...familyKinds,
+      }.intersection(available);
       if (visible.isNotEmpty) {
         return visible;
       }
@@ -51,8 +64,10 @@ final class ViewerViewportScenePolicy {
 
     // Keep the initial 3D view architectural and solid. Imported/detail
     // proxies remain available through category controls.
-    final architectural =
-        BimElementRegistry.standard.architecturalKinds.intersection(available);
+    final architectural = <String>{
+      ...BimElementRegistry.standard.architecturalKinds,
+      ...familyKinds,
+    }.intersection(available);
     if (architectural.isNotEmpty) {
       return architectural;
     }

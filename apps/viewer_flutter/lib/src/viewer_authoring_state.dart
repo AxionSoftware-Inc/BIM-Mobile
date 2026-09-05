@@ -161,7 +161,7 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
     _updateViewportState(() {
       _editStatusMessage = hadChainEndpoint
           ? mode == WallDrawMode.arc
-              ? 'Arc mode: tap the center, then the arc end point.'
+              ? 'Arc mode: set two endpoints, then drag the midpoint handle for radius.'
               : mode == WallDrawMode.straight
                   ? 'Continue from the last wall endpoint.'
                   : mode.description
@@ -361,6 +361,7 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
       _moveAnchorPoint = null;
       _moveWallOriginalStart = null;
       _moveWallOriginalEnd = null;
+      _draftWallArcGeometry = null;
       _draftMoveElementPoint = null;
       _draftMoveLevelId = null;
       _moveLevelOriginalElevation = null;
@@ -438,6 +439,8 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
     RenderScene nextScene, {
     required String message,
     bool authoritative = false,
+    int? revealElementId,
+    int? selectElementId,
   }) {
     // Reserve the next presentation revision before entering the queue. This
     // invalidates any deferred read immediately, even while the native
@@ -448,6 +451,8 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
         nextScene,
         message: message,
         authoritative: authoritative,
+        revealElementId: revealElementId,
+        selectElementId: selectElementId,
         sceneDataRevision: sceneDataRevision,
       ),
     );
@@ -457,6 +462,8 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
     RenderScene nextScene, {
     required String message,
     bool authoritative = false,
+    int? revealElementId,
+    int? selectElementId,
     required int sceneDataRevision,
   }) async {
     // Engine mutations are already serialized, so a newer queued snapshot
@@ -496,6 +503,16 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
       nextVisibleKinds,
       nextScene,
     );
+    // A newly created element must remain visible even when the user has an
+    // explicit category filter active.  Placement is a focused authoring
+    // action: reveal only the new element's category, preserving every other
+    // filter choice instead of resetting the whole visibility policy.
+    final revealedKind = revealElementId == null
+        ? null
+        : nextScene.objectById(revealElementId)?.kindKey;
+    if (revealedKind != null) {
+      resolvedVisibleKinds.add(revealedKind);
+    }
 
     // Publish the semantic scene and its presentation policy together. An
     // intermediate frame with a new scene but stale visibility/active-level
@@ -525,6 +542,21 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
       nextViewportScene,
       visibleKinds: _visibleKinds,
     );
+
+    if (selectElementId != null &&
+        nextScene.objectById(selectElementId) != null) {
+      // Selection and visibility are committed together for placement. This
+      // avoids restoring the previous wall/level selection for one frame and
+      // makes the newly placed family the only active Inspector object.
+      final selectedId = selectElementId.toString();
+      await _viewportController.selectElements(
+        <String>{selectedId},
+        activeElementId: selectedId,
+      );
+      await _viewportController.highlightElement(selectedId);
+      _scheduleRecoveryAutosave();
+      return;
+    }
 
     if (previousSelectedLevelId != null &&
         nextScene.levelById(previousSelectedLevelId) != null) {
@@ -559,6 +591,8 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
   Future<void> _applyEngineSceneResult(
     RenderSceneLoadResult result, {
     required String message,
+    int? revealElementId,
+    int? selectElementId,
   }) async {
     if (result.scene == null) {
       _updateViewportState(() {
@@ -572,6 +606,8 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
       result.scene!,
       message: message,
       authoritative: true,
+      revealElementId: revealElementId,
+      selectElementId: selectElementId,
     );
   }
 

@@ -433,6 +433,52 @@ extension _TbeViewerApiMethods on TbeViewerApi {
     }
   }
 
+  void setCurvedWallGeometry(
+    ffi.Pointer<ffi.Void> handle, {
+    required int wallId,
+    required double startX,
+    required double startY,
+    required double endX,
+    required double endY,
+    required double centerX,
+    required double centerY,
+    required double radiusMeters,
+    required double startAngleRadians,
+    required double sweepRadians,
+  }) {
+    final start = calloc<TbeVec2>();
+    final end = calloc<TbeVec2>();
+    final center = calloc<TbeVec2>();
+    start.ref
+      ..x = startX
+      ..y = startY;
+    end.ref
+      ..x = endX
+      ..y = endY;
+    center.ref
+      ..x = centerX
+      ..y = centerY;
+    try {
+      _check(
+        handle,
+        _setCurvedWallGeometry(
+          handle,
+          wallId,
+          start.ref,
+          end.ref,
+          center.ref,
+          radiusMeters,
+          startAngleRadians,
+          sweepRadians,
+        ),
+      );
+    } finally {
+      calloc.free(start);
+      calloc.free(end);
+      calloc.free(center);
+    }
+  }
+
   void autoJoinWalls(ffi.Pointer<ffi.Void> handle) {
     _check(handle, _autoJoinWalls(handle));
   }

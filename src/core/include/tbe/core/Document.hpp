@@ -244,6 +244,10 @@ public:
     void set_beam_column_join(ElementId beam_id, ElementId column_id, bool enabled);
     void set_wall_properties(ElementId wall_id, double thickness_meters, double height_meters, ElementId wall_type_id = 0);
     void set_wall_axis(ElementId wall_id, Line2 axis);
+    /// Updates the analytic circular definition of an existing curved wall.
+    /// The wall remains one semantic element; its openings and joins are
+    /// validated/rebuilt as part of the same authoring transaction.
+    void set_curved_wall_geometry(ElementId wall_id, Line2 chord, WallArcData arc);
     /// Applies an axis edit transactionally. A rigid body move carries only
     /// immediate joined endpoints; an endpoint-handle edit stays local.
     void set_wall_axis_with_joins(ElementId wall_id, Line2 axis);

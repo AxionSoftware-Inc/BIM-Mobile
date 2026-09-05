@@ -346,6 +346,26 @@ typedef _SetWallAxisDart = int Function(
   TbeVec2,
   TbeVec2,
 );
+typedef _SetCurvedWallGeometryNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Uint64,
+  TbeVec2,
+  TbeVec2,
+  TbeVec2,
+  ffi.Double,
+  ffi.Double,
+  ffi.Double,
+);
+typedef _SetCurvedWallGeometryDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  int,
+  TbeVec2,
+  TbeVec2,
+  TbeVec2,
+  double,
+  double,
+  double,
+);
 typedef _AutoJoinWallsNative = ffi.Int32 Function(ffi.Pointer<ffi.Void>);
 typedef _AutoJoinWallsDart = int Function(ffi.Pointer<ffi.Void>);
 typedef _TrimExtendWallsNative = ffi.Int32 Function(

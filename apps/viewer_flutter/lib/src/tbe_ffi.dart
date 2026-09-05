@@ -97,6 +97,9 @@ class TbeViewerApi {
         _setWallAxis =
             library.lookupFunction<_SetWallAxisNative, _SetWallAxisDart>(
                 'tbe_set_wall_axis'),
+        _setCurvedWallGeometry = library.lookupFunction<
+            _SetCurvedWallGeometryNative,
+            _SetCurvedWallGeometryDart>('tbe_set_curved_wall_geometry'),
         _autoJoinWalls =
             library.lookupFunction<_AutoJoinWallsNative, _AutoJoinWallsDart>(
                 'tbe_auto_join_walls'),
@@ -259,6 +262,7 @@ class TbeViewerApi {
   final _UpsertWallTypeForWallDart _upsertWallTypeForWall;
   final _SetWallLevelConstraintsDart _setWallLevelConstraints;
   final _SetWallAxisDart _setWallAxis;
+  final _SetCurvedWallGeometryDart _setCurvedWallGeometry;
   final _AutoJoinWallsDart _autoJoinWalls;
   final _TrimExtendWallsDart _trimExtendWalls;
   final _SetElementAssemblyDart _setElementAssembly;

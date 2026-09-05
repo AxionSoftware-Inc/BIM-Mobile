@@ -25,6 +25,7 @@ class NativeDraftOverlayPainter extends CustomPainter {
     required this.draftOpening,
     required this.draftSurface,
     required this.pickedWallIds,
+    required this.visibleKinds,
     required this.wallThicknessMeters,
     required this.activeElementId,
     required this.selectedLevelId,
@@ -44,6 +45,7 @@ class NativeDraftOverlayPainter extends CustomPainter {
   final RenderSceneOpeningDraft? draftOpening;
   final RenderSceneSurfaceDraft? draftSurface;
   final Set<int> pickedWallIds;
+  final Set<String> visibleKinds;
   final double wallThicknessMeters;
   final String? activeElementId;
   final int? selectedLevelId;
@@ -80,7 +82,11 @@ class NativeDraftOverlayPainter extends CustomPainter {
             ..style = PaintingStyle.stroke
             ..strokeWidth = 2.0
             ..color = const Color(0xFF2563EB);
-          for (final point in <RenderScenePoint>[start, end]) {
+          final midpoint = draftWallArc?.control ??
+              RenderSceneEditor.wallMidpointPoint(selected);
+          final handles = <RenderScenePoint>[start, end];
+          if (midpoint != null) handles.add(midpoint);
+          for (final point in handles) {
             final screen = projection.project(point).screen;
             canvas.drawCircle(screen, 7.0, fill);
             canvas.drawCircle(screen, 7.0, stroke);
@@ -573,6 +579,7 @@ class NativeDraftOverlayPainter extends CustomPainter {
         oldDelegate.draftOpening != draftOpening ||
         oldDelegate.draftSurface != draftSurface ||
         !setEquals(oldDelegate.pickedWallIds, pickedWallIds) ||
+        !setEquals(oldDelegate.visibleKinds, visibleKinds) ||
         oldDelegate.wallThicknessMeters != wallThicknessMeters ||
         oldDelegate.units != units ||
         oldDelegate.activeElementId != activeElementId ||

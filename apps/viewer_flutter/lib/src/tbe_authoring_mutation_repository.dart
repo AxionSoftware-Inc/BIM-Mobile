@@ -316,6 +316,29 @@ final class TbeAuthoringMutationRepository {
     return _afterMutation();
   }
 
+  Future<RenderSceneLoadResult> setCurvedWallGeometry({
+    required int wallId,
+    required WallArcGeometry geometry,
+  }) async {
+    _api.setCurvedWallGeometry(
+      _requireHandle(),
+      wallId: wallId,
+      startX: geometry.start.x,
+      startY: geometry.start.y,
+      endX: geometry.end.x,
+      endY: geometry.end.y,
+      centerX: geometry.center.x,
+      centerY: geometry.center.y,
+      radiusMeters: geometry.radiusMeters,
+      startAngleRadians: math.atan2(
+        geometry.start.y - geometry.center.y,
+        geometry.start.x - geometry.center.x,
+      ),
+      sweepRadians: geometry.sweepRadians,
+    );
+    return _afterMutation();
+  }
+
   Future<RenderSceneLoadResult> autoJoinWalls() async {
     _api.autoJoinWalls(_requireHandle());
     return _afterMutation();
