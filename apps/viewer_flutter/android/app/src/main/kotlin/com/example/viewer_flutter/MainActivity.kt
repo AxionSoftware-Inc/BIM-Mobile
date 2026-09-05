@@ -39,7 +39,7 @@ class MainActivity : FlutterActivity() {
     val registry: PlatformViewRegistry = flutterEngine.platformViewsController.registry
     registry.registerViewFactory(
       RenderScenePlatformViewFactory.BRIDGE_VIEW_TYPE,
-      RenderScenePlatformViewFactory(flutterEngine.dartExecutor.binaryMessenger)
+      RenderSceneViewportStabilityGuardFactory(flutterEngine.dartExecutor.binaryMessenger)
     )
     MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "tbe/app_storage")
       .setMethodCallHandler { call, result ->
