@@ -22,13 +22,12 @@ internal data class GeometryData(
 
 internal object RenderSceneEdgeGeometry {
   // 3D architectural edges are geometry, not screen-space strokes. Keep the
-  // ribbon narrow and lift it farther than its half-width so it cannot straddle
-  // the source face when the camera is very close. The previous 10 mm half-
-  // width with only 6-8 mm of lift made the ribbon itself intersect the wall
-  // envelope and produced depth/culling instability on mobile GPUs.
+  // ribbon narrow enough that its existing 6-8 mm face lift always clears the
+  // source surface instead of straddling it at close zoom. The previous 10 mm
+  // half-width was wider than the lift and effectively created a second face.
   private const val ISOMETRIC_WALL_EDGE_HALF_WIDTH_METERS = 0.003
-  private const val ISOMETRIC_STRAIGHT_WALL_EDGE_LIFT_METERS = 0.018
-  private const val ISOMETRIC_CURVED_WALL_EDGE_LIFT_METERS = 0.022
+  private const val STRAIGHT_WALL_EDGE_LIFT_METERS = 0.006
+  private const val CURVED_WALL_EDGE_LIFT_METERS = 0.008
 
   private fun stableWallEdgeOffset(
     first: ScenePoint,
@@ -53,7 +52,7 @@ internal object RenderSceneEdgeGeometry {
     val side = (edgeCenterX - axisCenterX) * normalX +
       (edgeCenterZ - axisCenterZ) * normalZ
     val sideSign = if (side < 0.0) -1.0 else 1.0
-    val offset = ISOMETRIC_STRAIGHT_WALL_EDGE_LIFT_METERS * sideSign
+    val offset = STRAIGHT_WALL_EDGE_LIFT_METERS * sideSign
     return ScenePoint(normalX * offset, 0.0, normalZ * offset)
   }
 
@@ -77,11 +76,11 @@ internal object RenderSceneEdgeGeometry {
 
     // Arc edges cannot use the endpoint chord as a wall normal. Offset them
     // along the true radial direction instead: the outer boundary moves out,
-    // the inner boundary moves in, and both remain depth-tested. Keep the lift
-    // comfortably larger than the ribbon half-width so close zoom never puts
-    // half of the overlay back inside the curved face.
+    // the inner boundary moves in, and both remain depth-tested. The 3D ribbon
+    // is deliberately narrower than this lift, so it stays fully outside the
+    // curved source face while preserving the authored edge position.
     val side = if (radialLength >= arcRadius) 1.0 else -1.0
-    val offset = ISOMETRIC_CURVED_WALL_EDGE_LIFT_METERS * side
+    val offset = CURVED_WALL_EDGE_LIFT_METERS * side
     return ScenePoint(
       radialX / radialLength * offset,
       0.0,
@@ -502,10 +501,10 @@ internal object RenderSceneEdgeGeometry {
     indexData.flip()
 
     // IMPORTANT: culling bounds must describe the generated ribbon, not the
-    // source face. Isometric edges can be lifted 18-50 mm from the source and
-    // junctions can move another 35-50 mm. The previous fixed +/-20 mm source
-    // margin excluded real edge vertices, so Filament could cull/re-admit the
-    // same batch on adjacent close-zoom frames. That presents exactly as
+    // source face. Isometric edges can be lifted up to 40-50 mm from the source
+    // and junctions can move another 35-50 mm. The previous fixed +/-20 mm
+    // source margin excluded real edge vertices, so Filament could cull and
+    // re-admit the same batch on adjacent close-zoom frames. That presents as
     // viewport flicker even when the depth buffer itself is stable.
     val bounds = SceneBounds(
       ScenePoint(generatedMinX, generatedMinY, generatedMinZ),
