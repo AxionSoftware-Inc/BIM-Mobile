@@ -37,6 +37,22 @@ class MainActivity : FlutterActivity() {
   override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
     super.configureFlutterEngine(flutterEngine)
     val registry: PlatformViewRegistry = flutterEngine.platformViewsController.registry
+
+    // IMPORTANT — viewport stability ownership.
+    //
+    // Keep the stability factory here until its two invariants have been moved
+    // into RenderSceneFilamentHostView itself:
+    //   1) every cullable renderable/batch AABB contains every uploaded vertex
+    //      in the SAME coordinate space and is transformed exactly once;
+    //   2) extreme orbit zoom adapts the near plane instead of putting the
+    //      orbit target on the fixed 0.12 m near plane.
+    //
+    // Do NOT replace this with RenderScenePlatformViewFactory merely because a
+    // camera-collision or SurfaceView experiment appears to help one model.
+    // The real shimmer reproduced in both 2D and 3D and even at distance, so
+    // camera-vs-wall contact was not the root cause. The SurfaceView/swapchain
+    // churn experiment was also reverted after it produced no improvement.
+    // See docs/viewport_stability_postmortem.md before changing this boundary.
     registry.registerViewFactory(
       RenderScenePlatformViewFactory.BRIDGE_VIEW_TYPE,
       RenderSceneViewportStabilityGuardFactory(flutterEngine.dartExecutor.binaryMessenger)
