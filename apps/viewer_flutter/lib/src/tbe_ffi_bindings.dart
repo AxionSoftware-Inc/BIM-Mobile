@@ -60,6 +60,15 @@ final class TbeVec2 extends ffi.Struct {
   external double y;
 }
 
+final class TbeVec3 extends ffi.Struct {
+  @ffi.Double()
+  external double x;
+  @ffi.Double()
+  external double y;
+  @ffi.Double()
+  external double z;
+}
+
 final class TbeRect2 extends ffi.Struct {
   @ffi.Double()
   external double minX;
@@ -606,6 +615,34 @@ typedef _CreateColumnDart = int Function(
   double,
   double,
   double,
+  int,
+  ffi.Pointer<ffi.Uint64>,
+);
+typedef _CreateProxyNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Pointer<Utf8>,
+  ffi.Uint64,
+  TbeVec2,
+  ffi.Double,
+  ffi.Double,
+  ffi.Double,
+  ffi.Pointer<TbeVec3>,
+  ffi.Size,
+  ffi.Pointer<ffi.Uint32>,
+  ffi.Size,
+  ffi.Pointer<ffi.Uint64>,
+);
+typedef _CreateProxyDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Pointer<Utf8>,
+  int,
+  TbeVec2,
+  double,
+  double,
+  double,
+  ffi.Pointer<TbeVec3>,
+  int,
+  ffi.Pointer<ffi.Uint32>,
   int,
   ffi.Pointer<ffi.Uint64>,
 );

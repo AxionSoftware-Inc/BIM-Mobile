@@ -68,6 +68,20 @@ abstract interface class ViewerElementCreationGateway {
     int materialId = 0,
   });
 
+  /// Creates a reusable family mesh as one lightweight project instance.
+  /// The family document remains external to the project; only this evaluated
+  /// mesh crosses the project boundary.
+  Future<RenderSceneLoadResult> createFamilyProxy({
+    required String name,
+    required int levelId,
+    required RenderScenePoint position,
+    required double widthMeters,
+    required double depthMeters,
+    required double heightMeters,
+    required List<RenderScenePoint> vertices,
+    required List<int> indices,
+  });
+
   Future<RenderSceneLoadResult> createProfile({
     required int targetKind,
     required int draftMode,

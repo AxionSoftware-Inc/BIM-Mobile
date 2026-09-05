@@ -136,6 +136,9 @@ class TbeViewerApi {
         _createColumn =
             library.lookupFunction<_CreateColumnNative, _CreateColumnDart>(
                 'tbe_create_column'),
+        _createProxy =
+            library.lookupFunction<_CreateProxyNative, _CreateProxyDart>(
+                'tbe_create_proxy'),
         _setOpeningLevelLock = library.lookupFunction<
             _SetOpeningLevelLockNative,
             _SetOpeningLevelLockDart>('tbe_set_opening_level_lock'),
@@ -265,6 +268,7 @@ class TbeViewerApi {
   final _CreateDoorDart _createDoor;
   final _CreateWindowDart _createWindow;
   final _CreateColumnDart _createColumn;
+  final _CreateProxyDart _createProxy;
   final _SetOpeningLevelLockDart _setOpeningLevelLock;
   final _SetOpeningLevelDart _setOpeningLevel;
   final _SetOpeningLevelConstraintDart _setOpeningLevelConstraint;

@@ -39,6 +39,7 @@ using tbe::core::Document;
 using tbe::core::Element;
 using tbe::core::ElementId;
 using tbe::core::Line2;
+using tbe::core::MeshBuffer;
 using tbe::core::Point2;
 using tbe::core::Point3;
 using tbe::core::Project;
@@ -5034,6 +5035,44 @@ ApiResult<ElementIdDTO> EngineSession::create_column(
     ElementIdDTO created{};
     return apply_mutation_with_value(*impl_, "create_column", created, [&](Document& document, ElementIdDTO& out) {
         out = to_id(document.create_column(level_id, to_point(position), width_meters, depth_meters, height_meters, material_id));
+    });
+}
+
+ApiResult<ElementIdDTO> EngineSession::create_proxy(
+    std::string name,
+    std::uint64_t level_id,
+    Vec2 position,
+    double width_meters,
+    double depth_meters,
+    double height_meters,
+    std::vector<Vec3> vertices,
+    std::vector<std::uint32_t> indices
+) {
+    ElementIdDTO created{};
+    return apply_mutation_with_value(*impl_, "create_proxy", created, [&](Document& document, ElementIdDTO& out) {
+        if (vertices.empty() || indices.empty() || indices.size() % 3 != 0) {
+            throw std::invalid_argument("family proxy mesh must contain triangles");
+        }
+        for (const auto index : indices) {
+            if (index >= vertices.size()) {
+                throw std::invalid_argument("family proxy mesh index is out of range");
+            }
+        }
+        MeshBuffer mesh{};
+        mesh.vertices.reserve(vertices.size());
+        for (const auto& vertex : vertices) {
+            mesh.vertices.push_back(Point3{.x = vertex.x, .y = vertex.y, .z = vertex.z});
+        }
+        mesh.indices = std::move(indices);
+        out = to_id(document.create_proxy(
+            std::move(name),
+            level_id,
+            to_point(position),
+            width_meters,
+            depth_meters,
+            height_meters,
+            std::move(mesh)
+        ));
     });
 }
 

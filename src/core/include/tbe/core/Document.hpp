@@ -151,7 +151,8 @@ public:
         Point2 position,
         double width_meters,
         double depth_meters,
-        double height_meters
+        double height_meters,
+        MeshBuffer mesh = {}
     );
     ElementId create_floor_system_for_room(ElementId room_id, ElementId assembly_id);
     ElementId create_ceiling_system_for_room(ElementId room_id, ElementId assembly_id, double height_offset_meters = 0.0);

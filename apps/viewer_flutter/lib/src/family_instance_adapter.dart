@@ -50,17 +50,33 @@ abstract final class FamilyInstanceAdapter {
     }
 
     final category = family.category;
+    final customMeshGeometry = family.features.any(
+      (feature) =>
+          feature.kind != FamilyFeatureKind.box &&
+          feature.kind != FamilyFeatureKind.profile,
+    );
     late final RenderSceneLoadResult created;
     switch (category) {
       case FamilyCategory.column:
       case FamilyCategory.structural:
-        created = await creationGateway.createColumn(
-          levelId: levelId,
-          position: position,
-          widthMeters: _lengthValue(family, type, 'width'),
-          depthMeters: _lengthValue(family, type, 'depth'),
-          heightMeters: _lengthValue(family, type, 'height'),
-        );
+        if (customMeshGeometry) {
+          created = await _createMeshInstance(
+            family: family,
+            type: type,
+            position: position,
+            levelId: levelId,
+            evaluatedMesh: evaluatedMesh,
+            creationGateway: creationGateway,
+          );
+        } else {
+          created = await creationGateway.createColumn(
+            levelId: levelId,
+            position: position,
+            widthMeters: _lengthValue(family, type, 'width'),
+            depthMeters: _lengthValue(family, type, 'depth'),
+            heightMeters: _lengthValue(family, type, 'height'),
+          );
+        }
       case FamilyCategory.door:
         final wallId = hostWallId;
         if (wallId == null) {
@@ -95,8 +111,13 @@ abstract final class FamilyInstanceAdapter {
         );
       case FamilyCategory.genericModel:
       case FamilyCategory.furniture:
-        throw const FormatException(
-          'Generic family placement is not enabled yet; use a Column family.',
+        created = await _createMeshInstance(
+          family: family,
+          type: type,
+          position: position,
+          levelId: levelId,
+          evaluatedMesh: evaluatedMesh,
+          creationGateway: creationGateway,
         );
     }
 
@@ -132,6 +153,52 @@ abstract final class FamilyInstanceAdapter {
       type: type,
       scene: withReference,
     );
+  }
+
+  static Future<RenderSceneLoadResult> _createMeshInstance({
+    required FamilyDocument family,
+    required FamilyTypeDefinition type,
+    required RenderScenePoint position,
+    required int levelId,
+    required FamilyEvaluatedMesh evaluatedMesh,
+    required ViewerElementCreationGateway creationGateway,
+  }) {
+    final indices = _triangleIndices(evaluatedMesh);
+    if (indices.isEmpty) {
+      throw const FormatException('Family mesh has no renderable triangles.');
+    }
+    final vertices = <RenderScenePoint>[
+      for (final vertex in evaluatedMesh.vertices)
+        RenderScenePoint(
+          x: position.x + vertex.x,
+          y: position.y + vertex.z,
+          z: position.z + vertex.y,
+        ),
+    ];
+    return creationGateway.createFamilyProxy(
+      name: '${family.name} · ${type.name}',
+      levelId: levelId,
+      position: position,
+      widthMeters: _lengthValue(family, type, 'width', fallback: 1.0),
+      depthMeters: _lengthValue(family, type, 'depth', fallback: 1.0),
+      heightMeters: _lengthValue(family, type, 'height', fallback: 1.0),
+      vertices: vertices,
+      indices: indices,
+    );
+  }
+
+  static List<int> _triangleIndices(FamilyEvaluatedMesh mesh) {
+    final result = <int>[];
+    for (final face in mesh.faces) {
+      if (face.indices.length < 3) continue;
+      for (var index = 1; index < face.indices.length - 1; index++) {
+        result
+          ..add(face.indices[0])
+          ..add(face.indices[index])
+          ..add(face.indices[index + 1]);
+      }
+    }
+    return result;
   }
 
   static double _lengthValue(

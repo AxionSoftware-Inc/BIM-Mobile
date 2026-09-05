@@ -102,6 +102,58 @@ int main() {
     }
 
     {
+        // Evaluated family meshes cross the project boundary as one proxy
+        // instance and survive the normal project JSON round trip.
+        auto mesh_result = tbe::api::create_session("Family Mesh API Test");
+        assert(mesh_result.ok() && mesh_result.value.has_value());
+        auto mesh_session = std::move(*mesh_result.value);
+        assert(mesh_session->new_project("Family Mesh").ok());
+        const auto level = mesh_session->create_level("Level 1", 0.0, 3.2);
+        assert(level.ok() && level.value.has_value());
+        const std::vector<tbe::api::Vec3> vertices{
+            {-0.5, 0.0, 0.0}, {0.5, 0.0, 0.0}, {0.0, 1.0, 0.0},
+            {-0.5, 0.0, 0.5}, {0.5, 0.0, 0.5}, {0.0, 1.0, 0.5},
+        };
+        const std::vector<std::uint32_t> indices{
+            0, 1, 2, 3, 5, 4,
+            0, 3, 4, 0, 4, 1,
+            1, 4, 5, 1, 5, 2,
+            2, 5, 3, 2, 3, 0,
+        };
+        const auto proxy = mesh_session->create_proxy(
+            "Family mesh", level.value->value, {.x = 2.0, .y = 2.0},
+            1.0, 0.5, 1.0, vertices, indices);
+        assert(proxy.ok() && proxy.value.has_value());
+        const auto scene = mesh_session->get_render_scene();
+        assert(scene.ok() && scene.value.has_value());
+        const auto object = std::find_if(
+            scene.value->objects.begin(), scene.value->objects.end(),
+            [&](const auto& candidate) {
+                return candidate.element_id.value == proxy.value->value;
+            });
+        assert(object != scene.value->objects.end());
+        assert(object->kind == tbe::api::ApiElementKind::Proxy);
+        assert(object->mesh.positions.size() == vertices.size());
+        assert(object->mesh.indices.size() == indices.size());
+        const auto saved = mesh_session->save_project_json();
+        assert(saved.ok() && saved.value.has_value());
+        assert(saved.value->find("\"mesh\"") != std::string::npos);
+        auto reloaded_result = tbe::api::create_session("Family Mesh Reload Test");
+        assert(reloaded_result.ok() && reloaded_result.value.has_value());
+        auto reloaded = std::move(*reloaded_result.value);
+        assert(reloaded->load_project_json(*saved.value).ok());
+        const auto reloaded_scene = reloaded->get_render_scene();
+        assert(reloaded_scene.ok() && reloaded_scene.value.has_value());
+        const auto reloaded_object = std::find_if(
+            reloaded_scene.value->objects.begin(), reloaded_scene.value->objects.end(),
+            [&](const auto& candidate) {
+                return candidate.element_id.value == proxy.value->value;
+            });
+        assert(reloaded_object != reloaded_scene.value->objects.end());
+        assert(reloaded_object->mesh.indices.size() == indices.size());
+    }
+
+    {
         // The public authoring seam must keep the circular wall as one
         // selectable element while exposing a smooth derived render mesh.
         auto curved_result = tbe::api::create_session("Curved Wall API Test");

@@ -3591,7 +3591,8 @@ ElementId Document::create_proxy(
     Point2 position,
     double width_meters,
     double depth_meters,
-    double height_meters
+    double height_meters,
+    MeshBuffer mesh
 ) {
     if (name.empty()) {
         throw std::invalid_argument("proxy name must not be empty");
@@ -3607,6 +3608,7 @@ ElementId Document::create_proxy(
         .width_meters = width_meters,
         .depth_meters = depth_meters,
         .height_meters = height_meters,
+        .mesh = std::move(mesh),
     });
     invalidate_dependency_graph_cache();
     return id;

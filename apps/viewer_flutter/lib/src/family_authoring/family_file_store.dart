@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:file_selector/file_selector.dart';
 
 import '../app_project_storage.dart';
+import 'built_in_family_catalog.dart';
 import 'family_document.dart';
 
 final class FamilyAssetFile {
@@ -19,6 +20,27 @@ final class FamilyAssetFile {
 /// therefore be saved and later removed from a project without changing the
 /// project persistence contract.
 abstract final class FamilyFileStore {
+  /// Seeds the local library with the curated starter families once. The
+  /// files are ordinary family assets after this call and can be edited,
+  /// copied or removed independently of project documents.
+  static Future<void> ensureBuiltInFamilies() async {
+    final directory = await _libraryDirectory();
+    final existingIds = <String>{};
+    await for (final entity in directory.list()) {
+      if (entity is! File ||
+          !entity.path.endsWith('.${FamilyDocument.fileExtension}')) {
+        continue;
+      }
+      final document = await _readDocument(entity);
+      if (document != null) existingIds.add(document.id);
+    }
+    for (final family in BuiltInFamilyCatalog.families) {
+      if (!existingIds.contains(family.id)) {
+        await _saveToLibrary(family);
+      }
+    }
+  }
+
   static Future<List<FamilyAssetFile>> listStored() async {
     final directory = await _libraryDirectory();
     final assets = <FamilyAssetFile>[];
@@ -100,9 +122,20 @@ abstract final class FamilyFileStore {
         .replaceAll(RegExp(r'_+'), '_')
         .replaceAll(RegExp(r'^_|_$'), '');
     final fileName = safeName.isEmpty ? 'New_Family' : safeName;
-    final target = File(
+    var target = File(
       '${directory.path}${Platform.pathSeparator}$fileName.${FamilyDocument.fileExtension}',
     );
+    var suffix = 2;
+    while (await target.exists()) {
+      final existing = await _readDocument(target);
+      if (existing?.id == document.id) {
+        break;
+      }
+      target = File(
+        '${directory.path}${Platform.pathSeparator}${fileName}_$suffix.${FamilyDocument.fileExtension}',
+      );
+      suffix += 1;
+    }
     final temporary = File(
       '${target.path}.tmp-${DateTime.now().microsecondsSinceEpoch}',
     );
@@ -127,5 +160,13 @@ abstract final class FamilyFileStore {
     );
     if (!await directory.exists()) await directory.create(recursive: true);
     return directory;
+  }
+
+  static Future<FamilyDocument?> _readDocument(File file) async {
+    try {
+      return FamilyDocument.fromJson(jsonDecode(await file.readAsString()));
+    } catch (_) {
+      return null;
+    }
   }
 }

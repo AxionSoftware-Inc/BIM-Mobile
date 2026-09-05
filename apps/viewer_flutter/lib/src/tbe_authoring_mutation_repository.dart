@@ -385,6 +385,32 @@ final class TbeAuthoringMutationRepository {
     return _afterMutation();
   }
 
+  Future<RenderSceneLoadResult> createFamilyProxy({
+    required String name,
+    required int levelId,
+    required RenderScenePoint position,
+    required double widthMeters,
+    required double depthMeters,
+    required double heightMeters,
+    required List<RenderScenePoint> vertices,
+    required List<int> indices,
+  }) async {
+    final id = _api.createProxy(
+      _requireHandle(),
+      name: name,
+      levelId: levelId,
+      x: position.x,
+      y: position.y,
+      widthMeters: widthMeters,
+      depthMeters: depthMeters,
+      heightMeters: heightMeters,
+      vertices: vertices,
+      indices: indices,
+    );
+    _setLastCreatedElementId(id);
+    return _afterMutation();
+  }
+
   Future<RenderSceneLoadResult> setOpeningLevelLock({
     required int openingId,
     required bool locked,

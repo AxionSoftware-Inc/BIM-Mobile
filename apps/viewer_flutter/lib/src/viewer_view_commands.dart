@@ -38,10 +38,17 @@ extension _ViewerViewCommands on _ViewerHomePageState {
     }
 
     try {
+      await FamilyFileStore.ensureBuiltInFamilies();
       final storedFamilies = await FamilyFileStore.listStored();
       final asset = await _chooseFamilyAsset(storedFamilies);
       if (!mounted || asset == null) return;
-      final placement = await _chooseFamilyPlacement(asset.document, scene);
+      final selected = _selectedObject(scene);
+      final hostWall = selected?.kindKey == 'wall' ? selected : null;
+      final placement = await _chooseFamilyPlacement(
+        asset.document,
+        scene,
+        hostWall: hostWall,
+      );
       if (!mounted || placement == null) return;
       _updateViewportState(() {
         _isBusy = true;
@@ -54,11 +61,10 @@ extension _ViewerViewCommands on _ViewerHomePageState {
         familyAssetPath: asset.path,
         levelId: placement.levelId,
         position: RenderScenePoint(x: placement.x, y: placement.y, z: 0.0),
+        offsetMeters: placement.offsetMeters,
         creationGateway: session,
         authoringGateway: session,
-        hostWallId: _selectedObject(scene)?.kindKey == 'wall'
-            ? _selectedObject(scene)?.elementId
-            : null,
+        hostWallId: hostWall?.elementId,
       );
       await _applyEngineSceneResult(
         result.scene,
@@ -77,23 +83,55 @@ extension _ViewerViewCommands on _ViewerHomePageState {
     }
   }
 
-  Future<({FamilyTypeDefinition type, int levelId, double x, double y})?>
-      _chooseFamilyPlacement(FamilyDocument family, RenderScene scene) async {
+  Future<
+      ({
+        FamilyTypeDefinition type,
+        int levelId,
+        double x,
+        double y,
+        double offsetMeters,
+      })?> _chooseFamilyPlacement(
+    FamilyDocument family,
+    RenderScene scene, {
+    RenderSceneObject? hostWall,
+  }) async {
     final levels = scene.levels;
     if (levels.isEmpty || family.types.isEmpty) return null;
+    final isHostedOpening = family.category == FamilyCategory.door ||
+        family.category == FamilyCategory.window;
     var selectedType = family.types.first;
-    var selectedLevelId =
-        scene.levelById(_activeLevelId)?.levelId ?? levels.first.levelId;
+    var selectedLevelId = hostWall?.levelId ??
+        scene.levelById(_activeLevelId)?.levelId ??
+        levels.first.levelId;
     final bounds =
         scene.bounds.isFinite ? scene.bounds : RenderSceneBounds.zero();
+    final hostWallCenter =
+        hostWall == null ? null : RenderSceneQueries.wallCenterPoint(hostWall);
+    final hostWallLength =
+        hostWall == null ? null : RenderSceneQueries.wallLength(hostWall);
+    final initialPoint = hostWallCenter ?? bounds.center;
+    final initialOffset = hostWallLength != null && hostWallLength.isFinite
+        ? hostWallLength * 0.5
+        : 0.0;
+    final hostedPlacementAvailable = !isHostedOpening ||
+        (hostWall != null &&
+            hostWallLength != null &&
+            hostWallLength.isFinite &&
+            hostWallLength > 0.0);
     final xController = TextEditingController(
-      text: bounds.center.x.toStringAsFixed(2),
+      text: initialPoint.x.toStringAsFixed(2),
     );
     final yController = TextEditingController(
-      text: bounds.center.y.toStringAsFixed(2),
+      text: initialPoint.y.toStringAsFixed(2),
     );
     final result = await showDialog<
-        ({FamilyTypeDefinition type, int levelId, double x, double y})>(
+        ({
+          FamilyTypeDefinition type,
+          int levelId,
+          double x,
+          double y,
+          double offsetMeters,
+        })>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setLocalState) => AlertDialog(
@@ -151,32 +189,38 @@ extension _ViewerViewCommands on _ViewerHomePageState {
                   },
                 ),
                 const SizedBox(height: 8),
-                Row(
-                  children: <Widget>[
-                    Expanded(
-                      child: _NumericField(
-                        label: 'X (m)',
-                        controller: xController,
-                        onChanged: (_) {},
+                if (isHostedOpening)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        hostWall == null
+                            ? 'Select a host wall in the viewport before placing this family.'
+                            : 'Host wall #${hostWall.elementId ?? '-'} · center placement · ${initialOffset.toStringAsFixed(2)} m',
+                        style: Theme.of(context).textTheme.bodySmall,
                       ),
                     ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: _NumericField(
-                        label: 'Y (m)',
-                        controller: yController,
-                        onChanged: (_) {},
+                  )
+                else
+                  Row(
+                    children: <Widget>[
+                      Expanded(
+                        child: _NumericField(
+                          label: 'X (m)',
+                          controller: xController,
+                          onChanged: (_) {},
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-                if (family.category == FamilyCategory.door ||
-                    family.category == FamilyCategory.window)
-                  const Padding(
-                    padding: EdgeInsets.only(top: 10),
-                    child: Text(
-                      'Select a host wall in the viewport before placing this family.',
-                    ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _NumericField(
+                          label: 'Y (m)',
+                          controller: yController,
+                          onChanged: (_) {},
+                        ),
+                      ),
+                    ],
                   ),
               ],
             ),
@@ -187,19 +231,26 @@ extension _ViewerViewCommands on _ViewerHomePageState {
               child: const Text('Cancel'),
             ),
             FilledButton(
-              onPressed: () {
-                final x = double.tryParse(xController.text.trim());
-                final y = double.tryParse(yController.text.trim());
-                if (x == null || y == null || !x.isFinite || !y.isFinite) {
-                  return;
-                }
-                Navigator.of(dialogContext).pop((
-                  type: selectedType,
-                  levelId: selectedLevelId,
-                  x: x,
-                  y: y,
-                ));
-              },
+              onPressed: hostedPlacementAvailable
+                  ? () {
+                      final x = double.tryParse(xController.text.trim());
+                      final y = double.tryParse(yController.text.trim());
+                      if (!isHostedOpening &&
+                          (x == null ||
+                              y == null ||
+                              !x.isFinite ||
+                              !y.isFinite)) {
+                        return;
+                      }
+                      Navigator.of(dialogContext).pop((
+                        type: selectedType,
+                        levelId: selectedLevelId,
+                        x: x ?? initialPoint.x,
+                        y: y ?? initialPoint.y,
+                        offsetMeters: isHostedOpening ? initialOffset : 0.0,
+                      ));
+                    }
+                  : null,
               child: const Text('Place'),
             ),
           ],
@@ -218,25 +269,36 @@ extension _ViewerViewCommands on _ViewerHomePageState {
     final choice = await showDialog<({FamilyAssetFile? asset, bool browse})>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Load family'),
+        title: const Text('Add family to project'),
         content: SizedBox(
           width: 420,
-          child: ListView.separated(
-            shrinkWrap: true,
-            itemCount: storedFamilies.length,
-            separatorBuilder: (_, __) => const Divider(height: 1),
-            itemBuilder: (context, index) {
-              final asset = storedFamilies[index];
-              return ListTile(
-                leading: const Icon(Icons.view_in_ar_outlined),
-                title: Text(asset.document.name),
-                subtitle: Text(asset.document.category.name),
-                onTap: () => Navigator.of(dialogContext).pop((
-                  asset: asset,
-                  browse: false,
-                )),
-              );
-            },
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              const Text(
+                'Choose a saved family. Columns place freely; doors and windows need a selected solid wall.',
+              ),
+              const SizedBox(height: 12),
+              ListView.separated(
+                shrinkWrap: true,
+                itemCount: storedFamilies.length,
+                separatorBuilder: (_, __) => const Divider(height: 1),
+                itemBuilder: (context, index) {
+                  final asset = storedFamilies[index];
+                  return ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.view_in_ar_outlined),
+                    title: Text(asset.document.name),
+                    subtitle: Text(asset.document.category.name),
+                    onTap: () => Navigator.of(dialogContext).pop((
+                      asset: asset,
+                      browse: false,
+                    )),
+                  );
+                },
+              ),
+            ],
           ),
         ),
         actions: <Widget>[

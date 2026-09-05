@@ -845,6 +845,72 @@ extension _TbeViewerApiMethods on TbeViewerApi {
     }
   }
 
+  int createProxy(
+    ffi.Pointer<ffi.Void> handle, {
+    required String name,
+    required int levelId,
+    required double x,
+    required double y,
+    required double widthMeters,
+    required double depthMeters,
+    required double heightMeters,
+    required List<RenderScenePoint> vertices,
+    required List<int> indices,
+  }) {
+    if (vertices.isEmpty || indices.isEmpty || indices.length % 3 != 0) {
+      throw ArgumentError('Proxy mesh must contain triangles.');
+    }
+    for (final index in indices) {
+      if (index < 0 || index >= vertices.length) {
+        throw RangeError.index(index, indices, 'indices');
+      }
+    }
+    final namePtr = name.toNativeUtf8();
+    final position = calloc<TbeVec2>();
+    final vertexBuffer = calloc<TbeVec3>(vertices.length);
+    final indexBuffer = calloc<ffi.Uint32>(indices.length);
+    final out = calloc<ffi.Uint64>();
+    try {
+      for (var index = 0; index < vertices.length; index++) {
+        final vertex = vertices[index];
+        vertexBuffer[index]
+          ..x = vertex.x
+          ..y = vertex.y
+          ..z = vertex.z;
+      }
+      for (var index = 0; index < indices.length; index++) {
+        indexBuffer[index] = indices[index];
+      }
+      position.ref
+        ..x = x
+        ..y = y;
+      _check(
+        handle,
+        _createProxy(
+          handle,
+          namePtr,
+          levelId,
+          position.ref,
+          widthMeters,
+          depthMeters,
+          heightMeters,
+          vertexBuffer,
+          vertices.length,
+          indexBuffer,
+          indices.length,
+          out,
+        ),
+      );
+      return out.value;
+    } finally {
+      calloc.free(namePtr);
+      calloc.free(vertexBuffer);
+      calloc.free(indexBuffer);
+      calloc.free(out);
+      calloc.free(position);
+    }
+  }
+
   void setElementFamilyReference(
     ffi.Pointer<ffi.Void> handle, {
     required int elementId,

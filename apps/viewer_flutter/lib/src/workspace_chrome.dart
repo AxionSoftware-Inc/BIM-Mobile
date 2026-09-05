@@ -175,7 +175,7 @@ class WorkspaceAppBar extends StatelessWidget implements PreferredSizeWidget {
               enabled: !busy && engineBacked && hasScene,
               child: const ListTile(
                 leading: Icon(Icons.view_in_ar_outlined),
-                title: Text('Load family'),
+                title: Text('Add family to project'),
               ),
             ),
             PopupMenuItem(

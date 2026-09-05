@@ -22,6 +22,12 @@ typedef struct TbeVec2 {
     double y;
 } TbeVec2;
 
+typedef struct TbeVec3 {
+    double x;
+    double y;
+    double z;
+} TbeVec3;
+
 typedef struct TbeScheduleSummary {
     size_t wall_rows;
     size_t opening_rows;
@@ -341,6 +347,20 @@ TbeApiStatusCode tbe_create_column(
     double height_meters,
     uint64_t material_id,
     uint64_t* out_column_id
+);
+TbeApiStatusCode tbe_create_proxy(
+    TbeEngineHandle* handle,
+    const char* name,
+    uint64_t level_id,
+    TbeVec2 position,
+    double width_meters,
+    double depth_meters,
+    double height_meters,
+    const TbeVec3* vertices,
+    size_t vertex_count,
+    const uint32_t* indices,
+    size_t index_count,
+    uint64_t* out_proxy_id
 );
 TbeApiStatusCode tbe_create_stair(
     TbeEngineHandle* handle,

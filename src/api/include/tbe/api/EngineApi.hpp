@@ -934,6 +934,16 @@ public:
         double height_meters,
         std::uint64_t material_id
     );
+    ApiResult<ElementIdDTO> create_proxy(
+        std::string name,
+        std::uint64_t level_id,
+        Vec2 position,
+        double width_meters,
+        double depth_meters,
+        double height_meters,
+        std::vector<Vec3> vertices,
+        std::vector<std::uint32_t> indices
+    );
     ApiResult<ElementIdDTO> create_beam(
         std::uint64_t level_id,
         Vec2 start,

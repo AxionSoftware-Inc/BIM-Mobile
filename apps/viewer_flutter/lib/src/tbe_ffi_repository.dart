@@ -833,6 +833,30 @@ class ViewerRepository
       );
 
   @override
+  Future<RenderSceneLoadResult> createFamilyProxy({
+    required String name,
+    required int levelId,
+    required RenderScenePoint position,
+    required double widthMeters,
+    required double depthMeters,
+    required double heightMeters,
+    required List<RenderScenePoint> vertices,
+    required List<int> indices,
+  }) =>
+      _authoringQueue.run(
+        () => _mutations.createFamilyProxy(
+          name: name,
+          levelId: levelId,
+          position: position,
+          widthMeters: widthMeters,
+          depthMeters: depthMeters,
+          heightMeters: heightMeters,
+          vertices: vertices,
+          indices: indices,
+        ),
+      );
+
+  @override
   Future<RenderSceneLoadResult> setOpeningLevelLock({
     required int openingId,
     required bool locked,

@@ -703,6 +703,56 @@ TbeApiStatusCode tbe_create_column(
     return apply_result(handle, result);
 }
 
+TbeApiStatusCode tbe_create_proxy(
+    TbeEngineHandle* handle,
+    const char* name,
+    uint64_t level_id,
+    TbeVec2 position,
+    double width_meters,
+    double depth_meters,
+    double height_meters,
+    const TbeVec3* vertices,
+    size_t vertex_count,
+    const uint32_t* indices,
+    size_t index_count,
+    uint64_t* out_proxy_id
+) {
+    if (handle == nullptr || handle->session == nullptr || name == nullptr || out_proxy_id == nullptr) {
+        return null_handle_error(handle);
+    }
+    if ((vertex_count > 0 && vertices == nullptr) || (index_count > 0 && indices == nullptr)) {
+        return TBE_API_INVALID_ARGUMENT;
+    }
+    std::vector<tbe::api::Vec3> mesh_vertices;
+    mesh_vertices.reserve(vertex_count);
+    for (size_t index = 0; index < vertex_count; ++index) {
+        mesh_vertices.push_back(tbe::api::Vec3{
+            .x = vertices[index].x,
+            .y = vertices[index].y,
+            .z = vertices[index].z,
+        });
+    }
+    std::vector<uint32_t> mesh_indices;
+    mesh_indices.reserve(index_count);
+    for (size_t index = 0; index < index_count; ++index) {
+        mesh_indices.push_back(indices[index]);
+    }
+    const auto result = handle->session->create_proxy(
+        name,
+        level_id,
+        tbe::api::Vec2{.x = position.x, .y = position.y},
+        width_meters,
+        depth_meters,
+        height_meters,
+        std::move(mesh_vertices),
+        std::move(mesh_indices)
+    );
+    if (result.ok() && result.value.has_value()) {
+        *out_proxy_id = result.value->value;
+    }
+    return apply_result(handle, result);
+}
+
 TbeApiStatusCode tbe_create_stair(
     TbeEngineHandle* handle, uint64_t base_level_id, uint64_t top_level_id,
     TbeVec2 start, TbeVec2 direction, double width_meters, double total_rise_meters,

@@ -1251,7 +1251,12 @@ std::string Document::to_json() const {
             out << ",\"width\":" << proxy->width_meters
                 << ",\"depth\":" << proxy->depth_meters
                 << ",\"height\":" << proxy->height_meters;
-            if (has_exact_ifc_geometry(element) && !proxy->mesh.vertices.empty()) {
+            // Family instances use the same lightweight proxy boundary as
+            // unsupported IFC products, but their evaluated mesh is authored
+            // locally rather than tagged as IFC exact geometry. Persist any
+            // non-empty proxy mesh so a project reopen cannot silently fall
+            // back to the bounding envelope and lose the family shape.
+            if (!proxy->mesh.vertices.empty() && !proxy->mesh.indices.empty()) {
                 out << ",\"mesh\":";
                 write_mesh(out, proxy->mesh);
             }

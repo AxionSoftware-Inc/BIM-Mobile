@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:viewer_flutter/src/family_authoring/family_authoring_module.dart';
+import 'package:viewer_flutter/src/family_authoring/built_in_family_catalog.dart';
 
 void main() {
   test('starter family is an independent parametric document', () {
@@ -195,6 +196,34 @@ void main() {
     expect(halfRevolved.faces, hasLength(24));
   });
 
+  test('curated exterior column and cabinet contain usable project meshes', () {
+    final families = BuiltInFamilyCatalog.families;
+    expect(families, hasLength(2));
+
+    final column = families.firstWhere(
+      (family) => family.category == FamilyCategory.column,
+    );
+    final cabinet = families.firstWhere(
+      (family) => family.category == FamilyCategory.furniture,
+    );
+    expect(FamilyDocumentValidator.validate(column).isValid, isTrue);
+    expect(FamilyDocumentValidator.validate(cabinet).isValid, isTrue);
+
+    final columnMesh = FamilyGeometryEvaluator.evaluateMesh(
+      column,
+      column.types.single,
+    );
+    final cabinetMesh = FamilyGeometryEvaluator.evaluateMesh(
+      cabinet,
+      cabinet.types.single,
+    );
+    expect(columnMesh.vertices.length, greaterThan(100));
+    expect(columnMesh.faces.length, greaterThan(100));
+    expect(cabinetMesh.vertices.length, 104);
+    expect(cabinetMesh.faces.length, 78);
+    expect(cabinetMesh.isApproximate, isFalse);
+  });
+
   testWidgets('Create family opens the detachable authoring page',
       (WidgetTester tester) async {
     await tester.pumpWidget(
@@ -212,17 +241,32 @@ void main() {
     await tester.tap(find.text('Create family'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Family Authoring'), findsOneWidget);
+    expect(find.text('Family Editor'), findsOneWidget);
     expect(find.text('Family type'), findsOneWidget);
     expect(find.text('Feature graph'), findsOneWidget);
+    final featureGraphTile = find.ancestor(
+      of: find.text('Feature graph'),
+      matching: find.byType(ExpansionTile),
+    );
+    await tester.ensureVisible(featureGraphTile);
+    await tester.tap(featureGraphTile);
+    await tester.pumpAndSettle();
     expect(find.text('Box solid'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Use in project'));
+    await tester.pumpAndSettle();
+    expect(find.text('Use this family in a project'), findsOneWidget);
+    expect(find.textContaining('Add family to project'), findsNWidgets(2));
+    await tester.tap(find.text('Got it'));
+    await tester.pumpAndSettle();
   });
 
   testWidgets('profile canvas closes and creates a parametric extrude',
       (WidgetTester tester) async {
-    await tester.binding.setSurfaceSize(const Size(800, 1000));
+    await tester.binding.setSurfaceSize(const Size(800, 1800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(const MaterialApp(home: FamilyEditorPage()));
+    await tester.pumpAndSettle();
 
     final profile = find.widgetWithText(OutlinedButton, 'Profile');
     await tester.tap(profile);
@@ -250,6 +294,13 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(extrude);
     await tester.pump();
+    final featureGraphTile = find.ancestor(
+      of: find.text('Feature graph'),
+      matching: find.byType(ExpansionTile),
+    );
+    await tester.ensureVisible(featureGraphTile);
+    await tester.tap(featureGraphTile);
+    await tester.pumpAndSettle();
     expect(find.text('Extrude Profile 1'), findsOneWidget);
     expect(find.text('Extrusion depth'), findsOneWidget);
   });

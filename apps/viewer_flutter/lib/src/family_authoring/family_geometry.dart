@@ -153,10 +153,11 @@ abstract final class FamilyGeometryEvaluator {
           isApproximate: true,
         );
       case FamilyFeatureKind.freeformMesh:
-        return _boxMesh(document, type).copyWith(
-          source: feature.label.isEmpty ? 'Freeform mesh' : feature.label,
-          isApproximate: true,
-        );
+        return _freeformMesh(feature) ??
+            _boxMesh(document, type).copyWith(
+              source: feature.label.isEmpty ? 'Freeform mesh' : feature.label,
+              isApproximate: true,
+            );
       case FamilyFeatureKind.profile:
         return _boxMesh(document, type);
     }
@@ -406,6 +407,61 @@ abstract final class FamilyGeometryEvaluator {
       vertices: List<FamilyMeshVertex>.unmodifiable(vertices),
       source: feature.label.isEmpty ? 'Transform' : feature.label,
     );
+  }
+
+  /// Reads a compact, editor-independent mesh payload used by curated
+  /// families and by future freeform authoring tools. Keeping this parser in
+  /// the evaluator means the project adapter receives the same validated
+  /// mesh as the family preview without importing family files into the
+  /// native document model.
+  static FamilyEvaluatedMesh? _freeformMesh(FamilyFeature feature) {
+    final rawVertices = feature.parameters['vertices'];
+    final rawFaces = feature.parameters['faces'];
+    if (rawVertices is! List || rawFaces is! List) return null;
+
+    final vertices = <FamilyMeshVertex>[];
+    for (final rawVertex in rawVertices) {
+      double? x;
+      double? y;
+      double? z;
+      if (rawVertex is List && rawVertex.length >= 3) {
+        x = _finiteDouble(rawVertex[0]);
+        y = _finiteDouble(rawVertex[1]);
+        z = _finiteDouble(rawVertex[2]);
+      } else if (rawVertex is Map) {
+        x = _finiteDouble(rawVertex['x']);
+        y = _finiteDouble(rawVertex['y']);
+        z = _finiteDouble(rawVertex['z']);
+      }
+      if (x == null || y == null || z == null) return null;
+      vertices.add(FamilyMeshVertex(x: x, y: y, z: z));
+    }
+
+    final faces = <FamilyMeshFace>[];
+    for (final rawFace in rawFaces) {
+      if (rawFace is! List || rawFace.length < 3) return null;
+      final indices = <int>[];
+      for (final rawIndex in rawFace) {
+        final index =
+            rawIndex is int ? rawIndex : int.tryParse(rawIndex.toString());
+        if (index == null || index < 0 || index >= vertices.length) {
+          return null;
+        }
+        indices.add(index);
+      }
+      faces.add(FamilyMeshFace(List<int>.unmodifiable(indices)));
+    }
+    if (vertices.isEmpty || faces.isEmpty) return null;
+    return FamilyEvaluatedMesh(
+      vertices: List<FamilyMeshVertex>.unmodifiable(vertices),
+      faces: List<FamilyMeshFace>.unmodifiable(faces),
+      source: feature.label.isEmpty ? 'Freeform mesh' : feature.label,
+    );
+  }
+
+  static double? _finiteDouble(Object? raw) {
+    final value = raw is num ? raw.toDouble() : double.tryParse('$raw');
+    return value != null && value.isFinite ? value : null;
   }
 
   static int? _previousSolidIndex(FamilyDocument document, int index) {

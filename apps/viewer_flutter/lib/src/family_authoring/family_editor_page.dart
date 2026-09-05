@@ -398,159 +398,267 @@ class _FamilyEditorPageState extends State<FamilyEditorPage> {
     _selectedTypeId = id;
   }
 
-  Future<void> _save() async {
+  Future<bool> _save() async {
     final validation = FamilyDocumentValidator.validate(_document);
     if (!validation.isValid) {
       setState(() => _status = validation.errors.first);
-      return;
+      return false;
     }
     setState(() => _status = 'Saving family...');
     try {
       final path = await FamilyFileStore.save(_document);
-      if (!mounted || path == null) return;
+      if (!mounted || path == null) return false;
       setState(() {
         _dirty = false;
         _status = 'Saved: ${path.split('/').last}';
       });
+      return true;
     } catch (error) {
       if (mounted) setState(() => _status = 'Save failed: $error');
+      return false;
     }
+  }
+
+  Future<void> _requestClose() async {
+    if (!_dirty) {
+      if (mounted) Navigator.of(context).pop();
+      return;
+    }
+    final action = await showDialog<_FamilyCloseAction>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Unsaved family'),
+        content: const Text(
+          'Save this family to the library before leaving, or discard the changes?',
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Keep editing'),
+          ),
+          TextButton(
+            onPressed: () =>
+                Navigator.of(dialogContext).pop(_FamilyCloseAction.discard),
+            child: const Text('Discard'),
+          ),
+          FilledButton(
+            onPressed: () =>
+                Navigator.of(dialogContext).pop(_FamilyCloseAction.save),
+            child: const Text('Save & close'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || action == null) return;
+    if (action == _FamilyCloseAction.save) {
+      if (await _save() && mounted) Navigator.of(context).pop();
+      return;
+    }
+    setState(() => _dirty = false);
+    if (mounted) Navigator.of(context).pop();
+  }
+
+  void _showProjectHandoff() {
+    final hosted = _document.category == FamilyCategory.door ||
+        _document.category == FamilyCategory.window;
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Use this family in a project'),
+        content: SizedBox(
+          width: 440,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              const Text('1  Save the family to the library.'),
+              const SizedBox(height: 8),
+              const Text('2  Open or create a project.'),
+              const SizedBox(height: 8),
+              Text(
+                hosted
+                    ? '3  Select a solid wall, then open ⋮ → Add family to project.'
+                    : '3  Open ⋮ → Add family to project and choose the placement point.',
+              ),
+              const SizedBox(height: 12),
+              Text(
+                hosted
+                    ? 'Doors and windows become native hosted openings; the family/type reference remains attached to the project element.'
+                    : 'The project stores the family/type reference and creates the supported native element.',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
+          ),
+        ),
+        actions: <Widget>[
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Got it'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final type = _selectedType;
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Family Authoring'),
-        leading: IconButton(
-          tooltip: 'Close family',
-          onPressed: () => Navigator.of(context).pop(),
-          icon: const Icon(Icons.close),
-        ),
-        actions: <Widget>[
-          IconButton(
-            tooltip: 'Undo',
-            onPressed: _undoStack.isEmpty ? null : _undo,
-            icon: const Icon(Icons.undo_outlined),
+    return PopScope<void>(
+      canPop: !_dirty,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _requestClose();
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Family Editor'),
+          leading: IconButton(
+            tooltip: 'Close family',
+            onPressed: _requestClose,
+            icon: const Icon(Icons.close),
           ),
-          IconButton(
-            tooltip: 'Redo',
-            onPressed: _redoStack.isEmpty ? null : _redo,
-            icon: const Icon(Icons.redo_outlined),
-          ),
-          if (_status != null)
-            Center(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                child: Text(
-                  _status!,
-                  style: TextStyle(color: colors.onSurfaceVariant),
+          actions: <Widget>[
+            IconButton(
+              tooltip: 'Undo',
+              onPressed: _undoStack.isEmpty ? null : _undo,
+              icon: const Icon(Icons.undo_outlined),
+            ),
+            IconButton(
+              tooltip: 'Redo',
+              onPressed: _redoStack.isEmpty ? null : _redo,
+              icon: const Icon(Icons.redo_outlined),
+            ),
+            OutlinedButton.icon(
+              onPressed: _showProjectHandoff,
+              icon: const Icon(Icons.output_outlined),
+              label: const Text('Use in project'),
+            ),
+            if (_status != null)
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: Text(
+                    _status!,
+                    style: TextStyle(color: colors.onSurfaceVariant),
+                  ),
                 ),
               ),
+            FilledButton.icon(
+              onPressed: () => _save(),
+              icon: const Icon(Icons.save_outlined),
+              label: Text(_dirty ? 'Save to library' : 'Saved'),
             ),
-          FilledButton.icon(
-            onPressed: _save,
-            icon: const Icon(Icons.save_outlined),
-            label: Text(_dirty ? 'Save family' : 'Save'),
-          ),
-          const SizedBox(width: 12),
-        ],
-      ),
-      body: SafeArea(
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final compact = constraints.maxWidth < 900;
-            final editor = _EditorPanel(
-              document: _document,
-              selectedTypeId: _selectedTypeId,
-              selectedSketchId: _selectedSketchId,
-              onNameChanged: (value) => _updateDocument(
-                _document.copyWith(
-                    name: value.trim().isEmpty ? 'New Family' : value),
-              ),
-              onCategoryChanged: (value) {
-                if (value != null) {
-                  _updateDocument(_document.copyWith(category: value));
-                }
-              },
-              onTypeChanged: _selectType,
-              onAddType: _addType,
-              onAddProfile: _addProfileSketch,
-              onAddExtrude: _addExtrude,
-              onAddRevolve: _addRevolve,
-              onAddUnion: () => _addBoolean(FamilyFeatureKind.booleanUnion),
-              onAddSubtract: () =>
-                  _addBoolean(FamilyFeatureKind.booleanSubtract),
-              onAddTransform: _addTransform,
-              onSketchChanged: (value) {
-                setState(() => _selectedSketchId = value);
-              },
-              widthController: _widthController,
-              depthController: _depthController,
-              heightController: _heightController,
-              extrusionController: _extrusionController,
-              revolveAngleController: _revolveAngleController,
-              onWidthChanged: (value) => _updateTypeValue('width', value),
-              onDepthChanged: (value) => _updateTypeValue('depth', value),
-              onHeightChanged: (value) => _updateTypeValue('height', value),
-              onExtrusionChanged: (value) =>
-                  _updateTypeValue('extrusionDepth', value),
-              onRevolveAngleChanged: (value) =>
-                  _updateTypeValue('revolveAngle', value),
-            );
-            final shape = FamilyGeometryEvaluator.evaluate(_document, type);
-            final mesh = FamilyGeometryEvaluator.evaluateMesh(_document, type);
-            final sketch = _selectedSketch;
-            final preview = _FamilyPreview(
-              name: _document.name,
-              category: _document.category,
-              shape: shape,
-              mesh: mesh,
-            );
-            final workspacePreview = _FamilyPreviewColumn(
-              preview: preview,
-              sketch: sketch,
-              onAddPoint: _addSketchPoint,
-              onMovePoint: _moveSketchPoint,
-              onToggleClosed: _toggleSketchClosed,
-              onClear: _clearSketch,
-            );
-            if (compact) {
-              return ListView(
-                padding: const EdgeInsets.all(16),
-                children: <Widget>[
-                  SizedBox(
-                    height: sketch == null ? 280 : 560,
-                    child: workspacePreview,
+            const SizedBox(width: 12),
+          ],
+        ),
+        body: SafeArea(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final compact = constraints.maxWidth < 900;
+              final editor = _EditorPanel(
+                document: _document,
+                selectedTypeId: _selectedTypeId,
+                selectedSketchId: _selectedSketchId,
+                onNameChanged: (value) => _updateDocument(
+                  _document.copyWith(
+                      name: value.trim().isEmpty ? 'New Family' : value),
+                ),
+                onCategoryChanged: (value) {
+                  if (value != null) {
+                    _updateDocument(_document.copyWith(category: value));
+                  }
+                },
+                onTypeChanged: _selectType,
+                onAddType: _addType,
+                onAddProfile: _addProfileSketch,
+                onAddExtrude: _addExtrude,
+                onAddRevolve: _addRevolve,
+                onAddUnion: () => _addBoolean(FamilyFeatureKind.booleanUnion),
+                onAddSubtract: () =>
+                    _addBoolean(FamilyFeatureKind.booleanSubtract),
+                onAddTransform: _addTransform,
+                onSketchChanged: (value) {
+                  setState(() => _selectedSketchId = value);
+                },
+                widthController: _widthController,
+                depthController: _depthController,
+                heightController: _heightController,
+                extrusionController: _extrusionController,
+                revolveAngleController: _revolveAngleController,
+                onWidthChanged: (value) => _updateTypeValue('width', value),
+                onDepthChanged: (value) => _updateTypeValue('depth', value),
+                onHeightChanged: (value) => _updateTypeValue('height', value),
+                onExtrusionChanged: (value) =>
+                    _updateTypeValue('extrusionDepth', value),
+                onRevolveAngleChanged: (value) =>
+                    _updateTypeValue('revolveAngle', value),
+              );
+              final shape = FamilyGeometryEvaluator.evaluate(_document, type);
+              final mesh =
+                  FamilyGeometryEvaluator.evaluateMesh(_document, type);
+              final sketch = _selectedSketch;
+              final preview = _FamilyPreview(
+                name: _document.name,
+                category: _document.category,
+                shape: shape,
+                mesh: mesh,
+              );
+              final workspacePreview = _FamilyPreviewColumn(
+                preview: preview,
+                sketch: sketch,
+                onAddPoint: _addSketchPoint,
+                onMovePoint: _moveSketchPoint,
+                onToggleClosed: _toggleSketchClosed,
+                onClear: _clearSketch,
+              );
+              if (compact) {
+                return SingleChildScrollView(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: <Widget>[
+                      editor,
+                      const SizedBox(height: 16),
+                      SizedBox(
+                        height: sketch == null ? 280 : 560,
+                        child: workspacePreview,
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 16),
-                  editor,
+                );
+              }
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: colors.surfaceContainerLow,
+                      border: Border(
+                        right: BorderSide(color: colors.outlineVariant),
+                      ),
+                    ),
+                    child: SizedBox(
+                      width: 410,
+                      child: SingleChildScrollView(child: editor),
+                    ),
+                  ),
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.all(20),
+                      child: workspacePreview,
+                    ),
+                  ),
                 ],
               );
-            }
-            return Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: <Widget>[
-                SizedBox(
-                  width: 390,
-                  child: SingleChildScrollView(child: editor),
-                ),
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.all(20),
-                    child: workspacePreview,
-                  ),
-                ),
-              ],
-            );
-          },
+            },
+          ),
         ),
       ),
     );
   }
 }
+
+enum _FamilyCloseAction { save, discard }
 
 class _EditorPanel extends StatelessWidget {
   const _EditorPanel({
@@ -613,166 +721,414 @@ class _EditorPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
-          Text('Family', style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 10),
-          TextFormField(
-            initialValue: document.name,
-            decoration: const InputDecoration(labelText: 'Family name'),
-            onChanged: onNameChanged,
-          ),
-          const SizedBox(height: 10),
-          DropdownButtonFormField<FamilyCategory>(
-            initialValue: document.category,
-            decoration: const InputDecoration(labelText: 'Category'),
-            items: FamilyCategory.values
-                .map(
-                  (category) => DropdownMenuItem(
-                    value: category,
-                    child: Text(_categoryLabel(category)),
+          _FamilyWorkflowCard(category: _categoryLabel(document.category)),
+          const SizedBox(height: 12),
+          _FamilySection(
+            number: '1',
+            title: 'Family',
+            subtitle: 'Name and category',
+            initiallyExpanded: true,
+            child: Column(
+              children: <Widget>[
+                TextFormField(
+                  initialValue: document.name,
+                  decoration: const InputDecoration(
+                    labelText: 'Family name',
+                    prefixIcon: Icon(Icons.badge_outlined),
                   ),
-                )
-                .toList(),
-            onChanged: onCategoryChanged,
+                  onChanged: onNameChanged,
+                ),
+                const SizedBox(height: 10),
+                DropdownButtonFormField<FamilyCategory>(
+                  initialValue: document.category,
+                  decoration: const InputDecoration(
+                    labelText: 'Category',
+                    prefixIcon: Icon(Icons.category_outlined),
+                  ),
+                  items: FamilyCategory.values
+                      .map(
+                        (category) => DropdownMenuItem(
+                          value: category,
+                          child: Text(_categoryLabel(category)),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: onCategoryChanged,
+                ),
+              ],
+            ),
           ),
-          const SizedBox(height: 22),
-          Row(
-            children: <Widget>[
-              Expanded(
-                  child: Text('Family type',
-                      style: Theme.of(context).textTheme.titleMedium)),
-              IconButton(
-                tooltip: 'Add family type',
-                onPressed: onAddType,
-                icon: const Icon(Icons.add),
-              ),
-            ],
-          ),
-          DropdownButtonFormField<String>(
-            key: ValueKey<String?>(selectedTypeId),
-            initialValue: selectedTypeId,
-            decoration: const InputDecoration(labelText: 'Type'),
-            items: document.types
-                .map((type) =>
-                    DropdownMenuItem(value: type.id, child: Text(type.name)))
-                .toList(),
-            onChanged: onTypeChanged,
-          ),
-          const SizedBox(height: 20),
-          Text('Shape tools', style: Theme.of(context).textTheme.titleSmall),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: <Widget>[
-              OutlinedButton.icon(
-                onPressed: onAddProfile,
-                icon: const Icon(Icons.polyline_outlined),
-                label: const Text('Profile'),
-              ),
-              OutlinedButton.icon(
-                onPressed: onAddExtrude,
-                icon: const Icon(Icons.height),
-                label: const Text('Extrude'),
-              ),
-              OutlinedButton.icon(
-                onPressed: onAddRevolve,
-                icon: const Icon(Icons.rotate_right_outlined),
-                label: const Text('Revolve'),
-              ),
-              OutlinedButton.icon(
-                onPressed: onAddUnion,
-                icon: const Icon(Icons.merge_type_outlined),
-                label: const Text('Union'),
-              ),
-              OutlinedButton.icon(
-                onPressed: onAddSubtract,
-                icon: const Icon(Icons.call_split_outlined),
-                label: const Text('Subtract'),
-              ),
-              OutlinedButton.icon(
-                onPressed: onAddTransform,
-                icon: const Icon(Icons.open_with_outlined),
-                label: const Text('Transform'),
-              ),
-            ],
-          ),
-          if (document.sketches.isNotEmpty) ...<Widget>[
-            const SizedBox(height: 10),
-            DropdownButtonFormField<String>(
-              key: ValueKey<String?>(selectedSketchId),
-              initialValue: selectedSketchId,
-              decoration: const InputDecoration(labelText: 'Active profile'),
-              items: document.sketches
-                  .map(
-                    (sketch) => DropdownMenuItem(
-                      value: sketch.id,
-                      child: Text(
-                        '${sketch.name}${sketch.closed ? '' : ' · open'}',
+          const SizedBox(height: 10),
+          _FamilySection(
+            number: '2',
+            title: 'Type & parameters',
+            subtitle:
+                '${document.types.length} type${document.types.length == 1 ? '' : 's'} · edit the selected type',
+            initiallyExpanded: true,
+            child: Column(
+              children: <Widget>[
+                Row(
+                  children: <Widget>[
+                    Expanded(
+                      child: DropdownButtonFormField<String>(
+                        key: ValueKey<String?>(selectedTypeId),
+                        initialValue: selectedTypeId,
+                        decoration: const InputDecoration(
+                          labelText: 'Family type',
+                          prefixIcon: Icon(Icons.tune_outlined),
+                        ),
+                        items: document.types
+                            .map((type) => DropdownMenuItem(
+                                  value: type.id,
+                                  child: Text(type.name),
+                                ))
+                            .toList(),
+                        onChanged: onTypeChanged,
                       ),
                     ),
-                  )
-                  .toList(),
-              onChanged: onSketchChanged,
-            ),
-          ],
-          const SizedBox(height: 16),
-          Text('Type parameters',
-              style: Theme.of(context).textTheme.titleSmall),
-          const SizedBox(height: 8),
-          _ParameterField(
-              label: 'Width',
-              controller: widthController,
-              onChanged: onWidthChanged),
-          const SizedBox(height: 8),
-          _ParameterField(
-              label: 'Depth',
-              controller: depthController,
-              onChanged: onDepthChanged),
-          const SizedBox(height: 8),
-          _ParameterField(
-              label: 'Height',
-              controller: heightController,
-              onChanged: onHeightChanged),
-          if (document.parameters.any(
-            (parameter) => parameter.id == 'extrusionDepth',
-          )) ...<Widget>[
-            const SizedBox(height: 8),
-            _ParameterField(
-                label: 'Extrusion depth',
-                controller: extrusionController,
-                onChanged: onExtrusionChanged),
-          ],
-          if (document.parameters.any(
-            (parameter) => parameter.id == 'revolveAngle',
-          )) ...<Widget>[
-            const SizedBox(height: 8),
-            _ParameterField(
-                label: 'Revolve angle',
-                controller: revolveAngleController,
-                suffix: '°',
-                onChanged: onRevolveAngleChanged),
-          ],
-          const SizedBox(height: 22),
-          Text('Feature graph', style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 8),
-          for (final feature in document.features)
-            Card(
-              margin: const EdgeInsets.only(bottom: 8),
-              color: colors.surfaceContainerHighest.withValues(alpha: 0.45),
-              child: ListTile(
-                dense: true,
-                leading: Icon(_featureIcon(feature.kind)),
-                title: Text(_featureLabel(feature)),
-                subtitle: Text(_featureSummary(feature)),
-                trailing: const Icon(Icons.check_circle_outline),
-              ),
-            ),
-          const SizedBox(height: 10),
-          Text(
-            'Profiles are edited on the canvas. Close a profile, then add Extrude to make a parametric solid. Revolve, boolean and freeform nodes use the same graph boundary as they are added.',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: colors.onSurfaceVariant,
+                    const SizedBox(width: 8),
+                    IconButton.filledTonal(
+                      tooltip: 'Add family type',
+                      onPressed: onAddType,
+                      icon: const Icon(Icons.add),
+                    ),
+                  ],
                 ),
+                const SizedBox(height: 12),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Expanded(
+                      child: _ParameterField(
+                        label: 'Width',
+                        controller: widthController,
+                        onChanged: onWidthChanged,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _ParameterField(
+                        label: 'Depth',
+                        controller: depthController,
+                        onChanged: onDepthChanged,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                _ParameterField(
+                  label: 'Height',
+                  controller: heightController,
+                  onChanged: onHeightChanged,
+                ),
+                if (document.parameters.any(
+                  (parameter) => parameter.id == 'extrusionDepth',
+                )) ...<Widget>[
+                  const SizedBox(height: 8),
+                  _ParameterField(
+                    label: 'Extrusion depth',
+                    controller: extrusionController,
+                    onChanged: onExtrusionChanged,
+                  ),
+                ],
+                if (document.parameters.any(
+                  (parameter) => parameter.id == 'revolveAngle',
+                )) ...<Widget>[
+                  const SizedBox(height: 8),
+                  _ParameterField(
+                    label: 'Revolve angle',
+                    controller: revolveAngleController,
+                    suffix: '°',
+                    onChanged: onRevolveAngleChanged,
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
+          _FamilySection(
+            number: '3',
+            title: 'Build geometry',
+            subtitle: 'Profile → close → make a solid',
+            initiallyExpanded: true,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                const _FamilyHint(
+                  icon: Icons.touch_app_outlined,
+                  text:
+                      'Start with Profile. Tap points on the canvas, close it, then add Extrude.',
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: <Widget>[
+                    OutlinedButton.icon(
+                      onPressed: onAddProfile,
+                      icon: const Icon(Icons.polyline_outlined),
+                      label: const Text('Profile'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: onAddExtrude,
+                      icon: const Icon(Icons.height),
+                      label: const Text('Extrude'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: onAddRevolve,
+                      icon: const Icon(Icons.rotate_right_outlined),
+                      label: const Text('Revolve'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: onAddUnion,
+                      icon: const Icon(Icons.merge_type_outlined),
+                      label: const Text('Union'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: onAddSubtract,
+                      icon: const Icon(Icons.call_split_outlined),
+                      label: const Text('Subtract'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: onAddTransform,
+                      icon: const Icon(Icons.open_with_outlined),
+                      label: const Text('Transform'),
+                    ),
+                  ],
+                ),
+                if (document.sketches.isNotEmpty) ...<Widget>[
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    key: ValueKey<String?>(selectedSketchId),
+                    initialValue: selectedSketchId,
+                    decoration: const InputDecoration(
+                      labelText: 'Active profile',
+                      prefixIcon: Icon(Icons.edit_note_outlined),
+                    ),
+                    items: document.sketches
+                        .map(
+                          (sketch) => DropdownMenuItem(
+                            value: sketch.id,
+                            child: Text(
+                              '${sketch.name}${sketch.closed ? '' : ' · open'}',
+                            ),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: onSketchChanged,
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
+          _FamilySection(
+            number: '4',
+            title: 'Feature graph',
+            subtitle:
+                '${document.features.length} feature node${document.features.length == 1 ? '' : 's'}',
+            initiallyExpanded: false,
+            child: Column(
+              children: <Widget>[
+                for (final feature in document.features)
+                  Card(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    color:
+                        colors.surfaceContainerHighest.withValues(alpha: 0.45),
+                    child: ListTile(
+                      dense: true,
+                      leading: Icon(_featureIcon(feature.kind)),
+                      title: Text(_featureLabel(feature)),
+                      subtitle: Text(_featureSummary(feature)),
+                      trailing: const Icon(Icons.check_circle_outline),
+                    ),
+                  ),
+                Text(
+                  'The graph is generated from the tools above. Edit profiles on the canvas; the preview updates immediately.',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: colors.onSurfaceVariant,
+                      ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
+          _ProjectHandoffCard(category: document.category),
+        ],
+      ),
+    );
+  }
+}
+
+class _FamilyWorkflowCard extends StatelessWidget {
+  const _FamilyWorkflowCard({required this.category});
+
+  final String category;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: colors.primaryContainer.withValues(alpha: 0.42),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: colors.primary.withValues(alpha: 0.22)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Icon(Icons.account_tree_outlined, color: colors.primary),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  'Family workspace',
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  'Define  ·  Build  ·  Save  ·  Use in project',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  '$category family · changes stay local until you save it.',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: colors.onSurfaceVariant,
+                      ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FamilySection extends StatelessWidget {
+  const _FamilySection({
+    required this.number,
+    required this.title,
+    required this.subtitle,
+    required this.child,
+    required this.initiallyExpanded,
+  });
+
+  final String number;
+  final String title;
+  final String subtitle;
+  final Widget child;
+  final bool initiallyExpanded;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Card(
+      margin: EdgeInsets.zero,
+      clipBehavior: Clip.antiAlias,
+      elevation: 0,
+      color: colors.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: colors.outlineVariant),
+      ),
+      child: ExpansionTile(
+        initiallyExpanded: initiallyExpanded,
+        tilePadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
+        childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+        leading: CircleAvatar(
+          radius: 15,
+          backgroundColor: colors.primaryContainer,
+          foregroundColor: colors.onPrimaryContainer,
+          child: Text(number),
+        ),
+        title: Text(
+          title,
+          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+        ),
+        subtitle: Text(subtitle),
+        children: <Widget>[child],
+      ),
+    );
+  }
+}
+
+class _FamilyHint extends StatelessWidget {
+  const _FamilyHint({required this.icon, required this.text});
+
+  final IconData icon;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+      decoration: BoxDecoration(
+        color: colors.surfaceContainerHighest.withValues(alpha: 0.55),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Icon(icon, size: 18, color: colors.primary),
+          const SizedBox(width: 8),
+          Expanded(child: Text(text)),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProjectHandoffCard extends StatelessWidget {
+  const _ProjectHandoffCard({required this.category});
+
+  final FamilyCategory category;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final hosted =
+        category == FamilyCategory.door || category == FamilyCategory.window;
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: colors.surfaceContainerHighest.withValues(alpha: 0.42),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: colors.outlineVariant),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Icon(Icons.output_outlined, color: colors.primary),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  'Next: use in project',
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  hosted
+                      ? 'Save to library → select a solid wall → ⋮ → Add family to project.'
+                      : 'Save to library → open a project → ⋮ → Add family to project.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -798,7 +1154,13 @@ class _ParameterField extends StatelessWidget {
     return TextFormField(
       controller: controller,
       keyboardType: const TextInputType.numberWithOptions(decimal: true),
-      decoration: InputDecoration(labelText: label, suffixText: suffix),
+      decoration: InputDecoration(
+        labelText: label,
+        suffixText: suffix,
+        isDense: true,
+        filled: true,
+        border: const OutlineInputBorder(),
+      ),
       onChanged: onChanged,
     );
   }
