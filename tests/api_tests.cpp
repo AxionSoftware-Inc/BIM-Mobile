@@ -1950,6 +1950,52 @@ int main() {
         assert(nearly_equal(foundation->bounds.max.z, 0.0, 1.0e-6));
     }
 
+    // The professional two-storey house is a separate preset: it must prove
+    // that the project can carry architectural, structural, site and family
+    // content together without falling back to the older glass showcase.
+    {
+        auto house_result = tbe::api::create_session("Professional House Test");
+        assert(house_result.ok() && house_result.value.has_value());
+        auto house = std::move(*house_result.value);
+        const auto created = house->create_showcase_template(3);
+        assert(created.ok() && created.value.has_value());
+        const auto scene = house->get_render_scene();
+        assert(scene.ok() && scene.value.has_value());
+        assert(scene.value->levels.size() == 3u);
+        assert(std::any_of(scene.value->objects.begin(), scene.value->objects.end(), [](const auto& object) {
+            const auto curve = object.metadata.find("curve_kind");
+            return object.kind == tbe::api::ApiElementKind::Wall &&
+                   curve != object.metadata.end() && curve->second == "arc";
+        }));
+        assert(std::any_of(scene.value->objects.begin(), scene.value->objects.end(), [](const auto& object) {
+            return object.kind == tbe::api::ApiElementKind::Stair &&
+                   object.metadata.find("layout_kind") != object.metadata.end() &&
+                   object.metadata.at("layout_kind") == "1";
+        }));
+        const auto family_count = std::count_if(
+            scene.value->objects.begin(), scene.value->objects.end(), [](const auto& object) {
+                return object.kind == tbe::api::ApiElementKind::Proxy &&
+                       object.metadata.find("property.family_asset_id") != object.metadata.end();
+            });
+        // The default scene is framed on Level 1; Level 2 carries the bed and
+        // second bathroom instances and is checked again after level switch.
+        assert(family_count >= 8u);
+        assert(std::any_of(scene.value->objects.begin(), scene.value->objects.end(), [](const auto& object) {
+            const auto type = object.metadata.find("property.family_asset_id");
+            return type != object.metadata.end() && type->second == "builtin-fixture-toilet-v1";
+        }));
+        assert(std::any_of(scene.value->floor_types.begin(), scene.value->floor_types.end(), [](const auto& type) {
+            return type.surface_key == "grass";
+        }));
+        assert(std::any_of(scene.value->floor_types.begin(), scene.value->floor_types.end(), [](const auto& type) {
+            return type.surface_key == "asphalt";
+        }));
+        const auto saved = house->save_project_json();
+        assert(saved.ok() && saved.value.has_value());
+        assert(saved.value->find("Modern Courtyard Villa") != std::string::npos);
+        assert(saved.value->find("builtin-appliance-refrigerator-v1") != std::string::npos);
+    }
+
     // Large-project gate: every engine change must keep both the single tower
     // and the six-building campus on the native authoring/snapshot path. This
     // is intentionally a correctness/crash gate, not a machine-dependent

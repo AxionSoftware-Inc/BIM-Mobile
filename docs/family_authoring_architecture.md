@@ -65,3 +65,18 @@ logic should be imported into the family module.
   Window are mapped to the existing hosted-opening path. Remaining work is
   sketch constraints, freeform mesh editing, exact CSG, instance overrides and
   performance tests for repeated instances.
+
+## Blender mesh import
+
+The Family Editor can import a Blender-exported GLB/glTF model through the
+`Import GLB/glTF` action. The importer reads glTF 2.0 mesh primitives,
+indices and node transforms, centres the model on X/Z, places its lowest point
+on the family ground plane, and creates a `freeformMesh` feature with
+automatically generated width, depth and height type values. The imported mesh
+remains outside the sketch editor; the Family Editor is used for type
+dimensions, category, saving and project placement.
+
+glTF material and texture preservation, decimation/LOD and a user-selectable
+unit scale remain follow-up work for production-quality asset exchange. The
+legacy OBJ parser remains available for programmatic callers, but it is no
+longer the editor import workflow.

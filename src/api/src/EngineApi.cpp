@@ -287,9 +287,274 @@ Project make_residential_template(int building_count, int story_count) {
     return project;
 }
 
+MeshBuffer make_family_box_mesh(Point2 center, double width_meters, double depth_meters, double height_meters) {
+    const auto x0 = center.x - (width_meters * 0.5);
+    const auto x1 = center.x + (width_meters * 0.5);
+    const auto y0 = center.y - (depth_meters * 0.5);
+    const auto y1 = center.y + (depth_meters * 0.5);
+    MeshBuffer mesh;
+    mesh.vertices = {
+        {.x = x0, .y = y0, .z = 0.0},
+        {.x = x1, .y = y0, .z = 0.0},
+        {.x = x1, .y = y1, .z = 0.0},
+        {.x = x0, .y = y1, .z = 0.0},
+        {.x = x0, .y = y0, .z = height_meters},
+        {.x = x1, .y = y0, .z = height_meters},
+        {.x = x1, .y = y1, .z = height_meters},
+        {.x = x0, .y = y1, .z = height_meters},
+    };
+    mesh.indices = {
+        0, 3, 2, 0, 2, 1,
+        4, 5, 6, 4, 6, 7,
+        0, 1, 5, 0, 5, 4,
+        1, 2, 6, 1, 6, 5,
+        2, 3, 7, 2, 7, 6,
+        3, 0, 4, 3, 4, 7,
+    };
+    return mesh;
+}
+
+std::string family_plan_symbol(double width_meters, double depth_meters, std::string_view category) {
+    std::ostringstream svg;
+    svg << std::setprecision(5)
+        << "<svg viewBox=\"" << -(width_meters * 0.5) << ' ' << -(depth_meters * 0.5)
+        << ' ' << width_meters << ' ' << depth_meters << "\" data-family-category=\""
+        << category << "\"><path d=\"M " << -(width_meters * 0.5) << ' ' << -(depth_meters * 0.5)
+        << " L " << (width_meters * 0.5) << ' ' << -(depth_meters * 0.5)
+        << " L " << (width_meters * 0.5) << ' ' << (depth_meters * 0.5)
+        << " L " << -(width_meters * 0.5) << ' ' << (depth_meters * 0.5)
+        << " Z\"/></svg>";
+    return svg.str();
+}
+
+Project make_professional_house_template() {
+    Project project{"Modern Courtyard Villa · 2 Storey"};
+    auto& document = project.active_document();
+    // Author the whole fixture in one batch. This keeps the initial frame
+    // cheap and leaves joins/room discovery deterministic after all hosts,
+    // openings and reusable family instances have been added.
+    document.set_automatic_wall_join_enabled(false);
+
+    const auto catalog = tbe::core::ensure_default_project_catalog(document);
+    const auto concrete = catalog.concrete_material;
+    const auto exterior_wall_type = catalog.exterior_wall_type;
+    const auto interior_wall_type = catalog.interior_wall_type;
+    const auto floor_assembly = catalog.wood_floor_assembly;
+    const auto foundation_assembly = catalog.foundation_assembly;
+    const auto ceiling_assembly = catalog.ceiling_assembly;
+    const auto roof_assembly = catalog.roof_assembly;
+    const auto stair_assembly = catalog.stair_assembly;
+
+    const auto level_1 = document.create_level("Level 1", 0.0, 3.2);
+    const auto level_2 = document.create_level("Level 2", 3.2, 3.2);
+    const auto roof_level = document.create_level("Roof", 6.4, 3.2);
+    const std::vector<Point2> footprint{
+        {.x = 0.0, .y = 0.0},
+        {.x = 12.0, .y = 0.0},
+        {.x = 12.0, .y = 10.0},
+        {.x = 0.0, .y = 10.0},
+    };
+    const auto rectangle = [](double min_x, double min_y, double max_x, double max_y) {
+        return std::vector<Point2>{
+            {.x = min_x, .y = min_y},
+            {.x = max_x, .y = min_y},
+            {.x = max_x, .y = max_y},
+            {.x = min_x, .y = max_y},
+        };
+    };
+
+    // Site datum is intentionally stepped: grass, driveway and paving never
+    // share a coplanar face, which avoids mobile depth-buffer shimmer.
+    document.create_slab(level_1, rectangle(-4.0, -5.0, 16.0, 15.0), 0.12,
+                         catalog.grass_material, catalog.grass_assembly, -0.52);
+    document.create_slab(level_1, rectangle(4.6, -4.0, 7.4, 0.0), 0.08,
+                         catalog.asphalt_material, catalog.asphalt_floor_assembly, -0.34);
+    document.create_slab(level_1, rectangle(3.4, -1.4, 8.6, 0.0), 0.06,
+                         catalog.paving_material, catalog.paving_assembly, -0.24);
+    document.create_slab(level_1, rectangle(1.0, 10.2, 11.0, 12.0), 0.06,
+                         catalog.paving_material, catalog.paving_assembly, -0.24);
+    document.create_slab(level_1, rectangle(-0.35, -0.35, 12.35, 10.35), 0.30,
+                         concrete, foundation_assembly, -0.34);
+
+    const auto add_wall = [&](std::string name, Point2 start, Point2 end, ElementId level_id,
+                              ElementId type_id, ElementId top_level_id) {
+        const auto wall_id = document.create_wall(std::move(name), Line2{.start = start, .end = end},
+                                                  0.20, 3.2, level_id);
+        document.set_wall_type(wall_id, type_id);
+        document.set_wall_level_constraints(wall_id, level_id, top_level_id, 0.0, 0.0,
+                                            tbe::core::WallHeightMode::TopLevel);
+        return wall_id;
+    };
+
+    const auto add_family = [&](std::string_view name, std::string_view asset_id,
+                                std::string_view type_id, std::string_view type_name,
+                                std::string_view category, ElementId level_id, Point2 position,
+                                double width_meters, double depth_meters, double height_meters) {
+        const auto instance_id = document.create_proxy(
+            std::string(name), level_id, position, width_meters, depth_meters, height_meters,
+            make_family_box_mesh(position, width_meters, depth_meters, height_meters));
+        document.set_element_family_reference(
+            instance_id, std::string(asset_id), std::string(name), std::string(type_id),
+            std::string(type_name), std::string(category), {}, {}, {},
+            family_plan_symbol(width_meters, depth_meters, category));
+        return instance_id;
+    };
+
+    const auto family_type = [](std::string_view asset_id) {
+        return std::string(asset_id) + "-type";
+    };
+    const auto add_builtin_family = [&](std::string_view name, std::string_view asset_id,
+                                        std::string_view type_name, std::string_view category,
+                                        ElementId level_id, Point2 position,
+                                        double width_meters, double depth_meters, double height_meters) {
+        const auto type_id = family_type(asset_id);
+        return add_family(name, asset_id, type_id, type_name, category, level_id, position,
+                          width_meters, depth_meters, height_meters);
+    };
+
+    std::vector<ElementId> top_perimeter;
+    for (const auto& [story_index, level_id] : std::array<std::pair<int, ElementId>, 2>{
+             std::pair{0, level_1}, std::pair{1, level_2}}) {
+        const auto top_level_id = story_index == 0 ? level_2 : roof_level;
+        std::vector<ElementId> perimeter;
+        perimeter.reserve(4);
+        for (std::size_t edge = 0; edge < footprint.size(); ++edge) {
+            perimeter.push_back(add_wall(
+                story_index == 0 ? "Level 1 exterior wall" : "Level 2 exterior wall",
+                footprint[edge], footprint[(edge + 1) % footprint.size()], level_id,
+                exterior_wall_type, top_level_id));
+        }
+
+        // The main hall, kitchen and service core are separated by short
+        // partitions with clearance from facade corners for stable joins.
+        const auto partition_a = add_wall(
+            story_index == 0 ? "Level 1 hall partition" : "Level 2 hall partition",
+            {.x = 7.0, .y = 0.30}, {.x = 7.0, .y = 5.20}, level_id,
+            interior_wall_type, top_level_id);
+        const auto partition_b = add_wall(
+            story_index == 0 ? "Level 1 service partition" : "Level 2 service partition",
+            {.x = 7.0, .y = 5.20}, {.x = 11.70, .y = 5.20}, level_id,
+            interior_wall_type, top_level_id);
+        const auto partition_c = add_wall(
+            story_index == 0 ? "Level 1 bedroom partition" : "Level 2 bedroom partition",
+            {.x = 4.20, .y = 5.20}, {.x = 4.20, .y = 9.70}, level_id,
+            interior_wall_type, top_level_id);
+        document.create_door(story_index == 0 ? "Level 1 hall door" : "Level 2 hall door",
+                             partition_a, 2.15, 0.90, 2.10);
+        document.create_door(story_index == 0 ? "Level 1 service door" : "Level 2 service door",
+                             partition_b, 2.00, 0.82, 2.10);
+        document.create_door(story_index == 0 ? "Level 1 bedroom door" : "Level 2 bedroom door",
+                             partition_c, 2.15, 0.82, 2.10);
+
+        // Openings stay on long, solid hosts and never on a glass/arc wall.
+        document.create_door(story_index == 0 ? "Level 1 main entry" : "Level 2 balcony door",
+                             perimeter.front(), 5.40, 1.20, 2.20);
+        document.create_window(story_index == 0 ? "Level 1 living window A" : "Level 2 bedroom window A",
+                               perimeter.front(), 1.25, 1.80, 1.45, 0.80);
+        document.create_window(story_index == 0 ? "Level 1 living window B" : "Level 2 bedroom window B",
+                               perimeter.front(), 9.25, 1.80, 1.45, 0.80);
+        document.create_window(story_index == 0 ? "Level 1 garden window" : "Level 2 garden window",
+                               perimeter[2], 3.00, 2.20, 1.50, 0.80);
+        document.create_window(story_index == 0 ? "Level 1 side window" : "Level 2 side window",
+                               perimeter[1], 6.00, 1.20, 1.35, 0.95);
+
+        // Native structural members remain analytical and separate from the
+        // reusable family instances placed below.
+        document.create_column(level_id, {.x = 0.70, .y = 0.70}, 0.30, 0.30, 3.2, concrete);
+        document.create_column(level_id, {.x = 11.30, .y = 0.70}, 0.30, 0.30, 3.2, concrete);
+        document.create_column(level_id, {.x = 0.70, .y = 9.30}, 0.30, 0.30, 3.2, concrete);
+        document.create_column(level_id, {.x = 11.30, .y = 9.30}, 0.30, 0.30, 3.2, concrete);
+        document.create_beam(level_id, {.x = 0.80, .y = 5.20}, {.x = 11.20, .y = 5.20}, 0.24, 0.42, concrete);
+
+        document.create_slab(level_id, footprint, 0.20, concrete, floor_assembly, 0.0);
+        document.create_ceiling_system_from_profile(level_id, footprint, ceiling_assembly, 2.85);
+        if (story_index == 0) {
+            document.create_stair_layout(
+                level_1, level_2,
+                {{.x = 4.65, .y = 0.90}, {.x = 4.65, .y = 4.30}, {.x = 6.10, .y = 4.30}},
+                1.15, 3.2, 18, 17, 0.90, tbe::core::StairLayoutKind::LShape, true,
+                concrete, stair_assembly);
+        } else {
+            top_perimeter = perimeter;
+        }
+    }
+
+    // Smooth entry feature: one real arc wall, not a polyline of tiny walls.
+    const auto arc_center = Point2{.x = 6.0, .y = 2.50};
+    const auto arc_radius = std::hypot(3.0, 2.50);
+    const auto arc_start = std::atan2(-2.50, -3.0);
+    const auto arc_end = std::atan2(-2.50, 3.0);
+    document.create_curved_wall(
+        "Curved entrance facade", Line2{.start = {.x = 3.0, .y = 0.0}, .end = {.x = 9.0, .y = 0.0}},
+        tbe::core::WallArcData{
+            .center = arc_center,
+            .radius_meters = arc_radius,
+            .start_angle_radians = arc_start,
+            .sweep_radians = arc_end - arc_start,
+        }, 0.20, 3.2, level_1, 0, exterior_wall_type);
+
+    document.create_roof(roof_level, footprint, tbe::core::RoofType::AutoFootprint, 0.20,
+                         concrete, roof_assembly, 25.0, 0.60, std::move(top_perimeter));
+
+    // A compact, reusable content set makes the template useful immediately
+    // without turning every decorative object into a bespoke project object.
+    add_builtin_family("Sofa · Three Seat", "builtin-sofa-three-seat-v1",
+                       "Three Seat 2200 × 900 × 850", "furniture", level_1,
+                       {.x = 2.30, .y = 2.15}, 2.20, 0.90, 0.85);
+    add_builtin_family("Table · Dining", "builtin-table-dining-v1",
+                       "Dining 1800 × 900 × 750", "furniture", level_1,
+                       {.x = 9.00, .y = 3.10}, 1.80, 0.90, 0.75);
+    add_builtin_family("Cabinet · Kitchen Base", "builtin-kitchen-base-cabinet-v1",
+                       "Base 2400 × 650 × 900", "casework", level_1,
+                       {.x = 10.20, .y = 0.95}, 2.40, 0.65, 0.90);
+    add_builtin_family("Appliance · Refrigerator", "builtin-appliance-refrigerator-v1",
+                       "Freestanding 900 × 750 × 2050", "casework", level_1,
+                       {.x = 11.15, .y = 4.05}, 0.90, 0.75, 2.05);
+    add_builtin_family("Cabinet · Storage Modern", "builtin-storage-cabinet-v1",
+                       "Modern 2560 × 750 × 2620", "casework", level_1,
+                       {.x = 1.65, .y = 8.75}, 2.56, 0.75, 2.62);
+    add_builtin_family("Fixture · Toilet", "builtin-fixture-toilet-v1",
+                       "Floor Mounted 400 × 700 × 450", "genericModel", level_1,
+                       {.x = 9.45, .y = 6.35}, 0.40, 0.70, 0.45);
+    add_builtin_family("Fixture · Bathroom Vanity", "builtin-fixture-vanity-v1",
+                       "Single 900 × 550 × 850", "casework", level_1,
+                       {.x = 10.65, .y = 6.35}, 0.90, 0.55, 0.85);
+    add_builtin_family("Fixture · Bathtub", "builtin-fixture-bathtub-v1",
+                       "Standard 1700 × 750 × 600", "genericModel", level_1,
+                       {.x = 10.65, .y = 8.25}, 1.70, 0.75, 0.60);
+    add_builtin_family("Column · Exterior Classic", "builtin-exterior-column-v1",
+                       "Classic 620 × 620 × 3120", "column", level_1,
+                       {.x = 3.10, .y = -0.75}, 0.62, 0.62, 3.12);
+    add_builtin_family("Column · Exterior Classic", "builtin-exterior-column-v1",
+                       "Classic 620 × 620 × 3120", "column", level_1,
+                       {.x = 8.90, .y = -0.75}, 0.62, 0.62, 3.12);
+    add_builtin_family("Bed · Double", "builtin-bed-double-v1",
+                       "Double 1800 × 2000 × 1050", "furniture", level_2,
+                       {.x = 2.25, .y = 7.40}, 1.80, 2.00, 1.05);
+    add_builtin_family("Bed · Single", "builtin-bed-single-v1",
+                       "Single 1000 × 2000 × 950", "furniture", level_2,
+                       {.x = 9.35, .y = 2.95}, 1.00, 2.00, 0.95);
+    add_builtin_family("Fixture · Toilet", "builtin-fixture-toilet-v1",
+                       "Floor Mounted 400 × 700 × 450", "genericModel", level_2,
+                       {.x = 9.45, .y = 6.35}, 0.40, 0.70, 0.45);
+    add_builtin_family("Fixture · Bathroom Vanity", "builtin-fixture-vanity-v1",
+                       "Single 900 × 550 × 850", "casework", level_2,
+                       {.x = 10.65, .y = 6.35}, 0.90, 0.55, 0.85);
+
+    document.auto_join_walls();
+    document.set_automatic_wall_join_enabled(true);
+    (void)document.detect_rooms();
+    document.clear_dirty_room_requests();
+    document.regenerate_dirty_geometry(tbe::core::GeometryDetail::Envelope);
+    return project;
+}
+
 Project make_showcase_template(int template_kind) {
-    if (template_kind < 0 || template_kind > 2) {
-        throw std::invalid_argument("showcase template kind must be 0, 1 or 2");
+    if (template_kind == 3) {
+        return make_professional_house_template();
+    }
+    if (template_kind < 0 || template_kind > 3) {
+        throw std::invalid_argument("showcase template kind must be 0, 1, 2 or 3");
     }
 
     const auto is_campus = template_kind == 2;

@@ -427,6 +427,7 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
       _ResidentialTemplateKind.modern3 => 0,
       _ResidentialTemplateKind.glassTower9 => 1,
       _ResidentialTemplateKind.glassCampus6x9 => 2,
+      _ResidentialTemplateKind.professionalHouse => 3,
       _ => null,
     };
     final buildingCount =
@@ -443,6 +444,8 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
         'Modern glass residential tower with central core',
       _ResidentialTemplateKind.glassCampus6x9 =>
         'Modern glass campus with six ordered buildings',
+      _ResidentialTemplateKind.professionalHouse =>
+        'Professional courtyard villa · 2 storey',
     };
     _currentProjectName = label;
     _updateViewportState(() {

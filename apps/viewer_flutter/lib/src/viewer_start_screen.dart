@@ -10,6 +10,7 @@ enum _ResidentialTemplateKind {
   modern3,
   glassTower9,
   glassCampus6x9,
+  professionalHouse,
 }
 
 class ViewerApp extends StatefulWidget {

@@ -178,6 +178,39 @@ void registerEngineIntegrationTests() {
     expect(saved, contains('Landscape Ground'));
   });
 
+  test('professional courtyard villa template carries real house content',
+      () async {
+    final repository = ViewerRepository(TbeViewerApi.load());
+    addTearDown(repository.dispose);
+
+    final result = await repository.createShowcaseTemplate(templateKind: 3);
+    final scene = result.scene!;
+    expect(result.errors, isEmpty);
+    expect(scene.levels, hasLength(3));
+    expect(scene.kindCounts['wall'], greaterThanOrEqualTo(10));
+    expect(scene.kindCounts['door'], greaterThanOrEqualTo(4));
+    expect(scene.kindCounts['window'], greaterThanOrEqualTo(4));
+    expect(scene.kindCounts['stair'], 1);
+    expect(scene.kindCounts['proxy'], greaterThanOrEqualTo(8));
+    expect(
+      scene.objects.any(
+        (object) =>
+            object.metadata['property.family_asset_id'] ==
+            'builtin-fixture-toilet-v1',
+      ),
+      isTrue,
+    );
+    expect(
+      scene.objects.any(
+        (object) => object.metadata['curve_kind'] == 'arc',
+      ),
+      isTrue,
+    );
+    final saved = await repository.saveProjectJson();
+    expect(saved, contains('Modern Courtyard Villa'));
+    expect(saved, contains('builtin-appliance-refrigerator-v1'));
+  });
+
   test('engine authoring creates a picked-wall floor in the render scene',
       () async {
     final repository = ViewerRepository(TbeViewerApi.load());

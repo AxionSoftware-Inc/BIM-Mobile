@@ -8,6 +8,7 @@ Widget _buildFamilyInspector(_ObjectInspectorContext context) {
   if (familyId == null) return _buildGenericInspector(context);
   return _FamilyPropertiesSection(
     object: context.object,
+    scene: context.scene,
     levels: context.levels,
     units: context.units,
     commands: context.commands,
@@ -97,6 +98,7 @@ final class _FamilyInstanceStateData {
 class _FamilyPropertiesSection extends StatefulWidget {
   const _FamilyPropertiesSection({
     required this.object,
+    required this.scene,
     required this.levels,
     required this.units,
     required this.commands,
@@ -104,6 +106,7 @@ class _FamilyPropertiesSection extends StatefulWidget {
   });
 
   final RenderSceneObject object;
+  final RenderScene scene;
   final List<RenderSceneLevel> levels;
   final ProjectUnitSettings units;
   final AuthoringCommandService commands;
@@ -301,6 +304,7 @@ class _FamilyPropertiesSectionState extends State<_FamilyPropertiesSection> {
       ..._values,
     });
     final object = widget.object;
+    var planSvg = FamilyPlanSymbolGenerator.svgFor(document, type);
     if (object.kindKey == 'door' || object.kindKey == 'window') {
       final opening = OpeningElementParameters.fromObject(object);
       final offset = _lengthValue('offset') ?? opening.offsetMeters;
@@ -330,44 +334,94 @@ class _FamilyPropertiesSectionState extends State<_FamilyPropertiesSection> {
         );
       }
     } else {
-      final position = RenderScenePoint(
-        x: elementParameterDouble(object, 'property.position_x') ??
-            object.bounds.center.x,
-        y: elementParameterDouble(object, 'property.position_y') ??
-            object.bounds.center.y,
-        z: 0.0,
-      );
+      final isWallSweep = instance.category == FamilyCategory.wallSweep.name;
+      RenderSceneObject? hostWall;
+      var hostOffset = 0.0;
+      var position = RenderScenePoint(
+          x: elementParameterDouble(object, 'property.position_x') ??
+              object.bounds.center.x,
+          y: elementParameterDouble(object, 'property.position_y') ??
+              object.bounds.center.y,
+          z: 0.0);
+      if (isWallSweep) {
+        final hostId = _intValue(_values['_hostWallId']);
+        hostOffset = _numberValue(_values['_hostOffsetMeters']) ??
+            (RenderSceneQueries.wallLength(object) ?? 0.0) * 0.5;
+        hostWall = RenderSceneQueries.objectById(widget.scene, hostId);
+        if (hostWall == null || hostWall.kindKey != 'wall') {
+          throw const FormatException('Wall sweep host wall is unavailable.');
+        }
+        final hostLength = RenderSceneQueries.wallLength(hostWall);
+        final sweepWidth = _lengthValue('width');
+        if (hostLength == null ||
+            !hostLength.isFinite ||
+            sweepWidth == null ||
+            sweepWidth > hostLength - 0.02) {
+          throw const FormatException(
+              'Wall sweep width must fit inside the host wall.');
+        }
+        position = RenderSceneQueries.wallPointAtOffset(
+              hostWall,
+              hostOffset,
+            ) ??
+            position;
+      }
       final mesh = FamilyGeometryEvaluator.evaluateMesh(document, type);
-      final vertices = FamilyInstanceAdapter.projectVertices(mesh, position);
+      final vertices = isWallSweep
+          ? FamilyInstanceAdapter.projectWallHostedVertices(
+              mesh: mesh,
+              hostWall: hostWall!,
+              offsetMeters: hostOffset,
+            )
+          : FamilyInstanceAdapter.projectVertices(mesh, position);
       final indices = FamilyInstanceAdapter.triangleIndices(mesh);
       if (object.elementId == null || vertices.isEmpty || indices.isEmpty) {
         throw const FormatException(
             'Family instance has no renderable geometry.');
       }
+      final dimensions = isWallSweep
+          ? FamilyInstanceAdapter.dimensionsForVertices(vertices)
+          : (
+              width: FamilyInstanceAdapter.lengthValue(
+                document,
+                type,
+                'width',
+                fallback: object.bounds.width,
+              ),
+              depth: FamilyInstanceAdapter.lengthValue(
+                document,
+                type,
+                'depth',
+                fallback: object.bounds.depth,
+              ),
+              height: FamilyInstanceAdapter.lengthValue(
+                document,
+                type,
+                'height',
+                fallback: object.bounds.height,
+              ),
+            );
       await widget.commands.updateFamilyInstance(
         elementId: object.elementId!,
         position: position,
-        widthMeters: FamilyInstanceAdapter.lengthValue(
-          document,
-          type,
-          'width',
-          fallback: object.bounds.width,
-        ),
-        depthMeters: FamilyInstanceAdapter.lengthValue(
-          document,
-          type,
-          'depth',
-          fallback: object.bounds.depth,
-        ),
-        heightMeters: FamilyInstanceAdapter.lengthValue(
-          document,
-          type,
-          'height',
-          fallback: object.bounds.height,
-        ),
+        widthMeters: dimensions.width,
+        depthMeters: dimensions.depth,
+        heightMeters: dimensions.height,
         vertices: vertices,
         indices: indices,
       );
+      if (isWallSweep) {
+        final tangent = RenderSceneQueries.wallTangentAtOffset(
+          hostWall!,
+          hostOffset,
+        );
+        planSvg = FamilyPlanSymbolGenerator.svgFor(
+          document,
+          type,
+          rotationRadians:
+              tangent == null ? 0.0 : math.atan2(tangent.y, tangent.x),
+        );
+      }
     }
     return widget.commands.setElementFamilyReference(
       elementId: object.elementId!,
@@ -381,7 +435,7 @@ class _FamilyPropertiesSectionState extends State<_FamilyPropertiesSection> {
         _definitions.map((parameter) => parameter.toJson()).toList(),
       ),
       familyParameterValuesJson: jsonEncode(_values),
-      familyPlanSvg: FamilyPlanSymbolGenerator.svgFor(document, type),
+      familyPlanSvg: planSvg,
     );
   }
 
@@ -396,6 +450,18 @@ class _FamilyPropertiesSectionState extends State<_FamilyPropertiesSection> {
       if (parsed != null && parsed.isFinite && parsed > 0.0) return parsed;
     }
     return null;
+  }
+
+  static int? _intValue(Object? value) {
+    if (value is int) return value;
+    return int.tryParse(value?.toString() ?? '');
+  }
+
+  static double? _numberValue(Object? value) {
+    final parsed = value is num
+        ? value.toDouble()
+        : double.tryParse(value?.toString() ?? '');
+    return parsed != null && parsed.isFinite ? parsed : null;
   }
 
   @override
@@ -417,7 +483,7 @@ class _FamilyPropertiesSectionState extends State<_FamilyPropertiesSection> {
       icon: _icon(widget.object.kindKey),
       children: <Widget>[
         _row('Type', instance.typeName),
-        _row('Category', instance.category),
+        _row('Category', _familyInspectorCategoryLabel(instance.category)),
         if (_loading) const LinearProgressIndicator(minHeight: 2),
         if (definitions.isNotEmpty) ...<Widget>[
           _sectionLabel('Type parameters'),
@@ -458,5 +524,20 @@ class _FamilyPropertiesSectionState extends State<_FamilyPropertiesSection> {
         _saveParameter(parameter, controller.text),
       ),
     );
+  }
+
+  static String _familyInspectorCategoryLabel(String value) {
+    return switch (value) {
+      'genericModel' => 'Generic model',
+      'column' => 'Column',
+      'door' => 'Door',
+      'window' => 'Window',
+      'wallSweep' => 'Wall sweep',
+      'furniture' => 'Furniture',
+      'casework' => 'Casework',
+      'stair' => 'Stair',
+      'structural' => 'Structural',
+      _ => value.isEmpty ? 'Family' : value,
+    };
   }
 }

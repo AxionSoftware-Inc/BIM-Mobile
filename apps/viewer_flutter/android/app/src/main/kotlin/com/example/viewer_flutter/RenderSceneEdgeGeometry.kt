@@ -439,7 +439,10 @@ internal object RenderSceneEdgeGeometry {
       if (widthLength <= 1e-8) continue
       val halfWidth = when {
         isFloorPlan -> 0.006
-        wallEdgePass && projectionMode == "isometric" -> 0.014
+        // Keep 3D wall ribbons close to the face. A wide ribbon grows into a
+        // second surface on close zoom and is the main source of the curved
+        // wall shimmer on mobile GPUs.
+        wallEdgePass && projectionMode == "isometric" -> 0.010
         else -> 0.010
       } * radiusScale
       val widthVector = ScenePoint(

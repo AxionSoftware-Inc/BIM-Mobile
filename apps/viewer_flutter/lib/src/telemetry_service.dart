@@ -15,7 +15,7 @@ abstract final class AppTelemetry {
   );
   static const String release = String.fromEnvironment(
     'APP_RELEASE',
-    defaultValue: 'viewer_flutter@0.2.15+17',
+    defaultValue: 'viewer_flutter@0.2.16+18',
   );
 
   static Future<void> initialize(

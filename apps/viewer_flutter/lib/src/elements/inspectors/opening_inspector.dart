@@ -3,11 +3,13 @@ part of '../../property_editor.dart';
 class _OpeningPropertiesSection extends StatefulWidget {
   const _OpeningPropertiesSection(
       {required this.object,
+      required this.scene,
       required this.levels,
       required this.units,
       required this.commands,
       required this.onApplied});
   final RenderSceneObject object;
+  final RenderScene scene;
   final List<RenderSceneLevel> levels;
   final ProjectUnitSettings units;
   final AuthoringCommandService commands;
@@ -140,6 +142,7 @@ class _OpeningPropertiesSectionState extends State<_OpeningPropertiesSection> {
             if (_FamilyInstanceStateData.fromObject(widget.object) != null)
               _FamilyPropertiesSection(
                 object: widget.object,
+                scene: widget.scene,
                 levels: widget.levels,
                 units: widget.units,
                 commands: widget.commands,

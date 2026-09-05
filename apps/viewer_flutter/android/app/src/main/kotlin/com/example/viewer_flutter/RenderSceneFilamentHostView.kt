@@ -78,6 +78,14 @@ private const val NATIVE_CACHE_EDGE_SEGMENT_BUDGET = 60_000
 // from repeatedly attaching/detaching while a pinch hovers at the boundary.
 private const val EDGE_DETAIL_HIDE_WIDTH_PIXELS = 0.48
 private const val EDGE_DETAIL_SHOW_WIDTH_PIXELS = 0.72
+// A curved wall's end-cap ribbon is useful at model scale, but it has no
+// architectural value once the orbit camera is inside the wall envelope. At
+// that distance a mobile depth buffer can alternate the ribbon with the wall
+// face even when the ribbon is offset correctly. Keep the LOD boundary
+// hysteretic so a pinch cannot make it attach/detach on adjacent frames.
+private const val CURVED_WALL_EDGE_HIDE_DISTANCE_RATIO = 0.12
+private const val CURVED_WALL_EDGE_MIN_HIDE_DISTANCE = 1.5
+private const val CURVED_WALL_EDGE_MAX_HIDE_DISTANCE = 4.0
 
 // External mesh formats (FBX and equivalent payloads) do not carry BIM
 // semantics that can be used to select a small architectural edge subset.
@@ -128,9 +136,22 @@ void material(inout MaterialInputs material) {
     // Solid; Shaded retains the finer light brick pattern used previously.
     float brickRowSpacing = mix(0.18, 0.075, materialParams.displayShade);
     float brickWidth = mix(0.48, 0.24, materialParams.displayShade);
-    float row = floor(world.y / brickRowSpacing);
-    float jointY = step(fract(world.y / brickRowSpacing), 0.022);
-    float jointX = step(fract((world.x + mod(row, 2.0) * brickWidth * 0.5) / brickWidth), 0.018);
+    // The brick cue is a viewport aid, not a texture atlas. Hard step()
+    // joints alias when the curved facade is viewed at a grazing angle and
+    // become a visible shimmer during a close pinch. Use periodic distance
+    // plus screen-space derivatives so the same cue remains stable at every
+    // zoom level and on every tessellated arc station.
+    float rowCoord = world.y / brickRowSpacing;
+    float row = floor(rowCoord);
+    float rowCell = fract(rowCoord);
+    float rowDistance = min(rowCell, 1.0 - rowCell);
+    float rowAa = max(fwidth(rowCoord) * 1.25, 0.0005);
+    float jointY = 1.0 - smoothstep(0.022 - rowAa, 0.022 + rowAa, rowDistance);
+    float brickCoord = (world.x + mod(row, 2.0) * brickWidth * 0.5) / brickWidth;
+    float brickCell = fract(brickCoord);
+    float brickDistance = min(brickCell, 1.0 - brickCell);
+    float brickAa = max(fwidth(brickCoord) * 1.25, 0.0005);
+    float jointX = 1.0 - smoothstep(0.018 - brickAa, 0.018 + brickAa, brickDistance);
     float mortar = max(jointY, jointX) * mix(0.66, 0.52, materialParams.displayShade);
     float3 brick = materialParams.baseColor.rgb * (1.0 - mortar);
 
@@ -184,6 +205,7 @@ private data class EdgeBatchKey(
   val levelId: Long?,
   val tileX: Int,
   val tileZ: Int,
+  val curvedWall: Boolean = false,
   val nativeKindMask: Long? = null,
 )
 
@@ -612,6 +634,7 @@ internal class RenderSceneFilamentHostView(
   private var orbitPitchRadians = Math.toRadians(22.0)
   private var orbitDistance = 12.0
   private var isometricEdgeDetailVisible = true
+  private var isometricCurvedWallEdgeVisible = true
   private var topDownZoom = 1.0
   private var projectionMode = "topDown"
   private var orbitProjectionStyle = "orthographic"
@@ -2406,7 +2429,17 @@ internal class RenderSceneFilamentHostView(
         FLAT_COLOR_MAT,
         lit = false,
       )
-      edgeMaterial = buildMaterial(engine, "RenderSceneEdges", FLAT_COLOR_MAT, lit = false)
+      // Architectural edges must test against faces, but they are an overlay
+      // pass and must never write their own depth. A depth write from one
+      // curved-wall ribbon can otherwise become the next ribbon's occluder,
+      // producing intermittent dark segments while the camera moves.
+      edgeMaterial = buildMaterial(
+        engine,
+        "RenderSceneEdges",
+        FLAT_COLOR_MAT,
+        lit = false,
+        depthWrite = false,
+      )
       // A floor plan is an orthographic drawing, not an occlusion view. Draw
       // its architectural contours after faces without depth testing so an
       // edge ribbon can never fight a coplanar floor/slab surface on mobile
@@ -3338,7 +3371,9 @@ internal class RenderSceneFilamentHostView(
         ?: kindVisible(key.kind)) &&
       openingVisibleInPlan(key.kind) &&
       !(projectionMode == "topDown" && key.kind == "wall") &&
-      (displayStyle == "wireframe" || projectionMode != "isometric" || isometricEdgeDetailVisible)
+      (displayStyle == "wireframe" || projectionMode != "isometric" ||
+        (isometricEdgeDetailVisible &&
+          (!key.curvedWall || isometricCurvedWallEdgeVisible)))
 
   private fun baseColorForObject(objectData: SceneObject): FloatArray =
     kindColor(normalizeKind(objectData.kind))
@@ -3778,6 +3813,8 @@ internal class RenderSceneFilamentHostView(
       levelId = objectData.levelId,
       tileX = kotlin.math.floor(centerX / tileSizeMeters).toInt(),
       tileZ = kotlin.math.floor(centerZ / tileSizeMeters).toInt(),
+      curvedWall = normalizeKind(objectData.kind) == "wall" &&
+        objectData.metadata["curve_kind"] == "arc",
     )
   }
 
@@ -6127,12 +6164,17 @@ internal class RenderSceneFilamentHostView(
    * and leaves all faces, selection, and Wireframe unaffected.
    */
   private fun updateIsometricEdgeDetailVisibility(): Boolean {
+    var changed = false
     if (projectionMode != "isometric" || renderSurface.height <= 1) {
       if (!isometricEdgeDetailVisible) {
         isometricEdgeDetailVisible = true
-        return true
+        changed = true
       }
-      return false
+      if (!isometricCurvedWallEdgeVisible) {
+        isometricCurvedWallEdgeVisible = true
+        changed = true
+      }
+      return changed
     }
     val visibleHalfHeight = if (orbitProjectionStyle == "perspective") {
       orbitDistance * tan(Math.toRadians(45.0) * 0.5)
@@ -6146,9 +6188,30 @@ internal class RenderSceneFilamentHostView(
     } else {
       projectedWidth >= EDGE_DETAIL_SHOW_WIDTH_PIXELS
     }
-    if (nextVisible == isometricEdgeDetailVisible) return false
-    isometricEdgeDetailVisible = nextVisible
-    return true
+    if (nextVisible != isometricEdgeDetailVisible) {
+      isometricEdgeDetailVisible = nextVisible
+      changed = true
+    }
+
+    val sceneBounds = sceneMetrics.bounds
+    val sceneSpan = max(
+      sceneBounds.max.x - sceneBounds.min.x,
+      max(sceneBounds.max.y - sceneBounds.min.y, sceneBounds.max.z - sceneBounds.min.z),
+    ).coerceAtLeast(0.1)
+    val hideDistance = (
+      sceneSpan * CURVED_WALL_EDGE_HIDE_DISTANCE_RATIO
+    ).coerceIn(CURVED_WALL_EDGE_MIN_HIDE_DISTANCE, CURVED_WALL_EDGE_MAX_HIDE_DISTANCE)
+    val showDistance = hideDistance * 1.18
+    val nextCurvedVisible = if (isometricCurvedWallEdgeVisible) {
+      orbitDistance >= hideDistance
+    } else {
+      orbitDistance >= showDistance
+    }
+    if (nextCurvedVisible != isometricCurvedWallEdgeVisible) {
+      isometricCurvedWallEdgeVisible = nextCurvedVisible
+      changed = true
+    }
+    return changed
   }
 
   /// Every non-isometric view is an architectural planar view. A Fit must
@@ -6293,11 +6356,17 @@ internal class RenderSceneFilamentHostView(
     // old fixed 2 mm..160 m range wasted almost all depth precision on empty
     // space; edge prisms could then alternate with the coplanar model faces
     // while orbiting or pinching. A small safety margin keeps the model and
-    // the 50 m navigation grid inside the frustum without reopening that
+    // the active navigation view inside the frustum without reopening that
     // precision gap in elevation/section orthographic views.
     val (near, sceneFar) = cameraDepthRange(bounds, sceneSpan)
     val far = if (projectionMode == "isometric") {
-      max(sceneFar, orbitDistance + max(sceneSpan, 50.0) * 1.15)
+      // The navigation grid is not a reason to keep a 50 m depth range for a
+      // close-up of a 10 m house. Orthographic depth precision is linear, so
+      // this old safety range made thin edge overlays compete with curved
+      // wall faces long before the geometry was actually close to the camera.
+      // Keep a scene-sized margin; distant navigation remains available once
+      // the camera zooms back out.
+      max(sceneFar, orbitDistance + max(sceneSpan * 1.75, 10.0))
     } else {
       sceneFar
     }
@@ -6342,7 +6411,10 @@ internal class RenderSceneFilamentHostView(
     // sparkle during a pinch.  The margin is still proportional, so small
     // architectural details remain selectable and visible.
     val safetyMargin = max(sceneSpan * 0.04, 0.10)
-    val near = max(0.05, (depths.minOrNull() ?: 0.0) - safetyMargin)
+    // Do not let an orbit camera enter a millimetre-scale near range. That
+    // range has almost no useful architectural content and magnifies depth
+    // instability when the target is a curved wall or an opening reveal.
+    val near = max(0.12, (depths.minOrNull() ?: 0.0) - safetyMargin)
     val far = max(near + max(sceneSpan * 1.25, 4.0), (depths.maxOrNull() ?: 1.0) + safetyMargin)
     return near to far
   }
@@ -6358,9 +6430,9 @@ internal class RenderSceneFilamentHostView(
   }
 
   private fun minimumOrbitDistance(): Double {
-    // Close inspection is allowed. This is only a numerical guard against a
-    // zero-distance camera; the Dart orbit scale applies the same policy.
-    return 0.01
+    // Close inspection is allowed, but a camera inside the first 12 cm has no
+    // useful architectural view and magnifies mobile depth-buffer noise.
+    return 0.12
   }
 
   private fun minimumPlanarOrbitDistance(): Double = 0.5

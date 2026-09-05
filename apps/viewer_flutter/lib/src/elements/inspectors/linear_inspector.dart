@@ -57,6 +57,7 @@ Widget _buildLinearInspectorFromParameters(
       const SizedBox(height: 6),
       _FamilyPropertiesSection(
         object: context.object,
+        scene: context.scene,
         levels: context.levels,
         units: context.units,
         commands: context.commands,

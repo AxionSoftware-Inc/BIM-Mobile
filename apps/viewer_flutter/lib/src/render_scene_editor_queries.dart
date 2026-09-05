@@ -173,6 +173,50 @@ class RenderSceneQueries {
     return _wallGeometry(wall)?.length;
   }
 
+  /// Returns the authored wall centerline point at a distance from its start.
+  /// Both straight and curved walls use the same arc samples, so hosted
+  /// families can resolve their position without duplicating wall geometry.
+  static RenderScenePoint? wallPointAtOffset(
+    RenderSceneObject wall,
+    double offsetMeters,
+  ) {
+    final points = wallCenterlinePoints(wall);
+    if (points.length < 2 || !offsetMeters.isFinite) return null;
+    final length = wallLength(wall) ?? _polylineLength(points);
+    if (!length.isFinite || length <= 1e-9) return null;
+    final target = offsetMeters.clamp(0.0, length).toDouble();
+    var accumulated = 0.0;
+    for (var index = 1; index < points.length; index += 1) {
+      final start = points[index - 1];
+      final end = points[index];
+      final segmentLength = start.distanceTo(end);
+      if (segmentLength <= 1e-9) continue;
+      if (target <= accumulated + segmentLength || index == points.length - 1) {
+        final fraction =
+            ((target - accumulated) / segmentLength).clamp(0.0, 1.0);
+        return start + (end - start).scale(fraction);
+      }
+      accumulated += segmentLength;
+    }
+    return points.last;
+  }
+
+  /// Returns a normalized plan tangent at a wall centerline offset.
+  static RenderScenePoint? wallTangentAtOffset(
+    RenderSceneObject wall,
+    double offsetMeters,
+  ) {
+    final length = wallLength(wall);
+    if (length == null || !length.isFinite || length <= 1e-9) return null;
+    final before = wallPointAtOffset(wall, offsetMeters - 0.02);
+    final after = wallPointAtOffset(wall, offsetMeters + 0.02);
+    if (before == null || after == null) return null;
+    final tangent = after - before;
+    final tangentLength = tangent.distanceTo(RenderScenePoint.zero());
+    if (!tangentLength.isFinite || tangentLength <= 1e-9) return null;
+    return tangent.scale(1.0 / tangentLength);
+  }
+
   /// Resolves a hosted opening from the architectural 2D symbol, not only
   /// from the small 3D panel bounds.  Door swings and window glazing lines
   /// are plan graphics, so a plan tap can legitimately land outside the
@@ -388,6 +432,14 @@ class RenderSceneQueries {
       }
     }
     return points;
+  }
+
+  static double _polylineLength(List<RenderScenePoint> points) {
+    var length = 0.0;
+    for (var index = 1; index < points.length; index += 1) {
+      length += points[index - 1].distanceTo(points[index]);
+    }
+    return length;
   }
 
   static RenderSceneBounds? surfaceBoundsForWalls(

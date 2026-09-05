@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -297,10 +298,50 @@ void main() {
     expect(halfRevolved.faces, hasLength(24));
   });
 
+  test('Blender OBJ import creates a centred, type-scalable mesh family', () {
+    const obj = '''
+# Blender-style Z-up cube in metres
+v -1 -2 0
+v 1 -2 0
+v 1 2 0
+v -1 2 0
+v -1 -2 3
+v 1 -2 3
+v 1 2 3
+v -1 2 3
+f 1 2 3 4
+f 5 8 7 6
+f 1 5 6 2
+f 2 6 7 3
+f 3 7 8 4
+f 5 1 4 8
+''';
+    final imported = FamilyMeshImporter.fromObjText(
+      obj,
+      name: 'Blender Chair.obj',
+    );
+
+    expect(imported.vertexCount, 8);
+    expect(imported.faceCount, 6);
+    expect(imported.document.category, FamilyCategory.genericModel);
+    expect(FamilyDocumentValidator.validate(imported.document).isValid, isTrue);
+    final mesh = FamilyGeometryEvaluator.evaluateMesh(
+      imported.document,
+      imported.document.types.single,
+    );
+    final xs = mesh.vertices.map((vertex) => vertex.x);
+    final ys = mesh.vertices.map((vertex) => vertex.y);
+    final zs = mesh.vertices.map((vertex) => vertex.z);
+    expect(xs.reduce(math.max) - xs.reduce(math.min), closeTo(2.0, 1e-9));
+    expect(ys.reduce(math.max) - ys.reduce(math.min), closeTo(3.0, 1e-9));
+    expect(zs.reduce(math.max) - zs.reduce(math.min), closeTo(4.0, 1e-9));
+    expect(ys.reduce(math.min), closeTo(0.0, 1e-9));
+  });
+
   test('curated exterior column and cabinet contain usable project meshes', () {
     final families = BuiltInFamilyCatalog.families;
-    expect(families, hasLength(18));
-    expect(families.map((family) => family.id).toSet(), hasLength(18));
+    expect(families, hasLength(23));
+    expect(families.map((family) => family.id).toSet(), hasLength(23));
     expect(
       families.where((family) => family.category == FamilyCategory.column),
       hasLength(2),
@@ -314,11 +355,20 @@ void main() {
       hasLength(2),
     );
     expect(
+      families.where((family) => family.category == FamilyCategory.wallSweep),
+      hasLength(1),
+    );
+    expect(
       families.where((family) => family.category == FamilyCategory.stair),
       hasLength(2),
     );
     expect(
       families.where((family) => family.category == FamilyCategory.casework),
+      hasLength(4),
+    );
+    expect(
+      families
+          .where((family) => family.category == FamilyCategory.genericModel),
       hasLength(2),
     );
     expect(
@@ -359,6 +409,36 @@ void main() {
     expect(cabinetMesh.isApproximate, isFalse);
   });
 
+  test('wall sweep family has a centered host profile and rotated plan symbol',
+      () {
+    final sweep = BuiltInFamilyCatalog.families.firstWhere(
+      (family) => family.category == FamilyCategory.wallSweep,
+    );
+    final mesh = FamilyGeometryEvaluator.evaluateMesh(
+      sweep,
+      sweep.types.single,
+    );
+    final xs = mesh.vertices.map((vertex) => vertex.x);
+    final ys = mesh.vertices.map((vertex) => vertex.y);
+    final zs = mesh.vertices.map((vertex) => vertex.z);
+    expect(xs.reduce(math.max) - xs.reduce(math.min), closeTo(3.0, 1e-9));
+    expect(ys.reduce(math.max) - ys.reduce(math.min), closeTo(0.24, 1e-9));
+    expect(zs.reduce(math.max) - zs.reduce(math.min), closeTo(0.06, 1e-9));
+    expect(zs.reduce(math.min), closeTo(-0.03, 1e-9));
+    final rotated = FamilyPlanSymbolGenerator.svgFor(
+      sweep,
+      sweep.types.single,
+      rotationRadians: math.pi / 2,
+    );
+    final paths = FamilyPlanSymbolPath.parse(rotated);
+    expect(paths, isNotEmpty);
+    expect(
+        paths
+            .expand((path) => path.commands)
+            .any((command) => command.x.abs() < 0.1 && command.y.abs() > 1.0),
+        isTrue);
+  });
+
   testWidgets('family library previews families without opening the keyboard',
       (WidgetTester tester) async {
     await tester.binding.setSurfaceSize(const Size(1200, 800));
@@ -376,7 +456,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Family Library'), findsOneWidget);
-    expect(find.text('18 results'), findsOneWidget);
+    expect(find.text('23 results'), findsOneWidget);
     expect(find.text('Place in project'), findsOneWidget);
     expect(find.byType(TextField), findsNothing);
     expect(find.byType(CustomPaint), findsWidgets);

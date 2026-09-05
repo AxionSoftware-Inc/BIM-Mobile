@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
@@ -24,6 +25,7 @@ import 'family_authoring/family_plan_symbol.dart';
 import 'family_instance_adapter.dart';
 import 'inspector_controller.dart';
 import 'project_unit_settings.dart';
+import 'render_scene_editor.dart';
 import 'render_scene_models.dart';
 
 part 'elements/inspectors/object_inspector_router.dart';

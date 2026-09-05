@@ -198,7 +198,8 @@ class ViewerRepository
     _projectName = switch (templateKind) {
       0 => 'Modern Glass Courtyard House',
       1 => 'Modern Glass Residential Tower',
-      _ => 'Modern Glass Courtyard Campus',
+      2 => 'Modern Glass Courtyard Campus',
+      _ => 'Modern Courtyard Villa · 2 Storey',
     };
     _currentJson = null;
     _currentJsonPath = null;

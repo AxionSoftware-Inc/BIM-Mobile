@@ -17,8 +17,13 @@ abstract final class BuiltInFamilyCatalog {
         _widePictureWindow(),
         _straightStair(),
         _lStair(),
+        _wallSweepBelt(),
         _storageCabinet(),
         _kitchenBaseCabinet(),
+        _refrigerator(),
+        _toiletFixture(),
+        _bathroomVanity(),
+        _bathtub(),
         _threeSeatSofa(),
         _sectionalSofa(),
         _diningTable(),
@@ -240,6 +245,24 @@ abstract final class BuiltInFamilyCatalog {
         }),
       );
 
+  static FamilyDocument _wallSweepBelt() => _meshFamily(
+        id: 'builtin-wall-sweep-belt-v1',
+        name: 'Wall Sweep · Horizontal Belt',
+        category: FamilyCategory.wallSweep,
+        description:
+            'A slim horizontal architectural belt hosted by a wall. Select a wall, choose a type, and place it along the wall direction.',
+        width: 3.00,
+        depth: 0.06,
+        height: 0.24,
+        typeName: 'Horizontal Belt 3000 × 60 × 240',
+        geometry: _geometry((mesh) {
+          // Family X follows the host wall, Y is vertical and Z is centered
+          // around the wall centerline. This keeps the sweep flush on either
+          // side of straight and curved wall hosts.
+          _appendBox(mesh, -1.50, 1.20, -0.03, 1.50, 1.44, 0.03);
+        }),
+      );
+
   static FamilyDocument _storageCabinet() {
     final geometry = _geometry((mesh) {
       // Carcass, back, divider, shelf, framed doors, crown/plinth and handles.
@@ -286,6 +309,76 @@ abstract final class BuiltInFamilyCatalog {
           _appendBox(mesh, -1.08, 0.12, -0.35, -0.04, 0.76, -0.315);
           _appendBox(mesh, 0.04, 0.12, -0.35, 1.08, 0.76, -0.315);
           _appendBox(mesh, -1.20, 0.00, 0.00, 1.20, 0.10, 0.24);
+        }),
+      );
+
+  static FamilyDocument _refrigerator() => _meshFamily(
+        id: 'builtin-appliance-refrigerator-v1',
+        name: 'Appliance · Refrigerator',
+        category: FamilyCategory.casework,
+        description:
+            'A full-height refrigerator sized for a residential kitchen.',
+        width: 0.90,
+        depth: 0.75,
+        height: 2.05,
+        typeName: 'Freestanding 900 × 750 × 2050',
+        geometry: _geometry((mesh) {
+          _appendBox(mesh, -0.45, 0.00, -0.375, 0.45, 2.05, 0.375);
+          _appendBox(mesh, -0.41, -0.015, -0.37, 0.41, 1.18, -0.335);
+          _appendBox(mesh, -0.41, -0.015, 0.04, 0.41, 1.98, 0.37);
+          _appendBox(mesh, -0.025, 0.18, -0.045, 0.025, 0.22, 0.12);
+          _appendBox(mesh, -0.025, 1.40, -0.045, 0.025, 1.46, 0.12);
+        }),
+      );
+
+  static FamilyDocument _toiletFixture() => _meshFamily(
+        id: 'builtin-fixture-toilet-v1',
+        name: 'Fixture · Toilet',
+        category: FamilyCategory.genericModel,
+        description:
+            'A compact floor-mounted toilet for a residential bathroom.',
+        width: 0.40,
+        depth: 0.70,
+        height: 0.45,
+        typeName: 'Floor Mounted 400 × 700 × 450',
+        geometry: _geometry((mesh) {
+          _appendBox(mesh, -0.20, 0.00, -0.35, 0.20, 0.10, 0.25);
+          _appendBox(mesh, -0.18, 0.08, -0.10, 0.18, 0.28, 0.28);
+          _appendBox(mesh, -0.17, 0.10, 0.10, 0.17, 0.45, 0.35);
+        }),
+      );
+
+  static FamilyDocument _bathroomVanity() => _meshFamily(
+        id: 'builtin-fixture-vanity-v1',
+        name: 'Fixture · Bathroom Vanity',
+        category: FamilyCategory.casework,
+        description:
+            'A single-basin bathroom vanity with a compact cabinet body.',
+        width: 0.90,
+        depth: 0.55,
+        height: 0.85,
+        typeName: 'Single 900 × 550 × 850',
+        geometry: _geometry((mesh) {
+          _appendBox(mesh, -0.45, -0.275, 0.00, 0.45, 0.78, 0.275);
+          _appendBox(mesh, -0.48, -0.30, 0.78, 0.48, 0.85, 0.30);
+          _appendBox(mesh, -0.20, 0.83, -0.16, 0.20, 0.88, 0.16);
+          _appendBox(mesh, -0.025, 0.85, -0.36, 0.025, 1.05, -0.30);
+        }),
+      );
+
+  static FamilyDocument _bathtub() => _meshFamily(
+        id: 'builtin-fixture-bathtub-v1',
+        name: 'Fixture · Bathtub',
+        category: FamilyCategory.genericModel,
+        description: 'A standard residential bathtub with a raised rim.',
+        width: 1.70,
+        depth: 0.75,
+        height: 0.60,
+        typeName: 'Standard 1700 × 750 × 600',
+        geometry: _geometry((mesh) {
+          _appendBox(mesh, -0.85, 0.00, -0.375, 0.85, 0.52, 0.375);
+          _appendBox(mesh, -0.82, 0.52, -0.35, 0.82, 0.60, 0.35);
+          _appendBox(mesh, -0.66, 0.50, -0.21, 0.66, 0.54, 0.21);
         }),
       );
 

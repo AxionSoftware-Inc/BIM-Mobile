@@ -1,9 +1,11 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'family_authoring/family_document.dart';
 import 'family_authoring/family_geometry.dart';
 import 'family_authoring/family_plan_symbol.dart';
 import 'family_authoring/family_validation.dart';
+import 'render_scene_editor.dart';
 import 'render_scene_models.dart';
 import 'viewer_authoring_gateway.dart';
 import 'viewer_element_creation_gateway.dart';
@@ -55,6 +57,73 @@ abstract final class FamilyInstanceAdapter {
     ];
   }
 
+  /// Projects family-local coordinates onto a wall host.
+  ///
+  /// Family X follows the wall centerline, family Z follows the wall normal,
+  /// and family Y remains the vertical BIM axis. The same method is used at
+  /// placement and during Inspector edits so a wall sweep cannot silently
+  /// rotate back to world axes.
+  static List<RenderScenePoint> projectWallHostedVertices({
+    required FamilyEvaluatedMesh mesh,
+    required RenderSceneObject hostWall,
+    required double offsetMeters,
+  }) {
+    final center = RenderSceneQueries.wallPointAtOffset(
+      hostWall,
+      offsetMeters,
+    );
+    final tangent = RenderSceneQueries.wallTangentAtOffset(
+      hostWall,
+      offsetMeters,
+    );
+    if (center == null || tangent == null) {
+      throw const FormatException('Wall host has no usable centerline.');
+    }
+    final normal = RenderScenePoint(x: -tangent.y, y: tangent.x, z: 0.0);
+    return <RenderScenePoint>[
+      for (final vertex in mesh.vertices)
+        RenderScenePoint(
+          x: center.x + tangent.x * vertex.x + normal.x * vertex.z,
+          y: center.y + tangent.y * vertex.x + normal.y * vertex.z,
+          z: vertex.y,
+        ),
+    ];
+  }
+
+  static ({double width, double depth, double height}) dimensionsForVertices(
+    List<RenderScenePoint> vertices, {
+    double fallbackWidth = 1.0,
+    double fallbackDepth = 1.0,
+    double fallbackHeight = 1.0,
+  }) {
+    if (vertices.isEmpty) {
+      return (
+        width: fallbackWidth,
+        depth: fallbackDepth,
+        height: fallbackHeight,
+      );
+    }
+    var minX = double.infinity;
+    var minY = double.infinity;
+    var minZ = double.infinity;
+    var maxX = double.negativeInfinity;
+    var maxY = double.negativeInfinity;
+    var maxZ = double.negativeInfinity;
+    for (final vertex in vertices) {
+      minX = math.min(minX, vertex.x);
+      minY = math.min(minY, vertex.y);
+      minZ = math.min(minZ, vertex.z);
+      maxX = math.max(maxX, vertex.x);
+      maxY = math.max(maxY, vertex.y);
+      maxZ = math.max(maxZ, vertex.z);
+    }
+    return (
+      width: math.max(maxX - minX, 0.05),
+      depth: math.max(maxY - minY, 0.05),
+      height: math.max(maxZ - minZ, 0.05),
+    );
+  }
+
   static double lengthValue(
     FamilyDocument family,
     FamilyTypeDefinition type,
@@ -72,6 +141,7 @@ abstract final class FamilyInstanceAdapter {
     required ViewerElementCreationGateway creationGateway,
     required ViewerAuthoringGateway authoringGateway,
     int? hostWallId,
+    RenderSceneObject? hostWall,
     double offsetMeters = 0.0,
   }) async {
     final validation = FamilyDocumentValidator.validate(family);
@@ -148,6 +218,35 @@ abstract final class FamilyInstanceAdapter {
             fallback: 0.9,
           ),
         );
+      case FamilyCategory.wallSweep:
+        final wallId = hostWallId;
+        if (wallId == null || hostWall == null) {
+          throw const FormatException(
+              'A wall sweep family must be hosted by a wall.');
+        }
+        final wallLength = RenderSceneQueries.wallLength(hostWall);
+        final sweepWidth = _lengthValue(family, type, 'width');
+        if (wallLength == null ||
+            !wallLength.isFinite ||
+            wallLength <= 1e-6 ||
+            sweepWidth > wallLength - 0.02) {
+          throw const FormatException(
+              'Wall sweep width must fit inside the selected wall.');
+        }
+        created = await _createMeshInstance(
+          family: family,
+          type: type,
+          position: RenderSceneQueries.wallPointAtOffset(
+                hostWall,
+                offsetMeters,
+              ) ??
+              position,
+          levelId: levelId,
+          evaluatedMesh: evaluatedMesh,
+          creationGateway: creationGateway,
+          hostWall: hostWall,
+          hostOffsetMeters: offsetMeters,
+        );
       case FamilyCategory.genericModel:
       case FamilyCategory.furniture:
       case FamilyCategory.casework:
@@ -188,9 +287,19 @@ abstract final class FamilyInstanceAdapter {
         <String, Object?>{
           for (final parameter in family.parameters)
             parameter.id: type.valueFor(parameter),
+          if (category == FamilyCategory.wallSweep) ...<String, Object?>{
+            '_hostWallId': hostWallId,
+            '_hostOffsetMeters': offsetMeters,
+          },
         },
       ),
-      familyPlanSvg: FamilyPlanSymbolGenerator.svgFor(family, type),
+      familyPlanSvg: FamilyPlanSymbolGenerator.svgFor(
+        family,
+        type,
+        rotationRadians: category == FamilyCategory.wallSweep
+            ? _wallRotation(hostWall, offsetMeters)
+            : 0.0,
+      ),
     );
     if (withReference.scene == null || withReference.errors.isNotEmpty) {
       throw StateError(
@@ -213,22 +322,43 @@ abstract final class FamilyInstanceAdapter {
     required int levelId,
     required FamilyEvaluatedMesh evaluatedMesh,
     required ViewerElementCreationGateway creationGateway,
+    RenderSceneObject? hostWall,
+    double hostOffsetMeters = 0.0,
   }) {
     final indices = triangleIndices(evaluatedMesh);
     if (indices.isEmpty) {
       throw const FormatException('Family mesh has no renderable triangles.');
     }
-    final vertices = projectVertices(evaluatedMesh, position);
+    final vertices = hostWall == null
+        ? projectVertices(evaluatedMesh, position)
+        : projectWallHostedVertices(
+            mesh: evaluatedMesh,
+            hostWall: hostWall,
+            offsetMeters: hostOffsetMeters,
+          );
+    final dimensions = dimensionsForVertices(
+      vertices,
+      fallbackWidth: _lengthValue(family, type, 'width', fallback: 1.0),
+      fallbackDepth: _lengthValue(family, type, 'depth', fallback: 1.0),
+      fallbackHeight: _lengthValue(family, type, 'height', fallback: 1.0),
+    );
     return creationGateway.createFamilyProxy(
       name: '${family.name} · ${type.name}',
       levelId: levelId,
       position: position,
-      widthMeters: _lengthValue(family, type, 'width', fallback: 1.0),
-      depthMeters: _lengthValue(family, type, 'depth', fallback: 1.0),
-      heightMeters: _lengthValue(family, type, 'height', fallback: 1.0),
+      widthMeters: dimensions.width,
+      depthMeters: dimensions.depth,
+      heightMeters: dimensions.height,
       vertices: vertices,
       indices: indices,
     );
+  }
+
+  static double _wallRotation(RenderSceneObject? wall, double offsetMeters) {
+    if (wall == null) return 0.0;
+    final tangent = RenderSceneQueries.wallTangentAtOffset(wall, offsetMeters);
+    if (tangent == null) return 0.0;
+    return math.atan2(tangent.y, tangent.x);
   }
 
   static double _lengthValue(

@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'family_document.dart';
 
 /// Compact, renderer-independent plan representation for a family instance.
@@ -6,14 +8,26 @@ import 'family_document.dart';
 /// reference.  The 3D feature graph is intentionally not part of it, so a
 /// floor plan can draw a family without decoding or projecting its mesh.
 abstract final class FamilyPlanSymbolGenerator {
-  static String svgFor(FamilyDocument family, FamilyTypeDefinition type) {
+  static String svgFor(
+    FamilyDocument family,
+    FamilyTypeDefinition type, {
+    double rotationRadians = 0.0,
+  }) {
     final width = _lengthValue(family, type, 'width', fallback: 1.0);
     final depth = _lengthValue(family, type, 'depth', fallback: width);
     final halfWidth = width * 0.5;
     final halfDepth = depth * 0.5;
     final category = family.category;
     final paths = <String>[
-      _rectanglePath(-halfWidth, -halfDepth, halfWidth, halfDepth),
+      category == FamilyCategory.wallSweep
+          ? _rotatedRectanglePath(
+              -halfWidth,
+              -halfDepth,
+              halfWidth,
+              halfDepth,
+              rotationRadians,
+            )
+          : _rectanglePath(-halfWidth, -halfDepth, halfWidth, halfDepth),
     ];
 
     switch (category) {
@@ -52,6 +66,7 @@ abstract final class FamilyPlanSymbolGenerator {
         }
       case FamilyCategory.door:
       case FamilyCategory.window:
+      case FamilyCategory.wallSweep:
       case FamilyCategory.genericModel:
         // Hosted openings already have their own wall-aware plan symbol. A
         // generic family remains intentionally quiet: its footprint is the
@@ -90,6 +105,27 @@ abstract final class FamilyPlanSymbolGenerator {
       'L ${_number(maxX)} ${_number(minY)} '
       'L ${_number(maxX)} ${_number(maxY)} '
       'L ${_number(minX)} ${_number(maxY)} Z';
+
+  static String _rotatedRectanglePath(
+    double minX,
+    double minY,
+    double maxX,
+    double maxY,
+    double rotationRadians,
+  ) {
+    final cosine = math.cos(rotationRadians);
+    final sine = math.sin(rotationRadians);
+    String point(double x, double y) {
+      final rotatedX = x * cosine - y * sine;
+      final rotatedY = x * sine + y * cosine;
+      return '${_number(rotatedX)} ${_number(rotatedY)}';
+    }
+
+    return 'M ${point(minX, minY)} '
+        'L ${point(maxX, minY)} '
+        'L ${point(maxX, maxY)} '
+        'L ${point(minX, maxY)} Z';
+  }
 
   static String _number(double value) {
     if (!value.isFinite) return '0';

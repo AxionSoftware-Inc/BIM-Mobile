@@ -274,7 +274,8 @@ class _FamilyLibraryDialogState extends State<FamilyLibraryDialog> {
     final document = asset.document;
     final type = document.types.first;
     final hosted = document.category == FamilyCategory.door ||
-        document.category == FamilyCategory.window;
+        document.category == FamilyCategory.window ||
+        document.category == FamilyCategory.wallSweep;
     final colors = Theme.of(context).colorScheme;
     return Card(
       margin: EdgeInsets.zero,
@@ -354,7 +355,9 @@ class _FamilyLibraryDialogState extends State<FamilyLibraryDialog> {
                       const SizedBox(width: 7),
                       Expanded(
                         child: Text(
-                          'Doors and windows are hosted openings. Select a solid wall first.',
+                          document.category == FamilyCategory.wallSweep
+                              ? 'Wall sweep is hosted on the selected wall and follows its direction.'
+                              : 'Doors and windows are hosted openings. Select a solid wall first.',
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
                       ),
@@ -649,6 +652,7 @@ String _categoryLabel(FamilyCategory category) {
     FamilyCategory.column => 'Column',
     FamilyCategory.door => 'Door',
     FamilyCategory.window => 'Window',
+    FamilyCategory.wallSweep => 'Wall sweep',
     FamilyCategory.furniture => 'Furniture',
     FamilyCategory.casework => 'Casework',
     FamilyCategory.stair => 'Stair',
@@ -663,6 +667,7 @@ IconData _categoryIcon(FamilyCategory category) {
       Icons.view_column_outlined,
     FamilyCategory.door => Icons.door_front_door_outlined,
     FamilyCategory.window => Icons.window_outlined,
+    FamilyCategory.wallSweep => Icons.border_style_outlined,
     FamilyCategory.stair => Icons.stairs_outlined,
     FamilyCategory.casework => Icons.kitchen_outlined,
     FamilyCategory.furniture => Icons.chair_outlined,

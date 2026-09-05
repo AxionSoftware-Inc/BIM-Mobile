@@ -94,6 +94,9 @@ abstract final class FamilyDocumentValidator {
           errors.add('${feature.kind.name} requires a closed profile');
         }
       }
+      if (feature.kind == FamilyFeatureKind.freeformMesh) {
+        _checkFreeformMesh(feature, errors);
+      }
     }
     return FamilyValidationResult(List<String>.unmodifiable(errors));
   }
@@ -122,5 +125,63 @@ abstract final class FamilyDocumentValidator {
       if (sketch.id == id) return sketch;
     }
     return null;
+  }
+
+  static void _checkFreeformMesh(
+    FamilyFeature feature,
+    List<String> errors,
+  ) {
+    const maxVertices = 200000;
+    const maxFaces = 200000;
+    final rawVertices = feature.parameters['vertices'];
+    final rawFaces = feature.parameters['faces'];
+    if (rawVertices is! List || rawFaces is! List) {
+      errors.add('Freeform mesh ${feature.id} needs vertices and faces');
+      return;
+    }
+    if (rawVertices.isEmpty || rawFaces.isEmpty) {
+      errors.add('Freeform mesh ${feature.id} cannot be empty');
+      return;
+    }
+    if (rawVertices.length > maxVertices) {
+      errors.add('Freeform mesh ${feature.id} has too many vertices');
+    }
+    if (rawFaces.length > maxFaces) {
+      errors.add('Freeform mesh ${feature.id} has too many faces');
+    }
+    for (var vertexIndex = 0; vertexIndex < rawVertices.length; vertexIndex++) {
+      final rawVertex = rawVertices[vertexIndex];
+      final values = rawVertex is List && rawVertex.length >= 3
+          ? rawVertex
+          : rawVertex is Map
+              ? <Object?>[rawVertex['x'], rawVertex['y'], rawVertex['z']]
+              : const <Object?>[];
+      if (values.length < 3 ||
+          values.take(3).any((value) => !_finiteNumber(value))) {
+        errors.add('Freeform mesh ${feature.id} has an invalid vertex');
+        break;
+      }
+    }
+    for (var faceIndex = 0; faceIndex < rawFaces.length; faceIndex++) {
+      final rawFace = rawFaces[faceIndex];
+      if (rawFace is! List || rawFace.length < 3) {
+        errors.add('Freeform mesh ${feature.id} has an invalid face');
+        break;
+      }
+      for (final rawIndex in rawFace) {
+        final index =
+            rawIndex is int ? rawIndex : int.tryParse(rawIndex.toString());
+        if (index == null || index < 0 || index >= rawVertices.length) {
+          errors.add(
+              'Freeform mesh ${feature.id} has an out-of-range face index');
+          return;
+        }
+      }
+    }
+  }
+
+  static bool _finiteNumber(Object? value) {
+    final number = value is num ? value.toDouble() : double.tryParse('$value');
+    return number != null && number.isFinite;
   }
 }

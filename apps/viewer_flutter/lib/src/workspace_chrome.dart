@@ -261,6 +261,7 @@ enum WorkspaceTemplate {
   modern3,
   glassTower9,
   glassCampus6x9,
+  professionalHouse,
 }
 
 /// The right-hand workspace slot hosts one contextual surface at a time.
@@ -396,39 +397,42 @@ class AuthoringToolPalette extends StatelessWidget {
             borderRadius: BorderRadius.circular(14),
             child: Padding(
               padding: const EdgeInsets.symmetric(vertical: 4),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  for (final tool in _primaryTools)
-                    _PaletteToolButton(
-                      tool: tool,
-                      selected: mode == tool.mode,
+              child: SingleChildScrollView(
+                physics: const ClampingScrollPhysics(),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    for (final tool in _primaryTools)
+                      _PaletteToolButton(
+                        tool: tool,
+                        selected: mode == tool.mode,
+                        enabled: enabled,
+                        onPressed: () => onModeChanged(tool.mode),
+                      ),
+                    const Divider(height: 20),
+                    PopupMenuButton<RenderSceneInteractionMode>(
+                      tooltip: 'More editing tools',
                       enabled: enabled,
-                      onPressed: () => onModeChanged(tool.mode),
-                    ),
-                  const Divider(height: 20),
-                  PopupMenuButton<RenderSceneInteractionMode>(
-                    tooltip: 'More editing tools',
-                    enabled: enabled,
-                    icon: const Icon(Icons.edit_note_outlined),
-                    onSelected: onModeChanged,
-                    itemBuilder: (context) =>
-                        <PopupMenuEntry<RenderSceneInteractionMode>>[
-                      for (final tool in _secondaryTools)
-                        CheckedPopupMenuItem<RenderSceneInteractionMode>(
-                          value: tool.mode,
-                          checked: mode == tool.mode,
-                          child: Row(
-                            children: <Widget>[
-                              Icon(tool.icon, size: 18),
-                              const SizedBox(width: 10),
-                              Text(tool.label),
-                            ],
+                      icon: const Icon(Icons.edit_note_outlined),
+                      onSelected: onModeChanged,
+                      itemBuilder: (context) =>
+                          <PopupMenuEntry<RenderSceneInteractionMode>>[
+                        for (final tool in _secondaryTools)
+                          CheckedPopupMenuItem<RenderSceneInteractionMode>(
+                            value: tool.mode,
+                            checked: mode == tool.mode,
+                            child: Row(
+                              children: <Widget>[
+                                Icon(tool.icon, size: 18),
+                                const SizedBox(width: 10),
+                                Text(tool.label),
+                              ],
+                            ),
                           ),
-                        ),
-                    ],
-                  ),
-                ],
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
           ),

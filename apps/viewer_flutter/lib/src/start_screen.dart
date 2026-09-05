@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import 'ifc_template_catalog.dart';
@@ -164,6 +166,16 @@ class StartScreen extends StatelessWidget {
                                 ? null
                                 : () => onSelectTemplate(
                                       WorkspaceTemplate.glassCampus6x9,
+                                    ),
+                          ),
+                          _TemplateCard(
+                            template: WorkspaceTemplate.professionalHouse,
+                            title: 'Professional courtyard villa',
+                            icon: Icons.home_work_outlined,
+                            onPressed: busy
+                                ? null
+                                : () => onSelectTemplate(
+                                      WorkspaceTemplate.professionalHouse,
                                     ),
                           ),
                         ],
@@ -863,6 +875,25 @@ class _TemplatePreviewPainter extends CustomPainter {
               offsetY: offset.dy,
               modern: true);
         }
+      case WorkspaceTemplate.professionalHouse:
+        _drawModernGround(canvas, size);
+        _drawBuilding(canvas, size,
+            floors: 2, scale: 0.92, offsetX: 0.0, modern: true);
+        final arcPaint = Paint()
+          ..color = secondary.withValues(alpha: 0.62)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.0;
+        canvas.drawArc(
+          Rect.fromCenter(
+            center: Offset(size.width * 0.50, size.height * 0.72),
+            width: size.width * 0.30,
+            height: size.height * 0.16,
+          ),
+          math.pi,
+          math.pi,
+          false,
+          arcPaint,
+        );
     }
   }
 

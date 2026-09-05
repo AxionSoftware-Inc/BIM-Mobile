@@ -10,6 +10,7 @@ enum FamilyCategory {
   column,
   door,
   window,
+  wallSweep,
   furniture,
   casework,
   stair,

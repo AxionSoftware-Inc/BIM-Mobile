@@ -48,6 +48,7 @@ class _ObjectInspectorRouter extends StatelessWidget {
         ),
     BimElementInspectorKeys.opening: (context) => _OpeningPropertiesSection(
           object: context.object,
+          scene: context.scene,
           levels: context.levels,
           units: context.units,
           commands: context.commands,

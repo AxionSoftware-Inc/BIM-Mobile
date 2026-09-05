@@ -65,6 +65,7 @@ extension _ViewerViewCommands on _ViewerHomePageState {
         creationGateway: session,
         authoringGateway: session,
         hostWallId: hostWall?.elementId,
+        hostWall: hostWall,
       );
       await _applyEngineSceneResult(
         result.scene,
@@ -99,6 +100,8 @@ extension _ViewerViewCommands on _ViewerHomePageState {
     if (levels.isEmpty || family.types.isEmpty) return null;
     final isHostedOpening = family.category == FamilyCategory.door ||
         family.category == FamilyCategory.window;
+    final isHostedFamily =
+        isHostedOpening || family.category == FamilyCategory.wallSweep;
     var selectedType = family.types.first;
     var selectedLevelId = hostWall?.levelId ??
         scene.levelById(_activeLevelId)?.levelId ??
@@ -109,11 +112,18 @@ extension _ViewerViewCommands on _ViewerHomePageState {
         hostWall == null ? null : RenderSceneQueries.wallCenterPoint(hostWall);
     final hostWallLength =
         hostWall == null ? null : RenderSceneQueries.wallLength(hostWall);
-    final initialPoint = hostWallCenter ?? bounds.center;
+    final initialPoint = hostWall == null || hostWallLength == null
+        ? bounds.center
+        : RenderSceneQueries.wallPointAtOffset(
+              hostWall,
+              hostWallLength * 0.5,
+            ) ??
+            hostWallCenter ??
+            bounds.center;
     final initialOffset = hostWallLength != null && hostWallLength.isFinite
         ? hostWallLength * 0.5
         : 0.0;
-    final hostedPlacementAvailable = !isHostedOpening ||
+    final hostedPlacementAvailable = !isHostedFamily ||
         (hostWall != null &&
             hostWallLength != null &&
             hostWallLength.isFinite &&
@@ -123,6 +133,9 @@ extension _ViewerViewCommands on _ViewerHomePageState {
     );
     final yController = TextEditingController(
       text: initialPoint.y.toStringAsFixed(2),
+    );
+    final offsetController = TextEditingController(
+      text: initialOffset.toStringAsFixed(2),
     );
     final result = await showDialog<
         ({
@@ -138,91 +151,105 @@ extension _ViewerViewCommands on _ViewerHomePageState {
           title: Text('Place ${family.name}'),
           content: SizedBox(
             width: 360,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    '${family.category.name} family',
-                    style: Theme.of(context).textTheme.labelMedium,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      '${family.category.name} family',
+                      style: Theme.of(context).textTheme.labelMedium,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<FamilyTypeDefinition>(
-                  initialValue: selectedType,
-                  decoration: const InputDecoration(
-                    labelText: 'Family type',
-                    border: OutlineInputBorder(),
-                    isDense: true,
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<FamilyTypeDefinition>(
+                    initialValue: selectedType,
+                    decoration: const InputDecoration(
+                      labelText: 'Family type',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                    items: family.types
+                        .map((item) => DropdownMenuItem<FamilyTypeDefinition>(
+                              value: item,
+                              child: Text(item.name),
+                            ))
+                        .toList(growable: false),
+                    onChanged: (value) {
+                      if (value != null) {
+                        setLocalState(() => selectedType = value);
+                      }
+                    },
                   ),
-                  items: family.types
-                      .map((item) => DropdownMenuItem<FamilyTypeDefinition>(
-                            value: item,
-                            child: Text(item.name),
-                          ))
-                      .toList(growable: false),
-                  onChanged: (value) {
-                    if (value != null) {
-                      setLocalState(() => selectedType = value);
-                    }
-                  },
-                ),
-                const SizedBox(height: 8),
-                DropdownButtonFormField<int>(
-                  initialValue: selectedLevelId,
-                  decoration: const InputDecoration(
-                    labelText: 'Level',
-                    border: OutlineInputBorder(),
-                    isDense: true,
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<int>(
+                    initialValue: selectedLevelId,
+                    decoration: const InputDecoration(
+                      labelText: 'Level',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                    items: levels
+                        .map((level) => DropdownMenuItem<int>(
+                              value: level.levelId,
+                              child: Text(level.name),
+                            ))
+                        .toList(growable: false),
+                    onChanged: (value) {
+                      if (value != null) {
+                        setLocalState(() => selectedLevelId = value);
+                      }
+                    },
                   ),
-                  items: levels
-                      .map((level) => DropdownMenuItem<int>(
-                            value: level.levelId,
-                            child: Text(level.name),
-                          ))
-                      .toList(growable: false),
-                  onChanged: (value) {
-                    if (value != null) {
-                      setLocalState(() => selectedLevelId = value);
-                    }
-                  },
-                ),
-                const SizedBox(height: 8),
-                if (isHostedOpening)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        hostWall == null
-                            ? 'Select a host wall in the viewport before placing this family.'
-                            : 'Host wall #${hostWall.elementId ?? '-'} · center placement · ${initialOffset.toStringAsFixed(2)} m',
-                        style: Theme.of(context).textTheme.bodySmall,
+                  const SizedBox(height: 8),
+                  if (isHostedFamily)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          hostWall == null
+                              ? 'Select a host wall in the viewport before placing this family.'
+                              : 'Host wall #${hostWall.elementId ?? '-'} · direction-aware placement',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ),
+                    )
+                  else
+                    const SizedBox.shrink(),
+                  if (family.category == FamilyCategory.wallSweep &&
+                      hostWall != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: _NumericField(
+                        label: 'Along wall (m)',
+                        controller: offsetController,
+                        onChanged: (_) {},
                       ),
                     ),
-                  )
-                else
-                  Row(
-                    children: <Widget>[
-                      Expanded(
-                        child: _NumericField(
-                          label: 'X (m)',
-                          controller: xController,
-                          onChanged: (_) {},
+                  if (!isHostedFamily)
+                    Row(
+                      children: <Widget>[
+                        Expanded(
+                          child: _NumericField(
+                            label: 'X (m)',
+                            controller: xController,
+                            onChanged: (_) {},
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: _NumericField(
-                          label: 'Y (m)',
-                          controller: yController,
-                          onChanged: (_) {},
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _NumericField(
+                            label: 'Y (m)',
+                            controller: yController,
+                            onChanged: (_) {},
+                          ),
                         ),
-                      ),
-                    ],
-                  ),
-              ],
+                      ],
+                    ),
+                ],
+              ),
             ),
           ),
           actions: <Widget>[
@@ -235,11 +262,22 @@ extension _ViewerViewCommands on _ViewerHomePageState {
                   ? () {
                       final x = double.tryParse(xController.text.trim());
                       final y = double.tryParse(yController.text.trim());
-                      if (!isHostedOpening &&
+                      final offset = family.category == FamilyCategory.wallSweep
+                          ? double.tryParse(offsetController.text.trim())
+                          : initialOffset;
+                      if (!isHostedFamily &&
                           (x == null ||
                               y == null ||
                               !x.isFinite ||
                               !y.isFinite)) {
+                        return;
+                      }
+                      if (isHostedFamily &&
+                          (offset == null ||
+                              !offset.isFinite ||
+                              offset < 0.0 ||
+                              (hostWallLength != null &&
+                                  offset > hostWallLength))) {
                         return;
                       }
                       Navigator.of(dialogContext).pop((
@@ -247,7 +285,7 @@ extension _ViewerViewCommands on _ViewerHomePageState {
                         levelId: selectedLevelId,
                         x: x ?? initialPoint.x,
                         y: y ?? initialPoint.y,
-                        offsetMeters: isHostedOpening ? initialOffset : 0.0,
+                        offsetMeters: isHostedFamily ? offset! : 0.0,
                       ));
                     }
                   : null,
@@ -257,8 +295,11 @@ extension _ViewerViewCommands on _ViewerHomePageState {
         ),
       ),
     );
-    xController.dispose();
-    yController.dispose();
+    // The dialog route can still run one final rebuild after `showDialog`
+    // completes (especially when the numeric keyboard was just dismissed).
+    // Disposing these controllers here races that rebuild and makes Flutter
+    // read a disposed controller. They are short-lived route-owned inputs;
+    // let the route release them after its final frame instead.
     return result;
   }
 

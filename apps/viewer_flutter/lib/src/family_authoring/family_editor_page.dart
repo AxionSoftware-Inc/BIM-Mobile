@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'family_document.dart';
 import 'family_file_store.dart';
 import 'family_geometry.dart';
+import 'family_mesh_importer.dart';
 import 'family_sketch_canvas.dart';
 import 'family_validation.dart';
 
@@ -311,6 +312,53 @@ class _FamilyEditorPageState extends State<FamilyEditorPage> {
     ]));
   }
 
+  Future<void> _importBlenderMesh() async {
+    if (_dirty) {
+      final replace = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Replace current family?'),
+          content: const Text(
+            'Importing a Blender model will replace the current family in the editor. Save it first if you want to keep these changes.',
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Continue'),
+            ),
+          ],
+        ),
+      );
+      if (!mounted || replace != true) return;
+    }
+    setState(() => _status = 'Choose a Blender GLB/glTF file...');
+    try {
+      final result = await FamilyMeshImporter.pickGltf();
+      if (!mounted || result == null) return;
+      final validation = FamilyDocumentValidator.validate(result.document);
+      if (!validation.isValid) {
+        throw FormatException(validation.errors.join('; '));
+      }
+      _undoStack.add(_document);
+      _redoStack.clear();
+      setState(() {
+        _document = result.document;
+        _selectedTypeId = result.document.types.first.id;
+        _selectedSketchId = null;
+        _dirty = true;
+        _status =
+            'Imported ${result.vertexCount} vertices · ${result.faceCount} faces';
+        _syncTypeControllers();
+      });
+    } catch (error) {
+      if (mounted) setState(() => _status = 'Import failed: $error');
+    }
+  }
+
   static bool _isSolidFeature(FamilyFeature feature) {
     return feature.kind == FamilyFeatureKind.box ||
         feature.kind == FamilyFeatureKind.extrude ||
@@ -460,7 +508,8 @@ class _FamilyEditorPageState extends State<FamilyEditorPage> {
 
   void _showProjectHandoff() {
     final hosted = _document.category == FamilyCategory.door ||
-        _document.category == FamilyCategory.window;
+        _document.category == FamilyCategory.window ||
+        _document.category == FamilyCategory.wallSweep;
     showDialog<void>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -483,7 +532,9 @@ class _FamilyEditorPageState extends State<FamilyEditorPage> {
               const SizedBox(height: 12),
               Text(
                 hosted
-                    ? 'Doors and windows become native hosted openings; the family/type reference remains attached to the project element.'
+                    ? _document.category == FamilyCategory.wallSweep
+                        ? 'Wall sweep is placed on the selected wall; its family/type reference remains attached to the project element.'
+                        : 'Doors and windows become native hosted openings; the family/type reference remains attached to the project element.'
                     : 'The project stores the family/type reference and creates the supported native element.',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
@@ -577,6 +628,7 @@ class _FamilyEditorPageState extends State<FamilyEditorPage> {
                 onAddSubtract: () =>
                     _addBoolean(FamilyFeatureKind.booleanSubtract),
                 onAddTransform: _addTransform,
+                onImportBlenderMesh: _importBlenderMesh,
                 onSketchChanged: (value) {
                   setState(() => _selectedSketchId = value);
                 },
@@ -675,6 +727,7 @@ class _EditorPanel extends StatelessWidget {
     required this.onAddUnion,
     required this.onAddSubtract,
     required this.onAddTransform,
+    required this.onImportBlenderMesh,
     required this.onSketchChanged,
     required this.widthController,
     required this.depthController,
@@ -701,6 +754,7 @@ class _EditorPanel extends StatelessWidget {
   final VoidCallback onAddUnion;
   final VoidCallback onAddSubtract;
   final VoidCallback onAddTransform;
+  final VoidCallback onImportBlenderMesh;
   final ValueChanged<String?> onSketchChanged;
   final TextEditingController widthController;
   final TextEditingController depthController;
@@ -857,13 +911,18 @@ class _EditorPanel extends StatelessWidget {
                 const _FamilyHint(
                   icon: Icons.touch_app_outlined,
                   text:
-                      'Start with Profile. Tap points on the canvas, close it, then add Extrude.',
+                      'Profile → Extrude, or import a Blender GLB/glTF mesh. The model is centred automatically.',
                 ),
                 const SizedBox(height: 12),
                 Wrap(
                   spacing: 8,
                   runSpacing: 8,
                   children: <Widget>[
+                    OutlinedButton.icon(
+                      onPressed: onImportBlenderMesh,
+                      icon: const Icon(Icons.file_upload_outlined),
+                      label: const Text('Import GLB/glTF'),
+                    ),
                     OutlinedButton.icon(
                       onPressed: onAddProfile,
                       icon: const Icon(Icons.polyline_outlined),
@@ -1096,8 +1155,9 @@ class _ProjectHandoffCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
-    final hosted =
-        category == FamilyCategory.door || category == FamilyCategory.window;
+    final hosted = category == FamilyCategory.door ||
+        category == FamilyCategory.window ||
+        category == FamilyCategory.wallSweep;
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -1459,6 +1519,7 @@ String _categoryLabel(FamilyCategory category) {
     FamilyCategory.column => 'Column',
     FamilyCategory.door => 'Door',
     FamilyCategory.window => 'Window',
+    FamilyCategory.wallSweep => 'Wall sweep',
     FamilyCategory.furniture => 'Furniture',
     FamilyCategory.casework => 'Casework',
     FamilyCategory.stair => 'Stair',

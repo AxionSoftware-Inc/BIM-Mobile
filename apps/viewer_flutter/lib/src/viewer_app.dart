@@ -436,6 +436,8 @@ class _ViewerHomePageState extends State<ViewerHomePage>
         return _ResidentialTemplateKind.glassTower9;
       case WorkspaceTemplate.glassCampus6x9:
         return _ResidentialTemplateKind.glassCampus6x9;
+      case WorkspaceTemplate.professionalHouse:
+        return _ResidentialTemplateKind.professionalHouse;
     }
   }
 

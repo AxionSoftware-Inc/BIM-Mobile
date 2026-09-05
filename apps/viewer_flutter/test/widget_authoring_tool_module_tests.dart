@@ -17,6 +17,12 @@ void registerAuthoringToolModuleTests() {
     expect(RenderSceneQueries.wallLength(wall), greaterThan(0.0));
     expect(RenderSceneQueries.wallCenterPoint(wall), isNotNull);
     expect(RenderSceneQueries.wallSnapPoints(scene), isNotEmpty);
+    final length = RenderSceneQueries.wallLength(wall)!;
+    final midpoint = RenderSceneQueries.wallPointAtOffset(wall, length * 0.5);
+    final tangent = RenderSceneQueries.wallTangentAtOffset(wall, length * 0.5);
+    expect(midpoint, isNotNull);
+    expect(tangent, isNotNull);
+    expect(tangent!.distanceTo(RenderScenePoint.zero()), closeTo(1.0, 1e-9));
   });
 
   test('wall authoring geometry keeps body moves on the wall normal', () {
