@@ -21,6 +21,15 @@ internal data class GeometryData(
 )
 
 internal object RenderSceneEdgeGeometry {
+  // 3D architectural edges are geometry, not screen-space strokes. Keep the
+  // ribbon narrow and lift it farther than its half-width so it cannot straddle
+  // the source face when the camera is very close. The previous 10 mm half-
+  // width with only 6-8 mm of lift made the ribbon itself intersect the wall
+  // envelope and produced depth/culling instability on mobile GPUs.
+  private const val ISOMETRIC_WALL_EDGE_HALF_WIDTH_METERS = 0.003
+  private const val ISOMETRIC_STRAIGHT_WALL_EDGE_LIFT_METERS = 0.018
+  private const val ISOMETRIC_CURVED_WALL_EDGE_LIFT_METERS = 0.022
+
   private fun stableWallEdgeOffset(
     first: ScenePoint,
     second: ScenePoint,
@@ -44,7 +53,7 @@ internal object RenderSceneEdgeGeometry {
     val side = (edgeCenterX - axisCenterX) * normalX +
       (edgeCenterZ - axisCenterZ) * normalZ
     val sideSign = if (side < 0.0) -1.0 else 1.0
-    val offset = 0.006 * sideSign
+    val offset = ISOMETRIC_STRAIGHT_WALL_EDGE_LIFT_METERS * sideSign
     return ScenePoint(normalX * offset, 0.0, normalZ * offset)
   }
 
@@ -66,13 +75,13 @@ internal object RenderSceneEdgeGeometry {
       return ScenePoint(0.0, 0.0, 0.0)
     }
 
-    // Arc edges cannot use the endpoint chord as a wall normal.  Offset them
+    // Arc edges cannot use the endpoint chord as a wall normal. Offset them
     // along the true radial direction instead: the outer boundary moves out,
-    // the inner boundary moves in, and both remain depth-tested.  This keeps
-    // the architectural line attached to the same curved face without the
-    // mobile depth-buffer shimmer caused by coplanar ribbons.
+    // the inner boundary moves in, and both remain depth-tested. Keep the lift
+    // comfortably larger than the ribbon half-width so close zoom never puts
+    // half of the overlay back inside the curved face.
     val side = if (radialLength >= arcRadius) 1.0 else -1.0
-    val offset = 0.008 * side
+    val offset = ISOMETRIC_CURVED_WALL_EDGE_LIFT_METERS * side
     return ScenePoint(
       radialX / radialLength * offset,
       0.0,
@@ -141,6 +150,7 @@ internal object RenderSceneEdgeGeometry {
       normalZ / length * offset,
     )
   }
+
   fun build(
     projectionMode: String,
     points: List<ScenePoint>,
@@ -273,8 +283,10 @@ internal object RenderSceneEdgeGeometry {
         )
           .map { (first, second) -> RenderEdge(first, second, junction = true) },
       )
-      rawRenderEdges.addAll(wallVerticalEnvelopeSegments(points, sourceBounds)
-        .map { (first, second) -> RenderEdge(first, second, junction = true) })
+      rawRenderEdges.addAll(
+        wallVerticalEnvelopeSegments(points, sourceBounds)
+          .map { (first, second) -> RenderEdge(first, second, junction = true) },
+      )
     }
     data class PointKey(val x: Long, val y: Long, val z: Long)
     data class RenderEdgeKey(val first: PointKey, val second: PointKey)
@@ -308,14 +320,30 @@ internal object RenderSceneEdgeGeometry {
     val indexData = ByteBuffer.allocateDirect(renderEdges.size * indicesPerEdge * Int.SIZE_BYTES)
       .order(ByteOrder.nativeOrder()).asIntBuffer()
     var vertexOffset = 0
+    var generatedMinX = Double.POSITIVE_INFINITY
+    var generatedMinY = Double.POSITIVE_INFINITY
+    var generatedMinZ = Double.POSITIVE_INFINITY
+    var generatedMaxX = Double.NEGATIVE_INFINITY
+    var generatedMaxY = Double.NEGATIVE_INFINITY
+    var generatedMaxZ = Double.NEGATIVE_INFINITY
+
+    fun includeGeneratedPoint(point: ScenePoint) {
+      generatedMinX = kotlin.math.min(generatedMinX, point.x)
+      generatedMinY = kotlin.math.min(generatedMinY, point.y)
+      generatedMinZ = kotlin.math.min(generatedMinZ, point.z)
+      generatedMaxX = kotlin.math.max(generatedMaxX, point.x)
+      generatedMaxY = kotlin.math.max(generatedMaxY, point.y)
+      generatedMaxZ = kotlin.math.max(generatedMaxZ, point.z)
+    }
+
     for (edge in renderEdges.values) {
       val sourceFirst = edge.first
       val sourceSecond = edge.second
       // At a wall/floor or wall/ceiling contact the border ribbon can be
       // coplanar with the adjacent system and lose the depth test. Move only
-      // those horizontal wall edges 18 mm onto the visible wall face: it
-      // preserves hidden-edge behavior while making an interior room read as
-      // bounded after an exterior wall is removed.
+      // those horizontal wall edges onto the visible wall face: it preserves
+      // hidden-edge behavior while making an interior room read as bounded
+      // after an exterior wall is removed.
       val averageY = (sourceFirst.y + sourceSecond.y) * 0.5
       val isHorizontalWallBoundary = edge.junction
       val junctionOffset = if (isHorizontalWallBoundary && !isFloorPlan) {
@@ -352,9 +380,9 @@ internal object RenderSceneEdgeGeometry {
       }
       // The edge ribbon otherwise sits exactly on the imported face. That is
       // enough to trigger depth-buffer fighting on tablet GPUs, which appears
-      // as disappearing/dotted lines while orbiting.  Move it a tiny amount
-      // along the average adjacent face normal; it remains depth-tested and
-      // is still hidden by genuinely occluding geometry.
+      // as disappearing/dotted lines while orbiting. Move it along a stable
+      // face normal; it remains depth-tested and is still hidden by genuinely
+      // occluding geometry.
       // A curved wall's chord is only its authored endpoint reference. It is
       // never a valid face normal for edge lifting; use the radial arc offset
       // below and deliberately ignore any chord axis attached to the edge.
@@ -397,7 +425,9 @@ internal object RenderSceneEdgeGeometry {
         y = sourceSecond.y + junctionOffset + surfaceOffset.y,
         z = sourceSecond.z + faceOffset.z + surfaceOffset.z,
       )
-      val dx = second.x - first.x; val dy = second.y - first.y; val dz = second.z - first.z
+      val dx = second.x - first.x
+      val dy = second.y - first.y
+      val dz = second.z - first.z
       val length = kotlin.math.sqrt(dx * dx + dy * dy + dz * dz)
       if (length <= 1e-8) continue
       val tangent = ScenePoint(dx / length, dy / length, dz / length)
@@ -439,10 +469,7 @@ internal object RenderSceneEdgeGeometry {
       if (widthLength <= 1e-8) continue
       val halfWidth = when {
         isFloorPlan -> 0.006
-        // Keep 3D wall ribbons close to the face. A wide ribbon grows into a
-        // second surface on close zoom and is the main source of the curved
-        // wall shimmer on mobile GPUs.
-        wallEdgePass && projectionMode == "isometric" -> 0.010
+        wallEdgePass && projectionMode == "isometric" -> ISOMETRIC_WALL_EDGE_HALF_WIDTH_METERS
         else -> 0.010
       } * radiusScale
       val widthVector = ScenePoint(
@@ -457,6 +484,7 @@ internal object RenderSceneEdgeGeometry {
         ScenePoint(second.x - widthVector.x, second.y - widthVector.y, second.z - widthVector.z),
       )
       for (point in ribbonPoints) {
+        includeGeneratedPoint(point)
         vertexData.putFloat(point.x.toFloat())
         vertexData.putFloat(point.y.toFloat())
         vertexData.putFloat(point.z.toFloat())
@@ -470,12 +498,18 @@ internal object RenderSceneEdgeGeometry {
       vertexOffset += 4
     }
     if (vertexOffset == 0) return null
-    vertexData.flip(); indexData.flip()
-    // The ribbon has no volumetric thickness, so only a small bound margin is
-    // needed and it cannot form an oversized near-plane culling volume.
+    vertexData.flip()
+    indexData.flip()
+
+    // IMPORTANT: culling bounds must describe the generated ribbon, not the
+    // source face. Isometric edges can be lifted 18-50 mm from the source and
+    // junctions can move another 35-50 mm. The previous fixed +/-20 mm source
+    // margin excluded real edge vertices, so Filament could cull/re-admit the
+    // same batch on adjacent close-zoom frames. That presents exactly as
+    // viewport flicker even when the depth buffer itself is stable.
     val bounds = SceneBounds(
-      ScenePoint(sourceBounds.min.x - 0.02, sourceBounds.min.y - 0.02, sourceBounds.min.z - 0.02),
-      ScenePoint(sourceBounds.max.x + 0.02, sourceBounds.max.y + 0.02, sourceBounds.max.z + 0.02),
+      ScenePoint(generatedMinX, generatedMinY, generatedMinZ),
+      ScenePoint(generatedMaxX, generatedMaxY, generatedMaxZ),
     )
     return GeometryData(vertexOffset, (vertexOffset / 4) * indicesPerEdge, vertexData, indexData, bounds)
   }
@@ -561,6 +595,7 @@ internal object RenderSceneEdgeGeometry {
     }
     return result.values.toList()
   }
+
   private fun triangleNormal(a: ScenePoint, b: ScenePoint, c: ScenePoint): DoubleArray {
     val abX = b.x - a.x
     val abY = b.y - a.y
