@@ -87,6 +87,17 @@ abstract final class FamilyDocumentValidator {
       for (final plane in document.referencePlanes) plane.id: plane,
     };
 
+    for (final sketch in document.sketches) {
+      final seenPointIds = <String>{};
+      for (final point in sketch.points) {
+        final pointId = point.id.trim();
+        if (pointId.isEmpty) continue;
+        if (!seenPointIds.add(pointId)) {
+          add('Sketch ${sketch.name} has duplicate point id $pointId');
+        }
+      }
+    }
+
     for (final plane in document.referencePlanes) {
       if (plane.name.trim().isEmpty) {
         add('Reference plane ${plane.id} needs a name');
@@ -105,10 +116,13 @@ abstract final class FamilyDocumentValidator {
         add('Constraint ${constraint.id} references unknown sketch ${constraint.sketchId}');
         continue;
       }
-      if (!_validPointIndex(sketch, constraint.pointAIndex)) {
-        add(
-          'Constraint ${constraint.id} references invalid point ${constraint.pointAIndex}',
-        );
+      final a = _pointIndex(
+        sketch,
+        stableId: constraint.pointAId,
+        legacyIndex: constraint.pointAIndex,
+      );
+      if (a == null) {
+        add('Constraint ${constraint.id} references a missing Point A');
       }
       switch (constraint.kind) {
         case FamilySketchConstraintKind.horizontal:
@@ -118,13 +132,13 @@ abstract final class FamilyDocumentValidator {
           if (constraint.referencePlaneId != null) {
             add('Constraint ${constraint.id} cannot reference a plane');
           }
-          if (constraint.pointCIndex != null || constraint.pointDIndex != null) {
+          if (_hasPointRef(constraint.pointCId, constraint.pointCIndex) ||
+              _hasPointRef(constraint.pointDId, constraint.pointDIndex)) {
             add('Constraint ${constraint.id} cannot use a second segment');
           }
           if (constraint.expression?.trim().isNotEmpty == true) {
             add('Constraint ${constraint.id} cannot use an expression');
           }
-          break;
         case FamilySketchConstraintKind.pointOnReferencePlane:
           final planeId = constraint.referencePlaneId;
           final plane = planeId == null ? null : planeById[planeId];
@@ -135,18 +149,18 @@ abstract final class FamilyDocumentValidator {
               'Constraint ${constraint.id} and reference plane ${plane.name} must use the same sketch',
             );
           }
-          if (constraint.pointBIndex != null ||
-              constraint.pointCIndex != null ||
-              constraint.pointDIndex != null) {
+          if (_hasPointRef(constraint.pointBId, constraint.pointBIndex) ||
+              _hasPointRef(constraint.pointCId, constraint.pointCIndex) ||
+              _hasPointRef(constraint.pointDId, constraint.pointDIndex)) {
             add('Constraint ${constraint.id} cannot use segment points');
           }
           if (constraint.expression?.trim().isNotEmpty == true) {
             add('Constraint ${constraint.id} cannot use an expression');
           }
-          break;
         case FamilySketchConstraintKind.distance:
           _validateTwoPointConstraint(constraint, sketch, add);
-          if (constraint.pointCIndex != null || constraint.pointDIndex != null) {
+          if (_hasPointRef(constraint.pointCId, constraint.pointCIndex) ||
+              _hasPointRef(constraint.pointDId, constraint.pointDIndex)) {
             add('Distance constraint ${constraint.id} cannot use a second segment');
           }
           if (constraint.referencePlaneId != null) {
@@ -155,7 +169,6 @@ abstract final class FamilyDocumentValidator {
           if (constraint.expression?.trim().isEmpty != false) {
             add('Distance constraint ${constraint.id} requires an expression');
           }
-          break;
         case FamilySketchConstraintKind.parallel:
         case FamilySketchConstraintKind.perpendicular:
         case FamilySketchConstraintKind.equalLength:
@@ -166,7 +179,6 @@ abstract final class FamilyDocumentValidator {
           if (constraint.expression?.trim().isNotEmpty == true) {
             add('Constraint ${constraint.id} cannot use an expression');
           }
-          break;
         case FamilySketchConstraintKind.angle:
           _validateFourPointConstraint(constraint, sketch, add);
           if (constraint.referencePlaneId != null) {
@@ -175,7 +187,6 @@ abstract final class FamilyDocumentValidator {
           if (constraint.expression?.trim().isEmpty != false) {
             add('Angle constraint ${constraint.id} requires an expression');
           }
-          break;
       }
     }
 
@@ -301,10 +312,19 @@ abstract final class FamilyDocumentValidator {
     FamilySketch sketch,
     void Function(String) add,
   ) {
-    final b = constraint.pointBIndex;
-    if (b == null || !_validPointIndex(sketch, b)) {
+    final a = _pointIndex(
+      sketch,
+      stableId: constraint.pointAId,
+      legacyIndex: constraint.pointAIndex,
+    );
+    final b = _pointIndex(
+      sketch,
+      stableId: constraint.pointBId,
+      legacyIndex: constraint.pointBIndex,
+    );
+    if (b == null) {
       add('Constraint ${constraint.id} requires a valid second point');
-    } else if (b == constraint.pointAIndex) {
+    } else if (a != null && b == a) {
       add('Constraint ${constraint.id} requires two distinct points');
     }
   }
@@ -315,21 +335,43 @@ abstract final class FamilyDocumentValidator {
     void Function(String) add,
   ) {
     _validateTwoPointConstraint(constraint, sketch, add);
-    final c = constraint.pointCIndex;
-    final d = constraint.pointDIndex;
-    if (c == null || !_validPointIndex(sketch, c)) {
-      add('Constraint ${constraint.id} requires a valid Point C');
-    }
-    if (d == null || !_validPointIndex(sketch, d)) {
-      add('Constraint ${constraint.id} requires a valid Point D');
-    }
+    final c = _pointIndex(
+      sketch,
+      stableId: constraint.pointCId,
+      legacyIndex: constraint.pointCIndex,
+    );
+    final d = _pointIndex(
+      sketch,
+      stableId: constraint.pointDId,
+      legacyIndex: constraint.pointDIndex,
+    );
+    if (c == null) add('Constraint ${constraint.id} requires a valid Point C');
+    if (d == null) add('Constraint ${constraint.id} requires a valid Point D');
     if (c != null && d != null && c == d) {
       add('Constraint ${constraint.id} second segment needs distinct points');
     }
   }
 
-  static bool _validPointIndex(FamilySketch sketch, int index) =>
-      index >= 0 && index < sketch.points.length;
+  static bool _hasPointRef(String? id, int? legacyIndex) =>
+      id?.trim().isNotEmpty == true || legacyIndex != null;
+
+  static int? _pointIndex(
+    FamilySketch sketch, {
+    required String? stableId,
+    required int? legacyIndex,
+  }) {
+    final id = stableId?.trim();
+    if (id != null && id.isNotEmpty) {
+      final index = sketch.points.indexWhere((point) => point.id == id);
+      return index < 0 ? null : index;
+    }
+    if (legacyIndex == null ||
+        legacyIndex < 0 ||
+        legacyIndex >= sketch.points.length) {
+      return null;
+    }
+    return legacyIndex;
+  }
 
   static void _checkUniqueIds(
     Iterable<String> ids,
