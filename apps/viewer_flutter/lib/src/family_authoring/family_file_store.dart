@@ -255,17 +255,27 @@ abstract final class FamilyFileStore {
     }
   }
 
+  /// Saves an authored Family into the persistent app-owned Family Library.
+  /// Stable family id controls update-vs-create; display-name changes never
+  /// create duplicate library assets.
   static Future<String?> save(FamilyDocument document) async {
     _validateOrThrow(document);
-    if (Platform.isAndroid) return _saveToLibrary(document);
+    return _saveToLibrary(document);
+  }
 
+  /// Explicit external-file export. Export is intentionally separate from
+  /// [save] so project/library persistence cannot accidentally depend on a
+  /// removable or user-moved external file.
+  static Future<String?> export(FamilyDocument document) async {
+    _validateOrThrow(document);
     const typeGroup = XTypeGroup(
       label: 'BIM family',
       extensions: <String>[FamilyDocument.fileExtension, 'json'],
     );
     final location = await getSaveLocation(
       acceptedTypeGroups: <XTypeGroup>[typeGroup],
-      suggestedName: '${_safeFileStem(document.name)}.${FamilyDocument.fileExtension}',
+      suggestedName:
+          '${_safeFileStem(document.name)}.${FamilyDocument.fileExtension}',
     );
     if (location == null) return null;
     final target = File(location.path);
@@ -273,9 +283,8 @@ abstract final class FamilyFileStore {
     return target.path;
   }
 
-  /// Saves an editor-opened asset back to its known path when possible.
-  /// This is the update path used by future/edit-existing library UI; it avoids
-  /// creating a new file just because the family display name changed.
+  /// Saves an editor-opened asset back to its known app-library path when
+  /// possible. A renamed Family keeps the same stable asset identity.
   static Future<String> saveAsset(
     FamilyDocument document, {
     required String existingPath,
