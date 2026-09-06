@@ -42,23 +42,38 @@ enum FamilyFeatureKind {
 enum FamilySketchPlane { xy, xz, yz }
 
 final class FamilySketchPoint {
-  const FamilySketchPoint({required this.x, required this.y});
+  const FamilySketchPoint({this.id = '', required this.x, required this.y});
 
+  /// Stable authoring identity. Empty ids are accepted only for legacy or
+  /// transient points; file loading and the editor hydrate them before v5 save.
+  final String id;
   final double x;
   final double y;
 
-  FamilySketchPoint copyWith({double? x, double? y}) {
-    return FamilySketchPoint(x: x ?? this.x, y: y ?? this.y);
+  FamilySketchPoint copyWith({String? id, double? x, double? y}) {
+    return FamilySketchPoint(
+      id: id ?? this.id,
+      x: x ?? this.x,
+      y: y ?? this.y,
+    );
   }
 
-  Map<String, Object?> toJson() => <String, Object?>{'x': x, 'y': y};
+  Map<String, Object?> toJson() => <String, Object?>{
+        if (id.trim().isNotEmpty) 'id': id.trim(),
+        'x': x,
+        'y': y,
+      };
 
   static FamilySketchPoint? fromJson(Object? raw) {
     if (raw is! Map) return null;
     final x = _asDouble(raw['x']);
     final y = _asDouble(raw['y']);
     if (x == null || y == null || !x.isFinite || !y.isFinite) return null;
-    return FamilySketchPoint(x: x, y: y);
+    return FamilySketchPoint(
+      id: raw['id']?.toString().trim() ?? '',
+      x: x,
+      y: y,
+    );
   }
 }
 
@@ -114,9 +129,14 @@ final class FamilySketch {
     final points = <FamilySketchPoint>[];
     final rawPoints = raw['points'];
     if (rawPoints is List) {
-      for (final item in rawPoints) {
-        final point = FamilySketchPoint.fromJson(item);
-        if (point != null) points.add(point);
+      for (var index = 0; index < rawPoints.length; index++) {
+        final point = FamilySketchPoint.fromJson(rawPoints[index]);
+        if (point == null) continue;
+        points.add(
+          point.id.trim().isEmpty
+              ? point.copyWith(id: '$id:point-$index')
+              : point,
+        );
       }
     }
     return FamilySketch(
@@ -146,10 +166,6 @@ final class FamilyParameterDefinition {
   final Object? defaultValue;
   final double? minimum;
   final double? maximum;
-
-  /// Optional numeric expression evaluated by FamilyParameterResolver.
-  /// Formula-driven parameters ignore their own type override but may depend
-  /// on other numeric family parameters.
   final String? formula;
 
   bool get hasFormula => formula?.trim().isNotEmpty == true;
@@ -228,8 +244,6 @@ final class FamilyTypeDefinition {
     );
   }
 
-  /// Raw value only. Geometry/placement code must use FamilyParameterResolver
-  /// so formula-driven parameters resolve consistently everywhere.
   Object? valueFor(FamilyParameterDefinition parameter) =>
       values[parameter.id] ?? parameter.defaultValue;
 
@@ -272,9 +286,6 @@ final class FamilyFeature {
   final FamilyFeatureKind kind;
   final String label;
   final List<String> inputs;
-
-  /// Values may be literals or parameter ids. The feature graph stays small
-  /// and serializable while the evaluator owns geometry construction.
   final Map<String, Object?> parameters;
 
   Map<String, Object?> toJson() => <String, Object?>{
@@ -333,7 +344,7 @@ final class FamilyDocument {
     this.schemaVersion = currentSchemaVersion,
   });
 
-  static const int currentSchemaVersion = 4;
+  static const int currentSchemaVersion = 5;
   static const int minimumSupportedSchemaVersion = 1;
   static const String fileExtension = 'bimfamily';
 
@@ -403,7 +414,6 @@ final class FamilyDocument {
           },
         ),
       ],
-      sketches: const <FamilySketch>[],
     );
   }
 
@@ -427,9 +437,7 @@ final class FamilyDocument {
         parameters ?? this.parameters,
       ),
       types: List<FamilyTypeDefinition>.unmodifiable(types ?? this.types),
-      features: List<FamilyFeature>.unmodifiable(
-        features ?? this.features,
-      ),
+      features: List<FamilyFeature>.unmodifiable(features ?? this.features),
       sketches: List<FamilySketch>.unmodifiable(sketches ?? this.sketches),
       referencePlanes: List<FamilyReferencePlane>.unmodifiable(
         referencePlanes ?? this.referencePlanes,
@@ -437,7 +445,6 @@ final class FamilyDocument {
       constraints: List<FamilySketchConstraint>.unmodifiable(
         constraints ?? this.constraints,
       ),
-      // Any authoring edit rewrites the document using the current schema.
       schemaVersion: currentSchemaVersion,
     );
   }
@@ -517,14 +524,22 @@ final class FamilyDocument {
         if (plane != null) referencePlanes.add(plane);
       }
     }
-    final constraints = <FamilySketchConstraint>[];
-    final rawConstraints = raw['constraints'];
-    if (rawConstraints is List) {
-      for (final item in rawConstraints) {
+    final rawConstraints = <FamilySketchConstraint>[];
+    final rawConstraintList = raw['constraints'];
+    if (rawConstraintList is List) {
+      for (final item in rawConstraintList) {
         final constraint = FamilySketchConstraint.fromJson(item);
-        if (constraint != null) constraints.add(constraint);
+        if (constraint != null) rawConstraints.add(constraint);
       }
     }
+    final sketchById = <String, FamilySketch>{
+      for (final sketch in sketches) sketch.id: sketch,
+    };
+    final constraints = <FamilySketchConstraint>[
+      for (final constraint in rawConstraints)
+        _hydrateConstraintPointIds(constraint, sketchById[constraint.sketchId]),
+    ];
+
     if (parameters.isEmpty || types.isEmpty || features.isEmpty) return null;
     return FamilyDocument(
       id: id,
@@ -541,6 +556,36 @@ final class FamilyDocument {
       schemaVersion: schemaVersion,
     );
   }
+}
+
+FamilySketchConstraint _hydrateConstraintPointIds(
+  FamilySketchConstraint constraint,
+  FamilySketch? sketch,
+) {
+  String? idAt(int? index, String? existing) {
+    if (existing?.trim().isNotEmpty == true) return existing!.trim();
+    if (sketch == null || index == null || index < 0 || index >= sketch.points.length) {
+      return null;
+    }
+    final id = sketch.points[index].id.trim();
+    return id.isEmpty ? null : id;
+  }
+
+  return FamilySketchConstraint(
+    id: constraint.id,
+    sketchId: constraint.sketchId,
+    kind: constraint.kind,
+    pointAIndex: constraint.pointAIndex,
+    pointAId: idAt(constraint.pointAIndex, constraint.pointAId),
+    pointBIndex: constraint.pointBIndex,
+    pointBId: idAt(constraint.pointBIndex, constraint.pointBId),
+    pointCIndex: constraint.pointCIndex,
+    pointCId: idAt(constraint.pointCIndex, constraint.pointCId),
+    pointDIndex: constraint.pointDIndex,
+    pointDId: idAt(constraint.pointDIndex, constraint.pointDId),
+    referencePlaneId: constraint.referencePlaneId,
+    expression: constraint.expression,
+  );
 }
 
 T? _enumFromName<T extends Enum>(List<T> values, String? name) {
