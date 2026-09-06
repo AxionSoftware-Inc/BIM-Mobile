@@ -62,6 +62,10 @@ internal object RenderSceneWallSurfaceProjection {
   }
 
   private fun buildWallMaterial(engine: Engine): Material? {
+    // Deliberately mirror RenderSceneFilamentHostView.buildMaterial() instead
+    // of depending on fluent return values for the source/depth setters. This
+    // keeps the guard on the same proven Filament API path as every built-in
+    // viewport material.
     val builder = MaterialBuilder()
       .name("RenderSceneWallLocalProjection")
       .shading(MaterialBuilder.Shading.UNLIT)
@@ -77,9 +81,8 @@ internal object RenderSceneWallSurfaceProjection {
       .targetApi(MaterialBuilder.TargetApi.OPENGL)
       .platform(MaterialBuilder.Platform.MOBILE)
       .optimization(MaterialBuilder.Optimization.NONE)
-      .material(WALL_LOCAL_PROJECTION_MAT)
-      .depthCulling(true)
-      .depthWrite(true)
+    builder.material(WALL_LOCAL_PROJECTION_MAT)
+    builder.depthCulling(true).depthWrite(true)
 
     val packageData: MaterialPackage = builder.build(engine)
     if (!packageData.isValid) return null
