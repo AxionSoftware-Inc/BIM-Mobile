@@ -144,10 +144,6 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
     );
   }
 
-  void _markMetadataDirty() {
-    if (!_dirty) setState(() => _dirty = true);
-  }
-
   Object? _effectiveValue(FamilyParameterDefinition parameter) {
     try {
       return FamilyParameterResolver(_document, _selectedType).resolve(parameter);
@@ -429,7 +425,6 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
           }),
       ],
     );
-    // This also catches formulas that still depend on the deleted id.
     if (!_acceptCandidate(candidate)) return;
     _commit(candidate, status: '${parameter.label} deleted');
   }
@@ -776,10 +771,10 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
     );
     if (!mounted || action == null) return;
     if (action == _CloseAction.save) {
-      if (await _save() && mounted) Navigator.of(context).pop(true);
+      if (await _save() && mounted) Navigator.of(context).pop();
       return;
     }
-    if (mounted) Navigator.of(context).pop(false);
+    if (mounted) Navigator.of(context).pop();
   }
 
   @override
@@ -908,9 +903,11 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
                     labelText: 'Family name',
                     border: OutlineInputBorder(),
                   ),
-                  onChanged: (_) {
-                    _markMetadataDirty();
-                    setState(() {});
+                  onChanged: (value) {
+                    final name = value.trim();
+                    if (name.isNotEmpty && name != _document.name) {
+                      _replaceDraft(_document.copyWith(name: name));
+                    }
                   },
                 ),
                 const SizedBox(height: 8),
@@ -943,7 +940,13 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
                     labelText: 'Description',
                     border: OutlineInputBorder(),
                   ),
-                  onChanged: (_) => _markMetadataDirty(),
+                  onChanged: (value) {
+                    if (value.trim() != _document.description) {
+                      _replaceDraft(
+                        _document.copyWith(description: value.trim()),
+                      );
+                    }
+                  },
                 ),
               ],
             ),
