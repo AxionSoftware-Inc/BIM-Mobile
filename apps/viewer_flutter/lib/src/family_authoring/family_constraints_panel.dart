@@ -263,27 +263,35 @@ class FamilyConstraintsPanel extends StatelessWidget {
     BuildContext context,
     FamilySketch sketch,
   ) async {
+    final stableSketch = _stableSketch(sketch);
     final draft = await showDialog<_ConstraintDraft>(
       context: context,
       builder: (_) => _ConstraintDialog(
-        sketch: sketch,
+        sketch: stableSketch,
         planes: _planes,
       ),
     );
     if (draft == null) return;
     final stamp = DateTime.now().microsecondsSinceEpoch;
+    final base = _replaceSketch(document, stableSketch);
+    String? pointId(int? index) =>
+        index == null ? null : stableSketch.points[index].id;
     _commit(
-      document.copyWith(
+      base.copyWith(
         constraints: <FamilySketchConstraint>[
-          ...document.constraints,
+          ...base.constraints,
           FamilySketchConstraint(
             id: 'constraint-$stamp',
-            sketchId: sketch.id,
+            sketchId: stableSketch.id,
             kind: draft.kind,
             pointAIndex: draft.pointA,
+            pointAId: pointId(draft.pointA),
             pointBIndex: draft.pointB,
+            pointBId: pointId(draft.pointB),
             pointCIndex: draft.pointC,
+            pointCId: pointId(draft.pointC),
             pointDIndex: draft.pointD,
+            pointDId: pointId(draft.pointD),
             referencePlaneId: draft.referencePlaneId,
             expression: draft.expression,
           ),
@@ -306,18 +314,20 @@ class FamilyConstraintsPanel extends StatelessWidget {
   }
 
   void _quickRectangle(FamilySketch sketch) {
-    final ownedPlaneIds = document.referencePlanes
-        .where((plane) => plane.sketchId == sketch.id)
+    final stableSketch = _stableSketch(sketch);
+    final stableDocument = _replaceSketch(document, stableSketch);
+    final ownedPlaneIds = stableDocument.referencePlanes
+        .where((plane) => plane.sketchId == stableSketch.id)
         .map((plane) => plane.id)
         .toSet();
-    final cleaned = document.copyWith(
+    final cleaned = stableDocument.copyWith(
       referencePlanes: <FamilyReferencePlane>[
-        for (final plane in document.referencePlanes)
-          if (plane.sketchId != sketch.id) plane,
+        for (final plane in stableDocument.referencePlanes)
+          if (plane.sketchId != stableSketch.id) plane,
       ],
       constraints: <FamilySketchConstraint>[
-        for (final constraint in document.constraints)
-          if (constraint.sketchId != sketch.id &&
+        for (final constraint in stableDocument.constraints)
+          if (constraint.sketchId != stableSketch.id &&
               !ownedPlaneIds.contains(constraint.referencePlaneId))
             constraint,
       ],
@@ -331,28 +341,28 @@ class FamilyConstraintsPanel extends StatelessWidget {
       FamilyReferencePlane(
         id: left,
         name: 'Left',
-        sketchId: sketch.id,
+        sketchId: stableSketch.id,
         axis: FamilyReferencePlaneAxis.x,
         expression: '-width / 2',
       ),
       FamilyReferencePlane(
         id: right,
         name: 'Right',
-        sketchId: sketch.id,
+        sketchId: stableSketch.id,
         axis: FamilyReferencePlaneAxis.x,
         expression: 'width / 2',
       ),
       FamilyReferencePlane(
         id: bottom,
         name: 'Bottom',
-        sketchId: sketch.id,
+        sketchId: stableSketch.id,
         axis: FamilyReferencePlaneAxis.y,
         expression: '0',
       ),
       FamilyReferencePlane(
         id: top,
         name: 'Top',
-        sketchId: sketch.id,
+        sketchId: stableSketch.id,
         axis: FamilyReferencePlaneAxis.y,
         expression: 'height',
       ),
@@ -364,9 +374,10 @@ class FamilyConstraintsPanel extends StatelessWidget {
     ) =>
         FamilySketchConstraint(
           id: 'rect-$suffix-$stamp',
-          sketchId: sketch.id,
+          sketchId: stableSketch.id,
           kind: FamilySketchConstraintKind.pointOnReferencePlane,
           pointAIndex: point,
+          pointAId: stableSketch.points[point].id,
           referencePlaneId: planeId,
         );
     final constraints = <FamilySketchConstraint>[
@@ -394,6 +405,23 @@ class FamilyConstraintsPanel extends StatelessWidget {
     );
   }
 
+  FamilySketch _stableSketch(FamilySketch sketch) => sketch.copyWith(
+        points: <FamilySketchPoint>[
+          for (var index = 0; index < sketch.points.length; index++)
+            sketch.points[index].id.trim().isEmpty
+                ? sketch.points[index].copyWith(id: '${sketch.id}:point-$index')
+                : sketch.points[index],
+        ],
+      );
+
+  FamilyDocument _replaceSketch(FamilyDocument source, FamilySketch sketch) =>
+      source.copyWith(
+        sketches: <FamilySketch>[
+          for (final current in source.sketches)
+            current.id == sketch.id ? sketch : current,
+        ],
+      );
+
   void _commit(FamilyDocument candidate, String success) {
     final validation = FamilyDocumentValidator.validate(candidate);
     if (!validation.isValid) {
@@ -405,8 +433,10 @@ class FamilyConstraintsPanel extends StatelessWidget {
   }
 
   String _constraintSummary(FamilySketchConstraint constraint) {
-    final a = constraint.pointAIndex + 1;
-    final b = (constraint.pointBIndex ?? -1) + 1;
+    final a = _pointNumber(constraint.pointAId, constraint.pointAIndex);
+    final b = _pointNumber(constraint.pointBId, constraint.pointBIndex);
+    final c = _pointNumber(constraint.pointCId, constraint.pointCIndex);
+    final d = _pointNumber(constraint.pointDId, constraint.pointDIndex);
     switch (constraint.kind) {
       case FamilySketchConstraintKind.pointOnReferencePlane:
         final plane =
@@ -418,14 +448,23 @@ class FamilyConstraintsPanel extends StatelessWidget {
       case FamilySketchConstraintKind.parallel:
       case FamilySketchConstraintKind.perpendicular:
       case FamilySketchConstraintKind.equalLength:
-        return 'Segment $a–$b ↔ Segment ${(constraint.pointCIndex ?? -1) + 1}–${(constraint.pointDIndex ?? -1) + 1}';
+        return 'Segment $a–$b ↔ Segment $c–$d';
       case FamilySketchConstraintKind.angle:
-        return 'Segment $a–$b ↔ Segment ${(constraint.pointCIndex ?? -1) + 1}–${(constraint.pointDIndex ?? -1) + 1} = ${constraint.expression}°';
+        return 'Segment $a–$b ↔ Segment $c–$d = ${constraint.expression}°';
       case FamilySketchConstraintKind.horizontal:
       case FamilySketchConstraintKind.vertical:
       case FamilySketchConstraintKind.coincident:
         return 'Point $a ↔ Point $b';
     }
+  }
+
+  String _pointNumber(String? id, int? legacyIndex) {
+    final sketch = _sketch;
+    if (sketch != null && id?.trim().isNotEmpty == true) {
+      final index = sketch.points.indexWhere((point) => point.id == id);
+      if (index >= 0) return '${index + 1}';
+    }
+    return legacyIndex == null ? '?' : '${legacyIndex + 1}';
   }
 
   static String _constraintTitle(FamilySketchConstraintKind kind) =>
