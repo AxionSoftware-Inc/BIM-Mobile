@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:viewer_flutter/src/family_authoring/family_authoring_module.dart';
@@ -210,6 +211,42 @@ void main() {
       expect(find.textContaining('Base − Tool'), findsOneWidget);
       expect(find.textContaining('Tool · tap in viewport'), findsOneWidget);
       expect(find.text('Pick a solid in the viewport'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('keyboard Enter, Escape and Cmd-Z follow editor command semantics',
+        (tester) async {
+      await pumpEditor(tester);
+
+      await tester.tap(find.text('Sketch').first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Rectangle'));
+      await tester.pumpAndSettle();
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(find.byType(FamilyAuthoringViewport), findsOneWidget);
+      expect(find.textContaining('Profile ready'), findsOneWidget);
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyZ);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Model history'));
+      await tester.pumpAndSettle();
+      expect(find.text('Profile 1'), findsNothing);
+      expect(find.text('Box'), findsWidgets);
+
+      await tester.tap(find.byTooltip('Model history'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Move').first);
+      await tester.pumpAndSettle();
+      expect(find.text('Done / leave tool'), findsOneWidget);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.text('Done / leave tool'), findsNothing);
       expect(tester.takeException(), isNull);
     });
   });
