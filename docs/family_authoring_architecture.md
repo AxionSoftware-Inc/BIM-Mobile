@@ -11,15 +11,16 @@ another wall implementation and it does not edit a project scene directly.
   values and the safe numeric expression language.
 - `family_constraint_models.dart` owns persistent reference-plane and sketch
   constraint intent.
-- `family_constraint_solver.dart` solves Stage-1 geometric constraints into a
-  transient sketch used by real geometry evaluation.
+- `family_constraint_solver.dart` solves exact coordinate constraints plus
+  deterministic dimensional/segment constraints into transient solved sketches
+  used by real geometry evaluation.
 - `family_csg.dart` owns closed-manifold solid union/subtraction.
 - `family_validation.dart` is the semantic gate before save/import/placement.
 - `family_file_store.dart` owns validated persistence and local Library state.
 - `family_editor_v2_page.dart` is the single production authoring surface for
   both new and existing library assets.
 - `family_constraints_panel.dart` is the tablet authoring UI for reference
-  planes and Stage-1 sketch constraints.
+  planes and geometric constraints.
 - `family_library_dialog.dart` owns search, filters, type choice, favorites,
   recents, cached previews and the edit-existing-family workflow.
 - `family_instance_adapter.dart` is the project boundary and the shared resolver
@@ -36,22 +37,24 @@ The family contract has four independent layers:
 4. An ordered feature graph for profile, extrude, revolve, transform, boolean
    union/subtract and freeform mesh.
 
-## Schema v3 and compatibility
+## Schema v4 and compatibility
 
-`FamilyDocument.currentSchemaVersion` is 3. Schema v1 and v2 remain readable.
-Future schema versions are rejected instead of being guessed at. Any authored
-edit is written back using schema v3.
+`FamilyDocument.currentSchemaVersion` is 4. Schema v1, v2 and v3 remain
+readable. Future schema versions are rejected instead of being guessed at. Any
+authored edit is written back using schema v4.
 
 Schema evolution:
 
 - **v1**: family/type/feature/sketch core.
 - **v2**: optional numeric parameter formulas.
-- **v3**: formula-driven reference planes and Stage-1 geometric sketch
-  constraints.
+- **v3**: formula-driven reference planes plus Horizontal, Vertical,
+  Coincident and Point-on-reference-plane constraints.
+- **v4**: formula-driven Distance and Angle targets plus Parallel,
+  Perpendicular and Equal-length segment relations.
 
-Old family assets do not need migration before opening: absent
-`reference_planes` and `constraints` simply mean unconstrained sketches. The
-first authored save rewrites the asset in the current schema.
+Old family assets do not need migration before opening. Missing newer fields
+mean the older feature is simply absent. The first authored save rewrites the
+asset in the current schema.
 
 ## Numeric formulas
 
@@ -64,8 +67,9 @@ deterministic:
 - `min(a,b)`, `max(a,b)`, `abs(x)` and `clamp(x,min,max)`.
 
 Parameter formulas may drive `length`, `number` and `angle` parameters.
-Reference-plane offsets use the exact same resolver, so a plane can be defined
-as `-width / 2`, `width / 2`, `height`, `max(depth, 0.5)`, and so on.
+Reference-plane offsets, Distance targets and Angle targets use the same safe
+resolver. Examples include `-width / 2`, `width / 2`, `height`, `width * 0.25`
+and `clamp(angleParam, 0, 180)`.
 
 Expressions cannot call Dart, access files/network, mutate state or depend on
 text/material/boolean values. The resolver rejects unknown ids, cycles,
@@ -77,7 +81,7 @@ dependencies still read the selected Family Type. This rule is shared by:
 ```text
 Family Type values
         -> FamilyParameterResolver
-        -> reference-plane expressions
+        -> reference-plane / distance / angle expressions
         -> FamilyConstraintSolver
         -> solved profile geometry
         -> FamilyGeometryEvaluator
@@ -92,15 +96,15 @@ in a new geometry/placement/Inspector path and read `type.values` directly for
 an effective dimension. Doing so would make plan, 3D and saved project
 instances disagree.
 
-## Stage-1 geometric constraints
+## Geometric constraints
 
-Schema v3 reference planes are sketch-scoped and fix one coordinate:
+Reference planes are sketch-scoped and fix one coordinate:
 
 - `axis: x` describes a vertical reference plane at a formula-driven X offset;
 - `axis: y` describes a horizontal reference plane at a formula-driven Y
   offset.
 
-Supported sketch constraints are:
+Exact coordinate constraints are:
 
 - **Horizontal**: two points share Y.
 - **Vertical**: two points share X.
@@ -108,20 +112,37 @@ Supported sketch constraints are:
 - **Point on reference plane**: one point's X or Y is pinned to the plane's
   resolved expression.
 
-`FamilyConstraintSolver` solves X and Y as independent equality graphs. It
-first merges equality groups, then applies fixed reference-plane coordinates.
-If two fixed planes demand different values for the same coordinate group, the
-family is reported as **over-constrained**. The solver never averages two
-conflicting fixed constraints to make the error disappear.
+Dimensional/segment constraints are:
 
-Unfixed equality groups use the deterministic average of their authored raw
-coordinates. Constraint intent remains persistent while solved coordinates are
-transient: geometry evaluation receives a solved document, but the `.bimfamily`
-does not replace its authored points with baked solved points.
+- **Distance**: distance between Point A and Point B equals a Family Type
+  expression.
+- **Parallel**: segment AB is parallel to segment CD.
+- **Perpendicular**: segment AB is perpendicular to segment CD.
+- **Equal length**: segment CD is projected to the length of segment AB.
+- **Angle**: the unsigned angle between segment AB and segment CD equals a
+  formula-driven value from 0 to 180 degrees.
+
+`FamilyConstraintSolver` first solves X and Y equality graphs and fixed
+reference-plane coordinates exactly. It then projects the dimensional/segment
+constraints deterministically, re-applies the exact coordinate constraints
+after every pass, and checks the residuals. The current solver uses at most 64
+passes with a `1e-6` residual budget. A system that cannot satisfy both layers
+is rejected as **over-constrained** instead of being silently averaged into an
+incorrect shape.
+
+Distance must resolve to a positive value. Angle must resolve to 0…180 degrees.
+Zero-length source segments are rejected for segment-direction constraints.
+Every target expression is resolved separately for every Family Type, so type
+changes can move reference planes and dimensions through one semantic path.
+
+Unfixed exact equality groups use the deterministic average of their authored
+raw coordinates. Constraint intent remains persistent while solved coordinates
+are transient: geometry evaluation receives a solved document, but the
+`.bimfamily` does not replace authored points with baked solved points.
 
 `FamilyGeometryEvaluator.evaluate()` and `evaluateMesh()` solve sketches before
-profile/extrude/revolve evaluation. Therefore these constraints drive actual
-3D placement and Inspector regeneration; they are not editor-only metadata.
+profile/extrude/revolve evaluation. Therefore constraints drive actual 3D
+placement and Inspector regeneration; they are not editor-only metadata.
 Invalid/incomplete constraints may temporarily show the raw authoring preview,
 but `FamilyDocumentValidator` blocks save/import/placement until every Family
 Type solves successfully.
@@ -133,7 +154,10 @@ Advanced Family Editor includes a dedicated constraints panel:
 - add/edit/delete reference planes;
 - show each plane's live resolved offset for the active Family Type;
 - add/delete Horizontal, Vertical, Coincident and Point-on-plane constraints;
-- choose points explicitly from the active profile;
+- add formula-driven Distance and Angle constraints;
+- add Parallel, Perpendicular and Equal-length relations between two explicit
+  sketch segments;
+- choose Point A/B/C/D explicitly from the active profile;
 - one-click **Parametric rectangle** for a four-point profile, creating:
   - left = `-width / 2`
   - right = `width / 2`
@@ -233,9 +257,11 @@ Before a family is saved, imported or placed, validation checks at least:
 - every selected type's effective resolved values;
 - formula cycles, unknown references and invalid arithmetic;
 - reference-plane sketch ownership and expression validity;
-- constraint sketch/point/reference-plane integrity;
-- every Family Type can solve every constrained sketch without an
-  over-constraint;
+- two-point and two-segment operand integrity;
+- Distance/Angle target expressions and valid numeric domains per Family Type;
+- constraints do not carry incompatible plane/expression/segment fields;
+- every Family Type can solve every constrained sketch inside the residual
+  budget without an over-constraint;
 - feature input existence and ordering (feature nodes may only depend on earlier
   feature nodes);
 - solid-only input requirements for transforms and booleans;
@@ -281,27 +307,23 @@ the validated family into the app-owned reusable library.
 
 ## Important production limits — do not fake these
 
-The following are still separate engine/content tasks and are **not** claimed
-as finished:
+The following remain separate engine/content tasks and are not claimed as
+finished merely because data can be stored:
 
-1. **Advanced/topology-aware geometric constraints**. Stage-1 equality and
-   reference-plane constraints are real. Still missing are dimensional distance
-   constraints, perpendicular/parallel/tangent/angular relations, equal-length
-   geometry, robust constraint propagation across lines/arcs, and stable
-   topology-aware point/edge identities. Current Stage-1 constraints reference
-   sketch point indexes, which is safe with today's add/move/clear workflow but
-   must be upgraded before arbitrary point insertion/reorder/deletion ships.
+1. **Curve/topology-aware constraints**. Point/line constraints above are real.
+   Still missing are tangent/arc/curve relations and stable topology-aware
+   point/edge identities. Current constraints reference sketch point indexes;
+   this is safe with today's add/move/clear workflow but must be upgraded before
+   arbitrary point insertion/reorder/deletion ships.
 2. **Nested families**. Child-family dependency/version/transform semantics need
-   a real dependency model before they can safely ship.
+   a real dependency model and synchronous evaluated-child boundary before they
+   can safely participate in parent geometry.
 3. **GLB material/texture preservation**. Geometry import works; production
    material/texture import, explicit unit selection, decimation and LOD
-   generation remain separate importer/rendering work.
+   generation still require importer/render-contract work.
 4. **Large repeated-instance performance certification**. The reference design
    avoids copying feature graphs, but large tablet scenes still require measured
    device regression budgets.
-
-Do not mark any of these as supported merely by storing metadata for them. The
-engine/evaluator must consume the data and save/reopen tests must prove it.
 
 ## Regression expectations
 
@@ -321,8 +343,11 @@ At minimum, family changes should preserve these workflows:
 8. boolean graph nodes must name exactly two distinct earlier solid operands;
 9. four-point Parametric rectangle -> change width/height -> solved profile and
    resulting geometry move with its reference planes;
-10. conflicting reference-plane pins are rejected as over-constrained;
-11. schema-v1/v2 family -> edit -> save -> schema-v3 family remains loadable;
-12. external invalid `.bimfamily` cannot enter the reusable library;
-13. import GLB/glTF -> save -> reopen -> place repeatedly;
-14. favorite/recent state can be missing/corrupt without breaking assets.
+10. Distance follows its Family Type expression; Parallel, Perpendicular,
+    Equal-length and Angle produce geometry inside the residual budget;
+11. incompatible fixed reference planes plus dimensional targets are rejected
+    as over-constrained;
+12. schema-v1/v2/v3 family -> edit -> save -> schema-v4 family remains loadable;
+13. external invalid `.bimfamily` cannot enter the reusable library;
+14. import GLB/glTF -> save -> reopen -> place repeatedly;
+15. favorite/recent state can be missing/corrupt without breaking assets.
