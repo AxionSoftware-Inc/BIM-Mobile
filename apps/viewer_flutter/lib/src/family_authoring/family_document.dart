@@ -45,7 +45,7 @@ final class FamilySketchPoint {
   const FamilySketchPoint({this.id = '', required this.x, required this.y});
 
   /// Stable authoring identity. Empty ids are accepted only for legacy or
-  /// transient points; file loading and the editor hydrate them before v5 save.
+  /// transient points; file loading and constraint authoring hydrate them.
   final String id;
   final double x;
   final double y;
@@ -100,11 +100,21 @@ final class FamilySketch {
     List<FamilySketchPoint>? points,
     bool? closed,
   }) {
+    final requested = points ?? this.points;
+    final normalized = <FamilySketchPoint>[
+      for (var index = 0; index < requested.length; index++)
+        requested[index].id.trim().isNotEmpty
+            ? requested[index]
+            : index < this.points.length &&
+                    this.points[index].id.trim().isNotEmpty
+                ? requested[index].copyWith(id: this.points[index].id)
+                : requested[index],
+    ];
     return FamilySketch(
       id: id,
       name: name ?? this.name,
       plane: plane ?? this.plane,
-      points: List<FamilySketchPoint>.unmodifiable(points ?? this.points),
+      points: List<FamilySketchPoint>.unmodifiable(normalized),
       closed: closed ?? this.closed,
     );
   }
