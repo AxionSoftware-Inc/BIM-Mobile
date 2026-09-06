@@ -1,0 +1,29 @@
+{
+  "format": "tablet_bim_family",
+  "schema_version": 6,
+  "id": "builtin-door-double-glazed-v1",
+  "name": "Door · Double Glazed",
+  "category": "door",
+  "description": "A wider double-leaf glazed entrance door.",
+  "parameters": [
+    {"id":"width","label":"Overall width","kind":"length","default":1.6,"minimum":0.05},
+    {"id":"depth","label":"Overall depth","kind":"length","default":0.2,"minimum":0.05},
+    {"id":"height","label":"Overall height","kind":"length","default":2.2,"minimum":0.05}
+  ],
+  "types": [
+    {
+      "id": "builtin-door-double-glazed-v1-type",
+      "name": "Double 1600 × 2200",
+      "values": {"width":1.6,"depth":0.2,"height":2.2}
+    }
+  ],
+  "features": [
+    {
+      "id": "builtin-door-double-glazed-v1-box",
+      "kind": "box",
+      "label": "Parametric box",
+      "parameters": {"width":"width","depth":"depth","height":"height"}
+    }
+  ],
+  "sketches": []
+}
