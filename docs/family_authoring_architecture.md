@@ -1,349 +1,307 @@
 # Family Authoring boundary
 
-Family Authoring is a separate authoring product inside Tablet BIM. It is not
-another wall implementation and it does not edit a project scene directly.
+Family Authoring is a reusable-content authoring product inside Tablet BIM. It
+owns family documents and geometry intent; it does **not** own another project
+renderer, another orbit camera, or another wall implementation.
 
-## Boundary
+## Non-negotiable viewport invariant
 
-- `apps/viewer_flutter/lib/src/family_authoring/family_document.dart` owns the
-  serializable `.bimfamily` contract.
-- `family_parameter_resolver.dart` owns deterministic effective parameter
-  values and the safe numeric expression language.
-- `family_constraint_models.dart` owns persistent reference-plane and sketch
-  constraint intent.
-- `family_constraint_solver.dart` resolves stable point identities, exact
-  coordinate constraints and deterministic dimensional/segment constraints
-  into transient solved sketches used by real geometry evaluation.
-- `family_csg.dart` owns closed-manifold solid union/subtraction.
-- `family_validation.dart` is the semantic gate before save/import/placement.
-- `family_file_store.dart` owns validated persistence and local Library state.
-- `family_editor_v2_page.dart` is the single production authoring surface for
-  both new and existing library assets.
-- `family_constraints_panel.dart` is the tablet authoring UI for reference
-  planes and geometric constraints.
-- `family_library_dialog.dart` owns search, filters, type choice, favorites,
-  recents, cached previews and edit-existing-family workflow.
-- `family_instance_adapter.dart` is the project boundary and shared resolver
-  facade used by placement and Inspector code.
+Family 3D uses the production project viewport:
 
-The family contract has four independent layers:
+```text
+FamilyDocument / FamilyGeometryEvaluator
+        -> FamilyRenderSceneAdapter
+        -> RenderScene
+        -> RenderSceneViewportController
+        -> RenderSceneViewport
+        -> Android Filament or project fallback renderer
+```
 
-1. Family metadata and category (`Generic Model`, `Column`, `Door`, `Window`,
-   `Wall Sweep`, `Furniture`, `Casework`, `Stair`, `Structural`).
-2. Parameter definitions and named Family Types. A type supplies values for
-   reusable parameters; it is not a separate geometry copy.
-3. Sketch intent: stable points, formula-driven reference planes and geometric
-   constraints.
-4. An ordered feature graph for profile, extrude, revolve, transform, boolean
-   union/subtract and freeform mesh.
+Family sketch navigation also reuses the project plan contracts:
 
-## Schema v5 and compatibility
+```text
+FamilySketch
+        -> FamilySketchViewport
+        -> RenderSceneViewport(topDown)
+        -> project pan/zoom/hit-test
+        -> PlanSketchGeometry snapping/inference
+```
 
-`FamilyDocument.currentSchemaVersion` is 5. Schema v1 through v4 remain
-readable. Future schema versions are rejected rather than guessed. Any authored
-edit is written using schema v5.
+Do **not** add a second Family-specific 3D orbit camera, renderer, hit-test
+implementation or fixed-scale sketch camera. Project viewport fixes must flow
+into Family automatically.
+
+Family coordinates are `X = width`, `Y = height`, `Z = depth`. RenderScene uses
+`X/Y` as the plan plane and `Z` as elevation, so the adapter performs the single
+axis conversion `(x, z, y)` and fixes winding once at that boundary.
+
+## Main ownership boundaries
+
+- `family_document.dart` — serializable `.bimfamily` contract.
+- `family_parameter_resolver.dart` — deterministic parameter/formula values.
+- `family_constraint_models.dart` — persistent sketch constraint intent.
+- `family_constraint_solver.dart` — stable-point geometric solving.
+- `family_csg.dart` — exact closed-manifold union/subtraction.
+- `family_dependency_resolver.dart` — nested-family dependency DAG and cycle
+  rejection.
+- `family_geometry.dart` — synchronous evaluated family geometry.
+- `family_validation.dart` — semantic gate before save/import/placement.
+- `family_file_store.dart` — validated local library persistence.
+- `family_render_scene_adapter.dart` — final Family mesh -> project RenderScene.
+- `family_authoring_scene_builder.dart` — transient per-feature RenderScene used
+  for viewport Base/Tool/source picking during authoring.
+- `family_authoring_viewport.dart` — thin host around the project viewport plus
+  authoring gizmo overlays; it does not implement a camera.
+- `family_sketch_viewport.dart` — project top-down viewport host for profile
+  drawing and point dragging.
+- `family_editor_v5_page.dart` — single active direct-manipulation editor.
+- `family_library_dialog.dart` — library search/filter/type/edit workflow.
+- `family_instance_adapter.dart` — project placement boundary.
+
+V2/V3/V4 editor classes are compatibility aliases only. New navigation enters
+V5 directly. Do not put new editor logic into those compatibility files.
+
+## Schema v6 and compatibility
+
+`FamilyDocument.currentSchemaVersion` is **6**. Schema v1 through v5 remain
+readable. Any authored edit saves using v6.
 
 Schema evolution:
 
-- **v1**: family/type/feature/sketch core.
-- **v2**: optional numeric parameter formulas.
-- **v3**: formula-driven reference planes plus Horizontal, Vertical,
+- **v1** — family/type/feature/sketch core.
+- **v2** — numeric parameter formulas.
+- **v3** — formula-driven reference planes plus Horizontal, Vertical,
   Coincident and Point-on-reference-plane constraints.
-- **v4**: formula-driven Distance and Angle targets plus Parallel,
-  Perpendicular and Equal-length segment relations.
-- **v5**: stable sketch-point identities and ID-first constraint references.
-  Legacy point indexes remain compatibility snapshots only.
+- **v4** — Distance, Angle, Parallel, Perpendicular and Equal-length relations.
+- **v5** — stable sketch-point identities and ID-first constraint references.
+- **v6** — nested-family feature references with stable family/type identity and
+  transform expressions.
 
-Old assets do not need an up-front migration. When a v1-v4 sketch is loaded,
-points without ids receive deterministic ids such as `profile:point-0`, and
-legacy index-only constraints are hydrated with those ids. The loaded document
-keeps its original schema number until the first authored edit, then saves as
-v5.
+Legacy point-index constraints are hydrated with deterministic point ids at
+load. Legacy family files therefore do not need an up-front migration.
 
-## Stable sketch topology identity
+## Parameter/formula path
 
-`FamilySketchPoint.id` is the persistent identity of a point. In schema v5,
-`FamilySketchConstraint` stores both:
-
-- `point_a_id` / `point_b_id` / `point_c_id` / `point_d_id` — authoritative;
-- `point_a` / `point_b` / `point_c` / `point_d` — legacy/recovery snapshots.
-
-The solver resolves a stable id first. A snapshot index is used only when a
-stable id is absent. Therefore a point reorder does not move a constraint to a
-different semantic point. Missing stable ids are explicit errors and duplicate
-point ids are rejected by validation.
-
-Constraint authoring stabilizes point ids before it creates the constraint.
-Sketch point editing preserves an existing id when a drag supplies new X/Y
-coordinates. Solved profiles preserve ids as well; the solver never bakes a new
-identity into transient geometry.
-
-This is sufficient for the current point/line sketch model and makes future
-insert/reorder/delete authoring safe as long as those operations preserve the
-point object's id. First-class curve/edge topology ids are a separate future
-extension because arcs and splines do not exist in the current sketch contract.
-
-## Numeric formulas
-
-The supported numeric expression language is deliberately small and
-deterministic:
+Supported numeric expressions are deliberately deterministic:
 
 - numeric literals and parameter ids;
 - `+`, `-`, `*`, `/`, parentheses and unary `+/-`;
 - constant `pi`;
-- `min(a,b)`, `max(a,b)`, `abs(x)` and `clamp(x,min,max)`.
+- `min`, `max`, `abs`, `clamp`.
 
-Parameter formulas may drive `length`, `number` and `angle` parameters.
-Reference-plane offsets, Distance targets and Angle targets use the same safe
-resolver. Examples include `-width / 2`, `width / 2`, `height`, `width * 0.25`
-and `clamp(angleParam, 0, 180)`.
-
-Expressions cannot call Dart, access files/network, mutate state or depend on
-text/material/boolean values. The resolver rejects unknown ids, cycles,
-division by zero, invalid ranges and non-finite results.
-
-The semantic path is shared:
+The shared semantic path is:
 
 ```text
 Family Type values
         -> FamilyParameterResolver
         -> reference-plane / distance / angle expressions
-        -> stable point resolution
         -> FamilyConstraintSolver
         -> solved profile geometry
         -> FamilyGeometryEvaluator
         -> FamilyPlanSymbolGenerator
         -> FamilyInstanceAdapter/native creation
-        -> Project Inspector edits
+        -> Project Inspector
         -> persisted effective instance values
 ```
 
-Do not bypass `FamilyParameterResolver` or
-`FamilyInstanceAdapter.resolvedValues` and read `type.values` directly for an
-effective dimension. That would make plan, 3D and persisted instances disagree.
+Do not bypass the resolver and treat raw `type.values` as effective dimensions.
 
-## Geometric constraints
+## Sketch constraints and identity
 
-Reference planes are sketch-scoped and fix one coordinate:
+`FamilySketchPoint.id` is persistent semantic identity. Constraint point ids are
+authoritative; legacy indexes are recovery snapshots only. Reordering points
+must not move a constraint to a different semantic point.
 
-- `axis: x` describes a vertical plane at a formula-driven X offset;
-- `axis: y` describes a horizontal plane at a formula-driven Y offset.
+Supported exact/inference constraints:
 
-Exact coordinate constraints:
+- Horizontal
+- Vertical
+- Coincident
+- Point on reference plane
+- Distance
+- Parallel
+- Perpendicular
+- Equal length
+- Angle
 
-- **Horizontal**: two points share Y.
-- **Vertical**: two points share X.
-- **Coincident**: two points share X and Y.
-- **Point on reference plane**: one point's X or Y is pinned to a plane.
+Over-constrained systems are rejected rather than averaged into plausible
+geometry. Constraint solving drives actual Extrude/Revolve geometry, plan
+symbols, placement and Inspector regeneration.
 
-Dimensional/segment constraints:
+### Sketch authoring UX
 
-- **Distance**: distance AB equals a Family Type expression.
-- **Parallel**: segment AB is parallel to CD.
-- **Perpendicular**: segment AB is perpendicular to CD.
-- **Equal length**: CD is projected to the length of AB.
-- **Angle**: unsigned angle AB↔CD equals a formula-driven 0…180° target.
+V5 sketch mode provides:
 
-`FamilyConstraintSolver` first resolves all stable point ids. X/Y equality
-constraints and fixed reference-plane coordinates are then solved exactly.
-Stage-2 dimensional/segment constraints are projected deterministically,
-Stage-1 is reapplied after every pass, and residuals are checked. The current
-solver uses at most 64 passes with a `1e-6` residual budget. A system that
-cannot satisfy both layers is rejected as **over-constrained**, not silently
-averaged into plausible-looking geometry.
+- Rectangle and Circle quick primitives;
+- manual point placement;
+- direct point drag;
+- project plan pan/zoom/hit-test behavior;
+- project `PlanSketchGeometry` snapping/inference;
+- default 50 mm Family grid snap with a visible Snap toggle;
+- endpoint snap and horizontal/vertical inference feedback;
+- Close/Reopen and Finish;
+- optional advanced reference-plane/constraint panel.
 
-Distance must be positive. Angle must resolve to 0…180°. Zero-length source
-segments are rejected. Every target expression resolves independently for each
-Family Type, so changing a type can move planes and dimensions through the
-same semantic path.
+A Family-only snap kernel must not be introduced. New reusable snap behavior
+belongs in the project plan geometry layer first.
 
-Unfixed exact equality groups use the deterministic average of authored raw
-coordinates. Constraint intent remains persistent while solved coordinates are
-transient. `FamilyGeometryEvaluator.evaluate()` and `evaluateMesh()` solve
-sketches before profile/extrude/revolve evaluation, so constraints drive actual
-3D geometry and Inspector regeneration rather than editor-only metadata.
+## Exact CSG
 
-### Constraint authoring UX
+`family_csg.dart` performs BSP union/subtraction for closed orientable
+2-manifold solids. Boolean features require exactly two explicit earlier solid
+inputs. Topology is validated and winding normalized before exact evaluation.
 
-Advanced Family Editor supports:
+If an imported mesh cannot satisfy the exact-solid contract, the preview is
+explicitly approximate rather than silently pretending the CSG succeeded.
 
-- add/edit/delete reference planes;
-- live resolved plane offsets for the selected Family Type;
-- Horizontal, Vertical, Coincident and Point-on-plane constraints;
-- formula-driven Distance and Angle constraints;
-- Parallel, Perpendicular and Equal-length relations between explicit segments;
-- Point A/B/C/D selection;
-- one-click **Parametric rectangle**:
-  - left = `-width / 2`
-  - right = `width / 2`
-  - bottom = `0`
-  - top = `height`
-- solved sketch rendering so constrained points visually snap to their solved
-  position.
+## Nested families
 
-Clearing a profile removes its point constraints, avoiding ghost references.
-Reference planes may remain and can be reused after points are redrawn.
+Nested families are implemented as stable dependency references, not embedded
+copies. A nested feature stores child `familyId + typeId` plus transform
+expressions. `FamilyDependencyResolver`:
 
-## Exact solid booleans
+- resolves against the Family Library;
+- evaluates dependency DAGs recursively;
+- rejects missing families/types;
+- rejects cycles;
+- materializes a transient child mesh for the synchronous geometry evaluator.
 
-`family_csg.dart` provides dependency-free BSP union and subtraction for closed,
-orientable two-manifold meshes. Boolean feature nodes consume exactly two
-explicit earlier solid inputs in graph order.
+Placement and Inspector regeneration use the same dependency path.
 
-Before BSP evaluation the kernel validates finite vertices/indices, checks that
-each boundary edge belongs to exactly two faces, propagates consistent face
-orientation, orients disconnected shells outward by signed volume and rejects
-zero-volume/non-orientable/open topology.
+## V5 direct-manipulation editor UX
 
-Successful boolean evaluation returns `isApproximate == false`. If an imported
-mesh cannot satisfy the solid contract, the editor keeps a safe approximate
-preview: union shows both operands and subtraction keeps the left operand.
-Invalid topology is never silently presented as exact CSG.
+The active editor is task-oriented and model-first.
 
-## Authoring UX
+### Ribbon
 
-The editor has two user levels without splitting the file format:
+- **CREATE** — Sketch, Extrude, Revolve
+- **MODIFY** — Move, Rotate, Scale
+- **COMBINE** — Union, Subtract
+- **INSERT** — Nested, Import
 
-- **Simple**: identity/category/description, named type choice, all declared type
-  values and GLB/glTF import. Ordinary furniture/equipment can become reusable
-  content without Dart changes or an app rebuild.
-- **Advanced**: type duplicate/rename/delete, parameter definitions, formulas,
-  touch profile editing, reference planes, constraints, extrude, revolve,
-  transform, exact manifold union/subtract and feature graph.
+History is optional and hidden by default. It is a feature-history aid, not the
+primary way a normal user must operate the editor.
 
-Parameter controls are generated from `FamilyParameterDefinition`. Core
-width/depth/height remain length parameters and cannot be removed because they
-are the stable sizing contract for evaluators/placement.
+### 3D operations
 
-Metadata and ordinary type values update while the user types. Save does not
-depend on pressing Enter. Formula fields are read-only at the type-value layer
-and show their effective computed value.
+All operations use the project 3D viewport.
 
-The same editor edits existing `FamilyAssetFile`s in place. GLB/glTF import
-while editing intentionally starts a new family asset rather than overwriting
-the original.
+- **Move** — tap a solid, drag X/Y/Z handles.
+- **Rotate** — tap a solid, drag the rotation ring.
+- **Scale** — tap a solid, drag the scale handle.
+- **Extrude** — live result plus direct blue `D` depth handle; numeric field and
+  slider remain available for precision.
+- **Revolve** — live result plus direct angle ring; numeric input remains
+  available for precision.
+- **Union/Subtract** — viewport enters candidate-pick mode. Tap Base then Tool,
+  inspect the live result, then Apply or Cancel.
 
-## Library
+`FamilyAuthoringSceneBuilder` exposes intermediate solids as separate selectable
+project `RenderSceneObject`s only while an operation needs them. Final/result
+mode remains one evaluated family object.
 
-Family Library supports:
+### Command semantics
 
-- full-text search across family name, description, category, type and parameter
-  labels;
-- category filtering;
-- persistent Favorites and Recent scopes;
-- family/type mesh preview cache;
-- explicit Family Type choice before placement;
-- direct Edit Family and disk reload/cache invalidation;
-- selected type carried into placement rather than silently using
-  `document.types.first`;
-- Android external `.bimfamily` import copied into app-owned reusable storage.
+Modal operations have explicit live-draft boundaries:
 
-Favorites and recents live in `.family_library_state.json`; writes are
-serialized and corrupt state is ignored. Family identity is stable `family.id`,
-not filename. Saving a renamed family updates the asset with that id rather than
-creating a duplicate.
+1. begin tool;
+2. choose/pick input(s);
+3. manipulate live preview;
+4. Apply or complete a direct gizmo step;
+5. Cancel returns to the pre-tool document.
 
-Every disk family is semantically validated. Invalid external assets cannot
-cross into project placement.
+A cancelled/interrupted gizmo drag must **never** create an undo step. Flutter
+`onPanCancel` restores the pre-drag snapshot with zero delta and does not call
+the commit path. This matters when a second touch, OS gesture or gesture arena
+cancels a drag.
+
+Native Android selection is synchronized back through
+`RenderSceneViewportController`; clearing/changing a pick resets the Family
+selection dedupe token so selecting the same solid again is a valid new action.
+
+## Family Library
+
+Library supports:
+
+- full-text search;
+- category filters;
+- Favorites and Recent;
+- cached previews;
+- explicit Family Type selection before placement;
+- Edit Family;
+- stable-family-id save/update rather than filename identity;
+- Android external `.bimfamily` import into app-owned storage.
+
+Invalid external family files cannot cross the validation boundary into project
+placement.
+
+## GLB/glTF import
+
+Geometry import supports glTF 2.0 mesh primitives, indices, node transforms and
+explicit unit scale (`m`, `cm`, `mm`, custom). Imported geometry is normalized
+into Family coordinates and becomes a `freeformMesh` feature.
+
+The current native family-proxy ABI carries vertices and triangle indices. It
+does **not** yet carry UV sets, material slots or texture resources. Do not
+claim GLB material/texture preservation until the renderer contract is extended
+through Flutter -> project gateway -> native engine -> Filament.
 
 ## Validation invariants
 
 Before save/import/placement, validation checks at least:
 
 - supported schema version;
-- non-empty family name, type list and feature list;
+- non-empty family/type/feature state;
 - unique parameter/type/feature/sketch/reference-plane/constraint ids;
-- duplicate non-empty sketch point ids;
-- stable constraint point ids or valid legacy index fallbacks;
-- unique Family Type names;
-- parameter kinds/defaults/ranges/formulas;
-- each Family Type's resolved parameter values;
-- formula cycles, unknown references and invalid arithmetic;
-- reference-plane ownership and expressions;
-- two-point/two-segment operand integrity;
-- Distance/Angle targets and numeric domains per Family Type;
-- no incompatible plane/expression/segment fields;
-- every Family Type can solve every constrained sketch inside residual budget;
+- stable/unique sketch point ids;
+- valid formulas and no formula cycles;
+- valid type ranges;
+- constraint ownership, operands and numeric domains;
+- every Family Type can solve constrained sketches;
 - feature dependency existence/order;
-- solid-only transform/boolean inputs;
-- exactly two distinct earlier solids for each boolean;
-- closed profiles for extrude/revolve;
-- freeform mesh vertex/face/index validity and size limits.
+- closed profiles for Extrude/Revolve;
+- solid-only Transform/Boolean inputs;
+- exactly two distinct earlier Boolean solids;
+- freeform mesh validity and limits;
+- nested-family reference/transform integrity.
 
-Keep this semantic gate at the file/project boundary even when Editor already
-prevents the same error. External files do not pass through Editor.
+Keep this gate at the file/project boundary even if the UI already prevents the
+same error.
 
-## Project integration and Inspector
+## Production limits — do not fake these
 
-Project instances reference a family asset and stable type id, then persist
-placement plus effective instance values. They do not copy the family feature
-graph into every placed element.
+These remain separate engine/rendering work, not hidden editor switches:
 
-`family_instance_adapter.dart` resolves the selected type and evaluates family
-geometry before native mutation. Invalid formulas or constraints fail before
-placement. Door/Window use hosted-opening paths, Wall Sweep projects to its host
-wall, and supported free-standing families use native analytical elements or a
-family proxy mesh.
-
-Inspector reconstructs the selected Family Type, evaluates the same family
-geometry path and persists effective values. Changing a dependency can move a
-reference plane, solve a sketch, rebuild 3D geometry and update plan graphics
-through one path.
-
-The Library's selected type is an in-memory placement preference; the source
-family file is not reordered merely to place a type.
-
-## Blender mesh import
-
-The editor imports glTF 2.0 GLB/glTF mesh primitives, indices and node
-transforms, centres geometry on X/Z, puts the lowest point on the family ground
-plane and creates a scalable `freeformMesh` family. TRIANGLES,
-TRIANGLE_STRIP and TRIANGLE_FAN primitive handling is explicit. Legacy OBJ
-parsing remains available programmatically.
-
-The current project/native family-proxy boundary carries vertices and triangle
-indices. It does **not** carry UV sets, material slots or texture resources.
-Therefore material/texture preservation is intentionally not claimed by the
-importer alone; real support requires a renderer-capable mesh contract all the
-way through the project/native boundary.
-
-## Important production limits — do not fake these
-
-These are separate subsystems, not hidden unfinished switches in Family Editor:
-
-1. **Curve topology**. Stable point identity is implemented. First-class arcs,
-   splines, curve/edge ids and tangent/curve constraints do not exist yet.
-2. **Nested families**. A production implementation needs child-family identity,
-   type/version dependencies, transforms, cycle detection and an async
-   dependency-resolution boundary feeding the synchronous geometry evaluator.
-3. **Material/texture rendering**. Current proxy ABI is position/index-only.
-   UVs, normals, material slots, image resources and Filament lifecycle need a
-   cross-layer renderer contract before GLB material preservation can be real.
-4. **Large repeated-instance device certification**. The reference model avoids
-   per-instance feature graph copies, but large tablet scenes still need measured
-   performance budgets on target devices.
+1. **Curved sketch topology** — first-class arcs/splines, persistent edge ids,
+   tangent/curve constraints and true curve editing are not yet in the sketch
+   contract. Circle quick-create is currently polygonal profile generation.
+2. **Material/texture proxy rendering** — UVs/material slots/images are not yet
+   carried by the family proxy ABI.
+3. **Large repeated-instance certification** — the reference model avoids
+   per-instance feature graph copies, but large tablet scenes still require
+   measured target-device budgets and renderer instancing work where needed.
 
 ## Regression expectations
 
-At minimum, family changes should preserve:
+At minimum, Family changes must preserve:
 
-1. Library -> search/filter -> family -> type -> Place;
-2. selected type remains selected in placement;
-3. Edit Family -> Save -> return -> same family reloads from disk;
-4. rename existing family -> stable id updates one asset;
-5. formula dependency change -> 3D/plan/Inspector/effective values agree;
-6. cyclic/unknown/invalid formulas cannot save/place;
-7. exact CSG on closed solids returns non-approximate geometry; open topology is
-   rejected by exact kernel;
-8. boolean graph requires exactly two explicit earlier solids;
-9. Parametric rectangle follows width/height;
-10. Distance/Parallel/Perpendicular/Equal-length/Angle solve inside budget;
-11. incompatible fixed planes + dimensions are rejected as over-constrained;
-12. v1-v4 point-index constraints load with deterministic stable ids and first
-    authored save becomes v5;
-13. point reorder preserves constraint semantics by stable id even when snapshot
-    indexes are stale;
-14. duplicate point ids are rejected;
-15. invalid external `.bimfamily` cannot enter reusable library;
-16. GLB/glTF -> save -> reopen -> place repeatedly;
-17. corrupt/missing favorite/recent state does not break assets.
+1. Library -> search/filter -> family -> type -> Place.
+2. Selected type remains selected in placement.
+3. Edit Family -> Save -> same stable family reloads.
+4. Formula/constraint changes agree in 3D, plan, Inspector and persistence.
+5. Exact CSG succeeds only on valid closed solids.
+6. Nested dependency cycle/missing child fails before placement/save.
+7. GLB/glTF -> unit conversion -> save -> reopen -> place.
+8. Family 3D uses `RenderSceneViewport`, never a duplicate orbit renderer.
+9. Family Sketch uses project top-down viewport navigation and project snap
+   geometry.
+10. Sketch -> Rectangle/manual profile -> Finish -> Extrude works entirely from
+    the visible UI.
+11. Extrude/Revolve direct handles update live preview before Apply.
+12. Move/Rotate/Scale work from viewport selection and direct gizmos.
+13. Boolean exposes intermediate solids as separately pickable candidates.
+14. Base then Tool selection produces a live Union/Subtract preview.
+15. Clearing and re-picking the same native solid reports a fresh selection.
+16. A cancelled gizmo gesture restores the draft and never commits.
+17. Obsolete Family-specific pseudo-3D preview/workbench implementations do not
+    return to the active module.
