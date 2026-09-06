@@ -1,0 +1,29 @@
+{
+  "format": "tablet_bim_family",
+  "schema_version": 6,
+  "id": "builtin-door-single-flush-v1",
+  "name": "Door · Single Flush",
+  "category": "door",
+  "description": "A compact single-leaf interior door.",
+  "parameters": [
+    {"id":"width","label":"Overall width","kind":"length","default":0.9,"minimum":0.05},
+    {"id":"depth","label":"Overall depth","kind":"length","default":0.2,"minimum":0.05},
+    {"id":"height","label":"Overall height","kind":"length","default":2.1,"minimum":0.05}
+  ],
+  "types": [
+    {
+      "id": "builtin-door-single-flush-v1-type",
+      "name": "Single 900 × 2100",
+      "values": {"width":0.9,"depth":0.2,"height":2.1}
+    }
+  ],
+  "features": [
+    {
+      "id": "builtin-door-single-flush-v1-box",
+      "kind": "box",
+      "label": "Parametric box",
+      "parameters": {"width":"width","depth":"depth","height":"height"}
+    }
+  ],
+  "sketches": []
+}
