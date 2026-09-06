@@ -1,20 +1,32 @@
 import 'dart:math' as math;
 
 import 'family_document.dart';
+import 'family_parameter_resolver.dart';
 
 /// Compact, renderer-independent plan representation for a family instance.
 ///
 /// A project instance keeps this small SVG-like symbol next to its family
-/// reference.  The 3D feature graph is intentionally not part of it, so a
-/// floor plan can draw a family without decoding or projecting its mesh.
+/// reference. The 3D feature graph is intentionally not part of it, so a floor
+/// plan can draw a family without decoding or projecting its mesh.
 abstract final class FamilyPlanSymbolGenerator {
   static String svgFor(
     FamilyDocument family,
     FamilyTypeDefinition type, {
     double rotationRadians = 0.0,
   }) {
-    final width = _lengthValue(family, type, 'width', fallback: 1.0);
-    final depth = _lengthValue(family, type, 'depth', fallback: width);
+    final resolver = FamilyParameterResolver(family, type);
+    final width = _lengthValue(
+      family,
+      resolver,
+      'width',
+      fallback: 1.0,
+    );
+    final depth = _lengthValue(
+      family,
+      resolver,
+      'depth',
+      fallback: width,
+    );
     final halfWidth = width * 0.5;
     final halfDepth = depth * 0.5;
     final category = family.category;
@@ -33,8 +45,6 @@ abstract final class FamilyPlanSymbolGenerator {
     switch (category) {
       case FamilyCategory.column:
       case FamilyCategory.structural:
-        // A cross is readable at a distance and remains stable when the
-        // column is too small for a detailed family outline.
         final crossX = width * 0.22;
         final crossY = depth * 0.22;
         paths.add('M ${_number(-crossX)} ${_number(-halfDepth)} '
@@ -68,9 +78,6 @@ abstract final class FamilyPlanSymbolGenerator {
       case FamilyCategory.window:
       case FamilyCategory.wallSweep:
       case FamilyCategory.genericModel:
-        // Hosted openings already have their own wall-aware plan symbol. A
-        // generic family remains intentionally quiet: its footprint is the
-        // reliable cross-renderer contract.
         break;
     }
 
@@ -82,15 +89,20 @@ abstract final class FamilyPlanSymbolGenerator {
 
   static double _lengthValue(
     FamilyDocument family,
-    FamilyTypeDefinition type,
+    FamilyParameterResolver resolver,
     String id, {
     required double fallback,
   }) {
     for (final parameter in family.parameters) {
-      if (parameter.id != id) continue;
-      final raw = type.valueFor(parameter);
-      final value = raw is num ? raw.toDouble() : double.tryParse('$raw');
-      if (value != null && value.isFinite && value > 0.0) return value;
+      if (parameter.id != id || parameter.kind != FamilyParameterKind.length) {
+        continue;
+      }
+      try {
+        final value = resolver.resolveNumber(id);
+        if (value.isFinite && value > 0.0) return value;
+      } on FormatException {
+        return fallback;
+      }
     }
     return fallback;
   }
@@ -183,9 +195,6 @@ final class FamilyPlanSymbolPath {
       if (commands.isNotEmpty) paths.add(FamilyPlanSymbolPath(commands));
     }
     final result = List<FamilyPlanSymbolPath>.unmodifiable(paths);
-    // Symbols are generated from a small family catalog. Keep a bounded cache
-    // so repeated painter frames never re-tokenize the same plan SVG while a
-    // malformed imported metadata value cannot grow memory indefinitely.
     if (_cache.length >= 64) _cache.remove(_cache.keys.first);
     _cache[svg] = result;
     return result;
