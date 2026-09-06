@@ -2,6 +2,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import 'family_constraint_solver.dart';
+import 'family_constraints_panel.dart';
 import 'family_document.dart';
 import 'family_file_store.dart';
 import 'family_geometry.dart';
@@ -75,6 +77,22 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
       if (sketch.id == id) return sketch;
     }
     return null;
+  }
+
+  FamilySketch? get _solvedSelectedSketch {
+    final sketch = _selectedSketch;
+    if (sketch == null) return null;
+    try {
+      return FamilyConstraintSolver.solveSketch(
+        _document,
+        _selectedType,
+        sketch,
+      ).sketch;
+    } catch (_) {
+      // The panel/validator surfaces the constraint error. Keep the raw sketch
+      // visible while the user fixes an incomplete or over-constrained edit.
+      return sketch;
+    }
   }
 
   void _commit(FamilyDocument next, {String? status}) {
@@ -705,8 +723,23 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
   void _clearSketch() {
     final sketch = _selectedSketch;
     if (sketch == null) return;
-    _updateSketch(
-      sketch.copyWith(points: const <FamilySketchPoint>[], closed: false),
+    _commit(
+      _document.copyWith(
+        sketches: <FamilySketch>[
+          for (final current in _document.sketches)
+            current.id == sketch.id
+                ? sketch.copyWith(
+                    points: const <FamilySketchPoint>[],
+                    closed: false,
+                  )
+                : current,
+        ],
+        constraints: <FamilySketchConstraint>[
+          for (final constraint in _document.constraints)
+            if (constraint.sketchId != sketch.id) constraint,
+        ],
+      ),
+      status: 'Profile cleared · point constraints removed',
     );
   }
 
@@ -782,7 +815,7 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
   Widget build(BuildContext context) {
     final type = _selectedType;
     final mesh = FamilyGeometryEvaluator.evaluateMesh(_document, type);
-    final sketch = _selectedSketch;
+    final sketch = _solvedSelectedSketch;
     return PopScope<void>(
       canPop: !_dirty,
       onPopInvokedWithResult: (didPop, _) {
@@ -1140,6 +1173,16 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
                   ],
                 ],
               ),
+            ),
+            const SizedBox(height: 10),
+            FamilyConstraintsPanel(
+              document: _document,
+              type: _selectedType,
+              selectedSketchId: _selectedSketchId,
+              onChanged: (next) => _commit(next, status: 'Constraints updated'),
+              onStatus: (message) {
+                if (mounted) setState(() => _status = message);
+              },
             ),
             const SizedBox(height: 10),
             _section(
