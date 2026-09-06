@@ -20,6 +20,7 @@ export 'family_library_dialog.dart';
 export 'family_mesh_importer.dart';
 export 'family_parameter_authoring.dart';
 export 'family_parameter_resolver.dart';
+export 'family_parameters_panel.dart';
 export 'family_plan_symbol.dart';
 export 'family_render_scene_adapter.dart';
 export 'family_sketch_canvas.dart';
