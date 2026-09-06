@@ -79,6 +79,8 @@ abstract final class FamilyParameterAuthoring {
   ///
   /// A parameter id is part of formulas, constraints and feature expressions,
   /// so renaming the id is deliberately not supported. Rename [label] instead.
+  /// [clearMinimum]/[clearMaximum] distinguish an intentional empty bound from
+  /// an omitted argument, so a label/formula-only edit never erases limits.
   static FamilyDocument updateParameter(
     FamilyDocument document, {
     required String parameterId,
@@ -87,6 +89,8 @@ abstract final class FamilyParameterAuthoring {
     Object? defaultValue,
     double? minimum,
     double? maximum,
+    bool clearMinimum = false,
+    bool clearMaximum = false,
     String? formula,
     bool clearFormula = false,
   }) {
@@ -109,8 +113,18 @@ abstract final class FamilyParameterAuthoring {
         'Only length, number and angle parameters can use formulas.',
       );
     }
-    final nextMinimum = minimum ?? current.minimum;
-    final nextMaximum = maximum ?? current.maximum;
+    if (clearMinimum && minimum != null) {
+      throw const FormatException(
+        'Cannot set and clear parameter minimum in the same update.',
+      );
+    }
+    if (clearMaximum && maximum != null) {
+      throw const FormatException(
+        'Cannot set and clear parameter maximum in the same update.',
+      );
+    }
+    final nextMinimum = clearMinimum ? null : (minimum ?? current.minimum);
+    final nextMaximum = clearMaximum ? null : (maximum ?? current.maximum);
     if ((nextMinimum != null || nextMaximum != null) &&
         !_isNumericKind(nextKind)) {
       throw const FormatException(
@@ -262,7 +276,9 @@ abstract final class FamilyParameterAuthoring {
     required String name,
   }) {
     final trimmed = name.trim();
-    if (trimmed.isEmpty) throw const FormatException('Family Type name is required.');
+    if (trimmed.isEmpty) {
+      throw const FormatException('Family Type name is required.');
+    }
     final type = _type(document, typeId);
     if (type == null) throw FormatException('Unknown Family Type: $typeId');
     final duplicate = document.types.any(
@@ -270,7 +286,9 @@ abstract final class FamilyParameterAuthoring {
           candidate.id != typeId &&
           candidate.name.trim().toLowerCase() == trimmed.toLowerCase(),
     );
-    if (duplicate) throw FormatException('Family Type "$trimmed" already exists.');
+    if (duplicate) {
+      throw FormatException('Family Type "$trimmed" already exists.');
+    }
     return _validated(
       document.copyWith(
         types: <FamilyTypeDefinition>[
