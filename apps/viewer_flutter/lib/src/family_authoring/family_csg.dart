@@ -59,13 +59,16 @@ abstract final class FamilyCsgKernel {
         return null;
       }
       return mesh;
-    } on StateError {
+    } catch (_) {
+      // A CSG failure must remain contained inside the family evaluator. The
+      // caller can preserve an approximate preview without corrupting project
+      // geometry or crashing the editor.
       return null;
     }
   }
 
-  /// Useful at import/diagnostic boundaries. This checks topology only; the
-  /// kernel additionally normalizes winding before an operation.
+  /// Useful at import/diagnostic boundaries. This checks topology and winding
+  /// orientability; the kernel then normalizes every connected component.
   static bool isClosedTwoManifold(FamilyCsgMesh mesh) =>
       _normalizeClosedMesh(mesh) != null;
 
@@ -119,6 +122,7 @@ abstract final class FamilyCsgKernel {
     }
 
     final flips = List<bool?>.filled(faces.length, null);
+    final components = <List<int>>[];
     for (var seed = 0; seed < faces.length; seed++) {
       if (flips[seed] != null) continue;
       flips[seed] = false;
@@ -139,19 +143,27 @@ abstract final class FamilyCsgKernel {
           }
         }
       }
+      components.add(List<int>.unmodifiable(queue));
     }
 
-    var oriented = <List<int>>[
+    final oriented = <List<int>>[
       for (var i = 0; i < faces.length; i++)
         flips[i] == true ? faces[i].reversed.toList() : List<int>.of(faces[i]),
     ];
 
-    final volume = _signedVolume(mesh.vertices, oriented);
-    if (!volume.isFinite || volume.abs() <= _epsilon) return null;
-    if (volume < 0.0) {
-      oriented = <List<int>>[
-        for (final face in oriented) face.reversed.toList(),
+    // Each disconnected shell needs its own outward orientation. Using one
+    // global signed volume can make two opposite shells cancel each other.
+    for (final component in components) {
+      final componentFaces = <List<int>>[
+        for (final faceIndex in component) oriented[faceIndex],
       ];
+      final volume = _signedVolume(mesh.vertices, componentFaces);
+      if (!volume.isFinite || volume.abs() <= _epsilon) return null;
+      if (volume < 0.0) {
+        for (final faceIndex in component) {
+          oriented[faceIndex] = oriented[faceIndex].reversed.toList();
+        }
+      }
     }
 
     return FamilyCsgMesh(
@@ -230,8 +242,7 @@ abstract final class FamilyCsgKernel {
       if (indices.length < 3 || indices.toSet().length < 3) continue;
 
       // BSP splitting can leave collinear points in a polygon. Keep the face
-      // contract simple by dropping those points before handing it to render
-      // triangulation.
+      // contract simple by dropping those points before render triangulation.
       var changed = true;
       while (changed && indices.length > 3) {
         changed = false;
@@ -327,9 +338,19 @@ final class _Vertex {
 final class _Plane {
   const _Plane(this.normal, this.w);
 
-  factory _Plane.fromPoints(_Vec a, _Vec b, _Vec c) {
-    final normal = (b - a).cross(c - a).unit();
-    return _Plane(normal, normal.dot(a));
+  factory _Plane.fromVertices(List<_Vertex> vertices) {
+    if (vertices.length < 3) throw StateError('CSG polygon needs 3 vertices');
+    final a = vertices[0].position;
+    for (var i = 1; i < vertices.length - 1; i++) {
+      for (var j = i + 1; j < vertices.length; j++) {
+        final normal = (vertices[i].position - a).cross(vertices[j].position - a);
+        if (normal.length > FamilyCsgKernel._epsilon) {
+          final unit = normal.unit();
+          return _Plane(unit, unit.dot(a));
+        }
+      }
+    }
+    throw StateError('Degenerate CSG polygon');
   }
 
   static const int _coplanar = 0;
@@ -369,10 +390,13 @@ final class _Plane {
                 ? coplanarFront
                 : coplanarBack)
             .add(polygon);
+        return;
       case _front:
         front.add(polygon);
+        return;
       case _back:
         back.add(polygon);
+        return;
       case _spanning:
         final frontVertices = <_Vertex>[];
         final backVertices = <_Vertex>[];
@@ -396,6 +420,7 @@ final class _Plane {
         }
         if (frontVertices.length >= 3) front.add(_Polygon(frontVertices));
         if (backVertices.length >= 3) back.add(_Polygon(backVertices));
+        return;
     }
   }
 }
@@ -403,11 +428,7 @@ final class _Plane {
 final class _Polygon {
   _Polygon(List<_Vertex> vertices)
       : vertices = List<_Vertex>.unmodifiable(vertices),
-        plane = _Plane.fromPoints(
-          vertices[0].position,
-          vertices[1].position,
-          vertices[2].position,
-        );
+        plane = _Plane.fromVertices(vertices);
 
   final List<_Vertex> vertices;
   final _Plane plane;
