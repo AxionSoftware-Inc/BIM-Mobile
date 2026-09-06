@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'family_editor_v2_page.dart';
 
+export 'family_authoring_viewport.dart';
 export 'family_constraint_models.dart';
 export 'family_constraint_solver.dart';
 export 'family_constraints_panel.dart';
@@ -10,6 +11,7 @@ export 'family_dependency_resolver.dart';
 export 'family_document.dart';
 export 'family_editor_v2_page.dart';
 export 'family_editor_v3_page.dart';
+export 'family_editor_v4_page.dart';
 export 'family_feature_workbench.dart';
 export 'family_file_store.dart';
 export 'family_geometry.dart';
@@ -18,6 +20,7 @@ export 'family_library_dialog.dart';
 export 'family_mesh_importer.dart';
 export 'family_parameter_resolver.dart';
 export 'family_plan_symbol.dart';
+export 'family_render_scene_adapter.dart';
 export 'family_sketch_canvas.dart';
 export 'family_validation.dart';
 
