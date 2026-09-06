@@ -10,6 +10,11 @@ enum FamilySketchConstraintKind {
   vertical,
   coincident,
   pointOnReferencePlane,
+  distance,
+  parallel,
+  perpendicular,
+  equalLength,
+  angle,
 }
 
 final class FamilyReferencePlane {
@@ -90,7 +95,10 @@ final class FamilySketchConstraint {
     required this.kind,
     required this.pointAIndex,
     this.pointBIndex,
+    this.pointCIndex,
+    this.pointDIndex,
     this.referencePlaneId,
+    this.expression,
   });
 
   final String id;
@@ -98,7 +106,15 @@ final class FamilySketchConstraint {
   final FamilySketchConstraintKind kind;
   final int pointAIndex;
   final int? pointBIndex;
+
+  /// Optional second segment for segment-to-segment constraints.
+  final int? pointCIndex;
+  final int? pointDIndex;
   final String? referencePlaneId;
+
+  /// Numeric target evaluated with the active Family Type.
+  /// `distance` uses family length units; `angle` uses degrees.
+  final String? expression;
 
   Map<String, Object?> toJson() => <String, Object?>{
         'id': id,
@@ -106,7 +122,11 @@ final class FamilySketchConstraint {
         'kind': kind.name,
         'point_a': pointAIndex,
         if (pointBIndex != null) 'point_b': pointBIndex,
+        if (pointCIndex != null) 'point_c': pointCIndex,
+        if (pointDIndex != null) 'point_d': pointDIndex,
         if (referencePlaneId != null) 'reference_plane_id': referencePlaneId,
+        if (expression?.trim().isNotEmpty == true)
+          'expression': expression!.trim(),
       };
 
   static FamilySketchConstraint? fromJson(Object? raw) {
@@ -123,7 +143,10 @@ final class FamilySketchConstraint {
     }
     final pointA = _asInt(raw['point_a']);
     final pointB = _asInt(raw['point_b']);
+    final pointC = _asInt(raw['point_c']);
+    final pointD = _asInt(raw['point_d']);
     final referencePlaneId = raw['reference_plane_id']?.toString().trim();
+    final expression = raw['expression']?.toString().trim();
     if (id.isEmpty || sketchId.isEmpty || kind == null || pointA == null) {
       return null;
     }
@@ -133,10 +156,13 @@ final class FamilySketchConstraint {
       kind: kind,
       pointAIndex: pointA,
       pointBIndex: pointB,
+      pointCIndex: pointC,
+      pointDIndex: pointD,
       referencePlaneId:
           referencePlaneId == null || referencePlaneId.isEmpty
               ? null
               : referencePlaneId,
+      expression: expression == null || expression.isEmpty ? null : expression,
     );
   }
 }
