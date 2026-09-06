@@ -6,134 +6,198 @@ another wall implementation and it does not edit a project scene directly.
 ## Boundary
 
 - `apps/viewer_flutter/lib/src/family_authoring/family_document.dart` owns the
-  serializable family contract.
-- `family_file_store.dart` owns `.bimfamily` persistence and local library UI
-  preferences.
-- `family_editor_v2_page.dart` is the default authoring surface.
-- `family_editor_page.dart` remains in-tree as the previous editor/reference
-  while V2 is exercised on tablets.
-- `family_library_dialog.dart` owns family discovery, search, type choice,
-  favorites, recent items and cached previews.
-- `family_authoring_module.dart` is the only entry point used by the start
-  screen. The project editor does not need to know the family document shape.
+  serializable `.bimfamily` contract.
+- `family_parameter_resolver.dart` owns deterministic effective parameter
+  values and numeric formulas.
+- `family_validation.dart` is the semantic gate before save/import/placement.
+- `family_file_store.dart` owns validated persistence and local Library state.
+- `family_editor_v2_page.dart` is the production authoring surface for both new
+  and existing library assets.
+- `family_editor_page.dart` remains in-tree only as the previous editor/reference.
+- `family_library_dialog.dart` owns search, filters, type choice, favorites,
+  recents, cached previews and the edit-existing-family workflow.
+- `family_instance_adapter.dart` is the project boundary. It consumes a
+  validated/resolved family and never copies the authoring feature graph into
+  every project instance.
 
 The family contract has three independent layers:
 
 1. Family metadata and category (`Generic Model`, `Column`, `Door`, `Window`,
    `Wall Sweep`, `Furniture`, `Casework`, `Stair`, `Structural`).
 2. Parameter definitions and named Family Types. A type supplies values for
-   reusable parameters; it is not a separate copy of the geometry.
+   reusable parameters; it is not a separate geometry copy.
 3. An ordered feature graph for profile, extrude, revolve, transform, boolean
    union/subtract and freeform mesh.
 
-## V2 authoring UX
+## Schema v2 and compatibility
 
-The V2 editor has two user levels without splitting the file format:
+`FamilyDocument.currentSchemaVersion` is 2. Schema v1 remains readable. Future
+schema versions are rejected instead of being guessed at. Any authored edit is
+written back as schema v2.
+
+Schema v2 adds optional numeric parameter formulas. The supported expression
+language is deliberately small and deterministic:
+
+- numeric literals and parameter ids;
+- `+`, `-`, `*`, `/`, parentheses and unary `+/-`;
+- constant `pi`;
+- `min(a,b)`, `max(a,b)`, `abs(x)` and `clamp(x,min,max)`.
+
+Formulas may drive `length`, `number` and `angle` parameters. They cannot call
+Dart, access files/network, mutate state or depend on text/material/boolean
+values. The resolver rejects unknown ids, cycles, division by zero, invalid
+ranges and non-finite results.
+
+A formula-driven parameter ignores its own stale per-type override. Its
+dependencies still read the selected Family Type. This rule is shared by:
+
+```text
+Family Editor preview
+        -> FamilyGeometryEvaluator
+        -> FamilyPlanSymbolGenerator
+        -> FamilyInstanceAdapter/native creation
+        -> persisted effective instance values
+```
+
+Do not bypass `FamilyParameterResolver` in a new geometry/placement path and
+read `type.values` directly for an effective dimension. Doing so would make
+plan, 3D and saved project instances disagree.
+
+## Authoring UX
+
+The editor has two user levels without splitting the file format:
 
 - **Simple**: name/category/description, named type choice, all declared type
-  values and a GLB/glTF import fast path. A normal chair, table, cabinet or
-  appliance can therefore be created as content without writing Dart code.
+  values and a GLB/glTF import fast path. A chair, table, cabinet or appliance
+  can be created as reusable content without writing Dart code.
 - **Advanced**: type duplicate/rename/delete, generic parameter-definition
-  add/edit/delete, touch profile editing, extrude, revolve, transform,
-  union/subtract feature nodes and the feature graph.
+  add/edit/delete, formulas, touch profile editing, extrude, revolve,
+  transform, union/subtract feature nodes and the feature graph.
 
-Parameter value controls are generated from `FamilyParameterDefinition`; the
-editor no longer assumes that the only editable values are width/depth/height.
-Core dimensions remain protected from deletion because existing evaluators and
-placement adapters use them as the stable sizing contract. A non-core parameter
-cannot be deleted while a feature node references its id.
+Parameter controls are generated from `FamilyParameterDefinition`; the editor
+does not assume width/depth/height are the only values. Core dimensions remain
+length parameters and cannot be removed because evaluators/placement use them
+as the stable sizing contract.
 
-## Library V2
+Metadata and ordinary type values update as the user types. Saving does not
+depend on pressing Enter or dismissing the keyboard first. Formula-driven type
+fields are read-only and show the effective computed value.
+
+The same editor accepts an optional `FamilyAssetFile`. When opened from Library,
+Save updates that stable asset path. Importing GLB/glTF while editing intentionally
+starts a new family asset rather than overwriting the original family.
+
+## Library
 
 The project-side Family Library is designed to scale beyond the curated starter
 set:
 
-- full-text search across family name, description, category and type names;
+- full-text search across family name, description, category, type and parameter
+  labels;
 - category filtering;
 - persistent Favorites and Recent scopes;
-- family/type mesh preview cache for smooth scrolling;
+- family/type mesh preview cache;
 - explicit Family Type selection before placement;
-- preferred type is carried into the existing placement dialog instead of
-  silently falling back to `document.types.first`;
-- imported `.bimfamily` files on Android are copied into the app-owned family
-  library, so adding reusable content does not require a source-code change or
-  application rebuild.
+- direct Edit Family action, followed by a disk reload and preview-cache
+  invalidation;
+- selected type is carried into placement instead of silently falling back to
+  `document.types.first`;
+- imported `.bimfamily` files on Android are copied into app-owned storage, so
+  adding reusable content does not require a source-code change or app rebuild.
 
-Favorites and recents live in `.family_library_state.json` beside the app-owned
-family library. They are UI preferences, not BIM project data, and corrupt
-preference state is ignored rather than preventing family assets from loading.
+Favorites and recents live in `.family_library_state.json`. Preference writes
+are serialized so rapid taps cannot let an older write overwrite a newer state.
+Corrupt preference state is ignored rather than blocking family assets.
+
+Family identity is the stable `family.id`, not the filename. Saving a renamed
+family scans the library for that id and updates the existing asset instead of
+creating a duplicate under a new display-name filename.
+
+Every family read from disk is semantically validated. Corrupt/invalid assets
+are skipped in the catalog and cannot cross into project placement.
+
+## Validation invariants
+
+Before a family is saved, imported or placed, validation checks at least:
+
+- supported schema version;
+- non-empty family name, type list and feature list;
+- unique parameter/type/feature/sketch ids;
+- unique Family Type names (case-insensitive);
+- parameter kinds, defaults, ranges and formula compatibility;
+- every selected type's effective resolved values;
+- formula cycles, unknown references and invalid arithmetic;
+- feature input existence and ordering (feature nodes may only depend on earlier
+  feature nodes);
+- solid-only input requirements for transforms and booleans;
+- closed profiles for extrude/revolve;
+- freeform-mesh vertex/face/index validity and size limits.
+
+Keep this validation at the file/project boundary even when the editor already
+prevents the same error in its UI. External `.bimfamily` files do not pass
+through the editor.
 
 ## Project integration rule
 
-Project instances reference a family asset and a stable type id, then store
-placement and instance values. They must not copy the family feature graph into
-every placed element. This keeps repeated objects cheap and allows a family
-asset to remain the semantic source.
+Project instances reference a family asset and stable type id, then persist
+placement plus effective instance values. They must not copy the family feature
+graph into every placed element. This keeps repeated objects cheap and the
+family asset semantic.
 
-```text
-FamilyDocument + type id
-        -> Family evaluator
-        -> project instance mesh / bounds / pick proxy
-```
+`family_instance_adapter.dart` resolves the full type before native mutation.
+If a formula is invalid, placement fails before an element is created. Door and
+Window use the hosted-opening path; Wall Sweep is projected onto its selected
+wall; free-standing supported families use native family/proxy geometry.
 
-`family_instance_adapter.dart` is deliberately outside the
-`family_authoring/` package. It translates a validated family type into the
-existing native creation gateways and writes the family/type reference on the
-project element. Door and Window use the existing hosted-opening path. Wall
-Sweep is projected onto its host wall. Other supported free-standing families
-use native family/proxy geometry as appropriate.
-
-The Library's selected type is an in-memory placement preference. The
-`.bimfamily` file itself is not reordered or rewritten just to place a type.
-This preserves stable file content while remaining backward-compatible with
-the existing placement UI.
+The Library's selected type is an in-memory placement preference. The source
+`.bimfamily` is not reordered or rewritten just to place a type.
 
 ## Blender mesh import
 
-The Family Editor imports Blender-exported GLB/glTF mesh primitives, indices
-and node transforms, centres the model on X/Z, places its lowest point on the
-family ground plane, and creates a `freeformMesh` feature with width, depth and
-height type values.
+The editor imports Blender-exported GLB/glTF mesh primitives, indices and node
+transforms, centres the model on X/Z, places its lowest point on the family
+ground plane, and creates a `freeformMesh` feature with width/depth/height type
+values.
 
 On Android, selecting an external `.bimfamily` through **Import family** copies
-that family into the app-owned reusable library. This is the content-driven
-extension path: teams can add families without adding entries to
-`BuiltInFamilyCatalog`.
+the validated family into the app-owned reusable library.
 
-## Important production limits — do not hide these in UI or docs
+## Important production limits — do not fake these
 
-The following are still real engine/content tasks and are **not** claimed as
-finished by V2:
+The following are still separate engine/content tasks and are **not** claimed
+as finished:
 
-1. **Exact CSG**. Current boolean union/subtract preview remains approximate
-   until a robust solid kernel is connected. The editor shows this explicitly.
-2. **Constraint solver / formulas**. A Revit-class reference-plane, equality,
-   lock/alignment and dependency-formula system requires a real constraint
-   graph and cycle-safe evaluator; it must not be faked by storing labels that
-   do not drive geometry.
-3. **Nested families**. Reusable child-family references need dependency,
-   versioning and transform semantics before they can safely ship.
+1. **Exact CSG**. Boolean union/subtract preview remains explicitly approximate
+   until a robust solid kernel is connected.
+2. **Geometric constraint solver**. Numeric dependency formulas are now real,
+   but Revit-class reference planes, alignment/equality locks, dimensional
+   constraints and a geometric constraint graph are not implemented yet.
+3. **Nested families**. Child-family dependency/version/transform semantics need
+   a real dependency model before they can safely ship.
 4. **GLB material/texture preservation**. Geometry import works; production
-   material/texture import, unit selection, decimation and LOD generation are
-   separate importer/rendering work.
-5. **Repeated-instance performance validation**. The reference architecture is
-   designed for reuse, but large-scene tablet budgets still need measured
-   regression tests.
+   material/texture import, explicit unit selection, decimation and LOD
+   generation remain separate importer/rendering work.
+5. **Large repeated-instance performance certification**. The reference design
+   avoids copying feature graphs, but large tablet scenes still require measured
+   device regression budgets.
 
-These boundaries are deliberate. Do not mark any of the above as "supported"
-until the evaluator/engine actually consumes the data and project reload tests
-prove the behavior.
+Do not mark any of these as supported merely by storing metadata for them. The
+engine/evaluator must consume the data and save/reopen tests must prove it.
 
 ## Regression expectations
 
 At minimum, family changes should preserve these workflows:
 
-1. open Family Library -> search/filter -> choose family -> choose type -> Place;
-2. selected type remains selected when the placement dialog opens;
-3. place -> edit supported family parameters in Inspector -> project geometry
-   updates -> save project -> restart -> reopen;
-4. import external `.bimfamily` -> it appears in future Library sessions;
-5. favorite/recent state can be corrupt or missing without breaking assets;
-6. create V2 family -> duplicate/rename type -> add a generic parameter -> save
-   -> reopen/parse with `FamilyDocument.fromJson`;
-7. GLB/glTF import remains a freeform family and can be placed repeatedly.
+1. Library -> search/filter -> family -> type -> Place;
+2. selected type remains selected in project placement;
+3. Library -> Edit Family -> Save -> return -> same family remains selected and
+   preview/type data reload from disk;
+4. rename an existing family -> Save -> stable id updates one asset, not a
+   duplicate file;
+5. create formula parameter -> change its dependency in a Family Type -> 3D,
+   plan symbol and placed effective values all change consistently;
+6. cyclic/unknown/invalid formulas cannot be saved or placed;
+7. external invalid `.bimfamily` cannot enter the reusable library;
+8. import GLB/glTF -> save -> reopen -> place repeatedly;
+9. favorite/recent state can be missing/corrupt without breaking assets;
+10. schema-v1 family -> edit -> save -> schema-v2 family remains loadable.
