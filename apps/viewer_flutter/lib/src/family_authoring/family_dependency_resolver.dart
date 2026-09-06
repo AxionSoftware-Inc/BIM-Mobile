@@ -211,7 +211,7 @@ abstract final class FamilyDependencyResolver {
     // `rotationZ` is the persisted legacy field name. Family coordinates use
     // Y as the vertical/height axis, so production Rotate semantics are yaw in
     // the X/Z plan plane. Keep the serialized key for compatibility while
-    // applying it around the actual vertical Family axis.
+    // applying the same positive-angle convention as Family transform nodes.
     final rotation = _resolveScalar(
           feature.parameters['rotationZ'],
           resolver,
@@ -239,9 +239,9 @@ abstract final class FamilyDependencyResolver {
           final y = vertex.y * scale;
           final z = vertex.z * scale;
           return FamilyMeshVertex(
-            x: x * cosine - z * sine + tx,
+            x: x * cosine + z * sine + tx,
             y: y + ty,
-            z: x * sine + z * cosine + tz,
+            z: -x * sine + z * cosine + tz,
           );
         }),
       ),
