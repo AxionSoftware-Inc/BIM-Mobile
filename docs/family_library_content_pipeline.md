@@ -36,29 +36,28 @@ Family files live under the `families/` child directory. Stable
 
 ## Shipped content
 
-Two seed sources currently coexist:
+Two seed sources still exist for compatibility:
 
-1. legacy `BuiltInFamilyCatalog.families` for compatibility;
-2. code-free `assets/families/*.bimfamily` discovered by
-   `FamilyBundledCatalog` from Flutter's asset manifest.
-
-`FamilyFileStore.ensureBuiltInFamilies()` composes both sources by stable family
-id, validates every seed and writes only ids missing from the local Library.
-Existing local assets are never overwritten by app startup, which preserves
-user edits.
+1. code-free `assets/families/*.bimfamily`, discovered by
+   `FamilyBundledCatalog` from Flutter's asset manifest;
+2. legacy `BuiltInFamilyCatalog.families`, retained only as a compatibility
+   fallback/reference while the old Dart definitions are retired safely.
 
 Bundled `.bimfamily` content is authoritative over the legacy Dart catalog for
-the same stable id. This is the migration mechanism: moving a legacy Family
-into `assets/families/` switches runtime seeding to the code-free document
-without requiring a risky edit of the large legacy catalog in the same change.
-Conflicting duplicate ids inside the bundled asset source still fail visibly.
+the same stable id. `FamilyFileStore.ensureBuiltInFamilies()` composes both
+sources by stable id, validates every seed and writes only ids missing from the
+local Library. Existing local assets are never overwritten by app startup, so
+user edits remain authoritative.
 
-The first migrated tranche is:
+The bundled catalog now covers **all 23 shipped legacy production stable ids**.
+`family_bundled_legacy_coverage_test.dart` locks this invariant. Future product
+content must be asset-first; no new code-defined Family definitions should be
+added to the legacy Dart catalog. Once a real Flutter test/build pass is
+available, the legacy implementation can be reduced or removed without changing
+runtime Family identity.
 
-- `builtin-door-single-flush-v1`;
-- `builtin-door-double-glazed-v1`;
-- `builtin-window-single-casement-v1`;
-- `builtin-window-wide-picture-v1`.
+Conflicting duplicate ids inside bundled assets fail visibly instead of being
+resolved by file order.
 
 The project placement command calls `ensureBuiltInFamilies()` before
 `listStored()` and before opening `FamilyLibraryDialog`, so newly shipped asset
@@ -66,7 +65,7 @@ families become visible without another bootstrap hook.
 
 ## Adding new production content
 
-New reusable product content should normally be authored as a validated
+New reusable product content must normally be authored as a validated
 `.bimfamily` document and added under `apps/viewer_flutter/assets/families/`.
 The directory is bundled from `pubspec.yaml`; no Dart catalog edit is required.
 
@@ -77,9 +76,6 @@ A bundled family must:
 - pass `FamilyDocumentValidator`;
 - carry category, parameters, formulas, types and geometry in the document;
 - avoid depending on its package filename for identity.
-
-The legacy Dart catalog can be migrated gradually. Future content must not add a
-second code-defined catalog path.
 
 ## Authoring integration
 
@@ -106,7 +102,8 @@ A Family persistence/content change must preserve these invariants:
 4. Existing user-edited Library assets are not overwritten during seed.
 5. Bundled `.bimfamily` content needs no Dart catalog change.
 6. Bundled assets shadow legacy definitions with the same stable id.
-7. Conflicting duplicate ids inside bundled content fail visibly.
-8. Library-selected Family Type remains selected in placement.
-9. Multi-type edits use `FamilyParameterAuthoring` and semantic validation.
-10. Invalid external or bundled families never cross into placement.
+7. Every one of the 23 legacy shipped stable ids has a bundled asset.
+8. Conflicting duplicate ids inside bundled content fail visibly.
+9. Library-selected Family Type remains selected in placement.
+10. Multi-type edits use `FamilyParameterAuthoring` and semantic validation.
+11. Invalid external or bundled families never cross into placement.
