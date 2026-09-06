@@ -731,18 +731,18 @@ final class _Mat4 {
         0,
         0,
         0,
-        1,
-        0,
-        0,
         0,
         1,
         0,
         0,
         0,
+        0,
         1,
         0,
         0,
         0,
+        0,
+        1,
       ]);
 
   factory _Mat4.fromNode(Map node) {
