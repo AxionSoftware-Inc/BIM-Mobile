@@ -225,6 +225,8 @@ class FamilyParametersPanel extends StatelessWidget {
         clearFormula: draft.formula.trim().isEmpty,
         minimum: draft.minimum,
         maximum: draft.maximum,
+        clearMinimum: draft.minimum == null,
+        clearMaximum: draft.maximum == null,
       ),
       'Parameter ${draft.label} updated.',
     );
