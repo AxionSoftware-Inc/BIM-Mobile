@@ -18,10 +18,9 @@ final class FamilyConstraintSolution {
 
 /// Deterministic 2D geometric constraint solver used by Family Authoring.
 ///
-/// Stage-1 equality constraints are solved exactly as coordinate groups.
-/// Stage-2 dimensional/segment constraints are then projected iteratively and
-/// Stage-1 is re-applied after every pass. A conflicting system must converge
-/// within a strict residual budget or it is rejected as over-constrained.
+/// Stable point ids are resolved before any geometry work. Legacy index-only
+/// constraints remain readable, but v5 constraints survive point reorder because
+/// the id, not the index snapshot, is authoritative.
 abstract final class FamilyConstraintSolver {
   static const double _tolerance = 1.0e-8;
   static const double _stage2Tolerance = 1.0e-6;
@@ -34,6 +33,7 @@ abstract final class FamilyConstraintSolver {
   ) {
     final constraints = document.constraints
         .where((constraint) => constraint.sketchId == sketch.id)
+        .map((constraint) => _resolveConstraint(sketch, constraint))
         .toList(growable: false);
     final planes = <String, FamilyReferencePlane>{
       for (final plane in document.referencePlanes)
@@ -53,22 +53,19 @@ abstract final class FamilyConstraintSolver {
 
     final x = _CoordinateSystem(count);
     final y = _CoordinateSystem(count);
-    for (final constraint in constraints) {
-      _requirePoint(sketch, constraint.pointAIndex, constraint.id);
+    for (final resolved in constraints) {
+      final constraint = resolved.source;
       switch (constraint.kind) {
         case FamilySketchConstraintKind.horizontal:
-          final b = _requireSecondPoint(sketch, constraint);
-          y.union(constraint.pointAIndex, b);
-          break;
+          final b = _requireSecondPoint(resolved);
+          y.union(resolved.a, b);
         case FamilySketchConstraintKind.vertical:
-          final b = _requireSecondPoint(sketch, constraint);
-          x.union(constraint.pointAIndex, b);
-          break;
+          final b = _requireSecondPoint(resolved);
+          x.union(resolved.a, b);
         case FamilySketchConstraintKind.coincident:
-          final b = _requireSecondPoint(sketch, constraint);
-          x.union(constraint.pointAIndex, b);
-          y.union(constraint.pointAIndex, b);
-          break;
+          final b = _requireSecondPoint(resolved);
+          x.union(resolved.a, b);
+          y.union(resolved.a, b);
         case FamilySketchConstraintKind.pointOnReferencePlane:
         case FamilySketchConstraintKind.distance:
         case FamilySketchConstraintKind.parallel:
@@ -91,7 +88,8 @@ abstract final class FamilyConstraintSolver {
       planeOffsets[plane.id] = value;
     }
 
-    for (final constraint in constraints) {
+    for (final resolved in constraints) {
+      final constraint = resolved.source;
       if (constraint.kind !=
           FamilySketchConstraintKind.pointOnReferencePlane) {
         continue;
@@ -106,14 +104,14 @@ abstract final class FamilyConstraintSolver {
       final offset = planeOffsets[plane.id]!;
       if (plane.axis == FamilyReferencePlaneAxis.x) {
         x.fix(
-          constraint.pointAIndex,
+          resolved.a,
           offset,
           source: plane.name,
           tolerance: _tolerance,
         );
       } else {
         y.fix(
-          constraint.pointAIndex,
+          resolved.a,
           offset,
           source: plane.name,
           tolerance: _tolerance,
@@ -125,8 +123,9 @@ abstract final class FamilyConstraintSolver {
     final stage2 = constraints.where(_isStage2).toList(growable: false);
     if (stage2.isNotEmpty) {
       final targets = <String, double>{};
-      for (final constraint in stage2) {
-        _validateStage2Shape(sketch, constraint);
+      for (final resolved in stage2) {
+        final constraint = resolved.source;
+        _validateStage2Shape(resolved);
         if (constraint.kind == FamilySketchConstraintKind.distance ||
             constraint.kind == FamilySketchConstraintKind.angle) {
           final expression = constraint.expression?.trim();
@@ -165,9 +164,6 @@ abstract final class FamilyConstraintSolver {
     );
   }
 
-  /// Returns a transient document whose sketches contain solved coordinates.
-  /// Persistent constraint intent remains untouched; this copy is for geometry
-  /// evaluation only and is never written back as baked point positions.
   static FamilyDocument solveDocument(
     FamilyDocument document,
     FamilyTypeDefinition type,
@@ -201,13 +197,13 @@ abstract final class FamilyConstraintSolver {
     final solvedY = y.solve(points.map((point) => point.y).toList());
     return <FamilySketchPoint>[
       for (var index = 0; index < points.length; index++)
-        FamilySketchPoint(x: solvedX[index], y: solvedY[index]),
+        points[index].copyWith(x: solvedX[index], y: solvedY[index]),
     ];
   }
 
   static List<FamilySketchPoint> _solveStage2(
     List<FamilySketchPoint> initial,
-    List<FamilySketchConstraint> constraints,
+    List<_ResolvedConstraint> constraints,
     Map<String, double> targets,
     _CoordinateSystem x,
     _CoordinateSystem y,
@@ -215,14 +211,22 @@ abstract final class FamilyConstraintSolver {
     var points = <FamilySketchPoint>[...initial];
     for (var iteration = 0; iteration < _stage2Iterations; iteration++) {
       for (final constraint in constraints) {
-        _applyStage2(points, constraint, targets[constraint.id]);
+        _applyStage2(
+          points,
+          constraint,
+          targets[constraint.source.id],
+        );
       }
       points = _projectStage1(points, x, y);
       var maxResidual = 0.0;
       for (final constraint in constraints) {
         maxResidual = math.max(
           maxResidual,
-          _stage2Residual(points, constraint, targets[constraint.id]),
+          _stage2Residual(
+            points,
+            constraint,
+            targets[constraint.source.id],
+          ),
         );
       }
       if (maxResidual <= _stage2Tolerance) return points;
@@ -234,17 +238,18 @@ abstract final class FamilyConstraintSolver {
 
   static void _applyStage2(
     List<FamilySketchPoint> points,
-    FamilySketchConstraint constraint,
+    _ResolvedConstraint resolved,
     double? target,
   ) {
-    final a = points[constraint.pointAIndex];
-    final bIndex = constraint.pointBIndex!;
+    final constraint = resolved.source;
+    final a = points[resolved.a];
+    final bIndex = _requireSecondPoint(resolved);
     final b = points[bIndex];
     switch (constraint.kind) {
       case FamilySketchConstraintKind.distance:
         final desired = target!;
         final direction = _direction(a, b, fallback: const _Vec2(1, 0));
-        points[bIndex] = FamilySketchPoint(
+        points[bIndex] = points[bIndex].copyWith(
           x: a.x + direction.x * desired,
           y: a.y + direction.y * desired,
         );
@@ -253,8 +258,8 @@ abstract final class FamilyConstraintSolver {
       case FamilySketchConstraintKind.perpendicular:
       case FamilySketchConstraintKind.equalLength:
       case FamilySketchConstraintKind.angle:
-        final cIndex = constraint.pointCIndex!;
-        final dIndex = constraint.pointDIndex!;
+        final cIndex = resolved.c!;
+        final dIndex = resolved.d!;
         final c = points[cIndex];
         final d = points[dIndex];
         final ab = _vector(a, b);
@@ -298,7 +303,7 @@ abstract final class FamilyConstraintSolver {
           desiredDirection =
               plus.dot(current) >= minus.dot(current) ? plus : minus;
         }
-        points[dIndex] = FamilySketchPoint(
+        points[dIndex] = points[dIndex].copyWith(
           x: c.x + desiredDirection.x * length,
           y: c.y + desiredDirection.y * length,
         );
@@ -313,11 +318,12 @@ abstract final class FamilyConstraintSolver {
 
   static double _stage2Residual(
     List<FamilySketchPoint> points,
-    FamilySketchConstraint constraint,
+    _ResolvedConstraint resolved,
     double? target,
   ) {
-    final a = points[constraint.pointAIndex];
-    final b = points[constraint.pointBIndex!];
+    final constraint = resolved.source;
+    final a = points[resolved.a];
+    final b = points[_requireSecondPoint(resolved)];
     final ab = _vector(a, b);
     switch (constraint.kind) {
       case FamilySketchConstraintKind.distance:
@@ -326,8 +332,8 @@ abstract final class FamilyConstraintSolver {
       case FamilySketchConstraintKind.perpendicular:
       case FamilySketchConstraintKind.equalLength:
       case FamilySketchConstraintKind.angle:
-        final c = points[constraint.pointCIndex!];
-        final d = points[constraint.pointDIndex!];
+        final c = points[resolved.c!];
+        final d = points[resolved.d!];
         final cd = _vector(c, d);
         if (ab.length <= _tolerance || cd.length <= _tolerance) {
           return double.infinity;
@@ -354,35 +360,33 @@ abstract final class FamilyConstraintSolver {
     }
   }
 
-  static bool _isStage2(FamilySketchConstraint constraint) =>
-      constraint.kind == FamilySketchConstraintKind.distance ||
-      constraint.kind == FamilySketchConstraintKind.parallel ||
-      constraint.kind == FamilySketchConstraintKind.perpendicular ||
-      constraint.kind == FamilySketchConstraintKind.equalLength ||
-      constraint.kind == FamilySketchConstraintKind.angle;
+  static bool _isStage2(_ResolvedConstraint resolved) {
+    final kind = resolved.source.kind;
+    return kind == FamilySketchConstraintKind.distance ||
+        kind == FamilySketchConstraintKind.parallel ||
+        kind == FamilySketchConstraintKind.perpendicular ||
+        kind == FamilySketchConstraintKind.equalLength ||
+        kind == FamilySketchConstraintKind.angle;
+  }
 
-  static void _validateStage2Shape(
-    FamilySketch sketch,
-    FamilySketchConstraint constraint,
-  ) {
-    final b = _requireSecondPoint(sketch, constraint);
+  static void _validateStage2Shape(_ResolvedConstraint resolved) {
+    final constraint = resolved.source;
+    final b = _requireSecondPoint(resolved);
     if (constraint.kind == FamilySketchConstraintKind.distance) {
-      if (constraint.pointCIndex != null || constraint.pointDIndex != null) {
+      if (resolved.c != null || resolved.d != null) {
         throw FormatException(
           'Distance constraint ${constraint.id} cannot use a second segment.',
         );
       }
       return;
     }
-    final c = constraint.pointCIndex;
-    final d = constraint.pointDIndex;
+    final c = resolved.c;
+    final d = resolved.d;
     if (c == null || d == null) {
       throw FormatException(
         'Constraint ${constraint.id} requires two complete segments.',
       );
     }
-    _requirePoint(sketch, c, constraint.id);
-    _requirePoint(sketch, d, constraint.id);
     if (c == d) {
       throw FormatException(
         'Constraint ${constraint.id} second segment must use distinct points.',
@@ -393,9 +397,116 @@ abstract final class FamilyConstraintSolver {
         'Segment constraint ${constraint.id} cannot reference a plane.',
       );
     }
-    if (b == constraint.pointAIndex) {
+    if (b == resolved.a) {
       throw FormatException(
         'Constraint ${constraint.id} first segment must use distinct points.',
+      );
+    }
+  }
+
+  static _ResolvedConstraint _resolveConstraint(
+    FamilySketch sketch,
+    FamilySketchConstraint constraint,
+  ) {
+    return _ResolvedConstraint(
+      source: constraint,
+      a: _resolveRequiredPoint(
+        sketch,
+        id: constraint.pointAId,
+        legacyIndex: constraint.pointAIndex,
+        constraintId: constraint.id,
+        label: 'A',
+      ),
+      b: _resolveOptionalPoint(
+        sketch,
+        id: constraint.pointBId,
+        legacyIndex: constraint.pointBIndex,
+        constraintId: constraint.id,
+        label: 'B',
+      ),
+      c: _resolveOptionalPoint(
+        sketch,
+        id: constraint.pointCId,
+        legacyIndex: constraint.pointCIndex,
+        constraintId: constraint.id,
+        label: 'C',
+      ),
+      d: _resolveOptionalPoint(
+        sketch,
+        id: constraint.pointDId,
+        legacyIndex: constraint.pointDIndex,
+        constraintId: constraint.id,
+        label: 'D',
+      ),
+    );
+  }
+
+  static int _resolveRequiredPoint(
+    FamilySketch sketch, {
+    required String? id,
+    required int legacyIndex,
+    required String constraintId,
+    required String label,
+  }) {
+    final stableId = id?.trim();
+    if (stableId != null && stableId.isNotEmpty) {
+      final index = sketch.points.indexWhere((point) => point.id == stableId);
+      if (index < 0) {
+        throw FormatException(
+          'Constraint $constraintId references missing Point $label id "$stableId".',
+        );
+      }
+      return index;
+    }
+    _requirePoint(sketch, legacyIndex, constraintId);
+    return legacyIndex;
+  }
+
+  static int? _resolveOptionalPoint(
+    FamilySketch sketch, {
+    required String? id,
+    required int? legacyIndex,
+    required String constraintId,
+    required String label,
+  }) {
+    final stableId = id?.trim();
+    if (stableId != null && stableId.isNotEmpty) {
+      final index = sketch.points.indexWhere((point) => point.id == stableId);
+      if (index < 0) {
+        throw FormatException(
+          'Constraint $constraintId references missing Point $label id "$stableId".',
+        );
+      }
+      return index;
+    }
+    if (legacyIndex == null) return null;
+    _requirePoint(sketch, legacyIndex, constraintId);
+    return legacyIndex;
+  }
+
+  static int _requireSecondPoint(_ResolvedConstraint resolved) {
+    final b = resolved.b;
+    if (b == null) {
+      throw FormatException(
+        'Constraint ${resolved.source.id} requires a second sketch point.',
+      );
+    }
+    if (b == resolved.a) {
+      throw FormatException(
+        'Constraint ${resolved.source.id} must reference two distinct points.',
+      );
+    }
+    return b;
+  }
+
+  static void _requirePoint(
+    FamilySketch sketch,
+    int index,
+    String constraintId,
+  ) {
+    if (index < 0 || index >= sketch.points.length) {
+      throw FormatException(
+        'Constraint $constraintId references point $index outside sketch ${sketch.name}.',
       );
     }
   }
@@ -412,37 +523,22 @@ abstract final class FamilyConstraintSolver {
     final length = vector.length;
     return length <= _tolerance ? fallback : vector * (1.0 / length);
   }
+}
 
-  static void _requirePoint(
-    FamilySketch sketch,
-    int index,
-    String constraintId,
-  ) {
-    if (index < 0 || index >= sketch.points.length) {
-      throw FormatException(
-        'Constraint $constraintId references point $index outside sketch ${sketch.name}.',
-      );
-    }
-  }
+final class _ResolvedConstraint {
+  const _ResolvedConstraint({
+    required this.source,
+    required this.a,
+    this.b,
+    this.c,
+    this.d,
+  });
 
-  static int _requireSecondPoint(
-    FamilySketch sketch,
-    FamilySketchConstraint constraint,
-  ) {
-    final b = constraint.pointBIndex;
-    if (b == null) {
-      throw FormatException(
-        'Constraint ${constraint.id} requires a second sketch point.',
-      );
-    }
-    _requirePoint(sketch, b, constraint.id);
-    if (b == constraint.pointAIndex) {
-      throw FormatException(
-        'Constraint ${constraint.id} must reference two distinct points.',
-      );
-    }
-    return b;
-  }
+  final FamilySketchConstraint source;
+  final int a;
+  final int? b;
+  final int? c;
+  final int? d;
 }
 
 final class _Vec2 {
@@ -451,7 +547,7 @@ final class _Vec2 {
   final double x;
   final double y;
 
-  _Vec2 operator * (double value) => _Vec2(x * value, y * value);
+  _Vec2 operator *(double value) => _Vec2(x * value, y * value);
 
   double get length => math.sqrt(x * x + y * y);
   double dot(_Vec2 other) => x * other.x + y * other.y;
