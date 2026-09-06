@@ -53,13 +53,16 @@ abstract final class FamilyConstraintSolver {
         case FamilySketchConstraintKind.horizontal:
           final b = _requireSecondPoint(sketch, constraint);
           y.union(constraint.pointAIndex, b);
+          break;
         case FamilySketchConstraintKind.vertical:
           final b = _requireSecondPoint(sketch, constraint);
           x.union(constraint.pointAIndex, b);
+          break;
         case FamilySketchConstraintKind.coincident:
           final b = _requireSecondPoint(sketch, constraint);
           x.union(constraint.pointAIndex, b);
           y.union(constraint.pointAIndex, b);
+          break;
         case FamilySketchConstraintKind.pointOnReferencePlane:
           // Applied after all equality groups are built.
           break;
@@ -119,6 +122,24 @@ abstract final class FamilyConstraintSolver {
     return FamilyConstraintSolution(
       sketch: sketch.copyWith(points: points),
       referencePlaneOffsets: Map<String, double>.unmodifiable(planeOffsets),
+    );
+  }
+
+  /// Returns a transient document whose sketches contain solved coordinates.
+  /// Persistent constraint intent remains untouched; this copy is for geometry
+  /// evaluation only and is never written back as baked point positions.
+  static FamilyDocument solveDocument(
+    FamilyDocument document,
+    FamilyTypeDefinition type,
+  ) {
+    if (document.constraints.isEmpty && document.referencePlanes.isEmpty) {
+      return document;
+    }
+    return document.copyWith(
+      sketches: <FamilySketch>[
+        for (final sketch in document.sketches)
+          solveSketch(document, type, sketch).sketch,
+      ],
     );
   }
 
@@ -209,8 +230,6 @@ final class _CoordinateSystem {
   }
 
   List<double> solve(List<double> originals) {
-    // Union may have changed roots after any earlier bookkeeping. Normalize
-    // fixed values through current roots before computing group coordinates.
     final normalizedFixed = <int, _FixedCoordinate>{};
     for (final entry in _fixedByRoot.entries) {
       normalizedFixed[find(entry.key)] = entry.value;
