@@ -74,9 +74,10 @@ void main() {
       ..['schema_version'] = 1;
     final legacy = FamilyDocument.fromJson(legacyJson);
     expect(legacy, isNotNull);
-    expect(legacy!.schemaVersion, 1);
+    final loadedLegacy = legacy!;
+    expect(loadedLegacy.schemaVersion, 1);
 
-    final edited = legacy.copyWith(name: 'Edited legacy family');
+    final edited = loadedLegacy.copyWith(name: 'Edited legacy family');
     expect(edited.schemaVersion, FamilyDocument.currentSchemaVersion);
     expect(FamilyDocumentValidator.validate(edited).isValid, isTrue);
   });
