@@ -6,6 +6,7 @@ import 'package:file_selector/file_selector.dart';
 import '../app_project_storage.dart';
 import '../atomic_file_writer.dart';
 import 'built_in_family_catalog.dart';
+import 'family_bundled_catalog.dart';
 import 'family_document.dart';
 import 'family_validation.dart';
 
@@ -139,9 +140,33 @@ abstract final class FamilyFileStore {
       final document = await _readDocument(entity);
       if (document != null) existingIds.add(document.id);
     }
-    for (final family in BuiltInFamilyCatalog.families) {
+
+    // Keep the original code catalog for backwards compatibility, while new
+    // product content can ship as ordinary assets/families/*.bimfamily files.
+    // Stable ids are authoritative across both sources.
+    final seedById = <String, FamilyDocument>{};
+    void registerSeed(FamilyDocument family, String source) {
       _validateOrThrow(family);
-      if (!existingIds.contains(family.id)) await _saveToLibrary(family);
+      final existing = seedById[family.id];
+      if (existing != null && existing.toJsonText() != family.toJsonText()) {
+        throw FormatException(
+          'Family seed id "${family.id}" is defined differently by $source.',
+        );
+      }
+      seedById[family.id] = family;
+    }
+
+    for (final family in BuiltInFamilyCatalog.families) {
+      registerSeed(family, 'BuiltInFamilyCatalog');
+    }
+    for (final family in await FamilyBundledCatalog.load()) {
+      registerSeed(family, 'assets/families');
+    }
+
+    for (final family in seedById.values) {
+      if (existingIds.contains(family.id)) continue;
+      await _saveToLibrary(family);
+      existingIds.add(family.id);
     }
   }
 
