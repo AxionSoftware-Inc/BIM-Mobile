@@ -6,6 +6,7 @@ export 'family_constraint_models.dart';
 export 'family_constraint_solver.dart';
 export 'family_constraints_panel.dart';
 export 'family_csg.dart';
+export 'family_dependency_resolver.dart';
 export 'family_document.dart';
 export 'family_editor_v2_page.dart';
 export 'family_file_store.dart';
