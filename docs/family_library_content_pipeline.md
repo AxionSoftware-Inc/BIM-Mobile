@@ -77,6 +77,16 @@ A bundled family must:
 - carry category, parameters, formulas, types and geometry in the document;
 - avoid depending on its package filename for identity.
 
+## Library capability metadata
+
+`FamilyLibraryMetadata` is the single derived classification contract for
+Library presentation and future indexing. It computes deterministic counts and
+capabilities from a `FamilyDocument`: types, parameters, formulas, constraints,
+sketches, nested families, freeform meshes, booleans and parametric features.
+Library UI/search code should consume this model instead of repeating feature
+classification rules in multiple widgets. The model is presentation-safe and
+does not mutate or persist additional BIM data.
+
 ## Authoring integration
 
 V5 Advanced Sketch authoring composes three responsibilities into one surface:
@@ -106,4 +116,5 @@ A Family persistence/content change must preserve these invariants:
 8. Conflicting duplicate ids inside bundled content fail visibly.
 9. Library-selected Family Type remains selected in placement.
 10. Multi-type edits use `FamilyParameterAuthoring` and semantic validation.
-11. Invalid external or bundled families never cross into placement.
+11. Library capability classification comes from `FamilyLibraryMetadata`.
+12. Invalid external or bundled families never cross into placement.
