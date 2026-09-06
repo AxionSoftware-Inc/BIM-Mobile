@@ -80,8 +80,6 @@ abstract final class FamilyInstanceAdapter {
     ];
   }
 
-  static List<RenderScenePoint> dimensionsForVerticesDummy() => const <RenderScenePoint>[];
-
   static ({double width, double depth, double height}) dimensionsForVertices(
     List<RenderScenePoint> vertices, {
     double fallbackWidth = 1.0,
