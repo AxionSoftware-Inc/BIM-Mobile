@@ -1,0 +1,30 @@
+{
+  "format": "tablet_bim_family",
+  "schema_version": 6,
+  "id": "builtin-window-wide-picture-v1",
+  "name": "Window · Wide Picture",
+  "category": "window",
+  "description": "A wide fixed window for living rooms and facades.",
+  "parameters": [
+    {"id":"width","label":"Overall width","kind":"length","default":2.4,"minimum":0.05},
+    {"id":"depth","label":"Overall depth","kind":"length","default":0.18,"minimum":0.05},
+    {"id":"height","label":"Overall height","kind":"length","default":1.5,"minimum":0.05},
+    {"id":"sillHeight","label":"Sill height","kind":"length","default":0.75,"minimum":0.0}
+  ],
+  "types": [
+    {
+      "id": "builtin-window-wide-picture-v1-type",
+      "name": "Picture 2400 × 1500",
+      "values": {"width":2.4,"depth":0.18,"height":1.5,"sillHeight":0.75}
+    }
+  ],
+  "features": [
+    {
+      "id": "builtin-window-wide-picture-v1-box",
+      "kind": "box",
+      "label": "Window opening envelope",
+      "parameters": {"width":"width","depth":"depth","height":"height"}
+    }
+  ],
+  "sketches": []
+}
