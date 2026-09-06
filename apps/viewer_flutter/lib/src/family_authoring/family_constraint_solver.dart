@@ -1,3 +1,5 @@
+export 'family_constraint_models.dart';
+
 import 'family_constraint_models.dart';
 import 'family_document.dart';
 import 'family_parameter_resolver.dart';
