@@ -266,7 +266,7 @@ abstract final class FamilyFileStore {
   /// Explicit external-file export. Export is intentionally separate from
   /// [save] so project/library persistence cannot accidentally depend on a
   /// removable or user-moved external file.
-  static Future<String?> export(FamilyDocument document) async {
+  static Future<String?> exportFile(FamilyDocument document) async {
     _validateOrThrow(document);
     const typeGroup = XTypeGroup(
       label: 'BIM family',
