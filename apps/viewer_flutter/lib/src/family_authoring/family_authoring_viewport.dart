@@ -49,17 +49,10 @@ class FamilyAuthoringViewport extends StatefulWidget {
   final String? gizmoFeatureId;
   final FamilyGizmoMode gizmoMode;
   final ValueChanged<String?>? onFeatureSelected;
-
-  /// Backward-compatible alias used by older editor shells.
   final ValueChanged<String?>? onFinalFeatureSelected;
   final ValueChanged<FamilyGizmoAxis>? onGizmoBegin;
   final void Function(FamilyGizmoAxis axis, double delta)? onGizmoChanged;
   final ValueChanged<FamilyGizmoAxis>? onGizmoEnd;
-
-  /// Called when Flutter cancels a drag because another pointer/gesture wins.
-  /// Cancellation is intentionally distinct from [onGizmoEnd]: an interrupted
-  /// authoring gesture must restore its live draft instead of becoming an undo
-  /// step the user never explicitly completed.
   final ValueChanged<FamilyGizmoAxis>? onGizmoCancel;
   final String? prompt;
   final bool showDiagnostics;
@@ -86,15 +79,9 @@ class _FamilyAuthoringViewportState extends State<FamilyAuthoringViewport> {
     super.didUpdateWidget(oldWidget);
     final nextKey = _keyFor(widget);
     if (_sceneKey != nextKey) {
-      // A new authoring scene may expose the same feature id as the previous
-      // scene. Clear the native-selection dedupe token so the first tap in the
-      // new scene is never swallowed as an old duplicate.
       _lastReportedFeatureId = null;
       unawaited(_configureAndLoad(resetView: false));
     } else if (oldWidget.selectedFeatureIds != widget.selectedFeatureIds) {
-      // "Change" in Boolean/Move deliberately clears the current selection.
-      // Reset the dedupe token too, otherwise choosing the same solid again on
-      // Android Filament would not report it back to the editor.
       _lastReportedFeatureId = null;
       unawaited(_syncSelection());
     }
@@ -116,8 +103,6 @@ class _FamilyAuthoringViewportState extends State<FamilyAuthoringViewport> {
       featureId = FamilyAuthoringSceneBuilder.featureIdForObject(object);
     }
     if (featureId == null) {
-      // Selection was cleared. Re-picking the previous object must be treated
-      // as a new user action rather than suppressed by the dedupe guard.
       _lastReportedFeatureId = null;
     } else if (featureId != _lastReportedFeatureId) {
       _lastReportedFeatureId = featureId;
@@ -193,8 +178,6 @@ class _FamilyAuthoringViewportState extends State<FamilyAuthoringViewport> {
         return object;
       }
     }
-    // Result mode has a single object whose metadata points at the final
-    // feature. It is still the correct gizmo anchor for a draft operation.
     if (scene.objects.length == 1) return scene.objects.first;
     return null;
   }
@@ -534,6 +517,11 @@ class _FamilyViewportGizmoState extends State<_FamilyViewportGizmo> {
       },
       onPanCancel: () {
         _accumulated.remove(axis);
+        // V5 snapshots the current live values in onBegin. Sending a zero
+        // delta first restores that snapshot for Move/Rotate/Scale as well as
+        // Extrude/Revolve, then the optional cancel callback can clear any
+        // additional UI state without ever committing an operation.
+        widget.onChanged?.call(axis, 0);
         widget.onCancel?.call(axis);
       },
       child: Container(
