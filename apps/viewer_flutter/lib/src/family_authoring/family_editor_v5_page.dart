@@ -108,6 +108,7 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
     _selectedTypeId = asset?.preferredTypeId ?? _document.types.first.id;
     _selectedFeatureId = _lastSolid(_document)?.id;
     _nameController = TextEditingController(text: _document.name);
+    _dirty = asset == null;
   }
 
   @override
@@ -1058,7 +1059,9 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
             hintText: 'Family name',
           ),
           style: Theme.of(context).textTheme.titleMedium,
-          onChanged: (_) => _dirty = true,
+          onChanged: (_) {
+            if (!_dirty) setState(() => _dirty = true);
+          },
         ),
       ),
       actions: <Widget>[
@@ -1569,7 +1572,7 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
             ),
             if (double.tryParse(_extrudeDepth) != null)
               Slider(
-                value: double.parse(_extrudeDepth).clamp(0.01, 10.0),
+                value: double.parse(_extrudeDepth).clamp(0.01, 10.0).toDouble(),
                 min: 0.01,
                 max: 10.0,
                 onChanged: (value) => setState(() {
@@ -1635,7 +1638,7 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
               }),
             ),
             Slider(
-              value: _parse(_revolveAngle, 360).clamp(1.0, 360.0),
+              value: _parse(_revolveAngle, 360).clamp(1.0, 360.0).toDouble(),
               min: 1,
               max: 360,
               onChanged: (value) => setState(() {
