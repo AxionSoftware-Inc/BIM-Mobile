@@ -74,16 +74,19 @@ internal class RenderSceneViewportStabilityGuardFactory(
 
   private fun applyStabilityPolicy(host: View) {
     applyNoCullingGuard(host)
+    RenderSceneWallSurfaceProjection.install(host)
     wrapNativeCameraTouch(host)
 
     // Renderer construction is synchronous today, but repeat after attach so
     // the policy remains deterministic across Android/Flutter lifecycle paths.
     host.post {
       applyNoCullingGuard(host)
+      RenderSceneWallSurfaceProjection.install(host)
       stabilizeCloseProjection(host)
     }
     host.postDelayed({
       applyNoCullingGuard(host)
+      RenderSceneWallSurfaceProjection.install(host)
       stabilizeCloseProjection(host)
     }, 250L)
   }
