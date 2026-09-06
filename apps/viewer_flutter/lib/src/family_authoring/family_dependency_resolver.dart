@@ -48,8 +48,6 @@ abstract final class FamilyDependencyResolver {
       if (id.isEmpty) continue;
       final existing = documents[id];
       if (existing != null && !identical(existing, document)) {
-        // Multiple assets claiming one stable family id make dependency
-        // resolution non-deterministic. Reject rather than choosing by order.
         if (existing.toJsonText() != document.toJsonText()) {
           throw FormatException('Duplicate Family Library id: $id');
         }
@@ -163,6 +161,10 @@ abstract final class FamilyDependencyResolver {
               'sourceFormat': 'nestedFamily',
               'nestedFamilyId': child.id,
               'nestedTypeId': childType.id,
+              // Parent width/depth/height must not implicitly stretch a child.
+              // A nested instance changes size only through the selected child
+              // type or its explicit parent transform/constraints.
+              'preserveDimensions': true,
               'vertices': <List<double>>[
                 for (final vertex in transformed.vertices)
                   <double>[vertex.x, vertex.y, vertex.z],
