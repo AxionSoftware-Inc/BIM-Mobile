@@ -26,6 +26,7 @@ export 'family_plan_symbol.dart';
 export 'family_render_scene_adapter.dart';
 export 'family_sketch_canvas.dart';
 export 'family_sketch_viewport.dart';
+export 'family_type_matrix_panel.dart';
 export 'family_validation.dart';
 
 /// Single registration point for the detachable Family Authoring feature.
