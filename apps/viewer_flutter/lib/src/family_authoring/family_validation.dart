@@ -139,6 +139,7 @@ abstract final class FamilyDocumentValidator {
           if (constraint.expression?.trim().isNotEmpty == true) {
             add('Constraint ${constraint.id} cannot use an expression');
           }
+          break;
         case FamilySketchConstraintKind.pointOnReferencePlane:
           final planeId = constraint.referencePlaneId;
           final plane = planeId == null ? null : planeById[planeId];
@@ -157,6 +158,7 @@ abstract final class FamilyDocumentValidator {
           if (constraint.expression?.trim().isNotEmpty == true) {
             add('Constraint ${constraint.id} cannot use an expression');
           }
+          break;
         case FamilySketchConstraintKind.distance:
           _validateTwoPointConstraint(constraint, sketch, add);
           if (_hasPointRef(constraint.pointCId, constraint.pointCIndex) ||
@@ -169,6 +171,7 @@ abstract final class FamilyDocumentValidator {
           if (constraint.expression?.trim().isEmpty != false) {
             add('Distance constraint ${constraint.id} requires an expression');
           }
+          break;
         case FamilySketchConstraintKind.parallel:
         case FamilySketchConstraintKind.perpendicular:
         case FamilySketchConstraintKind.equalLength:
@@ -179,6 +182,7 @@ abstract final class FamilyDocumentValidator {
           if (constraint.expression?.trim().isNotEmpty == true) {
             add('Constraint ${constraint.id} cannot use an expression');
           }
+          break;
         case FamilySketchConstraintKind.angle:
           _validateFourPointConstraint(constraint, sketch, add);
           if (constraint.referencePlaneId != null) {
@@ -187,6 +191,7 @@ abstract final class FamilyDocumentValidator {
           if (constraint.expression?.trim().isEmpty != false) {
             add('Angle constraint ${constraint.id} requires an expression');
           }
+          break;
       }
     }
 
@@ -235,6 +240,29 @@ abstract final class FamilyDocumentValidator {
           add('Type ${type.name} · constraint ${constraint.id}: ${error.message}');
         } catch (error) {
           add('Type ${type.name} · constraint ${constraint.id}: $error');
+        }
+      }
+      for (final feature in document.features) {
+        if (feature.kind != FamilyFeatureKind.nestedFamily) continue;
+        for (final key in const <String>[
+          'translationX',
+          'translationY',
+          'translationZ',
+          'rotationZ',
+          'scale',
+        ]) {
+          final raw = feature.parameters[key];
+          if (raw == null) continue;
+          try {
+            final value = _resolveFeatureScalar(raw, resolver);
+            if (key == 'scale' && value <= 0.0) {
+              add('Type ${type.name} · nested ${feature.id}: scale must be positive');
+            }
+          } on FormatException catch (error) {
+            add('Type ${type.name} · nested ${feature.id} · $key: ${error.message}');
+          } catch (error) {
+            add('Type ${type.name} · nested ${feature.id} · $key: $error');
+          }
         }
       }
       try {
@@ -302,9 +330,52 @@ abstract final class FamilyDocumentValidator {
       if (feature.kind == FamilyFeatureKind.freeformMesh) {
         _checkFreeformMesh(feature, add);
       }
+      if (feature.kind == FamilyFeatureKind.nestedFamily) {
+        final familyId = feature.parameters['familyId']?.toString().trim() ?? '';
+        final typeId = feature.parameters['typeId']?.toString().trim() ?? '';
+        if (familyId.isEmpty) {
+          add('Nested feature ${feature.id} requires familyId');
+        }
+        if (typeId.isEmpty) {
+          add('Nested feature ${feature.id} requires typeId');
+        }
+        if (familyId == document.id) {
+          add('Nested feature ${feature.id} cannot directly reference its own family');
+        }
+        if (feature.inputs.isNotEmpty) {
+          add('Nested feature ${feature.id} cannot consume local feature inputs');
+        }
+      }
     }
 
     return FamilyValidationResult(List<String>.unmodifiable(errors));
+  }
+
+  static double _resolveFeatureScalar(
+    Object raw,
+    FamilyParameterResolver resolver,
+  ) {
+    if (raw is num) {
+      final value = raw.toDouble();
+      if (!value.isFinite) {
+        throw const FormatException('must resolve to a finite number');
+      }
+      return value;
+    }
+    final token = raw.toString().trim();
+    if (token.isEmpty) throw const FormatException('expression is empty');
+    final direct = double.tryParse(token.replaceAll(',', '.'));
+    if (direct != null) {
+      if (!direct.isFinite) {
+        throw const FormatException('must resolve to a finite number');
+      }
+      return direct;
+    }
+    final value = resolver.resolveExpression(token);
+    if (!value.isFinite) {
+      throw const FormatException('must resolve to a finite number');
+    }
+    return value;
   }
 
   static void _validateTwoPointConstraint(
@@ -447,7 +518,8 @@ abstract final class FamilyDocumentValidator {
       feature.kind == FamilyFeatureKind.booleanUnion ||
       feature.kind == FamilyFeatureKind.booleanSubtract ||
       feature.kind == FamilyFeatureKind.transform ||
-      feature.kind == FamilyFeatureKind.freeformMesh;
+      feature.kind == FamilyFeatureKind.freeformMesh ||
+      feature.kind == FamilyFeatureKind.nestedFamily;
 
   static FamilySketch? _findSketch(
     Iterable<FamilySketch> sketches,
