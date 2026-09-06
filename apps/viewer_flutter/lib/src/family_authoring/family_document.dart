@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'family_constraint_models.dart';
+export 'family_constraint_models.dart';
 
 /// Independent family authoring document.
 ///
