@@ -37,8 +37,8 @@ void main() {
           name: 'Formula Type',
           values: <String, Object?>{
             'width': 2.4,
-            // These stale values prove formula-driven parameters ignore their
-            // own type override instead of accidentally using it.
+            // Formula targets deliberately contain stale snapshots. The
+            // resolver must ignore these own-value overrides.
             'depth': 99.0,
             'height': 99.0,
           },
@@ -48,17 +48,18 @@ void main() {
 
     final restored = FamilyDocument.fromJson(document.toJson());
     expect(restored, isNotNull);
-    expect(restored!.schemaVersion, FamilyDocument.currentSchemaVersion);
-    expect(restored.parameters[1].formula, 'width / 2');
-    expect(FamilyDocumentValidator.validate(restored).isValid, isTrue);
+    final loaded = restored!;
+    expect(loaded.schemaVersion, FamilyDocument.currentSchemaVersion);
+    expect(loaded.parameters[1].formula, 'width / 2');
+    expect(FamilyDocumentValidator.validate(loaded).isValid, isTrue);
 
-    final resolver = FamilyParameterResolver(restored, restored.types.single);
+    final resolver = FamilyParameterResolver(loaded, loaded.types.single);
     expect(resolver.resolveNumber('depth'), closeTo(1.2, 1e-9));
     expect(resolver.resolveNumber('height'), closeTo(3.6, 1e-9));
 
     final mesh = FamilyGeometryEvaluator.evaluateMesh(
-      restored,
-      restored.types.single,
+      loaded,
+      loaded.types.single,
     );
     final xs = mesh.vertices.map((vertex) => vertex.x).toList();
     final ys = mesh.vertices.map((vertex) => vertex.y).toList();
@@ -66,6 +67,24 @@ void main() {
     expect(xs.reduce(_max) - xs.reduce(_min), closeTo(2.4, 1e-9));
     expect(ys.reduce(_max) - ys.reduce(_min), closeTo(3.6, 1e-9));
     expect(zs.reduce(_max) - zs.reduce(_min), closeTo(1.2, 1e-9));
+  });
+
+  test('schema v1 remains readable and upgrades on authoring edit', () {
+    final legacyJson = FamilyDocument.starter().toJson()
+      ..['schema_version'] = 1;
+    final legacy = FamilyDocument.fromJson(legacyJson);
+    expect(legacy, isNotNull);
+    expect(legacy!.schemaVersion, 1);
+
+    final edited = legacy.copyWith(name: 'Edited legacy family');
+    expect(edited.schemaVersion, FamilyDocument.currentSchemaVersion);
+    expect(FamilyDocumentValidator.validate(edited).isValid, isTrue);
+  });
+
+  test('future family schema is rejected instead of guessed', () {
+    final futureJson = FamilyDocument.starter().toJson()
+      ..['schema_version'] = FamilyDocument.currentSchemaVersion + 1;
+    expect(FamilyDocument.fromJson(futureJson), isNull);
   });
 
   test('formula language supports arithmetic constants and safe functions', () {
