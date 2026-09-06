@@ -5,11 +5,11 @@ import 'family_constraint_solver.dart';
 import 'family_document.dart';
 import 'family_validation.dart';
 
-/// Tablet-friendly authoring surface for Stage-1 geometric constraints.
+/// Tablet-friendly authoring surface for geometric constraints.
 ///
 /// This widget only commits documents that pass the same semantic validator as
-/// save/placement. Reference-plane expressions are therefore live geometry,
-/// not decorative metadata.
+/// save/placement. Constraint expressions are therefore live geometry, not
+/// decorative metadata.
 class FamilyConstraintsPanel extends StatelessWidget {
   const FamilyConstraintsPanel({
     super.key,
@@ -103,7 +103,7 @@ class FamilyConstraintsPanel extends StatelessWidget {
                 ),
                 if (sketch.points.length == 4)
                   TextButton.icon(
-                    onPressed: () => _quickRectangle(context, sketch),
+                    onPressed: () => _quickRectangle(sketch),
                     icon: const Icon(Icons.crop_square_outlined),
                     label: const Text('Parametric rectangle'),
                   ),
@@ -282,7 +282,10 @@ class FamilyConstraintsPanel extends StatelessWidget {
             kind: draft.kind,
             pointAIndex: draft.pointA,
             pointBIndex: draft.pointB,
+            pointCIndex: draft.pointC,
+            pointDIndex: draft.pointD,
             referencePlaneId: draft.referencePlaneId,
+            expression: draft.expression,
           ),
         ],
       ),
@@ -302,7 +305,7 @@ class FamilyConstraintsPanel extends StatelessWidget {
     );
   }
 
-  void _quickRectangle(BuildContext context, FamilySketch sketch) {
+  void _quickRectangle(FamilySketch sketch) {
     final ownedPlaneIds = document.referencePlanes
         .where((plane) => plane.sketchId == sketch.id)
         .map((plane) => plane.id)
@@ -402,13 +405,27 @@ class FamilyConstraintsPanel extends StatelessWidget {
   }
 
   String _constraintSummary(FamilySketchConstraint constraint) {
-    if (constraint.kind ==
-        FamilySketchConstraintKind.pointOnReferencePlane) {
-      final plane = _planes.where((item) => item.id == constraint.referencePlaneId);
-      final planeName = plane.isEmpty ? 'missing plane' : plane.first.name;
-      return 'Point ${constraint.pointAIndex + 1} → $planeName';
+    final a = constraint.pointAIndex + 1;
+    final b = (constraint.pointBIndex ?? -1) + 1;
+    switch (constraint.kind) {
+      case FamilySketchConstraintKind.pointOnReferencePlane:
+        final plane =
+            _planes.where((item) => item.id == constraint.referencePlaneId);
+        final planeName = plane.isEmpty ? 'missing plane' : plane.first.name;
+        return 'Point $a → $planeName';
+      case FamilySketchConstraintKind.distance:
+        return 'Point $a ↔ Point $b = ${constraint.expression}';
+      case FamilySketchConstraintKind.parallel:
+      case FamilySketchConstraintKind.perpendicular:
+      case FamilySketchConstraintKind.equalLength:
+        return 'Segment $a–$b ↔ Segment ${(constraint.pointCIndex ?? -1) + 1}–${(constraint.pointDIndex ?? -1) + 1}';
+      case FamilySketchConstraintKind.angle:
+        return 'Segment $a–$b ↔ Segment ${(constraint.pointCIndex ?? -1) + 1}–${(constraint.pointDIndex ?? -1) + 1} = ${constraint.expression}°';
+      case FamilySketchConstraintKind.horizontal:
+      case FamilySketchConstraintKind.vertical:
+      case FamilySketchConstraintKind.coincident:
+        return 'Point $a ↔ Point $b';
     }
-    return 'Point ${constraint.pointAIndex + 1} ↔ Point ${(constraint.pointBIndex ?? -1) + 1}';
   }
 
   static String _constraintTitle(FamilySketchConstraintKind kind) =>
@@ -417,6 +434,11 @@ class FamilyConstraintsPanel extends StatelessWidget {
         FamilySketchConstraintKind.vertical => 'Vertical',
         FamilySketchConstraintKind.coincident => 'Coincident',
         FamilySketchConstraintKind.pointOnReferencePlane => 'Point on plane',
+        FamilySketchConstraintKind.distance => 'Distance',
+        FamilySketchConstraintKind.parallel => 'Parallel',
+        FamilySketchConstraintKind.perpendicular => 'Perpendicular',
+        FamilySketchConstraintKind.equalLength => 'Equal length',
+        FamilySketchConstraintKind.angle => 'Angle',
       };
 
   static IconData _constraintIcon(FamilySketchConstraintKind kind) =>
@@ -424,7 +446,13 @@ class FamilyConstraintsPanel extends StatelessWidget {
         FamilySketchConstraintKind.horizontal => Icons.horizontal_rule,
         FamilySketchConstraintKind.vertical => Icons.more_vert,
         FamilySketchConstraintKind.coincident => Icons.center_focus_strong,
-        FamilySketchConstraintKind.pointOnReferencePlane => Icons.vertical_align_center,
+        FamilySketchConstraintKind.pointOnReferencePlane =>
+          Icons.vertical_align_center,
+        FamilySketchConstraintKind.distance => Icons.straighten,
+        FamilySketchConstraintKind.parallel => Icons.drag_handle,
+        FamilySketchConstraintKind.perpendicular => Icons.square_foot,
+        FamilySketchConstraintKind.equalLength => Icons.compare_arrows,
+        FamilySketchConstraintKind.angle => Icons.architecture,
       };
 
   static String _number(double value) {
@@ -473,7 +501,9 @@ class _ReferencePlaneDialogState extends State<_ReferencePlaneDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-        title: Text(widget.plane == null ? 'Add reference plane' : 'Edit reference plane'),
+        title: Text(
+          widget.plane == null ? 'Add reference plane' : 'Edit reference plane',
+        ),
         content: SizedBox(
           width: 420,
           child: Column(
@@ -513,7 +543,8 @@ class _ReferencePlaneDialogState extends State<_ReferencePlaneDialog> {
                 decoration: const InputDecoration(
                   labelText: 'Offset expression',
                   hintText: '-width / 2',
-                  helperText: 'Uses the same safe numeric language as parameter formulas.',
+                  helperText:
+                      'Uses the same safe numeric language as parameter formulas.',
                   border: OutlineInputBorder(),
                 ),
               ),
@@ -543,13 +574,19 @@ final class _ConstraintDraft {
     required this.kind,
     required this.pointA,
     this.pointB,
+    this.pointC,
+    this.pointD,
     this.referencePlaneId,
+    this.expression,
   });
 
   final FamilySketchConstraintKind kind;
   final int pointA;
   final int? pointB;
+  final int? pointC;
+  final int? pointD;
   final String? referencePlaneId;
+  final String? expression;
 }
 
 class _ConstraintDialog extends StatefulWidget {
@@ -566,74 +603,156 @@ class _ConstraintDialogState extends State<_ConstraintDialog> {
   FamilySketchConstraintKind _kind = FamilySketchConstraintKind.horizontal;
   int _pointA = 0;
   int _pointB = 1;
+  int _pointC = 2;
+  int _pointD = 3;
   String? _planeId;
+  final TextEditingController _expression = TextEditingController(text: '1.0');
 
   @override
   void initState() {
     super.initState();
-    _pointB = widget.sketch.points.length > 1 ? 1 : 0;
+    final count = widget.sketch.points.length;
+    _pointB = count > 1 ? 1 : 0;
+    _pointC = count > 2 ? 2 : 0;
+    _pointD = count > 3 ? 3 : _pointB;
     _planeId = widget.planes.isEmpty ? null : widget.planes.first.id;
   }
 
   @override
+  void dispose() {
+    _expression.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final usesPlane = _kind == FamilySketchConstraintKind.pointOnReferencePlane;
+    final usesPlane =
+        _kind == FamilySketchConstraintKind.pointOnReferencePlane;
+    final usesSecondSegment = _kind == FamilySketchConstraintKind.parallel ||
+        _kind == FamilySketchConstraintKind.perpendicular ||
+        _kind == FamilySketchConstraintKind.equalLength ||
+        _kind == FamilySketchConstraintKind.angle;
+    final usesExpression = _kind == FamilySketchConstraintKind.distance ||
+        _kind == FamilySketchConstraintKind.angle;
+    final needsPointB = !usesPlane;
+    final enoughPoints = usesSecondSegment
+        ? widget.sketch.points.length >= 4
+        : usesPlane
+            ? widget.sketch.points.isNotEmpty
+            : widget.sketch.points.length >= 2;
+
     return AlertDialog(
       title: const Text('Add sketch constraint'),
       content: SizedBox(
-        width: 440,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            DropdownButtonFormField<FamilySketchConstraintKind>(
-              initialValue: _kind,
-              decoration: const InputDecoration(
-                labelText: 'Constraint',
-                border: OutlineInputBorder(),
-              ),
-              items: FamilySketchConstraintKind.values
-                  .map(
-                    (kind) => DropdownMenuItem<FamilySketchConstraintKind>(
-                      value: kind,
-                      child: Text(FamilyConstraintsPanel._constraintTitle(kind)),
-                    ),
-                  )
-                  .toList(growable: false),
-              onChanged: (kind) {
-                if (kind != null) setState(() => _kind = kind);
-              },
-            ),
-            const SizedBox(height: 8),
-            _pointPicker(
-              label: 'Point A',
-              value: _pointA,
-              onChanged: (value) => setState(() => _pointA = value),
-            ),
-            const SizedBox(height: 8),
-            if (usesPlane)
-              DropdownButtonFormField<String>(
-                initialValue: _planeId,
+        width: 460,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              DropdownButtonFormField<FamilySketchConstraintKind>(
+                initialValue: _kind,
                 decoration: const InputDecoration(
-                  labelText: 'Reference plane',
+                  labelText: 'Constraint',
                   border: OutlineInputBorder(),
                 ),
-                items: widget.planes
+                items: FamilySketchConstraintKind.values
                     .map(
-                      (plane) => DropdownMenuItem<String>(
-                        value: plane.id,
-                        child: Text('${plane.name} · ${plane.axis.name.toUpperCase()}'),
+                      (kind) => DropdownMenuItem<FamilySketchConstraintKind>(
+                        value: kind,
+                        child: Text(FamilyConstraintsPanel._constraintTitle(kind)),
                       ),
                     )
                     .toList(growable: false),
-                onChanged: (value) => setState(() => _planeId = value),
-              )
-            else
-              _pointPicker(
-                label: 'Point B',
-                value: _pointB,
-                onChanged: (value) => setState(() => _pointB = value),
+                onChanged: (kind) {
+                  if (kind == null) return;
+                  setState(() {
+                    _kind = kind;
+                    if (kind == FamilySketchConstraintKind.angle) {
+                      _expression.text = '90';
+                    } else if (kind == FamilySketchConstraintKind.distance &&
+                        _expression.text == '90') {
+                      _expression.text = '1.0';
+                    }
+                  });
+                },
               ),
-          ],
+              const SizedBox(height: 8),
+              _pointPicker(
+                label: 'Point A',
+                value: _pointA,
+                onChanged: (value) => setState(() => _pointA = value),
+              ),
+              if (needsPointB) ...<Widget>[
+                const SizedBox(height: 8),
+                _pointPicker(
+                  label: 'Point B',
+                  value: _pointB,
+                  onChanged: (value) => setState(() => _pointB = value),
+                ),
+              ],
+              if (usesPlane) ...<Widget>[
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  initialValue: _planeId,
+                  decoration: const InputDecoration(
+                    labelText: 'Reference plane',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: widget.planes
+                      .map(
+                        (plane) => DropdownMenuItem<String>(
+                          value: plane.id,
+                          child: Text(
+                            '${plane.name} · ${plane.axis.name.toUpperCase()}',
+                          ),
+                        ),
+                      )
+                      .toList(growable: false),
+                  onChanged: (value) => setState(() => _planeId = value),
+                ),
+              ],
+              if (usesSecondSegment) ...<Widget>[
+                const SizedBox(height: 8),
+                _pointPicker(
+                  label: 'Point C',
+                  value: _pointC,
+                  onChanged: (value) => setState(() => _pointC = value),
+                ),
+                const SizedBox(height: 8),
+                _pointPicker(
+                  label: 'Point D',
+                  value: _pointD,
+                  onChanged: (value) => setState(() => _pointD = value),
+                ),
+              ],
+              if (usesExpression) ...<Widget>[
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _expression,
+                  decoration: InputDecoration(
+                    labelText: _kind == FamilySketchConstraintKind.angle
+                        ? 'Angle expression (degrees)'
+                        : 'Distance expression',
+                    hintText: _kind == FamilySketchConstraintKind.angle
+                        ? '90 or clamp(angleParam, 0, 180)'
+                        : 'width / 2',
+                    helperText:
+                        'Numeric literals, parameter ids and safe family formula functions are supported.',
+                    border: const OutlineInputBorder(),
+                  ),
+                ),
+              ],
+              if (!enoughPoints) ...<Widget>[
+                const SizedBox(height: 8),
+                Text(
+                  usesSecondSegment
+                      ? 'This constraint needs at least four sketch points.'
+                      : 'This constraint needs more sketch points.',
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ],
+            ],
+          ),
         ),
       ),
       actions: <Widget>[
@@ -642,16 +761,25 @@ class _ConstraintDialogState extends State<_ConstraintDialog> {
           child: const Text('Cancel'),
         ),
         FilledButton(
-          onPressed: usesPlane && _planeId == null
+          onPressed: !enoughPoints || (usesPlane && _planeId == null)
               ? null
               : () {
-                  if (!usesPlane && _pointA == _pointB) return;
+                  if (needsPointB && _pointA == _pointB) return;
+                  if (usesSecondSegment && _pointC == _pointD) return;
+                  final expression =
+                      usesExpression ? _expression.text.trim() : null;
+                  if (usesExpression && (expression == null || expression.isEmpty)) {
+                    return;
+                  }
                   Navigator.of(context).pop(
                     _ConstraintDraft(
                       kind: _kind,
                       pointA: _pointA,
-                      pointB: usesPlane ? null : _pointB,
+                      pointB: needsPointB ? _pointB : null,
+                      pointC: usesSecondSegment ? _pointC : null,
+                      pointD: usesSecondSegment ? _pointD : null,
                       referencePlaneId: usesPlane ? _planeId : null,
+                      expression: expression,
                     ),
                   );
                 },
