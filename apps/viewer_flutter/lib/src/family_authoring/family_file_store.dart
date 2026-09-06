@@ -4,8 +4,10 @@ import 'dart:io';
 import 'package:file_selector/file_selector.dart';
 
 import '../app_project_storage.dart';
+import '../atomic_file_writer.dart';
 import 'built_in_family_catalog.dart';
 import 'family_document.dart';
+import 'family_validation.dart';
 
 final class FamilyAssetFile {
   const FamilyAssetFile({
@@ -35,7 +37,11 @@ final class FamilyAssetFile {
 
   FamilyAssetFile withPreferredType(FamilyTypeDefinition type) {
     if (!document.types.any((candidate) => candidate.id == type.id)) {
-      throw ArgumentError.value(type.id, 'type', 'Type does not belong to family');
+      throw ArgumentError.value(
+        type.id,
+        'type',
+        'Type does not belong to family',
+      );
     }
     final ordered = <FamilyTypeDefinition>[
       type,
@@ -51,9 +57,7 @@ final class FamilyAssetFile {
 }
 
 /// Small app-owned UI state for a potentially large family library.
-///
-/// This deliberately lives beside family assets rather than in project JSON:
-/// favorites and recents are user/library preferences, not BIM model data.
+/// Favorites and recents are user/library preferences, not BIM model data.
 final class FamilyLibraryPreferences {
   const FamilyLibraryPreferences({
     this.favoriteFamilyIds = const <String>{},
@@ -120,30 +124,24 @@ final class FamilyLibraryPreferences {
 
 /// File boundary owned by the family module.
 ///
-/// No project repository or scene serializer is imported here. A family can
-/// therefore be saved and later removed from a project without changing the
-/// project persistence contract.
+/// Every file is validated before it enters the reusable library or project
+/// placement flow. Invalid/corrupt assets are skipped rather than poisoning the
+/// whole catalog.
 abstract final class FamilyFileStore {
   static const String _preferencesFileName = '.family_library_state.json';
+  static final SerializedFileWriter _preferencesWriter = SerializedFileWriter();
 
-  /// Seeds the local library with the curated starter families once. The
-  /// files are ordinary family assets after this call and can be edited,
-  /// copied or removed independently of project documents.
   static Future<void> ensureBuiltInFamilies() async {
     final directory = await _libraryDirectory();
     final existingIds = <String>{};
     await for (final entity in directory.list()) {
-      if (entity is! File ||
-          !entity.path.endsWith('.${FamilyDocument.fileExtension}')) {
-        continue;
-      }
+      if (entity is! File || !_isFamilyFile(entity)) continue;
       final document = await _readDocument(entity);
       if (document != null) existingIds.add(document.id);
     }
     for (final family in BuiltInFamilyCatalog.families) {
-      if (!existingIds.contains(family.id)) {
-        await _saveToLibrary(family);
-      }
+      _validateOrThrow(family);
+      if (!existingIds.contains(family.id)) await _saveToLibrary(family);
     }
   }
 
@@ -151,24 +149,16 @@ abstract final class FamilyFileStore {
     final directory = await _libraryDirectory();
     final assets = <FamilyAssetFile>[];
     await for (final entity in directory.list()) {
-      if (entity is! File ||
-          !entity.path.endsWith('.${FamilyDocument.fileExtension}')) {
-        continue;
-      }
-      try {
-        final document = FamilyDocument.fromJson(
-          jsonDecode(await entity.readAsString()),
-        );
-        if (document != null) {
-          assets.add(FamilyAssetFile(document: document, path: entity.path));
-        }
-      } catch (_) {
-        // A partially written family must not prevent the rest of the library
-        // from loading.
+      if (entity is! File || !_isFamilyFile(entity)) continue;
+      final document = await _readDocument(entity);
+      if (document != null) {
+        assets.add(FamilyAssetFile(document: document, path: entity.path));
       }
     }
     assets.sort(
-      (left, right) => left.document.name.compareTo(right.document.name),
+      (left, right) => left.document.name
+          .toLowerCase()
+          .compareTo(right.document.name.toLowerCase()),
     );
     return List<FamilyAssetFile>.unmodifiable(assets);
   }
@@ -184,7 +174,6 @@ abstract final class FamilyFileStore {
         jsonDecode(await file.readAsString()),
       );
     } catch (_) {
-      // Corrupt UI preferences must never make the BIM family library fail.
       return const FamilyLibraryPreferences();
     }
   }
@@ -196,23 +185,10 @@ abstract final class FamilyFileStore {
     final target = File(
       '${directory.path}${Platform.pathSeparator}$_preferencesFileName',
     );
-    final temporary = File(
-      '${target.path}.tmp-${DateTime.now().microsecondsSinceEpoch}',
+    await _preferencesWriter.write(
+      target,
+      const JsonEncoder.withIndent('  ').convert(preferences.toJson()),
     );
-    try {
-      await temporary.writeAsString(
-        const JsonEncoder.withIndent('  ').convert(preferences.toJson()),
-        flush: true,
-      );
-      try {
-        await temporary.rename(target.path);
-      } on FileSystemException {
-        if (await target.exists()) await target.delete();
-        await temporary.rename(target.path);
-      }
-    } finally {
-      if (await temporary.exists()) await temporary.delete();
-    }
   }
 
   static Future<FamilyAssetFile?> open() async {
@@ -223,22 +199,19 @@ abstract final class FamilyFileStore {
     final location =
         await openFile(acceptedTypeGroups: <XTypeGroup>[typeGroup]);
     if (location == null) return null;
-    final text = await File(location.path).readAsString();
-    final decoded = jsonDecode(text);
-    final document = FamilyDocument.fromJson(decoded);
+    final source = File(location.path);
+    final document = await _readDocument(source, throwOnInvalid: true);
     if (document == null) {
       throw const FormatException('Selected file is not a valid BIM family.');
     }
 
-    // On Android, "Import family" means add it to the app-owned reusable
-    // library, not merely hold a fragile document-provider path for one
-    // placement. This makes new content data-driven: adding a .bimfamily does
-    // not require changing Dart source or rebuilding the application.
+    // Android document-provider paths can disappear after the picker session.
+    // Import the validated asset into app-owned storage before placement.
     if (Platform.isAndroid) {
       final storedPath = await _saveToLibrary(document);
       return FamilyAssetFile(document: document, path: storedPath);
     }
-    return FamilyAssetFile(document: document, path: location.path);
+    return FamilyAssetFile(document: document, path: source.path);
   }
 
   /// Loads an instance-referenced family without opening a file picker.
@@ -248,9 +221,7 @@ abstract final class FamilyFileStore {
     final file = File(normalized);
     try {
       if (!await file.exists()) return null;
-      final document = FamilyDocument.fromJson(
-        jsonDecode(await file.readAsString()),
-      );
+      final document = await _readDocument(file);
       return document == null
           ? null
           : FamilyAssetFile(document: document, path: file.path);
@@ -260,73 +231,93 @@ abstract final class FamilyFileStore {
   }
 
   static Future<String?> save(FamilyDocument document) async {
-    if (Platform.isAndroid) {
-      return _saveToLibrary(document);
-    }
+    _validateOrThrow(document);
+    if (Platform.isAndroid) return _saveToLibrary(document);
+
     const typeGroup = XTypeGroup(
       label: 'BIM family',
       extensions: <String>[FamilyDocument.fileExtension, 'json'],
     );
     final location = await getSaveLocation(
       acceptedTypeGroups: <XTypeGroup>[typeGroup],
-      suggestedName:
-          '${document.name.replaceAll(RegExp(r'[^A-Za-z0-9_-]+'), '_')}.${FamilyDocument.fileExtension}',
+      suggestedName: '${_safeFileStem(document.name)}.${FamilyDocument.fileExtension}',
     );
     if (location == null) return null;
     final target = File(location.path);
-    final temporary = File(
-      '${target.path}.tmp-${DateTime.now().microsecondsSinceEpoch}',
-    );
-    try {
-      await temporary.writeAsString(document.toJsonText(), flush: true);
-      try {
-        await temporary.rename(target.path);
-      } on FileSystemException {
-        if (await target.exists()) await target.delete();
-        await temporary.rename(target.path);
-      }
-      return target.path;
-    } finally {
-      if (await temporary.exists()) await temporary.delete();
+    await _writeDocument(target, document);
+    return target.path;
+  }
+
+  /// Saves an editor-opened asset back to its known path when possible.
+  /// This is the update path used by future/edit-existing library UI; it avoids
+  /// creating a new file just because the family display name changed.
+  static Future<String> saveAsset(
+    FamilyDocument document, {
+    required String existingPath,
+  }) async {
+    _validateOrThrow(document);
+    final normalized = existingPath.trim();
+    if (normalized.isEmpty) return _saveToLibrary(document);
+    final target = File(normalized);
+    final existing = await _readDocument(target);
+    if (existing != null && existing.id != document.id) {
+      throw const FormatException(
+        'Refusing to overwrite a different family asset.',
+      );
     }
+    await _writeDocument(target, document);
+    return target.path;
   }
 
   static Future<String> _saveToLibrary(FamilyDocument document) async {
+    _validateOrThrow(document);
     final directory = await _libraryDirectory();
-    final safeName = document.name
-        .replaceAll(RegExp(r'[^A-Za-z0-9_-]+'), '_')
-        .replaceAll(RegExp(r'_+'), '_')
-        .replaceAll(RegExp(r'^_|_$'), '');
-    final fileName = safeName.isEmpty ? 'New_Family' : safeName;
+
+    // Stable family id is authoritative. Search the whole library first so a
+    // rename updates the existing asset instead of creating a duplicate under
+    // the new filename.
+    final existing = await _findFileByFamilyId(directory, document.id);
+    if (existing != null) {
+      await _writeDocument(existing, document);
+      return existing.path;
+    }
+
+    final fileName = _safeFileStem(document.name);
     var target = File(
       '${directory.path}${Platform.pathSeparator}$fileName.${FamilyDocument.fileExtension}',
     );
     var suffix = 2;
     while (await target.exists()) {
-      final existing = await _readDocument(target);
-      if (existing?.id == document.id) {
-        break;
-      }
       target = File(
         '${directory.path}${Platform.pathSeparator}${fileName}_$suffix.${FamilyDocument.fileExtension}',
       );
       suffix += 1;
     }
-    final temporary = File(
-      '${target.path}.tmp-${DateTime.now().microsecondsSinceEpoch}',
-    );
-    try {
-      await temporary.writeAsString(document.toJsonText(), flush: true);
-      try {
-        await temporary.rename(target.path);
-      } on FileSystemException {
-        if (await target.exists()) await target.delete();
-        await temporary.rename(target.path);
-      }
-      return target.path;
-    } finally {
-      if (await temporary.exists()) await temporary.delete();
+    await _writeDocument(target, document);
+    return target.path;
+  }
+
+  static Future<File?> _findFileByFamilyId(
+    Directory directory,
+    String familyId,
+  ) async {
+    await for (final entity in directory.list()) {
+      if (entity is! File || !_isFamilyFile(entity)) continue;
+      final document = await _readDocument(entity);
+      if (document?.id == familyId) return entity;
     }
+    return null;
+  }
+
+  static Future<void> _writeDocument(
+    File target,
+    FamilyDocument document,
+  ) async {
+    _validateOrThrow(document);
+    if (!await target.parent.exists()) {
+      await target.parent.create(recursive: true);
+    }
+    await atomicWriteString(target, document.toJsonText());
   }
 
   static Future<Directory> _libraryDirectory() async {
@@ -338,11 +329,49 @@ abstract final class FamilyFileStore {
     return directory;
   }
 
-  static Future<FamilyDocument?> _readDocument(File file) async {
+  static bool _isFamilyFile(File file) =>
+      file.path.endsWith('.${FamilyDocument.fileExtension}');
+
+  static String _safeFileStem(String name) {
+    final safe = name
+        .replaceAll(RegExp(r'[^A-Za-z0-9_-]+'), '_')
+        .replaceAll(RegExp(r'_+'), '_')
+        .replaceAll(RegExp(r'^_|_$'), '');
+    return safe.isEmpty ? 'New_Family' : safe;
+  }
+
+  static Future<FamilyDocument?> _readDocument(
+    File file, {
+    bool throwOnInvalid = false,
+  }) async {
     try {
-      return FamilyDocument.fromJson(jsonDecode(await file.readAsString()));
-    } catch (_) {
+      final document = FamilyDocument.fromJson(
+        jsonDecode(await file.readAsString()),
+      );
+      if (document == null) {
+        if (throwOnInvalid) {
+          throw const FormatException('File is not a supported BIM family.');
+        }
+        return null;
+      }
+      final validation = FamilyDocumentValidator.validate(document);
+      if (!validation.isValid) {
+        if (throwOnInvalid) {
+          throw FormatException(validation.errors.join('; '));
+        }
+        return null;
+      }
+      return document;
+    } catch (error) {
+      if (throwOnInvalid) rethrow;
       return null;
+    }
+  }
+
+  static void _validateOrThrow(FamilyDocument document) {
+    final validation = FamilyDocumentValidator.validate(document);
+    if (!validation.isValid) {
+      throw FormatException(validation.errors.join('; '));
     }
   }
 }
