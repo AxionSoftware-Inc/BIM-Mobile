@@ -5,21 +5,13 @@ import 'family_document.dart';
 /// Resolves one Family Type into the effective parameter values consumed by
 /// preview, placement and plan graphics.
 ///
-/// A formula is intentionally a numeric expression rather than an arbitrary
-/// Dart snippet. Keeping the language small makes family files deterministic,
-/// portable and safe to open from external sources.
+/// Formulas deliberately use a small deterministic language instead of Dart:
+/// numeric literals, parameter ids, + - * /, parentheses, unary +/- and the
+/// functions min, max, abs and clamp. `pi` is also available.
 ///
-/// Supported syntax:
-///
-/// - numeric literals (`1`, `0.25`, `1.2e-3`)
-/// - parameter ids (`width`, `shelf_count`)
-/// - `+`, `-`, `*`, `/`, parentheses and unary +/-
-/// - `pi`
-/// - `min(a,b)`, `max(a,b)`, `abs(x)`, `clamp(x,min,max)`
-///
-/// Formula-driven parameters ignore the per-type stored value for that
-/// parameter. Dependencies may still read ordinary per-type values. Cycles,
-/// unknown ids, division by zero and non-finite results fail explicitly.
+/// Formula-driven parameters ignore their own per-type stored value. Cycles,
+/// unknown references, invalid kinds, division by zero and non-finite results
+/// fail explicitly instead of silently falling back to a different geometry.
 final class FamilyParameterResolver {
   FamilyParameterResolver(this.document, this.type)
       : _parameters = <String, FamilyParameterDefinition>{
@@ -30,7 +22,7 @@ final class FamilyParameterResolver {
   final FamilyTypeDefinition type;
   final Map<String, FamilyParameterDefinition> _parameters;
   final Map<String, Object?> _cache = <String, Object?>{};
-  final Set<String> _resolving = <String>{};
+  final List<String> _resolutionStack = <String>[];
 
   Object? resolve(FamilyParameterDefinition parameter) =>
       resolveById(parameter.id);
@@ -41,10 +33,16 @@ final class FamilyParameterResolver {
     if (parameter == null) {
       throw FormatException('Unknown family parameter "$parameterId".');
     }
-    if (!_resolving.add(parameterId)) {
-      final chain = <String>[..._resolving, parameterId].join(' -> ');
+    final cycleStart = _resolutionStack.indexOf(parameterId);
+    if (cycleStart >= 0) {
+      final chain = <String>[
+        ..._resolutionStack.sublist(cycleStart),
+        parameterId,
+      ].join(' -> ');
       throw FormatException('Family parameter formula cycle: $chain');
     }
+
+    _resolutionStack.add(parameterId);
     try {
       final formula = parameter.formula?.trim();
       final Object? value;
@@ -67,7 +65,7 @@ final class FamilyParameterResolver {
       _cache[parameterId] = value;
       return value;
     } finally {
-      _resolving.remove(parameterId);
+      _resolutionStack.removeLast();
     }
   }
 
@@ -110,11 +108,13 @@ final class FamilyParameterResolver {
         if (value is! bool) {
           throw FormatException('${parameter.label} must be true or false.');
         }
+        return;
       case FamilyParameterKind.text:
       case FamilyParameterKind.material:
         if (value is! String || value.trim().isEmpty) {
           throw FormatException('${parameter.label} must be non-empty text.');
         }
+        return;
       case FamilyParameterKind.length:
       case FamilyParameterKind.number:
       case FamilyParameterKind.angle:
@@ -133,6 +133,7 @@ final class FamilyParameterResolver {
         if (parameter.maximum != null && number > parameter.maximum!) {
           throw FormatException('${parameter.label} is above its maximum.');
         }
+        return;
     }
   }
 
@@ -160,9 +161,7 @@ final class _ExpressionParser {
         'Unexpected token in family formula near "${source.substring(_offset)}".',
       );
     }
-    if (!result.isFinite) {
-      throw const FormatException('Family formula produced a non-finite result.');
-    }
+    _requireFinite(result);
     return result;
   }
 
@@ -217,8 +216,10 @@ final class _ExpressionParser {
       }
       return value;
     }
+
     final number = _number();
     if (number != null) return number;
+
     final identifier = _identifier();
     if (identifier == null) {
       throw FormatException(
@@ -300,9 +301,7 @@ final class _ExpressionParser {
       while (_offset < source.length && _isDigit(source.codeUnitAt(_offset))) {
         _offset++;
       }
-      if (_offset == exponentDigits) {
-        _offset = exponentStart;
-      }
+      if (_offset == exponentDigits) _offset = exponentStart;
     }
     final value = double.tryParse(source.substring(start, _offset));
     if (value == null || !value.isFinite) {
@@ -329,7 +328,7 @@ final class _ExpressionParser {
       if (unit == 32 || unit == 9 || unit == 10 || unit == 13) {
         _offset++;
       } else {
-        break;
+        return;
       }
     }
   }
