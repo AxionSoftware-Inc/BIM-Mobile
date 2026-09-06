@@ -3,7 +3,7 @@ import 'dart:math' as math;
 import 'family_document.dart';
 
 /// Resolves one Family Type into the effective parameter values consumed by
-/// preview, placement and plan graphics.
+/// preview, placement, plan graphics and geometric constraints.
 ///
 /// Formulas deliberately use a small deterministic language instead of Dart:
 /// numeric literals, parameter ids, + - * /, parentheses, unary +/- and the
@@ -52,10 +52,7 @@ final class FamilyParameterResolver {
             'Formula parameter "${parameter.label}" must be numeric.',
           );
         }
-        value = _ExpressionParser(
-          formula,
-          resolveIdentifier: _resolveNumericIdentifier,
-        ).parse();
+        value = resolveExpression(formula);
       } else {
         value = type.values.containsKey(parameter.id)
             ? type.values[parameter.id]
@@ -78,6 +75,20 @@ final class FamilyParameterResolver {
       );
     }
     return number;
+  }
+
+  /// Evaluates a standalone safe numeric expression against the same selected
+  /// Family Type. Reference-plane offsets use this path so geometry constraints
+  /// and ordinary parameter formulas share one language and one cycle model.
+  double resolveExpression(String expression) {
+    final source = expression.trim();
+    if (source.isEmpty) {
+      throw const FormatException('Family numeric expression cannot be empty.');
+    }
+    return _ExpressionParser(
+      source,
+      resolveIdentifier: _resolveNumericIdentifier,
+    ).parse();
   }
 
   Map<String, Object?> resolveAll() => <String, Object?>{
