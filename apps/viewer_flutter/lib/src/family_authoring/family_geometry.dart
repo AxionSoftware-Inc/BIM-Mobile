@@ -1,12 +1,13 @@
 import 'dart:math' as math;
 
 import 'family_document.dart';
+import 'family_parameter_resolver.dart';
 
 /// A small, engine-independent preview result for the Family Authoring page.
 ///
-/// This is deliberately not a project render mesh. The future native family
-/// evaluator can consume the same document and produce a real mesh without
-/// making the authoring UI depend on the project viewport.
+/// This is deliberately not a project render mesh. The native family evaluator
+/// can consume the same document later without making the editor depend on the
+/// project viewport.
 final class FamilyPreviewShape {
   const FamilyPreviewShape({
     required this.profile,
@@ -114,11 +115,9 @@ abstract final class FamilyGeometryEvaluator {
     return _fitMeshToTypeParameters(document, type, _boxMesh(document, type));
   }
 
-  /// Freeform/revolve meshes are authored in family coordinates.  Their
-  /// dimensions must still follow the same type parameters as a box family;
-  /// otherwise Inspector edits change labels only and leave the instance
-  /// geometry stale.  Fit each axis around a stable base/origin so family
-  /// instances resize without drifting in the project.
+  /// Freeform/revolve meshes are authored in family coordinates. Their
+  /// dimensions must still follow the same effective type parameters as box
+  /// families, including formula-driven values.
   static FamilyEvaluatedMesh _fitMeshToTypeParameters(
     FamilyDocument document,
     FamilyTypeDefinition type,
@@ -154,10 +153,7 @@ abstract final class FamilyGeometryEvaluator {
     final scaleZ =
         depth != null && sourceDepth > 1e-9 ? depth / sourceDepth : 1.0;
     if (scaleX == 1.0 && scaleY == 1.0 && scaleZ == 1.0) return mesh;
-    // Box/profile families conventionally start at the local origin, while
-    // authored furniture and revolved solids are commonly centered around
-    // it. Preserve that authored convention so changing a parameter does not
-    // teleport an existing instance.
+
     final anchorX = minX < -1e-9 ? (minX + maxX) * 0.5 : minX;
     final anchorY = minY;
     final anchorZ = minZ < -1e-9 ? (minZ + maxZ) * 0.5 : minZ;
@@ -170,7 +166,8 @@ abstract final class FamilyGeometryEvaluator {
         ),
     ];
     return mesh.copyWith(
-        vertices: List<FamilyMeshVertex>.unmodifiable(vertices));
+      vertices: List<FamilyMeshVertex>.unmodifiable(vertices),
+    );
   }
 
   static double? _parameterLength(
@@ -178,15 +175,18 @@ abstract final class FamilyGeometryEvaluator {
     FamilyTypeDefinition type,
     String id,
   ) {
-    for (final parameter in document.parameters) {
-      if (parameter.id != id || parameter.kind != FamilyParameterKind.length) {
-        continue;
-      }
-      final raw = type.valueFor(parameter);
-      final value = raw is num ? raw.toDouble() : double.tryParse('$raw');
-      if (value != null && value.isFinite && value > 0.0) return value;
+    final parameter = _parameterById(document, id);
+    if (parameter == null || parameter.kind != FamilyParameterKind.length) {
+      return null;
     }
-    return null;
+    try {
+      final value = FamilyParameterResolver(document, type).resolveNumber(id);
+      return value.isFinite && value > 0.0 ? value : null;
+    } on FormatException {
+      // Authoring preview stays alive while the user is typing an incomplete
+      // formula. FamilyDocumentValidator still blocks save/project placement.
+      return null;
+    }
   }
 
   static FamilyEvaluatedMesh _evaluateMeshFeature(
@@ -220,9 +220,8 @@ abstract final class FamilyGeometryEvaluator {
         final base = previous == null
             ? _boxMesh(document, type)
             : _evaluateMeshFeature(document, type, previous);
-        // Exact CSG is kept behind the family evaluator boundary. Until the
-        // robust kernel is connected, retain the base mesh and mark it so the
-        // caller cannot mistake this preview for final boolean geometry.
+        // Do not fake exact CSG. The feature remains explicit and the preview
+        // is marked approximate until the robust solid kernel is connected.
         return base.copyWith(
           source: feature.label.isEmpty
               ? _featureName(feature.kind)
@@ -280,11 +279,9 @@ abstract final class FamilyGeometryEvaluator {
               : feature.label,
         );
       case FamilyFeatureKind.freeformMesh:
-        return _boxShape(
-          document,
-          type,
-        ).copyWith(
-            source: feature.label.isEmpty ? 'Freeform mesh' : feature.label);
+        return _boxShape(document, type).copyWith(
+          source: feature.label.isEmpty ? 'Freeform mesh' : feature.label,
+        );
       case FamilyFeatureKind.profile:
         return _boxShape(document, type);
     }
@@ -352,8 +349,9 @@ abstract final class FamilyGeometryEvaluator {
     ];
     for (var index = 0; index < count; index++) {
       final next = (index + 1) % count;
-      faces
-          .add(FamilyMeshFace(<int>[index, next, count + next, count + index]));
+      faces.add(
+        FamilyMeshFace(<int>[index, next, count + next, count + index]),
+      );
     }
     return FamilyEvaluatedMesh(
       vertices: List<FamilyMeshVertex>.unmodifiable(vertices),
@@ -366,7 +364,7 @@ abstract final class FamilyGeometryEvaluator {
     FamilyPreviewShape shape,
     String source,
   ) {
-    final double angle = shape.angle.clamp(1.0, 360.0).toDouble();
+    final angle = shape.angle.clamp(1.0, 360.0).toDouble();
     final fullRevolution = angle >= 359.999;
     final segments = math.max(8, (24 * angle / 360).ceil()).toInt();
     final rings = fullRevolution ? segments : segments + 1;
@@ -387,6 +385,7 @@ abstract final class FamilyGeometryEvaluator {
         );
       }
     }
+
     final faces = <FamilyMeshFace>[];
     final faceSegments = fullRevolution ? segments : segments - 1;
     for (var segment = 0; segment < faceSegments; segment++) {
@@ -407,9 +406,7 @@ abstract final class FamilyGeometryEvaluator {
     }
     if (!fullRevolution) {
       faces.add(
-        FamilyMeshFace(
-          List<int>.generate(profile.length, (index) => index),
-        ),
+        FamilyMeshFace(List<int>.generate(profile.length, (index) => index)),
       );
       final lastRing = (rings - 1) * profile.length;
       faces.add(
@@ -487,10 +484,7 @@ abstract final class FamilyGeometryEvaluator {
   }
 
   /// Reads a compact, editor-independent mesh payload used by curated
-  /// families and by future freeform authoring tools. Keeping this parser in
-  /// the evaluator means the project adapter receives the same validated
-  /// mesh as the family preview without importing family files into the
-  /// native document model.
+  /// families and imported freeform geometry.
   static FamilyEvaluatedMesh? _freeformMesh(FamilyFeature feature) {
     final rawVertices = feature.parameters['vertices'];
     final rawFaces = feature.parameters['faces'];
@@ -521,9 +515,7 @@ abstract final class FamilyGeometryEvaluator {
       for (final rawIndex in rawFace) {
         final index =
             rawIndex is int ? rawIndex : int.tryParse(rawIndex.toString());
-        if (index == null || index < 0 || index >= vertices.length) {
-          return null;
-        }
+        if (index == null || index < 0 || index >= vertices.length) return null;
         indices.add(index);
       }
       faces.add(FamilyMeshFace(List<int>.unmodifiable(indices)));
@@ -643,18 +635,14 @@ abstract final class FamilyGeometryEvaluator {
     if (token == null || token.isEmpty) return fallback;
     final direct = double.tryParse(token.replaceAll(',', '.'));
     if (direct != null && direct.isFinite) return direct.abs();
-    final parameter = document.parameters.firstWhere(
-      (item) => item.id == token,
-      orElse: () => const FamilyParameterDefinition(
-        id: '',
-        label: '',
-        kind: FamilyParameterKind.number,
-        defaultValue: null,
-      ),
-    );
-    final value = type.values[token] ?? parameter.defaultValue;
-    if (value is num && value.isFinite) return value.toDouble().abs();
-    return fallback;
+    final parameter = _parameterById(document, token);
+    if (parameter == null) return fallback;
+    try {
+      final value = FamilyParameterResolver(document, type).resolveNumber(token);
+      return value.isFinite ? value.abs() : fallback;
+    } on FormatException {
+      return fallback;
+    }
   }
 
   static double _resolveScalar(
@@ -668,17 +656,22 @@ abstract final class FamilyGeometryEvaluator {
     if (token == null || token.isEmpty) return fallback;
     final direct = double.tryParse(token.replaceAll(',', '.'));
     if (direct != null && direct.isFinite) return direct;
-    final parameter = document.parameters.firstWhere(
-      (item) => item.id == token,
-      orElse: () => const FamilyParameterDefinition(
-        id: '',
-        label: '',
-        kind: FamilyParameterKind.number,
-        defaultValue: null,
-      ),
-    );
-    final value = type.values[token] ?? parameter.defaultValue;
-    if (value is num && value.isFinite) return value.toDouble();
-    return fallback;
+    final parameter = _parameterById(document, token);
+    if (parameter == null) return fallback;
+    try {
+      return FamilyParameterResolver(document, type).resolveNumber(token);
+    } on FormatException {
+      return fallback;
+    }
+  }
+
+  static FamilyParameterDefinition? _parameterById(
+    FamilyDocument document,
+    String id,
+  ) {
+    for (final parameter in document.parameters) {
+      if (parameter.id == id) return parameter;
+    }
+    return null;
   }
 }
