@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'family_constraints_geometry_panel.dart' as geometry;
 import 'family_document.dart';
 import 'family_parameters_panel.dart';
+import 'family_type_matrix_panel.dart';
 
 /// Unified advanced Family authoring surface.
 ///
@@ -34,6 +35,13 @@ class FamilyConstraintsPanel extends StatelessWidget {
         FamilyParametersPanel(
           document: document,
           type: type,
+          onChanged: onChanged,
+          onStatus: onStatus,
+        ),
+        const SizedBox(height: 10),
+        FamilyTypeMatrixPanel(
+          document: document,
+          currentTypeId: type.id,
           onChanged: onChanged,
           onStatus: onStatus,
         ),
