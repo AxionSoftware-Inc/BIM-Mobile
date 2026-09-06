@@ -27,8 +27,8 @@ final class FamilyInstancePlacementResult {
 }
 
 /// Application-side adapter between the independent Family Authoring module
-/// and the project gateways. Keeping this outside `family_authoring/` makes
-/// the family editor detachable while still allowing project placement.
+/// and project gateways. This is also the single resolver boundary available
+/// to project Inspector code, so editor/plan/3D/Inspector cannot drift apart.
 abstract final class FamilyInstanceAdapter {
   static List<int> triangleIndices(FamilyEvaluatedMesh mesh) {
     final result = <int>[];
@@ -58,25 +58,13 @@ abstract final class FamilyInstanceAdapter {
     ];
   }
 
-  /// Projects family-local coordinates onto a wall host.
-  ///
-  /// Family X follows the wall centerline, family Z follows the wall normal,
-  /// and family Y remains the vertical BIM axis. The same method is used at
-  /// placement and during Inspector edits so a wall sweep cannot silently
-  /// rotate back to world axes.
   static List<RenderScenePoint> projectWallHostedVertices({
     required FamilyEvaluatedMesh mesh,
     required RenderSceneObject hostWall,
     required double offsetMeters,
   }) {
-    final center = RenderSceneQueries.wallPointAtOffset(
-      hostWall,
-      offsetMeters,
-    );
-    final tangent = RenderSceneQueries.wallTangentAtOffset(
-      hostWall,
-      offsetMeters,
-    );
+    final center = RenderSceneQueries.wallPointAtOffset(hostWall, offsetMeters);
+    final tangent = RenderSceneQueries.wallTangentAtOffset(hostWall, offsetMeters);
     if (center == null || tangent == null) {
       throw const FormatException('Wall host has no usable centerline.');
     }
@@ -125,6 +113,19 @@ abstract final class FamilyInstanceAdapter {
     );
   }
 
+  static Map<String, Object?> resolvedValues(
+    FamilyDocument family,
+    FamilyTypeDefinition type,
+  ) =>
+      FamilyParameterResolver(family, type).resolveAll();
+
+  static Object? resolvedValue(
+    FamilyDocument family,
+    FamilyTypeDefinition type,
+    String parameterId,
+  ) =>
+      FamilyParameterResolver(family, type).resolveById(parameterId);
+
   static double lengthValue(
     FamilyDocument family,
     FamilyTypeDefinition type,
@@ -155,10 +156,8 @@ abstract final class FamilyInstanceAdapter {
       );
     }
 
-    // Resolve once before native mutation. If a formula is invalid, placement
-    // fails before any element is created and project state remains atomic.
     final resolver = FamilyParameterResolver(family, type);
-    final resolvedValues = resolver.resolveAll();
+    final resolved = resolver.resolveAll();
     final evaluatedMesh = FamilyGeometryEvaluator.evaluateMesh(family, type);
     if (evaluatedMesh.vertices.isEmpty || evaluatedMesh.faces.isEmpty) {
       throw const FormatException('Family type has no usable solid geometry.');
@@ -207,9 +206,7 @@ abstract final class FamilyInstanceAdapter {
       case FamilyCategory.window:
         final wallId = hostWallId;
         if (wallId == null) {
-          throw const FormatException(
-            'A window family must be hosted by a wall.',
-          );
+          throw const FormatException('A window family must be hosted by a wall.');
         }
         created = await creationGateway.createWindow(
           name: family.name,
@@ -226,9 +223,7 @@ abstract final class FamilyInstanceAdapter {
       case FamilyCategory.wallSweep:
         final wallId = hostWallId;
         if (wallId == null || hostWall == null) {
-          throw const FormatException(
-            'A wall sweep family must be hosted by a wall.',
-          );
+          throw const FormatException('A wall sweep family must be hosted by a wall.');
         }
         final wallLength = RenderSceneQueries.wallLength(hostWall);
         final sweepWidth = _resolvedLength(resolver, 'width');
@@ -243,10 +238,7 @@ abstract final class FamilyInstanceAdapter {
         created = await _createMeshInstance(
           family: family,
           type: type,
-          position: RenderSceneQueries.wallPointAtOffset(
-                hostWall,
-                offsetMeters,
-              ) ??
+          position: RenderSceneQueries.wallPointAtOffset(hostWall, offsetMeters) ??
               position,
           levelId: levelId,
           evaluatedMesh: evaluatedMesh,
@@ -292,7 +284,7 @@ abstract final class FamilyInstanceAdapter {
       ),
       familyParameterValuesJson: jsonEncode(
         <String, Object?>{
-          ...resolvedValues,
+          ...resolved,
           if (category == FamilyCategory.wallSweep) ...<String, Object?>{
             '_hostWallId': hostWallId,
             '_hostOffsetMeters': offsetMeters,
