@@ -18,17 +18,15 @@ Rules:
 - Category, types, parameters, formulas, geometry and description belong in the
   `.bimfamily` document itself.
 - A bundled asset intentionally shadows a legacy Dart built-in with the same
-  stable id. This is how old catalog entries migrate to content files without
-  changing user/project identity.
+  stable id. This preserves user/project identity during migration.
 - Two different bundled documents must never reuse the same stable id.
 
-Current first migration tranche:
-
-- `door_single_flush.bimfamily`
-- `door_double_glazed.bimfamily`
-- `window_single_casement.bimfamily`
-- `window_wide_picture.bimfamily`
+The bundled directory now covers all **23 legacy shipped production stable
+ids**. `family_bundled_legacy_coverage_test.dart` locks that invariant. The old
+Dart catalog remains only as a compatibility fallback/reference while real
+Flutter build/test coverage is unavailable; new production content must be
+asset-first.
 
 This directory is intentionally content-driven. New chairs, casework, doors,
-windows or generic components should normally be added here rather than by
-editing `built_in_family_catalog.dart`.
+windows, stairs, fixtures or generic components should be added here rather
+than by editing `built_in_family_catalog.dart`.
