@@ -4,10 +4,13 @@ import 'package:flutter/material.dart';
 
 import 'family_constraint_solver.dart';
 import 'family_constraints_panel.dart';
+import 'family_dependency_resolver.dart';
 import 'family_document.dart';
 import 'family_file_store.dart';
 import 'family_geometry.dart';
+import 'family_import_units_dialog.dart';
 import 'family_mesh_importer.dart';
+import 'family_nested_feature_dialog.dart';
 import 'family_parameter_resolver.dart';
 import 'family_sketch_canvas.dart';
 import 'family_validation.dart';
@@ -44,6 +47,8 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
   bool _dirty = false;
   final List<FamilyDocument> _undo = <FamilyDocument>[];
   final List<FamilyDocument> _redo = <FamilyDocument>[];
+  String? _nestedPreviewKey;
+  Future<FamilyEvaluatedMesh>? _nestedPreviewFuture;
 
   @override
   void initState() {
@@ -68,6 +73,10 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
   FamilyTypeDefinition get _selectedType => _document.types.firstWhere(
         (type) => type.id == _selectedTypeId,
         orElse: () => _document.types.first,
+      );
+
+  bool get _hasNestedFamily => _document.features.any(
+        (feature) => feature.kind == FamilyFeatureKind.nestedFamily,
       );
 
   FamilySketch? get _selectedSketch {
@@ -634,6 +643,19 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
     );
   }
 
+  Future<void> _addNestedFamily() async {
+    final feature = await FamilyNestedFeatureDialog.show(
+      context,
+      parent: _document,
+    );
+    if (!mounted || feature == null) return;
+    final candidate = _document.copyWith(
+      features: <FamilyFeature>[..._document.features, feature],
+    );
+    if (!_acceptCandidate(candidate)) return;
+    _commit(candidate, status: '${feature.label} nested family added');
+  }
+
   Future<void> _importMesh() async {
     if (_dirty) {
       final replace = await showDialog<bool>(
@@ -657,9 +679,11 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
       );
       if (!mounted || replace != true) return;
     }
+    final unitScale = await FamilyImportUnitsDialog.show(context);
+    if (!mounted || unitScale == null) return;
     setState(() => _status = 'Choose a Blender GLB/glTF file...');
     try {
-      final imported = await FamilyMeshImporter.pickGltf();
+      final imported = await FamilyMeshImporter.pickGltf(unitScale: unitScale);
       if (!mounted || imported == null) return;
       final validation = FamilyDocumentValidator.validate(imported.document);
       if (!validation.isValid) {
@@ -676,7 +700,7 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
         imported.document,
         dirty: true,
         status:
-            'Imported ${imported.vertexCount} vertices · ${imported.faceCount} faces',
+            'Imported ${imported.vertexCount} vertices · ${imported.faceCount} faces · scale $unitScale m/unit',
       );
     } catch (error) {
       if (mounted) setState(() => _status = 'Import failed: $error');
@@ -743,6 +767,27 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
     );
   }
 
+  Future<void> _preflightDependencies(FamilyDocument candidate) async {
+    if (!candidate.features.any(
+      (feature) => feature.kind == FamilyFeatureKind.nestedFamily,
+    )) {
+      return;
+    }
+    final assets = await FamilyFileStore.listStored();
+    final available = <FamilyDocument>[
+      candidate,
+      for (final asset in assets)
+        if (asset.document.id != candidate.id) asset.document,
+    ];
+    for (final type in candidate.types) {
+      FamilyDependencyResolver.resolve(
+        candidate,
+        type,
+        availableDocuments: available,
+      );
+    }
+  }
+
   Future<bool> _save() async {
     FocusManager.instance.primaryFocus?.unfocus();
     final candidate = _withLiveMetadata(_document);
@@ -757,6 +802,7 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
     }
     setState(() => _status = 'Saving family...');
     try {
+      await _preflightDependencies(candidate);
       final path = _assetPath == null
           ? await FamilyFileStore.save(candidate)
           : await FamilyFileStore.saveAsset(
@@ -811,11 +857,74 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
     if (mounted) Navigator.of(context).pop();
   }
 
+  Future<FamilyEvaluatedMesh> _nestedPreviewFor(
+    FamilyTypeDefinition type,
+  ) {
+    final key = '${type.id}\u001f${_document.toJsonText()}';
+    if (_nestedPreviewFuture == null || _nestedPreviewKey != key) {
+      _nestedPreviewKey = key;
+      _nestedPreviewFuture = () async {
+        final resolved = await FamilyDependencyResolver.resolveFromLibrary(
+          _document,
+          type,
+        );
+        return FamilyGeometryEvaluator.evaluateMesh(resolved, type);
+      }();
+    }
+    return _nestedPreviewFuture!;
+  }
+
+  Widget _buildNestedPreview(
+    BuildContext context,
+    FamilyTypeDefinition type,
+    FamilySketch? sketch,
+  ) {
+    return FutureBuilder<FamilyEvaluatedMesh>(
+      future: _nestedPreviewFor(type),
+      builder: (context, snapshot) {
+        final mesh = snapshot.data;
+        if (mesh != null) return _buildPreview(context, mesh, sketch);
+        if (snapshot.hasError) {
+          return Card(
+            margin: EdgeInsets.zero,
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: <Widget>[
+                  Icon(
+                    Icons.account_tree_outlined,
+                    size: 44,
+                    color: Theme.of(context).colorScheme.error,
+                  ),
+                  const SizedBox(height: 12),
+                  const Text('Nested family preview unavailable'),
+                  const SizedBox(height: 8),
+                  Text(
+                    '${snapshot.error}',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
+        return const Card(
+          margin: EdgeInsets.zero,
+          child: Center(child: CircularProgressIndicator()),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final type = _selectedType;
-    final mesh = FamilyGeometryEvaluator.evaluateMesh(_document, type);
     final sketch = _solvedSelectedSketch;
+    final directMesh = _hasNestedFamily
+        ? null
+        : FamilyGeometryEvaluator.evaluateMesh(_document, type);
     return PopScope<void>(
       canPop: !_dirty,
       onPopInvokedWithResult: (didPop, _) {
@@ -873,7 +982,9 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
             builder: (context, constraints) {
               final compact = constraints.maxWidth < 900;
               final editor = _buildEditorPanel(context);
-              final preview = _buildPreview(context, mesh, sketch);
+              final preview = directMesh == null
+                  ? _buildNestedPreview(context, type, sketch)
+                  : _buildPreview(context, directMesh, sketch);
               if (compact) {
                 return ListView(
                   padding: const EdgeInsets.all(14),
@@ -1102,7 +1213,7 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
             _section(
               context,
               title: 'Geometry',
-              subtitle: 'Profile, solids and imported mesh',
+              subtitle: 'Profile, solids, nested content and imported mesh',
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[
@@ -1114,6 +1225,11 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
                         onPressed: _importMesh,
                         icon: const Icon(Icons.file_upload_outlined),
                         label: const Text('Import GLB/glTF'),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: _addNestedFamily,
+                        icon: const Icon(Icons.account_tree_outlined),
+                        label: const Text('Nested family'),
                       ),
                       OutlinedButton.icon(
                         onPressed: _addProfile,
@@ -1220,7 +1336,7 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[
                   const Text(
-                    'Model in Blender, import GLB/glTF, choose category and type dimensions, then save. The reusable asset is data-driven; no Dart change or app rebuild is required.',
+                    'Model in Blender, import GLB/glTF, choose source units, category and type dimensions, then save. The reusable asset is data-driven; no Dart change or app rebuild is required.',
                   ),
                   const SizedBox(height: 10),
                   FilledButton.tonalIcon(
@@ -1843,7 +1959,8 @@ bool _isSolidFeature(FamilyFeature feature) =>
     feature.kind == FamilyFeatureKind.booleanUnion ||
     feature.kind == FamilyFeatureKind.booleanSubtract ||
     feature.kind == FamilyFeatureKind.freeformMesh ||
-    feature.kind == FamilyFeatureKind.transform;
+    feature.kind == FamilyFeatureKind.transform ||
+    feature.kind == FamilyFeatureKind.nestedFamily;
 
 String _rangeText(FamilyParameterDefinition parameter) {
   if (parameter.minimum == null && parameter.maximum == null) return '';
@@ -1874,6 +1991,7 @@ IconData _featureIcon(FamilyFeatureKind kind) => switch (kind) {
       FamilyFeatureKind.booleanSubtract => Icons.call_split_outlined,
       FamilyFeatureKind.transform => Icons.open_with_outlined,
       FamilyFeatureKind.freeformMesh => Icons.grid_4x4_outlined,
+      FamilyFeatureKind.nestedFamily => Icons.account_tree_outlined,
     };
 
 String _featureLabel(FamilyFeature feature) {
@@ -1887,6 +2005,7 @@ String _featureLabel(FamilyFeature feature) {
     FamilyFeatureKind.booleanSubtract => 'Boolean subtract',
     FamilyFeatureKind.transform => 'Transform',
     FamilyFeatureKind.freeformMesh => 'Freeform mesh',
+    FamilyFeatureKind.nestedFamily => 'Nested family',
   };
 }
 
@@ -1900,6 +2019,8 @@ String _featureSummary(FamilyFeature feature) => switch (feature.kind) {
         'Exact BSP subtraction for closed manifold solids',
       FamilyFeatureKind.transform => 'Move / rotate / scale',
       FamilyFeatureKind.freeformMesh => 'Imported mesh geometry',
+      FamilyFeatureKind.nestedFamily =>
+        'Library family/type dependency · resolved before geometry evaluation',
     };
 
 String _categoryLabel(FamilyCategory category) => switch (category) {
