@@ -79,6 +79,49 @@ void main() {
     expect(xs.reduce((a, b) => a < b ? a : b), greaterThan(1.0));
   });
 
+  test('nested rotation uses the Family vertical axis', () {
+    final child = _boxFamily(
+      id: 'child-rotation',
+      name: 'Child rotation',
+      width: 2,
+      depth: 1,
+      height: 3,
+    );
+    final parent = _nestedParent(
+      childId: child.id,
+      childTypeId: child.types.single.id,
+      rotationZ: 90.0,
+    );
+
+    final resolved = FamilyDependencyResolver.resolve(
+      parent,
+      parent.types.single,
+      availableDocuments: <FamilyDocument>[parent, child],
+    );
+    final feature = resolved.features.singleWhere(
+      (candidate) => candidate.parameters['sourceFormat'] == 'nestedFamily',
+    );
+    final vertices = feature.parameters['vertices'] as List;
+    final xs = <double>[];
+    final ys = <double>[];
+    final zs = <double>[];
+    for (final raw in vertices) {
+      final vertex = raw as List;
+      xs.add(vertex[0] as double);
+      ys.add(vertex[1] as double);
+      zs.add(vertex[2] as double);
+    }
+
+    // Y is Family height/vertical and must remain untouched by yaw. The 90°
+    // turn swaps the horizontal X/Z extents instead of tipping height into X.
+    expect(ys.reduce((a, b) => a > b ? a : b) - ys.reduce((a, b) => a < b ? a : b),
+        closeTo(3.0, 1e-9));
+    expect(xs.reduce((a, b) => a > b ? a : b) - xs.reduce((a, b) => a < b ? a : b),
+        closeTo(1.0, 1e-9));
+    expect(zs.reduce((a, b) => a > b ? a : b) - zs.reduce((a, b) => a < b ? a : b),
+        closeTo(2.0, 1e-9));
+  });
+
   test('missing child and missing child type are rejected', () {
     final parent = _nestedParent(childId: 'missing', childTypeId: 'type');
     expect(
@@ -194,6 +237,7 @@ FamilyDocument _nestedParent({
   required String childId,
   required String childTypeId,
   Object? translationX,
+  Object? rotationZ,
   FamilyParameterDefinition? extraParameter,
   Object? extraValue,
 }) {
@@ -220,6 +264,7 @@ FamilyDocument _nestedParent({
           'familyId': childId,
           'typeId': childTypeId,
           if (translationX != null) 'translationX': translationX,
+          if (rotationZ != null) 'rotationZ': rotationZ,
         },
       ),
     ],
