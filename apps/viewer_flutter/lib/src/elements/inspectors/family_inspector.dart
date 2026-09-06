@@ -464,7 +464,7 @@ class _FamilyPropertiesSectionState extends State<_FamilyPropertiesSection> {
             position;
       }
 
-      final mesh = FamilyGeometryEvaluator.evaluateMesh(document, type);
+      final mesh = await FamilyInstanceAdapter.evaluatedMesh(document, type);
       final vertices = isWallSweep
           ? FamilyInstanceAdapter.projectWallHostedVertices(
               mesh: mesh,
