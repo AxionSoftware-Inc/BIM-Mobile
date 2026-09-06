@@ -79,7 +79,7 @@ void main() {
     expect(xs.reduce((a, b) => a < b ? a : b), greaterThan(1.0));
   });
 
-  test('nested rotation uses the Family vertical axis', () {
+  test('nested rotation uses the Family vertical axis and transform direction', () {
     final child = _boxFamily(
       id: 'child-rotation',
       name: 'Child rotation',
@@ -120,6 +120,13 @@ void main() {
         closeTo(1.0, 1e-9));
     expect(zs.reduce((a, b) => a > b ? a : b) - zs.reduce((a, b) => a < b ? a : b),
         closeTo(2.0, 1e-9));
+
+    // The first source box vertex is (-1, 0, 0). Positive 90° must follow the
+    // same yaw convention as Family transform nodes: it lands at (0, 0, 1).
+    final first = vertices.first as List;
+    expect(first[0] as double, closeTo(0.0, 1e-9));
+    expect(first[1] as double, closeTo(0.0, 1e-9));
+    expect(first[2] as double, closeTo(1.0, 1e-9));
   });
 
   test('missing child and missing child type are rejected', () {
