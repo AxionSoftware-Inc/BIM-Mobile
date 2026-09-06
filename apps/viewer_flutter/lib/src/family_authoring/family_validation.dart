@@ -121,6 +121,7 @@ abstract final class FamilyDocumentValidator {
     };
     for (var index = 0; index < document.features.length; index++) {
       final feature = document.features[index];
+      final validSolidInputs = <String>[];
       for (final input in feature.inputs) {
         final inputFeatureIndex = featureIndex[input];
         if (!sketchIds.contains(input) && inputFeatureIndex == null) {
@@ -136,6 +137,23 @@ abstract final class FamilyDocumentValidator {
             inputFeatureIndex != null &&
             !_isSolidFeature(document.features[inputFeatureIndex])) {
           add('Feature ${feature.id} requires solid input $input');
+        }
+        if (inputFeatureIndex != null &&
+            inputFeatureIndex < index &&
+            _isSolidFeature(document.features[inputFeatureIndex])) {
+          validSolidInputs.add(input);
+        }
+      }
+
+      if (feature.kind == FamilyFeatureKind.booleanUnion ||
+          feature.kind == FamilyFeatureKind.booleanSubtract) {
+        final distinct = validSolidInputs.toSet();
+        if (feature.inputs.length != 2 ||
+            validSolidInputs.length != 2 ||
+            distinct.length != 2) {
+          add(
+            '${feature.kind.name} requires exactly two distinct earlier solid inputs',
+          );
         }
       }
 
