@@ -35,6 +35,7 @@ class FamilyAuthoringViewport extends StatefulWidget {
     this.onGizmoBegin,
     this.onGizmoChanged,
     this.onGizmoEnd,
+    this.onGizmoCancel,
     this.prompt,
     this.showDiagnostics = false,
   });
@@ -54,6 +55,12 @@ class FamilyAuthoringViewport extends StatefulWidget {
   final ValueChanged<FamilyGizmoAxis>? onGizmoBegin;
   final void Function(FamilyGizmoAxis axis, double delta)? onGizmoChanged;
   final ValueChanged<FamilyGizmoAxis>? onGizmoEnd;
+
+  /// Called when Flutter cancels a drag because another pointer/gesture wins.
+  /// Cancellation is intentionally distinct from [onGizmoEnd]: an interrupted
+  /// authoring gesture must restore its live draft instead of becoming an undo
+  /// step the user never explicitly completed.
+  final ValueChanged<FamilyGizmoAxis>? onGizmoCancel;
   final String? prompt;
   final bool showDiagnostics;
 
@@ -229,6 +236,7 @@ class _FamilyAuthoringViewportState extends State<FamilyAuthoringViewport> {
                 onBegin: widget.onGizmoBegin,
                 onChanged: widget.onGizmoChanged,
                 onEnd: widget.onGizmoEnd,
+                onCancel: widget.onGizmoCancel,
               ),
             ),
           Positioned(
@@ -315,6 +323,7 @@ class _FamilyViewportGizmo extends StatefulWidget {
     this.onBegin,
     this.onChanged,
     this.onEnd,
+    this.onCancel,
   });
 
   final RenderSceneViewportController controller;
@@ -323,6 +332,7 @@ class _FamilyViewportGizmo extends StatefulWidget {
   final ValueChanged<FamilyGizmoAxis>? onBegin;
   final void Function(FamilyGizmoAxis axis, double delta)? onChanged;
   final ValueChanged<FamilyGizmoAxis>? onEnd;
+  final ValueChanged<FamilyGizmoAxis>? onCancel;
 
   @override
   State<_FamilyViewportGizmo> createState() => _FamilyViewportGizmoState();
@@ -518,8 +528,14 @@ class _FamilyViewportGizmoState extends State<_FamilyViewportGizmo> {
         _accumulated[axis] = next;
         widget.onChanged?.call(axis, next);
       },
-      onPanEnd: (_) => widget.onEnd?.call(axis),
-      onPanCancel: () => widget.onEnd?.call(axis),
+      onPanEnd: (_) {
+        _accumulated.remove(axis);
+        widget.onEnd?.call(axis);
+      },
+      onPanCancel: () {
+        _accumulated.remove(axis);
+        widget.onCancel?.call(axis);
+      },
       child: Container(
         width: 36,
         height: 36,
