@@ -37,6 +37,11 @@ enum FamilyFeatureKind {
   booleanSubtract,
   transform,
   freeformMesh,
+
+  /// References another reusable family by stable family/type ids. The child
+  /// document is not embedded in this document; an external dependency resolver
+  /// prepares its evaluated mesh before geometry evaluation.
+  nestedFamily,
 }
 
 enum FamilySketchPlane { xy, xz, yz }
@@ -354,7 +359,7 @@ final class FamilyDocument {
     this.schemaVersion = currentSchemaVersion,
   });
 
-  static const int currentSchemaVersion = 5;
+  static const int currentSchemaVersion = 6;
   static const int minimumSupportedSchemaVersion = 1;
   static const String fileExtension = 'bimfamily';
 
