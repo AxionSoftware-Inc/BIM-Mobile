@@ -1,0 +1,30 @@
+{
+  "format": "tablet_bim_family",
+  "schema_version": 6,
+  "id": "builtin-window-single-casement-v1",
+  "name": "Window · Single Casement",
+  "category": "window",
+  "description": "A practical single opening window for regular rooms.",
+  "parameters": [
+    {"id":"width","label":"Overall width","kind":"length","default":1.2,"minimum":0.05},
+    {"id":"depth","label":"Overall depth","kind":"length","default":0.18,"minimum":0.05},
+    {"id":"height","label":"Overall height","kind":"length","default":1.4,"minimum":0.05},
+    {"id":"sillHeight","label":"Sill height","kind":"length","default":0.9,"minimum":0.0}
+  ],
+  "types": [
+    {
+      "id": "builtin-window-single-casement-v1-type",
+      "name": "Casement 1200 × 1400",
+      "values": {"width":1.2,"depth":0.18,"height":1.4,"sillHeight":0.9}
+    }
+  ],
+  "features": [
+    {
+      "id": "builtin-window-single-casement-v1-box",
+      "kind": "box",
+      "label": "Window opening envelope",
+      "parameters": {"width":"width","depth":"depth","height":"height"}
+    }
+  ],
+  "sketches": []
+}
