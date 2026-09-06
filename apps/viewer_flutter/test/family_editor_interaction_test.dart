@@ -214,7 +214,7 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('keyboard Enter, Escape and Cmd-Z follow editor command semantics',
+    testWidgets('keyboard Enter, Escape, undo and redo follow editor commands',
         (tester) async {
       await pumpEditor(tester);
 
@@ -237,9 +237,28 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Profile 1'), findsNothing);
       expect(find.text('Box'), findsWidgets);
+      await tester.tap(find.byTooltip('Model history'));
+      await tester.pumpAndSettle();
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyZ);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+      await tester.pumpAndSettle();
 
       await tester.tap(find.byTooltip('Model history'));
       await tester.pumpAndSettle();
+      expect(find.text('Profile 1'), findsOneWidget);
+      await tester.tap(find.byTooltip('Model history'));
+      await tester.pumpAndSettle();
+
+      // Return to the base model before checking modal Escape semantics.
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyZ);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+      await tester.pumpAndSettle();
+
       await tester.tap(find.text('Move').first);
       await tester.pumpAndSettle();
       expect(find.text('Done / leave tool'), findsOneWidget);
@@ -247,6 +266,35 @@ void main() {
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
       await tester.pumpAndSettle();
       expect(find.text('Done / leave tool'), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('keyboard Delete uses the normal dependency-safe delete flow',
+        (tester) async {
+      await pumpEditor(tester);
+
+      await tester.tap(find.text('Move').first);
+      await tester.pumpAndSettle();
+      final xHandle = find.descendant(
+        of: find.byType(FamilyAuthoringViewport),
+        matching: find.text('X'),
+      );
+      await tester.drag(xHandle, const Offset(48, 0));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Done / leave tool'));
+      await tester.pumpAndSettle();
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.delete);
+      await tester.pumpAndSettle();
+      expect(find.text('Delete Transform?'), findsOneWidget);
+      await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Feature deleted.'), findsOneWidget);
+
+      await tester.tap(find.byTooltip('Model history'));
+      await tester.pumpAndSettle();
+      expect(find.text('Transform'), findsNothing);
+      expect(find.text('Box'), findsWidgets);
       expect(tester.takeException(), isNull);
     });
   });
