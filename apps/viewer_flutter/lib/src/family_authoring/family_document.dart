@@ -135,6 +135,7 @@ final class FamilyParameterDefinition {
     required this.defaultValue,
     this.minimum,
     this.maximum,
+    this.formula,
   });
 
   final String id;
@@ -144,6 +145,33 @@ final class FamilyParameterDefinition {
   final double? minimum;
   final double? maximum;
 
+  /// Optional numeric expression evaluated by FamilyParameterResolver.
+  /// Formula-driven parameters ignore their own type override but may depend
+  /// on other numeric family parameters.
+  final String? formula;
+
+  bool get hasFormula => formula?.trim().isNotEmpty == true;
+
+  FamilyParameterDefinition copyWith({
+    String? label,
+    FamilyParameterKind? kind,
+    Object? defaultValue,
+    double? minimum,
+    double? maximum,
+    String? formula,
+    bool clearFormula = false,
+  }) {
+    return FamilyParameterDefinition(
+      id: id,
+      label: label ?? this.label,
+      kind: kind ?? this.kind,
+      defaultValue: defaultValue ?? this.defaultValue,
+      minimum: minimum ?? this.minimum,
+      maximum: maximum ?? this.maximum,
+      formula: clearFormula ? null : (formula ?? this.formula),
+    );
+  }
+
   Map<String, Object?> toJson() => <String, Object?>{
         'id': id,
         'label': label,
@@ -151,6 +179,7 @@ final class FamilyParameterDefinition {
         'default': defaultValue,
         if (minimum != null) 'minimum': minimum,
         if (maximum != null) 'maximum': maximum,
+        if (hasFormula) 'formula': formula!.trim(),
       };
 
   static FamilyParameterDefinition? fromJson(Object? raw) {
@@ -162,6 +191,7 @@ final class FamilyParameterDefinition {
       raw['kind']?.toString(),
     );
     if (id.isEmpty || label.isEmpty || kind == null) return null;
+    final formula = raw['formula']?.toString().trim();
     return FamilyParameterDefinition(
       id: id,
       label: label,
@@ -169,6 +199,7 @@ final class FamilyParameterDefinition {
       defaultValue: raw['default'],
       minimum: _asDouble(raw['minimum']),
       maximum: _asDouble(raw['maximum']),
+      formula: formula == null || formula.isEmpty ? null : formula,
     );
   }
 }
@@ -195,6 +226,8 @@ final class FamilyTypeDefinition {
     );
   }
 
+  /// Raw value only. Geometry/placement code must use FamilyParameterResolver
+  /// so formula-driven parameters resolve consistently everywhere.
   Object? valueFor(FamilyParameterDefinition parameter) =>
       values[parameter.id] ?? parameter.defaultValue;
 
@@ -238,8 +271,8 @@ final class FamilyFeature {
   final String label;
   final List<String> inputs;
 
-  /// Values may be literals or parameter ids. The feature evaluator is a
-  /// later layer; the document stays a small, serializable feature graph.
+  /// Values may be literals or parameter ids. The feature graph stays small
+  /// and serializable while the evaluator owns geometry construction.
   final Map<String, Object?> parameters;
 
   Map<String, Object?> toJson() => <String, Object?>{
@@ -296,7 +329,8 @@ final class FamilyDocument {
     this.schemaVersion = currentSchemaVersion,
   });
 
-  static const int currentSchemaVersion = 1;
+  static const int currentSchemaVersion = 2;
+  static const int minimumSupportedSchemaVersion = 1;
   static const String fileExtension = 'bimfamily';
 
   final String id;
@@ -389,7 +423,8 @@ final class FamilyDocument {
         features ?? this.features,
       ),
       sketches: List<FamilySketch>.unmodifiable(sketches ?? this.sketches),
-      schemaVersion: schemaVersion,
+      // Any authoring edit rewrites the document using the current schema.
+      schemaVersion: currentSchemaVersion,
     );
   }
 
@@ -410,6 +445,11 @@ final class FamilyDocument {
 
   static FamilyDocument? fromJson(Object? raw) {
     if (raw is! Map || raw['format'] != 'tablet_bim_family') return null;
+    final schemaVersion = _asInt(raw['schema_version']) ?? 1;
+    if (schemaVersion < minimumSupportedSchemaVersion ||
+        schemaVersion > currentSchemaVersion) {
+      return null;
+    }
     final id = raw['id']?.toString().trim() ?? '';
     final name = raw['name']?.toString().trim() ?? '';
     final category = _enumFromName(
@@ -417,6 +457,7 @@ final class FamilyDocument {
       raw['category']?.toString(),
     );
     if (id.isEmpty || name.isEmpty || category == null) return null;
+
     final parameters = <FamilyParameterDefinition>[];
     final rawParameters = raw['parameters'];
     if (rawParameters is List) {
@@ -459,7 +500,7 @@ final class FamilyDocument {
       types: List<FamilyTypeDefinition>.unmodifiable(types),
       features: List<FamilyFeature>.unmodifiable(features),
       sketches: List<FamilySketch>.unmodifiable(sketches),
-      schemaVersion: _asInt(raw['schema_version']) ?? currentSchemaVersion,
+      schemaVersion: schemaVersion,
     );
   }
 }
