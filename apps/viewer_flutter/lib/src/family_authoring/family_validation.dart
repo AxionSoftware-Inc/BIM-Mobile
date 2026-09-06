@@ -1,3 +1,5 @@
+import 'family_constraint_models.dart';
+import 'family_constraint_solver.dart';
 import 'family_document.dart';
 import 'family_parameter_resolver.dart';
 
@@ -50,6 +52,16 @@ abstract final class FamilyDocumentValidator {
       'sketch',
       add,
     );
+    _checkUniqueIds(
+      document.referencePlanes.map((plane) => plane.id),
+      'reference plane',
+      add,
+    );
+    _checkUniqueIds(
+      document.constraints.map((constraint) => constraint.id),
+      'constraint',
+      add,
+    );
     _checkUniqueNames(
       document.types.map((type) => type.name),
       'family type',
@@ -87,6 +99,66 @@ abstract final class FamilyDocumentValidator {
       }
     }
 
+    final sketchById = <String, FamilySketch>{
+      for (final sketch in document.sketches) sketch.id: sketch,
+    };
+    final sketchIds = sketchById.keys.toSet();
+    final planeById = <String, FamilyReferencePlane>{
+      for (final plane in document.referencePlanes) plane.id: plane,
+    };
+
+    for (final plane in document.referencePlanes) {
+      if (plane.name.trim().isEmpty) {
+        add('Reference plane ${plane.id} needs a name');
+      }
+      if (!sketchIds.contains(plane.sketchId)) {
+        add('Reference plane ${plane.id} references unknown sketch ${plane.sketchId}');
+      }
+      if (plane.expression.trim().isEmpty) {
+        add('Reference plane ${plane.name} needs an offset expression');
+      }
+    }
+
+    for (final constraint in document.constraints) {
+      final sketch = sketchById[constraint.sketchId];
+      if (sketch == null) {
+        add('Constraint ${constraint.id} references unknown sketch ${constraint.sketchId}');
+        continue;
+      }
+      if (!_validPointIndex(sketch, constraint.pointAIndex)) {
+        add(
+          'Constraint ${constraint.id} references invalid point ${constraint.pointAIndex}',
+        );
+      }
+      switch (constraint.kind) {
+        case FamilySketchConstraintKind.horizontal:
+        case FamilySketchConstraintKind.vertical:
+        case FamilySketchConstraintKind.coincident:
+          final b = constraint.pointBIndex;
+          if (b == null || !_validPointIndex(sketch, b)) {
+            add('Constraint ${constraint.id} requires a valid second point');
+          } else if (b == constraint.pointAIndex) {
+            add('Constraint ${constraint.id} requires two distinct points');
+          }
+          if (constraint.referencePlaneId != null) {
+            add('Constraint ${constraint.id} cannot reference a plane');
+          }
+        case FamilySketchConstraintKind.pointOnReferencePlane:
+          final planeId = constraint.referencePlaneId;
+          final plane = planeId == null ? null : planeById[planeId];
+          if (plane == null) {
+            add('Constraint ${constraint.id} requires a reference plane');
+          } else if (plane.sketchId != constraint.sketchId) {
+            add(
+              'Constraint ${constraint.id} and reference plane ${plane.name} must use the same sketch',
+            );
+          }
+          if (constraint.pointBIndex != null) {
+            add('Constraint ${constraint.id} cannot have a second point');
+          }
+      }
+    }
+
     for (final type in document.types) {
       if (type.name.trim().isEmpty) add('Family type name is required');
       for (final key in type.values.keys) {
@@ -112,9 +184,24 @@ abstract final class FamilyDocumentValidator {
           add('Type ${type.name}: $error');
         }
       }
+      for (final plane in document.referencePlanes) {
+        try {
+          resolver.resolveExpression(plane.expression);
+        } on FormatException catch (error) {
+          add('Type ${type.name} · reference plane ${plane.name}: ${error.message}');
+        } catch (error) {
+          add('Type ${type.name} · reference plane ${plane.name}: $error');
+        }
+      }
+      try {
+        FamilyConstraintSolver.validateAll(document, type);
+      } on FormatException catch (error) {
+        add('Type ${type.name} · constraints: ${error.message}');
+      } catch (error) {
+        add('Type ${type.name} · constraints: $error');
+      }
     }
 
-    final sketchIds = document.sketches.map((sketch) => sketch.id).toSet();
     final featureIndex = <String, int>{
       for (var index = 0; index < document.features.length; index++)
         document.features[index].id: index,
@@ -175,6 +262,9 @@ abstract final class FamilyDocumentValidator {
 
     return FamilyValidationResult(List<String>.unmodifiable(errors));
   }
+
+  static bool _validPointIndex(FamilySketch sketch, int index) =>
+      index >= 0 && index < sketch.points.length;
 
   static void _checkUniqueIds(
     Iterable<String> ids,
