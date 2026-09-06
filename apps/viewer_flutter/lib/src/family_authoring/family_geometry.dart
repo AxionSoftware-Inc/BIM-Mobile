@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'family_constraint_solver.dart';
 import 'family_csg.dart';
 import 'family_document.dart';
 import 'family_parameter_resolver.dart';
@@ -94,26 +95,43 @@ abstract final class FamilyGeometryEvaluator {
     FamilyDocument document,
     FamilyTypeDefinition type,
   ) {
-    for (var index = document.features.length - 1; index >= 0; index--) {
-      if (_isSolidFeature(document.features[index])) {
-        return _evaluateFeature(document, type, index);
+    final solved = _solveForPreview(document, type);
+    for (var index = solved.features.length - 1; index >= 0; index--) {
+      if (_isSolidFeature(solved.features[index])) {
+        return _evaluateFeature(solved, type, index);
       }
     }
-    return _boxShape(document, type);
+    return _boxShape(solved, type);
   }
 
   static FamilyEvaluatedMesh evaluateMesh(
     FamilyDocument document,
     FamilyTypeDefinition type,
   ) {
+    final solved = _solveForPreview(document, type);
     late final FamilyEvaluatedMesh mesh;
-    for (var index = document.features.length - 1; index >= 0; index--) {
-      if (_isSolidFeature(document.features[index])) {
-        mesh = _evaluateMeshFeature(document, type, index);
-        return _fitMeshToTypeParameters(document, type, mesh);
+    for (var index = solved.features.length - 1; index >= 0; index--) {
+      if (_isSolidFeature(solved.features[index])) {
+        mesh = _evaluateMeshFeature(solved, type, index);
+        return _fitMeshToTypeParameters(solved, type, mesh);
       }
     }
-    return _fitMeshToTypeParameters(document, type, _boxMesh(document, type));
+    return _fitMeshToTypeParameters(solved, type, _boxMesh(solved, type));
+  }
+
+  /// Authoring preview must survive an incomplete/temporarily over-constrained
+  /// edit. Save and placement still run FamilyDocumentValidator and reject the
+  /// invalid document; preview simply falls back to the unsolved sketch until
+  /// the user resolves the conflict.
+  static FamilyDocument _solveForPreview(
+    FamilyDocument document,
+    FamilyTypeDefinition type,
+  ) {
+    try {
+      return FamilyConstraintSolver.solveDocument(document, type);
+    } on FormatException {
+      return document;
+    }
   }
 
   /// Freeform/revolve meshes are authored in family coordinates. Their
@@ -184,8 +202,6 @@ abstract final class FamilyGeometryEvaluator {
       final value = FamilyParameterResolver(document, type).resolveNumber(id);
       return value.isFinite && value > 0.0 ? value : null;
     } on FormatException {
-      // Authoring preview stays alive while the user is typing an incomplete
-      // formula. FamilyDocumentValidator still blocks save/project placement.
       return null;
     }
   }
@@ -259,10 +275,6 @@ abstract final class FamilyGeometryEvaluator {
     );
     if (result != null) return _fromCsgMesh(result, source: source);
 
-    // Open/non-manifold imported content cannot safely participate in exact
-    // BSP CSG. Preserve a useful authoring preview while keeping the result
-    // visibly approximate so placement/diagnostics never mistake it for an
-    // exact boolean result.
     if (feature.kind == FamilyFeatureKind.booleanUnion) {
       return _mergeMeshes(left, right, source: source).copyWith(
         isApproximate: true,
@@ -574,8 +586,6 @@ abstract final class FamilyGeometryEvaluator {
     );
   }
 
-  /// Reads a compact, editor-independent mesh payload used by curated
-  /// families and imported freeform geometry.
   static FamilyEvaluatedMesh? _freeformMesh(FamilyFeature feature) {
     final rawVertices = feature.parameters['vertices'];
     final rawFaces = feature.parameters['faces'];
@@ -668,9 +678,6 @@ abstract final class FamilyGeometryEvaluator {
       }
     }
 
-    // While a user is constructing an incomplete node, keep preview alive by
-    // using the two most recent solids. Validator still blocks save/placement
-    // until explicit deterministic inputs exist.
     for (var cursor = index - 1; cursor >= 0 && result.length < 2; cursor--) {
       if (_isSolidFeature(document.features[cursor]) &&
           !result.contains(cursor)) {
