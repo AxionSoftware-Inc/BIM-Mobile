@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'family_csg.dart';
 import 'family_document.dart';
 import 'family_parameter_resolver.dart';
 
@@ -216,18 +217,7 @@ abstract final class FamilyGeometryEvaluator {
         return _transformMesh(document, type, base, feature);
       case FamilyFeatureKind.booleanUnion:
       case FamilyFeatureKind.booleanSubtract:
-        final previous = _inputOrPreviousSolidIndex(document, index, feature);
-        final base = previous == null
-            ? _boxMesh(document, type)
-            : _evaluateMeshFeature(document, type, previous);
-        // Do not fake exact CSG. The feature remains explicit and the preview
-        // is marked approximate until the robust solid kernel is connected.
-        return base.copyWith(
-          source: feature.label.isEmpty
-              ? _featureName(feature.kind)
-              : feature.label,
-          isApproximate: true,
-        );
+        return _booleanMesh(document, type, index, feature);
       case FamilyFeatureKind.freeformMesh:
         return _freeformMesh(feature) ??
             _boxMesh(document, type).copyWith(
@@ -237,6 +227,107 @@ abstract final class FamilyGeometryEvaluator {
       case FamilyFeatureKind.profile:
         return _boxMesh(document, type);
     }
+  }
+
+  static FamilyEvaluatedMesh _booleanMesh(
+    FamilyDocument document,
+    FamilyTypeDefinition type,
+    int index,
+    FamilyFeature feature,
+  ) {
+    final inputIndices = _booleanInputIndices(document, index, feature);
+    if (inputIndices.length < 2) {
+      final previous = _previousSolidIndex(document, index);
+      final fallback = previous == null
+          ? _boxMesh(document, type)
+          : _evaluateMeshFeature(document, type, previous);
+      return fallback.copyWith(
+        source: feature.label.isEmpty ? _featureName(feature.kind) : feature.label,
+        isApproximate: true,
+      );
+    }
+
+    final left = _evaluateMeshFeature(document, type, inputIndices[0]);
+    final right = _evaluateMeshFeature(document, type, inputIndices[1]);
+    final source = feature.label.isEmpty ? _featureName(feature.kind) : feature.label;
+    final result = FamilyCsgKernel.apply(
+      left: _toCsgMesh(left),
+      right: _toCsgMesh(right),
+      operation: feature.kind == FamilyFeatureKind.booleanUnion
+          ? FamilyCsgOperation.union
+          : FamilyCsgOperation.subtract,
+    );
+    if (result != null) return _fromCsgMesh(result, source: source);
+
+    // Open/non-manifold imported content cannot safely participate in exact
+    // BSP CSG. Preserve a useful authoring preview while keeping the result
+    // visibly approximate so placement/diagnostics never mistake it for an
+    // exact boolean result.
+    if (feature.kind == FamilyFeatureKind.booleanUnion) {
+      return _mergeMeshes(left, right, source: source).copyWith(
+        isApproximate: true,
+      );
+    }
+    return left.copyWith(source: source, isApproximate: true);
+  }
+
+  static FamilyCsgMesh _toCsgMesh(FamilyEvaluatedMesh mesh) => FamilyCsgMesh(
+        vertices: <FamilyCsgVertex>[
+          for (final vertex in mesh.vertices)
+            FamilyCsgVertex(vertex.x, vertex.y, vertex.z),
+        ],
+        faces: <FamilyCsgFace>[
+          for (final face in mesh.faces)
+            FamilyCsgFace(List<int>.unmodifiable(face.indices)),
+        ],
+      );
+
+  static FamilyEvaluatedMesh _fromCsgMesh(
+    FamilyCsgMesh mesh, {
+    required String source,
+  }) =>
+      FamilyEvaluatedMesh(
+        vertices: List<FamilyMeshVertex>.unmodifiable(
+          mesh.vertices.map(
+            (vertex) => FamilyMeshVertex(
+              x: vertex.x,
+              y: vertex.y,
+              z: vertex.z,
+            ),
+          ),
+        ),
+        faces: List<FamilyMeshFace>.unmodifiable(
+          mesh.faces.map(
+            (face) => FamilyMeshFace(List<int>.unmodifiable(face.indices)),
+          ),
+        ),
+        source: source,
+      );
+
+  static FamilyEvaluatedMesh _mergeMeshes(
+    FamilyEvaluatedMesh left,
+    FamilyEvaluatedMesh right, {
+    required String source,
+  }) {
+    final offset = left.vertices.length;
+    return FamilyEvaluatedMesh(
+      vertices: List<FamilyMeshVertex>.unmodifiable(
+        <FamilyMeshVertex>[...left.vertices, ...right.vertices],
+      ),
+      faces: List<FamilyMeshFace>.unmodifiable(
+        <FamilyMeshFace>[
+          ...left.faces,
+          for (final face in right.faces)
+            FamilyMeshFace(
+              List<int>.unmodifiable(
+                face.indices.map((index) => index + offset),
+              ),
+            ),
+        ],
+      ),
+      source: source,
+      isApproximate: true,
+    );
   }
 
   static FamilyPreviewShape _evaluateFeature(
@@ -556,6 +647,40 @@ abstract final class FamilyGeometryEvaluator {
       }
     }
     return _previousSolidIndex(document, index);
+  }
+
+  static List<int> _booleanInputIndices(
+    FamilyDocument document,
+    int index,
+    FamilyFeature feature,
+  ) {
+    final result = <int>[];
+    for (final input in feature.inputs) {
+      final inputIndex = document.features.indexWhere(
+        (candidate) => candidate.id == input,
+      );
+      if (inputIndex >= 0 &&
+          inputIndex < index &&
+          _isSolidFeature(document.features[inputIndex]) &&
+          !result.contains(inputIndex)) {
+        result.add(inputIndex);
+        if (result.length == 2) return result;
+      }
+    }
+
+    // While a user is constructing an incomplete node, keep preview alive by
+    // using the two most recent solids. Validator still blocks save/placement
+    // until explicit deterministic inputs exist.
+    for (var cursor = index - 1; cursor >= 0 && result.length < 2; cursor--) {
+      if (_isSolidFeature(document.features[cursor]) &&
+          !result.contains(cursor)) {
+        result.add(cursor);
+      }
+    }
+    if (feature.inputs.isEmpty && result.length == 2) {
+      return result.reversed.toList(growable: false);
+    }
+    return result;
   }
 
   static bool _isSolidFeature(FamilyFeature feature) {
