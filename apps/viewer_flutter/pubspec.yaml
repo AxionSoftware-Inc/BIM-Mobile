@@ -1,7 +1,7 @@
 name: viewer_flutter
 description: Production tablet BIM authoring client for TabletBimEngine.
 publish_to: "none"
-version: 0.3.0+24
+version: 0.3.0+25
 
 environment:
   sdk: ">=3.5.0 <4.0.0"
@@ -28,3 +28,4 @@ flutter:
   assets:
     - assets/sample_project.json
     - assets/render_scene.json
+    - assets/families/
