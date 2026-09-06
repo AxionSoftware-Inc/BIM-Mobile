@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'family_constraint_models.dart';
+
 /// Independent family authoring document.
 ///
 /// A family file is intentionally not a project scene. It describes a
@@ -325,11 +327,13 @@ final class FamilyDocument {
     required this.types,
     required this.features,
     this.sketches = const <FamilySketch>[],
+    this.referencePlanes = const <FamilyReferencePlane>[],
+    this.constraints = const <FamilySketchConstraint>[],
     this.description = '',
     this.schemaVersion = currentSchemaVersion,
   });
 
-  static const int currentSchemaVersion = 2;
+  static const int currentSchemaVersion = 3;
   static const int minimumSupportedSchemaVersion = 1;
   static const String fileExtension = 'bimfamily';
 
@@ -341,6 +345,8 @@ final class FamilyDocument {
   final List<FamilyTypeDefinition> types;
   final List<FamilyFeature> features;
   final List<FamilySketch> sketches;
+  final List<FamilyReferencePlane> referencePlanes;
+  final List<FamilySketchConstraint> constraints;
   final int schemaVersion;
 
   factory FamilyDocument.starter({
@@ -409,6 +415,8 @@ final class FamilyDocument {
     List<FamilyTypeDefinition>? types,
     List<FamilyFeature>? features,
     List<FamilySketch>? sketches,
+    List<FamilyReferencePlane>? referencePlanes,
+    List<FamilySketchConstraint>? constraints,
   }) {
     return FamilyDocument(
       id: id,
@@ -423,6 +431,12 @@ final class FamilyDocument {
         features ?? this.features,
       ),
       sketches: List<FamilySketch>.unmodifiable(sketches ?? this.sketches),
+      referencePlanes: List<FamilyReferencePlane>.unmodifiable(
+        referencePlanes ?? this.referencePlanes,
+      ),
+      constraints: List<FamilySketchConstraint>.unmodifiable(
+        constraints ?? this.constraints,
+      ),
       // Any authoring edit rewrites the document using the current schema.
       schemaVersion: currentSchemaVersion,
     );
@@ -439,6 +453,11 @@ final class FamilyDocument {
         'types': types.map((item) => item.toJson()).toList(),
         'features': features.map((item) => item.toJson()).toList(),
         'sketches': sketches.map((item) => item.toJson()).toList(),
+        if (referencePlanes.isNotEmpty)
+          'reference_planes':
+              referencePlanes.map((item) => item.toJson()).toList(),
+        if (constraints.isNotEmpty)
+          'constraints': constraints.map((item) => item.toJson()).toList(),
       };
 
   String toJsonText() => const JsonEncoder.withIndent('  ').convert(toJson());
@@ -490,6 +509,22 @@ final class FamilyDocument {
         if (sketch != null) sketches.add(sketch);
       }
     }
+    final referencePlanes = <FamilyReferencePlane>[];
+    final rawReferencePlanes = raw['reference_planes'];
+    if (rawReferencePlanes is List) {
+      for (final item in rawReferencePlanes) {
+        final plane = FamilyReferencePlane.fromJson(item);
+        if (plane != null) referencePlanes.add(plane);
+      }
+    }
+    final constraints = <FamilySketchConstraint>[];
+    final rawConstraints = raw['constraints'];
+    if (rawConstraints is List) {
+      for (final item in rawConstraints) {
+        final constraint = FamilySketchConstraint.fromJson(item);
+        if (constraint != null) constraints.add(constraint);
+      }
+    }
     if (parameters.isEmpty || types.isEmpty || features.isEmpty) return null;
     return FamilyDocument(
       id: id,
@@ -500,6 +535,9 @@ final class FamilyDocument {
       types: List<FamilyTypeDefinition>.unmodifiable(types),
       features: List<FamilyFeature>.unmodifiable(features),
       sketches: List<FamilySketch>.unmodifiable(sketches),
+      referencePlanes:
+          List<FamilyReferencePlane>.unmodifiable(referencePlanes),
+      constraints: List<FamilySketchConstraint>.unmodifiable(constraints),
       schemaVersion: schemaVersion,
     );
   }
