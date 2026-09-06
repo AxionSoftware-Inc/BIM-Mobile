@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'family_authoring_viewport.dart';
 import 'family_constraints_panel.dart';
@@ -195,6 +196,82 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
       _selectedFeatureId = _lastSolid(next)?.id;
       _invalidatePreview();
     });
+  }
+
+  bool get _textEditingHasFocus {
+    final context = FocusManager.instance.primaryFocus?.context;
+    if (context == null) return false;
+    return context.widget is EditableText ||
+        context.findAncestorWidgetOfExactType<EditableText>() != null;
+  }
+
+  KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    final key = event.logicalKey;
+
+    if (key == LogicalKeyboardKey.escape) {
+      if (_tool != _Tool.select) {
+        _cancelTool();
+        return KeyEventResult.handled;
+      }
+      if (_selectedFeatureId != null) {
+        setState(() {
+          _selectedFeatureId = null;
+          _status = null;
+        });
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored;
+    }
+
+    // Never hijack native text editing. Ctrl/Cmd+Z, Backspace and Enter must
+    // keep their normal field semantics while an EditableText owns focus.
+    if (_textEditingHasFocus) return KeyEventResult.ignored;
+
+    final keyboard = HardwareKeyboard.instance;
+    final command = keyboard.isControlPressed || keyboard.isMetaPressed;
+    if (command && key == LogicalKeyboardKey.keyS) {
+      if (_tool == _Tool.select) {
+        unawaited(_save());
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored;
+    }
+    if (command && key == LogicalKeyboardKey.keyZ) {
+      if (keyboard.isShiftPressed) {
+        _redoChange();
+      } else {
+        _undoChange();
+      }
+      return KeyEventResult.handled;
+    }
+    if (command && key == LogicalKeyboardKey.keyY) {
+      _redoChange();
+      return KeyEventResult.handled;
+    }
+
+    if (key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.numpadEnter) {
+      if (_tool == _Tool.sketch) {
+        _finishSketch();
+        return KeyEventResult.handled;
+      }
+      if (_tool != _Tool.select) {
+        _commitTool();
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored;
+    }
+
+    if (key == LogicalKeyboardKey.delete ||
+        key == LogicalKeyboardKey.backspace) {
+      if (_tool == _Tool.select && _selectedFeature != null) {
+        unawaited(_deleteSelected());
+        return KeyEventResult.handled;
+      }
+    }
+
+    return KeyEventResult.ignored;
   }
 
   void _beginOperation(_Tool tool) {
@@ -1044,41 +1121,45 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
 
   @override
   Widget build(BuildContext context) {
-    return PopScope<void>(
-      canPop: !_dirty && _tool == _Tool.select,
-      onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) unawaited(_requestClose());
-      },
-      child: Scaffold(
-        appBar: _buildAppBar(),
-        body: SafeArea(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final wide = constraints.maxWidth >= 1000;
-              return Column(
-                children: <Widget>[
-                  _buildRibbon(),
-                  const Divider(height: 1),
-                  Expanded(
-                    child: wide
-                        ? Row(
-                            children: <Widget>[
-                              Expanded(child: _buildWorkspace()),
-                              const VerticalDivider(width: 1),
-                              SizedBox(width: 330, child: _buildInspector()),
-                            ],
-                          )
-                        : Column(
-                            children: <Widget>[
-                              Expanded(child: _buildWorkspace()),
-                              const Divider(height: 1),
-                              SizedBox(height: 265, child: _buildInspector()),
-                            ],
-                          ),
-                  ),
-                ],
-              );
-            },
+    return Focus(
+      autofocus: true,
+      onKeyEvent: _handleKeyEvent,
+      child: PopScope<void>(
+        canPop: !_dirty && _tool == _Tool.select,
+        onPopInvokedWithResult: (didPop, _) {
+          if (!didPop) unawaited(_requestClose());
+        },
+        child: Scaffold(
+          appBar: _buildAppBar(),
+          body: SafeArea(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final wide = constraints.maxWidth >= 1000;
+                return Column(
+                  children: <Widget>[
+                    _buildRibbon(),
+                    const Divider(height: 1),
+                    Expanded(
+                      child: wide
+                          ? Row(
+                              children: <Widget>[
+                                Expanded(child: _buildWorkspace()),
+                                const VerticalDivider(width: 1),
+                                SizedBox(width: 330, child: _buildInspector()),
+                              ],
+                            )
+                          : Column(
+                              children: <Widget>[
+                                Expanded(child: _buildWorkspace()),
+                                const Divider(height: 1),
+                                SizedBox(height: 265, child: _buildInspector()),
+                              ],
+                            ),
+                    ),
+                  ],
+                );
+              },
+            ),
           ),
         ),
       ),
@@ -1735,7 +1816,11 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
                 ],
               ),
             if (_tool == _Tool.rotate)
-              _numericDraftField('Rotation Z°', _rotation, (v) => _rotation = v),
+              _numericDraftField(
+                'Rotation · vertical axis °',
+                _rotation,
+                (v) => _rotation = v,
+              ),
             if (_tool == _Tool.scale)
               _numericDraftField('Scale', _scale, (v) => _scale = v),
             const SizedBox(height: 8),
