@@ -55,10 +55,14 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Add Family parameter'), findsOneWidget);
 
-      final fields = find.byType(TextField);
+      final dialog = find.byType(AlertDialog);
+      final fields = find.descendant(
+        of: dialog,
+        matching: find.byType(TextField),
+      );
       expect(fields, findsNWidgets(5));
       await tester.enterText(fields.at(0), 'Seat Height');
-      await tester.tap(find.text('Add').last);
+      await tester.tap(find.descendant(of: dialog, matching: find.text('Add')));
       await tester.pumpAndSettle();
 
       expect(find.text('Seat Height'), findsOneWidget);
@@ -80,9 +84,14 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Duplicate Family Type'), findsOneWidget);
 
-      final field = find.byType(TextField).last;
+      final dialog = find.byType(AlertDialog);
+      final field = find.descendant(
+        of: dialog,
+        matching: find.byType(TextField),
+      );
+      expect(field, findsOneWidget);
       await tester.enterText(field, 'Large');
-      await tester.tap(find.text('Apply').last);
+      await tester.tap(find.descendant(of: dialog, matching: find.text('Apply')));
       await tester.pumpAndSettle();
 
       expect(find.textContaining('Family Type Large created.'), findsOneWidget);
