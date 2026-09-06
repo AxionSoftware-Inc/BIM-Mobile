@@ -6,10 +6,6 @@ import 'family_document.dart';
 import 'family_parameter_resolver.dart';
 
 /// A small, engine-independent preview result for the Family Authoring page.
-///
-/// This is deliberately not a project render mesh. The native family evaluator
-/// can consume the same document later without making the editor depend on the
-/// project viewport.
 final class FamilyPreviewShape {
   const FamilyPreviewShape({
     required this.profile,
@@ -60,8 +56,6 @@ final class FamilyMeshFace {
   final List<int> indices;
 }
 
-/// Engine-independent evaluated mesh used by the family preview/evaluator
-/// boundary. It is deliberately separate from the project's render mesh type.
 final class FamilyEvaluatedMesh {
   const FamilyEvaluatedMesh({
     required this.vertices,
@@ -119,10 +113,6 @@ abstract final class FamilyGeometryEvaluator {
     return _fitMeshToTypeParameters(solved, type, _boxMesh(solved, type));
   }
 
-  /// Authoring preview must survive an incomplete/temporarily over-constrained
-  /// edit. Save and placement still run FamilyDocumentValidator and reject the
-  /// invalid document; preview simply falls back to the unsolved sketch until
-  /// the user resolves the conflict.
   static FamilyDocument _solveForPreview(
     FamilyDocument document,
     FamilyTypeDefinition type,
@@ -134,9 +124,6 @@ abstract final class FamilyGeometryEvaluator {
     }
   }
 
-  /// Freeform/revolve meshes are authored in family coordinates. Their
-  /// dimensions must still follow the same effective type parameters as box
-  /// families, including formula-driven values.
   static FamilyEvaluatedMesh _fitMeshToTypeParameters(
     FamilyDocument document,
     FamilyTypeDefinition type,
@@ -562,8 +549,14 @@ abstract final class FamilyGeometryEvaluator {
       type,
       fallback: 0,
     );
-    final rotation = _resolveScalar(
-          feature.parameters['rotationZ'],
+
+    // Family coordinates are X = width, Y = vertical/height, Z = depth.
+    // The historical serialized field is named `rotationZ`, but the user-facing
+    // Rotate tool is a plan/yaw rotation and must therefore rotate around the
+    // Family Y (vertical) axis. Keep the serialized key for schema compatibility
+    // while applying the physically correct vertical-axis transform here.
+    final yaw = _resolveScalar(
+          feature.parameters['rotationY'] ?? feature.parameters['rotationZ'],
           document,
           type,
           fallback: 0,
@@ -576,17 +569,18 @@ abstract final class FamilyGeometryEvaluator {
       type,
       fallback: 1,
     );
-    final cosine = math.cos(rotation);
-    final sine = math.sin(rotation);
+    final cosine = math.cos(yaw);
+    final sine = math.sin(yaw);
     final vertices = <FamilyMeshVertex>[];
     for (final vertex in base.vertices) {
       final x = vertex.x * scale;
       final y = vertex.y * scale;
+      final z = vertex.z * scale;
       vertices.add(
         FamilyMeshVertex(
-          x: x * cosine - y * sine + translateX,
-          y: x * sine + y * cosine + translateY,
-          z: vertex.z * scale + translateZ,
+          x: x * cosine + z * sine + translateX,
+          y: y + translateY,
+          z: -x * sine + z * cosine + translateZ,
         ),
       );
     }
@@ -629,7 +623,7 @@ abstract final class FamilyGeometryEvaluator {
         if (index == null || index < 0 || index >= vertices.length) return null;
         indices.add(index);
       }
-      faces.add(FamilyMeshFace(List<int>.unmodifiable(indices)));
+      faces.add(FamilyMeshFace(List<int>.unmodifiable(indices));
     }
     if (vertices.isEmpty || faces.isEmpty) return null;
     return FamilyEvaluatedMesh(
