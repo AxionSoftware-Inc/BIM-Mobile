@@ -166,7 +166,7 @@ class _NestedFamilyDialogState extends State<_NestedFamilyDialog> {
                 children: <Widget>[
                   Expanded(child: _field(_tx, 'X', '0')),
                   const SizedBox(width: 8),
-                  Expanded(child: _field(_ty, 'Y', '0')),
+                  Expanded(child: _field(_ty, 'Y · vertical', '0')),
                   const SizedBox(width: 8),
                   Expanded(child: _field(_tz, 'Z', '0')),
                 ],
@@ -174,7 +174,13 @@ class _NestedFamilyDialogState extends State<_NestedFamilyDialog> {
               const SizedBox(height: 8),
               Row(
                 children: <Widget>[
-                  Expanded(child: _field(_rotation, 'Rotation Z (°)', '0')),
+                  Expanded(
+                    child: _field(
+                      _rotation,
+                      'Rotation · vertical axis (°)',
+                      '0',
+                    ),
+                  ),
                   const SizedBox(width: 8),
                   Expanded(child: _field(_scale, 'Uniform scale', '1')),
                 ],
@@ -227,6 +233,8 @@ class _NestedFamilyDialogState extends State<_NestedFamilyDialog> {
           'translationX': _token(_tx, '0'),
           'translationY': _token(_ty, '0'),
           'translationZ': _token(_tz, '0'),
+          // Persist the established field name for backward compatibility.
+          // The resolver interprets it as yaw around Family Y (vertical).
           'rotationZ': _token(_rotation, '0'),
           'scale': scale,
         },
