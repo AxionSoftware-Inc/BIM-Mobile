@@ -8,11 +8,12 @@ void main() {
       ..['schema_version'] = 2;
     final legacy = FamilyDocument.fromJson(legacyJson);
     expect(legacy, isNotNull);
-    expect(legacy!.schemaVersion, 2);
-    expect(legacy.referencePlanes, isEmpty);
-    expect(legacy.constraints, isEmpty);
+    final loadedLegacy = legacy!;
+    expect(loadedLegacy.schemaVersion, 2);
+    expect(loadedLegacy.referencePlanes, isEmpty);
+    expect(loadedLegacy.constraints, isEmpty);
 
-    final edited = legacy.copyWith(name: 'Schema 3 family');
+    final edited = loadedLegacy.copyWith(name: 'Schema 3 family');
     expect(edited.schemaVersion, 3);
     expect(edited.schemaVersion, FamilyDocument.currentSchemaVersion);
   });
