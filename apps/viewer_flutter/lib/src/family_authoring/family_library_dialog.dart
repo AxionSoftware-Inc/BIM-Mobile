@@ -4,9 +4,15 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import 'family_document.dart';
+import 'family_editor_v2_page.dart';
 import 'family_file_store.dart';
 import 'family_geometry.dart';
+import 'family_parameter_resolver.dart';
 
+/// Result returned to the project placement flow.
+///
+/// Library browsing/editing remains inside this dialog; project mutation only
+/// starts after the user explicitly chooses a family type and presses Place.
 final class FamilyLibraryResult {
   const FamilyLibraryResult._({this.asset, this.browseFile = false});
 
@@ -19,12 +25,6 @@ final class FamilyLibraryResult {
   final bool browseFile;
 }
 
-/// Project-side family picker.
-///
-/// V2 intentionally owns library/navigation UX only. Geometry authoring stays
-/// in Family Editor and project mutation stays in FamilyInstanceAdapter.
-/// Keeping these boundaries separate lets the catalog grow to hundreds or
-/// thousands of assets without coupling search/favorites to the BIM engine.
 class FamilyLibraryDialog extends StatefulWidget {
   const FamilyLibraryDialog({
     super.key,
@@ -54,19 +54,20 @@ class _FamilyLibraryDialogState extends State<FamilyLibraryDialog> {
   final Map<String, FamilyEvaluatedMesh> _previewCache =
       <String, FamilyEvaluatedMesh>{};
 
+  late List<FamilyAssetFile> _assets;
   FamilyCategory? _category;
   FamilyAssetFile? _selected;
   String? _selectedTypeId;
   _LibraryScope _scope = _LibraryScope.all;
   FamilyLibraryPreferences _preferences = const FamilyLibraryPreferences();
   bool _preferencesLoaded = false;
+  bool _refreshing = false;
 
   @override
   void initState() {
     super.initState();
-    if (widget.assets.isNotEmpty) {
-      _selectAsset(widget.assets.first, rebuild: false);
-    }
+    _assets = List<FamilyAssetFile>.of(widget.assets);
+    if (_assets.isNotEmpty) _selectAsset(_assets.first, rebuild: false);
     unawaited(_loadPreferences());
   }
 
@@ -91,7 +92,7 @@ class _FamilyLibraryDialogState extends State<FamilyLibraryDialog> {
       for (var index = 0; index < _preferences.recentFamilyIds.length; index++)
         _preferences.recentFamilyIds[index]: index,
     };
-    final result = widget.assets.where((asset) {
+    final result = _assets.where((asset) {
       final document = asset.document;
       if (_category != null && document.category != _category) return false;
       switch (_scope) {
@@ -99,18 +100,17 @@ class _FamilyLibraryDialogState extends State<FamilyLibraryDialog> {
           break;
         case _LibraryScope.favorites:
           if (!_preferences.isFavorite(document.id)) return false;
-          break;
         case _LibraryScope.recent:
           if (!recentRank.containsKey(document.id)) return false;
-          break;
       }
       if (query.isEmpty) return true;
       final haystack = <String>[
         document.name,
         document.description,
-        _categoryLabel(document.category),
         document.category.name,
+        _categoryLabel(document.category),
         for (final type in document.types) type.name,
+        for (final parameter in document.parameters) parameter.label,
       ].join(' ').toLowerCase();
       return haystack.contains(query);
     }).toList(growable: false);
@@ -146,7 +146,10 @@ class _FamilyLibraryDialogState extends State<FamilyLibraryDialog> {
   void _selectAsset(FamilyAssetFile asset, {bool rebuild = true}) {
     void apply() {
       _selected = asset;
-      _selectedTypeId = asset.preferredTypeId ?? asset.document.types.first.id;
+      final preferred = asset.preferredTypeId;
+      _selectedTypeId = asset.document.types.any((type) => type.id == preferred)
+          ? preferred
+          : asset.document.types.first.id;
     }
 
     if (rebuild) {
@@ -163,7 +166,7 @@ class _FamilyLibraryDialogState extends State<FamilyLibraryDialog> {
 
   Future<void> _toggleFavorite(FamilyAssetFile asset) async {
     final next = _preferences.toggleFavorite(asset.document.id);
-    setState(() => _preferences = next);
+    if (mounted) setState(() => _preferences = next);
     await FamilyFileStore.saveLibraryPreferences(next);
   }
 
@@ -173,25 +176,75 @@ class _FamilyLibraryDialogState extends State<FamilyLibraryDialog> {
     if (asset == null || type == null) return;
 
     final next = _preferences.recordRecent(asset.document.id);
-    setState(() => _preferences = next);
+    if (mounted) setState(() => _preferences = next);
     await FamilyFileStore.saveLibraryPreferences(next);
     if (!mounted) return;
 
-    // The existing placement dialog historically initializes from
-    // document.types.first. Carry the library's explicit type choice forward
-    // by returning an in-memory asset whose preferred type is first. The
-    // .bimfamily on disk is NOT reordered, and the adapter still persists the
-    // stable type id/name on the placed instance.
+    // Preserve stable ids and source file order. The preferred type is an
+    // in-memory placement hint only; .bimfamily is not rewritten for browsing.
     Navigator.of(context).pop(
       FamilyLibraryResult.asset(asset.withPreferredType(type)),
     );
+  }
+
+  Future<void> _editSelected() async {
+    final asset = _selected;
+    if (asset == null || _refreshing) return;
+    final familyId = asset.document.id;
+    final typeId = _selectedTypeId;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => FamilyEditorV2Page(
+          initialAsset: asset.withPreferredType(_selectedType ?? asset.preferredType),
+        ),
+      ),
+    );
+    if (!mounted) return;
+    await _reloadAssets(preferredFamilyId: familyId, preferredTypeId: typeId);
+  }
+
+  Future<void> _reloadAssets({
+    String? preferredFamilyId,
+    String? preferredTypeId,
+  }) async {
+    if (_refreshing) return;
+    setState(() => _refreshing = true);
+    try {
+      final assets = await FamilyFileStore.listStored();
+      if (!mounted) return;
+      _previewCache.clear();
+      FamilyAssetFile? selected;
+      if (preferredFamilyId != null) {
+        for (final asset in assets) {
+          if (asset.document.id == preferredFamilyId) {
+            selected = asset;
+            break;
+          }
+        }
+      }
+      selected ??= assets.isEmpty ? null : assets.first;
+      setState(() {
+        _assets = List<FamilyAssetFile>.of(assets);
+        _selected = selected;
+        if (selected == null) {
+          _selectedTypeId = null;
+        } else if (selected.document.types
+            .any((type) => type.id == preferredTypeId)) {
+          _selectedTypeId = preferredTypeId;
+        } else {
+          _selectedTypeId = selected.document.types.first.id;
+        }
+      });
+    } finally {
+      if (mounted) setState(() => _refreshing = false);
+    }
   }
 
   FamilyEvaluatedMesh _meshFor(
     FamilyDocument document,
     FamilyTypeDefinition type,
   ) {
-    final key = '${document.id}\u001f${type.id}';
+    final key = '${document.id}\u001f${type.id}\u001f${document.schemaVersion}';
     return _previewCache.putIfAbsent(
       key,
       () => FamilyGeometryEvaluator.evaluateMesh(document, type),
@@ -206,7 +259,7 @@ class _FamilyLibraryDialogState extends State<FamilyLibraryDialog> {
       insetPadding: const EdgeInsets.all(20),
       clipBehavior: Clip.antiAlias,
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 1120, maxHeight: 760),
+        constraints: const BoxConstraints(maxWidth: 1180, maxHeight: 780),
         child: Column(
           children: <Widget>[
             _buildHeader(context),
@@ -214,16 +267,13 @@ class _FamilyLibraryDialogState extends State<FamilyLibraryDialog> {
             Expanded(
               child: LayoutBuilder(
                 builder: (context, constraints) {
-                  final compact = constraints.maxWidth < 820;
+                  final compact = constraints.maxWidth < 840;
                   if (compact) {
                     return Column(
                       children: <Widget>[
                         Expanded(child: _buildLibraryPane(context, assets)),
                         if (_selected != null)
-                          SizedBox(
-                            height: 270,
-                            child: _buildDetails(context),
-                          ),
+                          SizedBox(height: 300, child: _buildDetails(context)),
                       ],
                     );
                   }
@@ -231,13 +281,10 @@ class _FamilyLibraryDialogState extends State<FamilyLibraryDialog> {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: <Widget>[
                       SizedBox(
-                        width: 430,
+                        width: 470,
                         child: _buildLibraryPane(context, assets),
                       ),
-                      VerticalDivider(
-                        width: 1,
-                        color: colors.outlineVariant,
-                      ),
+                      VerticalDivider(width: 1, color: colors.outlineVariant),
                       Expanded(child: _buildDetails(context)),
                     ],
                   );
@@ -277,7 +324,7 @@ class _FamilyLibraryDialogState extends State<FamilyLibraryDialog> {
                       ),
                 ),
                 Text(
-                  '${widget.assets.length} families · search, choose a type, then place',
+                  '${_assets.length} reusable families · choose a family and type',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: colors.onSurfaceVariant,
                       ),
@@ -285,10 +332,21 @@ class _FamilyLibraryDialogState extends State<FamilyLibraryDialog> {
               ],
             ),
           ),
-          OutlinedButton.icon(
-            onPressed: () => Navigator.of(context).pop(
-              const FamilyLibraryResult.browseFile(),
+          if (_refreshing)
+            const Padding(
+              padding: EdgeInsets.only(right: 12),
+              child: SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
             ),
+          OutlinedButton.icon(
+            onPressed: _refreshing
+                ? null
+                : () => Navigator.of(context).pop(
+                      const FamilyLibraryResult.browseFile(),
+                    ),
             icon: const Icon(Icons.file_open_outlined),
             label: const Text('Import family'),
           ),
@@ -315,7 +373,7 @@ class _FamilyLibraryDialogState extends State<FamilyLibraryDialog> {
             controller: _searchController,
             onChanged: (_) => setState(() {}),
             decoration: InputDecoration(
-              hintText: 'Search families or types',
+              hintText: 'Search families, types or parameters',
               prefixIcon: const Icon(Icons.search),
               suffixIcon: _searchController.text.isEmpty
                   ? null
@@ -338,27 +396,11 @@ class _FamilyLibraryDialogState extends State<FamilyLibraryDialog> {
             padding: const EdgeInsets.symmetric(horizontal: 14),
             scrollDirection: Axis.horizontal,
             children: <Widget>[
-              ChoiceChip(
-                label: const Text('All'),
-                selected: _scope == _LibraryScope.all,
-                onSelected: (_) => setState(() => _scope = _LibraryScope.all),
-              ),
+              _scopeChip(_LibraryScope.all, 'All', Icons.apps_outlined),
               const SizedBox(width: 6),
-              ChoiceChip(
-                avatar: const Icon(Icons.star_outline, size: 17),
-                label: const Text('Favorites'),
-                selected: _scope == _LibraryScope.favorites,
-                onSelected: (_) =>
-                    setState(() => _scope = _LibraryScope.favorites),
-              ),
+              _scopeChip(_LibraryScope.favorites, 'Favorites', Icons.star_outline),
               const SizedBox(width: 6),
-              ChoiceChip(
-                avatar: const Icon(Icons.history, size: 17),
-                label: const Text('Recent'),
-                selected: _scope == _LibraryScope.recent,
-                onSelected: (_) =>
-                    setState(() => _scope = _LibraryScope.recent),
-              ),
+              _scopeChip(_LibraryScope.recent, 'Recent', Icons.history),
             ],
           ),
         ),
@@ -401,7 +443,7 @@ class _FamilyLibraryDialogState extends State<FamilyLibraryDialog> {
                   padding: const EdgeInsets.fromLTRB(14, 6, 14, 14),
                   gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: 2,
-                    mainAxisExtent: 190,
+                    mainAxisExtent: 195,
                     crossAxisSpacing: 10,
                     mainAxisSpacing: 10,
                   ),
@@ -421,6 +463,15 @@ class _FamilyLibraryDialogState extends State<FamilyLibraryDialog> {
                 ),
         ),
       ],
+    );
+  }
+
+  Widget _scopeChip(_LibraryScope scope, String label, IconData icon) {
+    return ChoiceChip(
+      avatar: Icon(icon, size: 17),
+      label: Text(label),
+      selected: _scope == scope,
+      onSelected: (_) => setState(() => _scope = scope),
     );
   }
 
@@ -455,7 +506,6 @@ class _FamilyLibraryDialogState extends State<FamilyLibraryDialog> {
                             fontWeight: FontWeight.w700,
                           ),
                     ),
-                    const SizedBox(height: 2),
                     Text(
                       _categoryLabel(document.category),
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -464,6 +514,11 @@ class _FamilyLibraryDialogState extends State<FamilyLibraryDialog> {
                     ),
                   ],
                 ),
+              ),
+              IconButton(
+                tooltip: 'Edit family',
+                onPressed: _refreshing ? null : _editSelected,
+                icon: const Icon(Icons.edit_outlined),
               ),
               IconButton.filledTonal(
                 tooltip: _preferences.isFavorite(document.id)
@@ -481,7 +536,7 @@ class _FamilyLibraryDialogState extends State<FamilyLibraryDialog> {
           const SizedBox(height: 12),
           Expanded(
             child: Container(
-              constraints: const BoxConstraints(minHeight: 120),
+              constraints: const BoxConstraints(minHeight: 110),
               decoration: BoxDecoration(
                 color: colors.surfaceContainerHighest.withValues(alpha: 0.35),
                 borderRadius: BorderRadius.circular(16),
@@ -534,11 +589,10 @@ class _FamilyLibraryDialogState extends State<FamilyLibraryDialog> {
                 label:
                     '${document.types.length} type${document.types.length == 1 ? '' : 's'}',
               ),
+              if (document.parameters.any((parameter) => parameter.hasFormula))
+                const _InfoChip(icon: Icons.functions, label: 'Parametric'),
               if (hosted)
-                const _InfoChip(
-                  icon: Icons.link_outlined,
-                  label: 'Hosted',
-                ),
+                const _InfoChip(icon: Icons.link_outlined, label: 'Hosted'),
               if (mesh.isApproximate)
                 const _InfoChip(
                   icon: Icons.warning_amber_outlined,
@@ -561,7 +615,7 @@ class _FamilyLibraryDialogState extends State<FamilyLibraryDialog> {
               Expanded(
                 child: Text(
                   hosted
-                      ? 'Select a host wall before placement.'
+                      ? 'Select the required host wall before placement.'
                       : 'The next step chooses level and position.',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: colors.onSurfaceVariant,
@@ -570,7 +624,7 @@ class _FamilyLibraryDialogState extends State<FamilyLibraryDialog> {
               ),
               const SizedBox(width: 12),
               FilledButton.icon(
-                onPressed: _placeSelected,
+                onPressed: _refreshing ? null : _placeSelected,
                 icon: const Icon(Icons.add_location_alt_outlined),
                 label: Text('Place ${type.name}'),
               ),
@@ -634,8 +688,8 @@ class _FamilyCard extends StatelessWidget {
                     ),
                   ),
                   Positioned(
-                    top: 4,
-                    right: 4,
+                    top: 2,
+                    right: 2,
                     child: IconButton(
                       visualDensity: VisualDensity.compact,
                       tooltip: favorite ? 'Remove favorite' : 'Add favorite',
@@ -655,49 +709,22 @@ class _FamilyCard extends StatelessWidget {
                     document.name,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.labelLarge,
+                    style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
                   ),
                   const SizedBox(height: 2),
                   Text(
                     '${_categoryLabel(document.category)} · ${document.types.length} type${document.types.length == 1 ? '' : 's'}',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: colors.onSurfaceVariant,
-                        ),
+                    style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ],
               ),
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _InfoChip extends StatelessWidget {
-  const _InfoChip({required this.icon, required this.label});
-
-  final IconData icon;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
-      decoration: BoxDecoration(
-        color: colors.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          Icon(icon, size: 15),
-          const SizedBox(width: 5),
-          Text(label, style: Theme.of(context).textTheme.labelSmall),
-        ],
       ),
     );
   }
@@ -722,18 +749,18 @@ class _EmptyLibraryState extends StatelessWidget {
           children: <Widget>[
             Icon(
               preferencesLoaded ? Icons.search_off : Icons.hourglass_empty,
-              size: 36,
+              size: 42,
             ),
             const SizedBox(height: 10),
-            Text(preferencesLoaded
-                ? 'No families match these filters.'
-                : 'Loading library preferences...'),
+            Text(
+              preferencesLoaded ? 'No matching families' : 'Loading library...',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
             if (preferencesLoaded) ...<Widget>[
-              const SizedBox(height: 10),
-              TextButton.icon(
+              const SizedBox(height: 8),
+              OutlinedButton(
                 onPressed: onClear,
-                icon: const Icon(Icons.filter_alt_off_outlined),
-                label: const Text('Clear filters'),
+                child: const Text('Clear filters'),
               ),
             ],
           ],
@@ -749,20 +776,27 @@ class _NoSelectionState extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return const Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          Icon(Icons.inventory_2_outlined, size: 42),
-          SizedBox(height: 10),
-          Text('Choose a family to inspect and place.'),
-        ],
-      ),
+      child: Text('Choose a family to inspect and place.'),
     );
   }
 }
 
-/// Cheap cached-mesh preview. The evaluator runs once per family/type in the
-/// dialog; scrolling no longer rebuilds the same geometry on every card frame.
+class _InfoChip extends StatelessWidget {
+  const _InfoChip({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Chip(
+      avatar: Icon(icon, size: 17),
+      label: Text(label),
+      visualDensity: VisualDensity.compact,
+    );
+  }
+}
+
 class _FamilyLibraryPreviewPainter extends CustomPainter {
   const _FamilyLibraryPreviewPainter({
     required this.mesh,
@@ -778,85 +812,72 @@ class _FamilyLibraryPreviewPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    if (mesh.vertices.isEmpty || size.width <= 1 || size.height <= 1) return;
-
+    if (mesh.vertices.isEmpty || mesh.faces.isEmpty ||
+        size.width <= 2 || size.height <= 2) {
+      return;
+    }
     final projected = <Offset>[
       for (final vertex in mesh.vertices)
         Offset(
-          (vertex.x - vertex.z) * 0.82,
-          -vertex.y + (vertex.x + vertex.z) * 0.34,
+          vertex.x - vertex.z * 0.48,
+          -vertex.y + (vertex.x + vertex.z) * 0.24,
         ),
     ];
-    var minX = double.infinity;
-    var minY = double.infinity;
-    var maxX = -double.infinity;
-    var maxY = -double.infinity;
-    for (final point in projected) {
-      minX = math.min(minX, point.dx);
-      minY = math.min(minY, point.dy);
-      maxX = math.max(maxX, point.dx);
-      maxY = math.max(maxY, point.dy);
-    }
-    final width = math.max(maxX - minX, 0.001);
-    final height = math.max(maxY - minY, 0.001);
-    final scale = math.min(
-      (size.width - 24) / width,
-      (size.height - 24) / height,
+    final minX = projected.map((point) => point.dx).reduce(math.min);
+    final maxX = projected.map((point) => point.dx).reduce(math.max);
+    final minY = projected.map((point) => point.dy).reduce(math.min);
+    final maxY = projected.map((point) => point.dy).reduce(math.max);
+    final width = math.max(maxX - minX, 0.1);
+    final height = math.max(maxY - minY, 0.1);
+    final scale = math.max(
+      0.01,
+      math.min((size.width - 22) / width, (size.height - 22) / height) * 0.78,
     );
+    final center = Offset(size.width * 0.5, size.height * 0.55);
     final modelCenter = Offset((minX + maxX) * 0.5, (minY + maxY) * 0.5);
-    final screenCenter = Offset(size.width * 0.5, size.height * 0.52);
-    Offset screen(Offset point) =>
-        screenCenter + (point - modelCenter) * scale;
+    Offset screen(int index) {
+      final point = projected[index];
+      return Offset(
+        center.dx + (point.dx - modelCenter.dx) * scale,
+        center.dy + (point.dy - modelCenter.dy) * scale,
+      );
+    }
 
-    final fillPaint = Paint()
-      ..color = fillColor
-      ..style = PaintingStyle.fill;
-    for (final face in mesh.faces) {
-      if (face.indices.length < 3) continue;
-      final valid = face.indices
-          .where((index) => index >= 0 && index < projected.length)
-          .toList(growable: false);
-      if (valid.length < 3) continue;
+    final outline = Paint()
+      ..color = lineColor.withValues(alpha: 0.72)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2;
+    final orderedFaces = <int>[
+      for (var index = 0; index < mesh.faces.length; index++) index,
+    ];
+    // Stable ordering prevents preview faces from visually reordering between
+    // rebuilds while filters/search update the grid.
+    orderedFaces.sort((a, b) => a.compareTo(b));
+    for (final faceIndex in orderedFaces) {
+      final face = mesh.faces[faceIndex];
+      if (face.indices.length < 3 ||
+          !face.indices.every((index) => index >= 0 && index < projected.length)) {
+        continue;
+      }
       final path = Path();
-      final first = screen(projected[valid.first]);
+      final first = screen(face.indices.first);
       path.moveTo(first.dx, first.dy);
-      for (final index in valid.skip(1)) {
-        final point = screen(projected[index]);
+      for (final index in face.indices.skip(1)) {
+        final point = screen(index);
         path.lineTo(point.dx, point.dy);
       }
       path.close();
-      canvas.drawPath(path, fillPaint);
+      canvas.drawPath(path, Paint()..color = fillColor);
+      canvas.drawPath(path, outline);
     }
 
-    final edgePaint = Paint()
-      ..color = lineColor
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.25
-      ..strokeJoin = StrokeJoin.round
-      ..strokeCap = StrokeCap.round;
-    final edges = <String>{};
-    for (final face in mesh.faces) {
-      if (face.indices.length < 2) continue;
-      for (var i = 0; i < face.indices.length; i++) {
-        final a = face.indices[i];
-        final b = face.indices[(i + 1) % face.indices.length];
-        if (a < 0 || b < 0 || a >= projected.length || b >= projected.length) {
-          continue;
-        }
-        final low = math.min(a, b);
-        final high = math.max(a, b);
-        if (!edges.add('$low:$high')) continue;
-        canvas.drawLine(screen(projected[a]), screen(projected[b]), edgePaint);
-      }
-    }
-
-    final axisPaint = Paint()
-      ..color = axisColor.withValues(alpha: 0.65)
-      ..strokeWidth = 0.8;
+    final ground = Paint()
+      ..color = axisColor.withValues(alpha: 0.45)
+      ..strokeWidth = 0.7;
     canvas.drawLine(
-      Offset(12, size.height - 12),
-      Offset(size.width - 12, size.height - 12),
-      axisPaint,
+      Offset(size.width * 0.18, size.height * 0.86),
+      Offset(size.width * 0.82, size.height * 0.86),
+      ground,
     );
   }
 
@@ -868,25 +889,29 @@ class _FamilyLibraryPreviewPainter extends CustomPainter {
       oldDelegate.axisColor != axisColor;
 }
 
-({double? width, double? depth, double? height}) _dimensions(
+({double width, double depth, double height}) _dimensions(
   FamilyDocument document,
   FamilyTypeDefinition type,
 ) {
-  double? value(String id) {
-    for (final parameter in document.parameters) {
-      if (parameter.id != id) continue;
-      final raw = type.valueFor(parameter);
-      final parsed = raw is num ? raw.toDouble() : double.tryParse('$raw');
-      return parsed != null && parsed.isFinite ? parsed : null;
+  final resolver = FamilyParameterResolver(document, type);
+  double read(String id) {
+    try {
+      final value = resolver.resolveNumber(id);
+      return value.isFinite && value > 0.0 ? value : 0.0;
+    } catch (_) {
+      return 0.0;
     }
-    return null;
   }
 
-  return (width: value('width'), depth: value('depth'), height: value('height'));
+  return (
+    width: read('width'),
+    depth: read('depth'),
+    height: read('height'),
+  );
 }
 
-String _formatDimension(double? value) =>
-    value == null ? '—' : value.toStringAsFixed(value >= 10 ? 1 : 2);
+String _formatDimension(double value) =>
+    value <= 0.0 ? '—' : value.toStringAsFixed(value >= 10 ? 1 : 2);
 
 String _categoryLabel(FamilyCategory category) => switch (category) {
       FamilyCategory.genericModel => 'Generic model',
@@ -901,7 +926,7 @@ String _categoryLabel(FamilyCategory category) => switch (category) {
     };
 
 IconData _categoryIcon(FamilyCategory category) => switch (category) {
-      FamilyCategory.genericModel => Icons.widgets_outlined,
+      FamilyCategory.genericModel => Icons.category_outlined,
       FamilyCategory.column => Icons.view_column_outlined,
       FamilyCategory.door => Icons.door_front_door_outlined,
       FamilyCategory.window => Icons.window_outlined,
@@ -909,5 +934,5 @@ IconData _categoryIcon(FamilyCategory category) => switch (category) {
       FamilyCategory.furniture => Icons.chair_outlined,
       FamilyCategory.casework => Icons.kitchen_outlined,
       FamilyCategory.stair => Icons.stairs_outlined,
-      FamilyCategory.structural => Icons.account_tree_outlined,
+      FamilyCategory.structural => Icons.foundation_outlined,
     };
