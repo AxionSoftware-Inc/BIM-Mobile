@@ -333,7 +333,7 @@ final class FamilyDocument {
     this.schemaVersion = currentSchemaVersion,
   });
 
-  static const int currentSchemaVersion = 3;
+  static const int currentSchemaVersion = 4;
   static const int minimumSupportedSchemaVersion = 1;
   static const String fileExtension = 'bimfamily';
 
