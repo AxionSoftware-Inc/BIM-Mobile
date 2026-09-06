@@ -4,6 +4,7 @@ import 'family_editor_v5_page.dart';
 
 export 'family_authoring_scene_builder.dart';
 export 'family_authoring_viewport.dart';
+export 'family_bundled_catalog.dart';
 export 'family_constraint_models.dart';
 export 'family_constraint_solver.dart';
 export 'family_constraints_panel.dart';
