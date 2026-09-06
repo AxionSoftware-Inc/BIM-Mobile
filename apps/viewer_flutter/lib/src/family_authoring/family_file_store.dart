@@ -216,6 +216,11 @@ abstract final class FamilyFileStore {
     );
   }
 
+  /// Imports one validated external family into app-owned library storage.
+  ///
+  /// "Import family" has the same persistence contract on every platform: the
+  /// project never depends on the user leaving the picked source file at its
+  /// original path. Stable family id deduplicates/replaces the app-owned copy.
   static Future<FamilyAssetFile?> open() async {
     const typeGroup = XTypeGroup(
       label: 'BIM family',
@@ -230,13 +235,8 @@ abstract final class FamilyFileStore {
       throw const FormatException('Selected file is not a valid BIM family.');
     }
 
-    // Android document-provider paths can disappear after the picker session.
-    // Import the validated asset into app-owned storage before placement.
-    if (Platform.isAndroid) {
-      final storedPath = await _saveToLibrary(document);
-      return FamilyAssetFile(document: document, path: storedPath);
-    }
-    return FamilyAssetFile(document: document, path: source.path);
+    final storedPath = await _saveToLibrary(document);
+    return FamilyAssetFile(document: document, path: storedPath);
   }
 
   /// Loads an instance-referenced family without opening a file picker.
