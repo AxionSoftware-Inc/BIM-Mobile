@@ -31,9 +31,23 @@ Do **not** add a second Family-specific 3D orbit camera, renderer, hit-test
 implementation or fixed-scale sketch camera. Project viewport fixes must flow
 into Family automatically.
 
-Family coordinates are `X = width`, `Y = height`, `Z = depth`. RenderScene uses
-`X/Y` as the plan plane and `Z` as elevation, so the adapter performs the single
-axis conversion `(x, z, y)` and fixes winding once at that boundary.
+Family coordinates are `X = width`, `Y = height/vertical`, `Z = depth`.
+RenderScene uses `X/Y` as the plan plane and `Z` as elevation, so the adapter
+performs the single axis conversion `(x, z, y)` and fixes winding once at that
+boundary.
+
+### Rotation compatibility invariant
+
+The historic serialized transform field is named `rotationZ`. That name is a
+schema compatibility artifact; it is **not** the physical Family rotation axis.
+User-facing Rotate is plan/yaw rotation around Family `Y`, because Family `Y`
+is vertical. Therefore both ordinary Transform features and nested-family
+transforms rotate in the Family `X/Z` plane using the same positive-angle
+convention.
+
+Do not reinterpret legacy `rotationZ` as an X/Y rotation. Ordinary Transform
+may read a future/explicit `rotationY` value first, but current writers continue
+to persist `rotationZ` so existing `.bimfamily` files remain compatible.
 
 ## Main ownership boundaries
 
@@ -166,6 +180,10 @@ expressions. `FamilyDependencyResolver`:
 - rejects cycles;
 - materializes a transient child mesh for the synchronous geometry evaluator.
 
+Nested X/Y/Z translation uses Family coordinates. Nested rotation follows the
+same vertical-axis/yaw convention as ordinary Transform; the persisted
+`rotationZ` token is retained only for file compatibility.
+
 Placement and Inspector regeneration use the same dependency path.
 
 ## V5 direct-manipulation editor UX
@@ -187,7 +205,7 @@ primary way a normal user must operate the editor.
 All operations use the project 3D viewport.
 
 - **Move** — tap a solid, drag X/Y/Z handles.
-- **Rotate** — tap a solid, drag the rotation ring.
+- **Rotate** — tap a solid, drag the vertical-axis rotation ring.
 - **Scale** — tap a solid, drag the scale handle.
 - **Extrude** — live result plus direct blue `D` depth handle; numeric field and
   slider remain available for precision.
@@ -218,6 +236,23 @@ cancels a drag.
 Native Android selection is synchronized back through
 `RenderSceneViewportController`; clearing/changing a pick resets the Family
 selection dedupe token so selecting the same solid again is a valid new action.
+
+### Keyboard contract
+
+V5 handles hardware keyboard commands through the editor's real command paths,
+not a parallel shortcut model:
+
+- `Esc` — cancel active tool; in Select, clear current feature selection.
+- `Enter` / numpad Enter — Finish Sketch or Apply the active operation.
+- `Delete` / `Backspace` — run the normal dependency-safe selected-feature
+  delete flow, including confirmation.
+- `Ctrl/Cmd+Z` — model Undo.
+- `Ctrl/Cmd+Shift+Z` or `Ctrl/Cmd+Y` — model Redo.
+- `Ctrl/Cmd+S` — Save when no modal tool is active.
+
+When an `EditableText` owns focus, text editing keeps native Undo/Delete/Enter
+behavior and model shortcuts do not hijack the field. Escape remains a CAD
+command boundary and can cancel the current modal operation.
 
 ## Family Library
 
@@ -303,5 +338,9 @@ At minimum, Family changes must preserve:
 14. Base then Tool selection produces a live Union/Subtract preview.
 15. Clearing and re-picking the same native solid reports a fresh selection.
 16. A cancelled gizmo gesture restores the draft and never commits.
-17. Obsolete Family-specific pseudo-3D preview/workbench implementations do not
+17. Ordinary Transform and nested-family rotation both preserve Family Y as
+    vertical and use the same positive yaw direction.
+18. Hardware Enter/Escape/Undo/Redo/Delete use the editor command/history paths;
+    text fields retain native editing semantics.
+19. Obsolete Family-specific pseudo-3D preview/workbench implementations do not
     return to the active module.
