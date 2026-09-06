@@ -11,7 +11,7 @@ import 'family_render_scene_adapter.dart';
 
 enum FamilyAuthoringViewportMode { result, pickFeatures }
 
-enum FamilyGizmoMode { none, move, rotate, scale }
+enum FamilyGizmoMode { none, move, rotate, scale, extrude, revolve }
 
 enum FamilyGizmoAxis { x, y, z, rotation, scale }
 
@@ -49,7 +49,7 @@ class FamilyAuthoringViewport extends StatefulWidget {
   final FamilyGizmoMode gizmoMode;
   final ValueChanged<String?>? onFeatureSelected;
 
-  /// Backward-compatible alias used by the V4 shell.
+  /// Backward-compatible alias used by older editor shells.
   final ValueChanged<String?>? onFinalFeatureSelected;
   final ValueChanged<FamilyGizmoAxis>? onGizmoBegin;
   final void Function(FamilyGizmoAxis axis, double delta)? onGizmoChanged;
@@ -143,8 +143,7 @@ class _FamilyAuthoringViewportState extends State<FamilyAuthoringViewport> {
     final ids = <String>{};
     String? active;
     for (final object in scene.objects) {
-      final featureId =
-          FamilyAuthoringSceneBuilder.featureIdForObject(object);
+      final featureId = FamilyAuthoringSceneBuilder.featureIdForObject(object);
       if (featureId != null && widget.selectedFeatureIds.contains(featureId)) {
         final elementId = object.elementIdRaw;
         if (elementId != null) {
@@ -176,7 +175,7 @@ class _FamilyAuthoringViewportState extends State<FamilyAuthoringViewport> {
       }
     }
     // Result mode has a single object whose metadata points at the final
-    // feature. It is still the correct gizmo anchor for a draft transform.
+    // feature. It is still the correct gizmo anchor for a draft operation.
     if (scene.objects.length == 1) return scene.objects.first;
     return null;
   }
@@ -338,6 +337,7 @@ class _FamilyViewportGizmoState extends State<_FamilyViewportGizmo> {
         );
         final center3 = widget.object.bounds.center;
         final center = projection.project(center3).screen;
+
         if (widget.mode == FamilyGizmoMode.move) {
           final axes = <(FamilyGizmoAxis, String, RenderScenePoint, Color)>[
             (
@@ -384,13 +384,45 @@ class _FamilyViewportGizmoState extends State<_FamilyViewportGizmo> {
                   color: axis.$4,
                   center: center,
                   endpoint: projection.project(axis.$3).screen,
-                  size: size,
                 ),
             ],
           );
         }
 
-        if (widget.mode == FamilyGizmoMode.rotate) {
+        if (widget.mode == FamilyGizmoMode.extrude) {
+          final endpoint = projection.project(
+            RenderScenePoint(x: center3.x, y: center3.y + 1, z: center3.z),
+          ).screen;
+          return Stack(
+            children: <Widget>[
+              IgnorePointer(
+                child: CustomPaint(
+                  size: size,
+                  painter: _AxisPainter(
+                    center: center,
+                    axes: <_AxisVisual>[
+                      _AxisVisual(
+                        label: 'DEPTH',
+                        color: Colors.blue,
+                        endpoint: endpoint,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              _axisHandle(
+                axis: FamilyGizmoAxis.z,
+                label: 'D',
+                color: Colors.blue,
+                center: center,
+                endpoint: endpoint,
+              ),
+            ],
+          );
+        }
+
+        if (widget.mode == FamilyGizmoMode.rotate ||
+            widget.mode == FamilyGizmoMode.revolve) {
           return Stack(
             children: <Widget>[
               IgnorePointer(
@@ -437,7 +469,6 @@ class _FamilyViewportGizmoState extends State<_FamilyViewportGizmo> {
     required Color color,
     required Offset center,
     required Offset endpoint,
-    required Size size,
   }) {
     final vector = endpoint - center;
     final distance = vector.distance;
@@ -451,8 +482,8 @@ class _FamilyViewportGizmoState extends State<_FamilyViewportGizmo> {
         axis: axis,
         label: label,
         color: color,
-        scalar: (delta) => (delta.dx * unit.dx + delta.dy * unit.dy) /
-            math.max(distance, 12),
+        scalar: (delta) =>
+            (delta.dx * unit.dx + delta.dy * unit.dy) / math.max(distance, 12),
       ),
     );
   }
@@ -537,11 +568,7 @@ class _AxisPainter extends CustomPainter {
           ..strokeCap = StrokeCap.round,
       );
     }
-    canvas.drawCircle(
-      center,
-      6,
-      Paint()..color = Colors.white,
-    );
+    canvas.drawCircle(center, 6, Paint()..color = Colors.white);
     canvas.drawCircle(
       center,
       6,
