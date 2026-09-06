@@ -9,6 +9,7 @@ another wall implementation and it does not edit a project scene directly.
   serializable `.bimfamily` contract.
 - `family_parameter_resolver.dart` owns deterministic effective parameter
   values and numeric formulas.
+- `family_csg.dart` owns closed-manifold solid union/subtraction.
 - `family_validation.dart` is the semantic gate before save/import/placement.
 - `family_file_store.dart` owns validated persistence and local Library state.
 - `family_editor_v2_page.dart` is the single production authoring surface for
@@ -63,6 +64,28 @@ in a new geometry/placement/Inspector path and read `type.values` directly for
 an effective dimension. Doing so would make plan, 3D and saved project
 instances disagree.
 
+## Exact solid booleans
+
+`family_csg.dart` provides dependency-free BSP union and subtraction for closed,
+orientable two-manifold meshes. Boolean feature nodes consume exactly two
+explicit earlier solid inputs in graph order.
+
+Before BSP evaluation the kernel:
+
+- validates finite vertices and face indices;
+- verifies every boundary edge belongs to exactly two faces;
+- propagates consistent face orientation across each connected shell;
+- orients every disconnected shell outward using signed volume;
+- rejects zero-volume/non-orientable/open topology rather than inventing a
+  solid result.
+
+Successful boolean evaluation returns `isApproximate == false`. If an imported
+or otherwise malformed/open mesh cannot satisfy the solid contract, the editor
+keeps a safe approximate preview (union shows both operands; subtraction keeps
+the left operand) while validation/project diagnostics can still identify the
+input problem. Exact CSG therefore never silently turns invalid topology into a
+project solid.
+
 ## Authoring UX
 
 The editor has two user levels without splitting the file format:
@@ -72,7 +95,7 @@ The editor has two user levels without splitting the file format:
   can be created as reusable content without writing Dart code.
 - **Advanced**: type duplicate/rename/delete, generic parameter-definition
   add/edit/delete, formulas, touch profile editing, extrude, revolve,
-  transform, union/subtract feature nodes and the feature graph.
+  transform, exact manifold union/subtract feature nodes and the feature graph.
 
 Parameter controls are generated from `FamilyParameterDefinition`; the editor
 does not assume width/depth/height are the only values. Core dimensions remain
@@ -130,6 +153,7 @@ Before a family is saved, imported or placed, validation checks at least:
 - feature input existence and ordering (feature nodes may only depend on earlier
   feature nodes);
 - solid-only input requirements for transforms and booleans;
+- exactly two distinct earlier solid inputs for every boolean node;
 - closed profiles for extrude/revolve;
 - freeform-mesh vertex/face/index validity and size limits.
 
@@ -174,17 +198,15 @@ the validated family into the app-owned reusable library.
 The following are still separate engine/content tasks and are **not** claimed
 as finished:
 
-1. **Exact CSG**. Boolean union/subtract preview remains explicitly approximate
-   until a robust solid kernel is connected.
-2. **Geometric constraint solver**. Numeric dependency formulas are real, but
+1. **Geometric constraint solver**. Numeric dependency formulas are real, but
    Revit-class reference planes, alignment/equality locks, dimensional
    constraints and a geometric constraint graph are not implemented yet.
-3. **Nested families**. Child-family dependency/version/transform semantics need
+2. **Nested families**. Child-family dependency/version/transform semantics need
    a real dependency model before they can safely ship.
-4. **GLB material/texture preservation**. Geometry import works; production
+3. **GLB material/texture preservation**. Geometry import works; production
    material/texture import, explicit unit selection, decimation and LOD
    generation remain separate importer/rendering work.
-5. **Large repeated-instance performance certification**. The reference design
+4. **Large repeated-instance performance certification**. The reference design
    avoids copying feature graphs, but large tablet scenes still require measured
    device regression budgets.
 
@@ -204,7 +226,10 @@ At minimum, family changes should preserve these workflows:
 5. create formula parameter -> change its dependency in a Family Type -> 3D,
    plan symbol, Inspector and placed effective values all change consistently;
 6. cyclic/unknown/invalid formulas cannot be saved or placed;
-7. external invalid `.bimfamily` cannot enter the reusable library;
-8. import GLB/glTF -> save -> reopen -> place repeatedly;
-9. favorite/recent state can be missing/corrupt without breaking assets;
-10. schema-v1 family -> edit -> save -> schema-v2 family remains loadable.
+7. exact union/subtract on overlapping closed solids produces non-approximate
+   geometry with the expected volume; open topology is rejected by the kernel;
+8. boolean graph nodes must name exactly two distinct earlier solid operands;
+9. external invalid `.bimfamily` cannot enter the reusable library;
+10. import GLB/glTF -> save -> reopen -> place repeatedly;
+11. favorite/recent state can be missing/corrupt without breaking assets;
+12. schema-v1 family -> edit -> save -> schema-v2 family remains loadable.
