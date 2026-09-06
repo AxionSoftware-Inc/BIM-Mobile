@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'family_authoring/family_document.dart';
 import 'family_authoring/family_geometry.dart';
+import 'family_authoring/family_parameter_resolver.dart';
 import 'family_authoring/family_plan_symbol.dart';
 import 'family_authoring/family_validation.dart';
 import 'render_scene_editor.dart';
@@ -150,9 +151,14 @@ abstract final class FamilyInstanceAdapter {
     }
     if (!family.types.any((candidate) => candidate.id == type.id)) {
       throw const FormatException(
-          'Selected family type does not belong to the family.');
+        'Selected family type does not belong to the family.',
+      );
     }
 
+    // Resolve once before native mutation. If a formula is invalid, placement
+    // fails before any element is created and project state remains atomic.
+    final resolver = FamilyParameterResolver(family, type);
+    final resolvedValues = resolver.resolveAll();
     final evaluatedMesh = FamilyGeometryEvaluator.evaluateMesh(family, type);
     if (evaluatedMesh.vertices.isEmpty || evaluatedMesh.faces.isEmpty) {
       throw const FormatException('Family type has no usable solid geometry.');
@@ -181,39 +187,38 @@ abstract final class FamilyInstanceAdapter {
           created = await creationGateway.createColumn(
             levelId: levelId,
             position: position,
-            widthMeters: _lengthValue(family, type, 'width'),
-            depthMeters: _lengthValue(family, type, 'depth'),
-            heightMeters: _lengthValue(family, type, 'height'),
+            widthMeters: _resolvedLength(resolver, 'width'),
+            depthMeters: _resolvedLength(resolver, 'depth'),
+            heightMeters: _resolvedLength(resolver, 'height'),
           );
         }
       case FamilyCategory.door:
         final wallId = hostWallId;
         if (wallId == null) {
-          throw const FormatException(
-              'A door family must be hosted by a wall.');
+          throw const FormatException('A door family must be hosted by a wall.');
         }
         created = await creationGateway.createDoor(
           name: family.name,
           hostWallId: wallId,
           offsetMeters: offsetMeters,
-          widthMeters: _lengthValue(family, type, 'width'),
-          heightMeters: _lengthValue(family, type, 'height'),
+          widthMeters: _resolvedLength(resolver, 'width'),
+          heightMeters: _resolvedLength(resolver, 'height'),
         );
       case FamilyCategory.window:
         final wallId = hostWallId;
         if (wallId == null) {
           throw const FormatException(
-              'A window family must be hosted by a wall.');
+            'A window family must be hosted by a wall.',
+          );
         }
         created = await creationGateway.createWindow(
           name: family.name,
           hostWallId: wallId,
           offsetMeters: offsetMeters,
-          widthMeters: _lengthValue(family, type, 'width'),
-          heightMeters: _lengthValue(family, type, 'height'),
-          sillHeightMeters: _lengthValue(
-            family,
-            type,
+          widthMeters: _resolvedLength(resolver, 'width'),
+          heightMeters: _resolvedLength(resolver, 'height'),
+          sillHeightMeters: _resolvedLength(
+            resolver,
             'sillHeight',
             fallback: 0.9,
           ),
@@ -222,16 +227,18 @@ abstract final class FamilyInstanceAdapter {
         final wallId = hostWallId;
         if (wallId == null || hostWall == null) {
           throw const FormatException(
-              'A wall sweep family must be hosted by a wall.');
+            'A wall sweep family must be hosted by a wall.',
+          );
         }
         final wallLength = RenderSceneQueries.wallLength(hostWall);
-        final sweepWidth = _lengthValue(family, type, 'width');
+        final sweepWidth = _resolvedLength(resolver, 'width');
         if (wallLength == null ||
             !wallLength.isFinite ||
             wallLength <= 1e-6 ||
             sweepWidth > wallLength - 0.02) {
           throw const FormatException(
-              'Wall sweep width must fit inside the selected wall.');
+            'Wall sweep width must fit inside the selected wall.',
+          );
         }
         created = await _createMeshInstance(
           family: family,
@@ -285,8 +292,7 @@ abstract final class FamilyInstanceAdapter {
       ),
       familyParameterValuesJson: jsonEncode(
         <String, Object?>{
-          for (final parameter in family.parameters)
-            parameter.id: type.valueFor(parameter),
+          ...resolvedValues,
           if (category == FamilyCategory.wallSweep) ...<String, Object?>{
             '_hostWallId': hostWallId,
             '_hostOffsetMeters': offsetMeters,
@@ -361,22 +367,29 @@ abstract final class FamilyInstanceAdapter {
     return math.atan2(tangent.y, tangent.x);
   }
 
+  static double _resolvedLength(
+    FamilyParameterResolver resolver,
+    String parameterId, {
+    double? fallback,
+  }) {
+    try {
+      final value = resolver.resolveNumber(parameterId);
+      if (value.isFinite && value > 0.0) return value;
+    } on FormatException {
+      if (fallback != null) return fallback;
+      rethrow;
+    }
+    if (fallback != null) return fallback;
+    throw FormatException('Family parameter "$parameterId" must be positive.');
+  }
+
   static double _lengthValue(
     FamilyDocument family,
     FamilyTypeDefinition type,
     String parameterId, {
     double? fallback,
   }) {
-    for (final parameter in family.parameters) {
-      if (parameter.id != parameterId) continue;
-      final value = type.valueFor(parameter);
-      final parsed = value is num
-          ? value.toDouble()
-          : double.tryParse(value?.toString() ?? '');
-      if (parsed != null && parsed.isFinite && parsed > 0.0) return parsed;
-      break;
-    }
-    if (fallback != null) return fallback;
-    throw FormatException('Family parameter "$parameterId" must be positive.');
+    final resolver = FamilyParameterResolver(family, type);
+    return _resolvedLength(resolver, parameterId, fallback: fallback);
   }
 }
