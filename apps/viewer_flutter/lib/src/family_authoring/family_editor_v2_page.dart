@@ -6,17 +6,22 @@ import 'family_document.dart';
 import 'family_file_store.dart';
 import 'family_geometry.dart';
 import 'family_mesh_importer.dart';
+import 'family_parameter_resolver.dart';
 import 'family_sketch_canvas.dart';
 import 'family_validation.dart';
 
-/// Production-oriented Family Editor V2.
+/// Production Family Editor.
 ///
-/// The original editor is intentionally kept in the repository as a fallback
-/// while this page becomes the default route. V2 removes the old assumption
-/// that a family only has width/depth/height: every declared parameter and
-/// every named type is editable through one generic contract.
+/// The editor owns reusable family content only. It never mutates a project
+/// scene directly. New families and existing library assets use the same page,
+/// which prevents a second, weaker edit path from drifting away from creation.
 class FamilyEditorV2Page extends StatefulWidget {
-  const FamilyEditorV2Page({super.key});
+  const FamilyEditorV2Page({
+    super.key,
+    this.initialAsset,
+  });
+
+  final FamilyAssetFile? initialAsset;
 
   @override
   State<FamilyEditorV2Page> createState() => _FamilyEditorV2PageState();
@@ -27,6 +32,9 @@ enum _CloseAction { save, discard }
 
 class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
   late FamilyDocument _document;
+  late final TextEditingController _nameController;
+  late final TextEditingController _descriptionController;
+  String? _assetPath;
   String? _selectedTypeId;
   String? _selectedSketchId;
   _FamilyEditorMode _mode = _FamilyEditorMode.simple;
@@ -38,8 +46,21 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
   @override
   void initState() {
     super.initState();
-    _document = FamilyDocument.starter();
-    _selectedTypeId = _document.types.first.id;
+    final asset = widget.initialAsset;
+    _document = asset?.document ?? FamilyDocument.starter();
+    _assetPath = asset?.path;
+    _selectedTypeId = asset?.preferredTypeId ?? _document.types.first.id;
+    _selectedSketchId =
+        _document.sketches.isEmpty ? null : _document.sketches.first.id;
+    _nameController = TextEditingController(text: _document.name);
+    _descriptionController = TextEditingController(text: _document.description);
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _descriptionController.dispose();
+    super.dispose();
   }
 
   FamilyTypeDefinition get _selectedType => _document.types.firstWhere(
@@ -60,9 +81,26 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
     if (identical(next, _document)) return;
     _undo.add(_document);
     _redo.clear();
+    _setDocument(next, dirty: true, status: status);
+  }
+
+  /// Live text/number fields use this path so a user can type naturally
+  /// without creating one undo snapshot per keystroke. Structural operations
+  /// (add/delete/type/feature/sketch) still use [_commit].
+  void _replaceDraft(FamilyDocument next, {String? status}) {
+    _redo.clear();
+    _setDocument(next, dirty: true, status: status);
+  }
+
+  void _setDocument(
+    FamilyDocument next, {
+    required bool dirty,
+    String? status,
+    bool syncMetadataControllers = false,
+  }) {
     setState(() {
       _document = next;
-      _dirty = true;
+      _dirty = dirty;
       _status = status;
       if (!_document.types.any((type) => type.id == _selectedTypeId)) {
         _selectedTypeId = _document.types.first.id;
@@ -71,22 +109,19 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
         _selectedSketchId =
             _document.sketches.isEmpty ? null : _document.sketches.last.id;
       }
+      if (syncMetadataControllers) {
+        _nameController.text = _document.name;
+        _descriptionController.text = _document.description;
+      }
     });
   }
 
   void _restore(FamilyDocument next) {
-    setState(() {
-      _document = next;
-      _dirty = true;
-      _status = null;
-      if (!_document.types.any((type) => type.id == _selectedTypeId)) {
-        _selectedTypeId = _document.types.first.id;
-      }
-      if (!_document.sketches.any((sketch) => sketch.id == _selectedSketchId)) {
-        _selectedSketchId =
-            _document.sketches.isEmpty ? null : _document.sketches.last.id;
-      }
-    });
+    _setDocument(
+      next,
+      dirty: true,
+      syncMetadataControllers: true,
+    );
   }
 
   void _undoChange() {
@@ -101,61 +136,70 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
     _restore(_redo.removeLast());
   }
 
-  void _updateTypeValue(FamilyParameterDefinition parameter, Object? value) {
-    if (!_validParameterValue(parameter, value)) {
-      setState(() => _status = '${parameter.label}: invalid value');
-      return;
+  FamilyDocument _withLiveMetadata(FamilyDocument source) {
+    final name = _nameController.text.trim();
+    return source.copyWith(
+      name: name.isEmpty ? source.name : name,
+      description: _descriptionController.text.trim(),
+    );
+  }
+
+  void _markMetadataDirty() {
+    if (!_dirty) setState(() => _dirty = true);
+  }
+
+  Object? _effectiveValue(FamilyParameterDefinition parameter) {
+    try {
+      return FamilyParameterResolver(_document, _selectedType).resolve(parameter);
+    } catch (_) {
+      return _selectedType.valueFor(parameter);
     }
+  }
+
+  void _updateTypeValueDraft(
+    FamilyParameterDefinition parameter,
+    Object? value,
+  ) {
+    if (parameter.hasFormula) return;
+    if (!_validParameterValue(parameter, value)) return;
     final selected = _selectedType;
+    final current = selected.values[parameter.id];
+    if (current == value) return;
     final values = <String, Object?>{...selected.values, parameter.id: value};
-    _commit(
+    _replaceDraft(
       _document.copyWith(
         types: <FamilyTypeDefinition>[
           for (final type in _document.types)
-            if (type.id == selected.id)
-              type.copyWith(values: values)
-            else
-              type,
+            type.id == selected.id ? type.copyWith(values: values) : type,
         ],
       ),
     );
   }
 
+  bool _typeNameExists(String name, {String? exceptId}) {
+    final normalized = name.trim().toLowerCase();
+    return _document.types.any(
+      (type) => type.id != exceptId && type.name.trim().toLowerCase() == normalized,
+    );
+  }
+
   Future<void> _addType() async {
-    final controller = TextEditingController(
-      text: '${_selectedType.name} Copy',
+    final name = await _askText(
+      title: 'Duplicate family type',
+      label: 'Type name',
+      initialValue: '${_selectedType.name} Copy',
+      actionLabel: 'Duplicate',
     );
-    final name = await showDialog<String>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Duplicate family type'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(
-            labelText: 'Type name',
-            border: OutlineInputBorder(),
-          ),
-          onSubmitted: (value) => Navigator.of(dialogContext).pop(value),
-        ),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop(controller.text),
-            child: const Text('Duplicate'),
-          ),
-        ],
-      ),
-    );
-    if (!mounted || name == null || name.trim().isEmpty) return;
+    if (!mounted || name == null) return;
+    if (_typeNameExists(name)) {
+      setState(() => _status = 'A family type named "$name" already exists.');
+      return;
+    }
     final id = 'type-${DateTime.now().microsecondsSinceEpoch}';
     final source = _selectedType;
     final next = FamilyTypeDefinition(
       id: id,
-      name: name.trim(),
+      name: name,
       values: Map<String, Object?>.from(source.values),
     );
     _selectedTypeId = id;
@@ -167,19 +211,50 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
 
   Future<void> _renameType() async {
     final selected = _selectedType;
-    final controller = TextEditingController(text: selected.name);
-    final name = await showDialog<String>(
+    final name = await _askText(
+      title: 'Rename family type',
+      label: 'Type name',
+      initialValue: selected.name,
+      actionLabel: 'Rename',
+    );
+    if (!mounted || name == null || name == selected.name) return;
+    if (_typeNameExists(name, exceptId: selected.id)) {
+      setState(() => _status = 'A family type named "$name" already exists.');
+      return;
+    }
+    _commit(
+      _document.copyWith(
+        types: <FamilyTypeDefinition>[
+          for (final type in _document.types)
+            type.id == selected.id ? type.copyWith(name: name) : type,
+        ],
+      ),
+      status: 'Type renamed',
+    );
+  }
+
+  Future<String?> _askText({
+    required String title,
+    required String label,
+    required String initialValue,
+    required String actionLabel,
+  }) async {
+    final controller = TextEditingController(text: initialValue);
+    final result = await showDialog<String>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Rename family type'),
+        title: Text(title),
         content: TextField(
           controller: controller,
           autofocus: true,
-          decoration: const InputDecoration(
-            labelText: 'Type name',
-            border: OutlineInputBorder(),
+          decoration: InputDecoration(
+            labelText: label,
+            border: const OutlineInputBorder(),
           ),
-          onSubmitted: (value) => Navigator.of(dialogContext).pop(value),
+          onSubmitted: (value) {
+            final trimmed = value.trim();
+            if (trimmed.isNotEmpty) Navigator.of(dialogContext).pop(trimmed);
+          },
         ),
         actions: <Widget>[
           TextButton(
@@ -187,21 +262,17 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
             child: const Text('Cancel'),
           ),
           FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop(controller.text),
-            child: const Text('Rename'),
+            onPressed: () {
+              final trimmed = controller.text.trim();
+              if (trimmed.isNotEmpty) Navigator.of(dialogContext).pop(trimmed);
+            },
+            child: Text(actionLabel),
           ),
         ],
       ),
     );
-    if (!mounted || name == null || name.trim().isEmpty) return;
-    _commit(
-      _document.copyWith(
-        types: <FamilyTypeDefinition>[
-          for (final type in _document.types)
-            type.id == selected.id ? type.copyWith(name: name.trim()) : type,
-        ],
-      ),
-    );
+    controller.dispose();
+    return result;
   }
 
   Future<void> _deleteType() async {
@@ -215,7 +286,7 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
       builder: (dialogContext) => AlertDialog(
         title: Text('Delete ${selected.name}?'),
         content: const Text(
-          'This removes the type definition from this family. Existing project instances that reference it should be migrated before replacing a deployed family asset.',
+          'This removes the type from this family. Existing deployed project instances keep their stored values, but should be migrated before replacing a shared asset.',
         ),
         actions: <Widget>[
           TextButton(
@@ -256,47 +327,41 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
       defaultValue: result.defaultValue,
       minimum: result.minimum,
       maximum: result.maximum,
+      formula: result.formula,
     );
-    if (!_validParameterValue(definition, definition.defaultValue)) {
-      setState(() => _status = 'Default value is outside the allowed range');
-      return;
-    }
-    _commit(
-      _document.copyWith(
-        parameters: <FamilyParameterDefinition>[
-          ..._document.parameters,
-          definition,
-        ],
-        types: <FamilyTypeDefinition>[
-          for (final type in _document.types)
-            type.copyWith(values: <String, Object?>{
-              ...type.values,
-              definition.id: definition.defaultValue,
-            }),
-        ],
-      ),
-      status: '${definition.label} parameter added',
+    final candidate = _document.copyWith(
+      parameters: <FamilyParameterDefinition>[..._document.parameters, definition],
+      types: <FamilyTypeDefinition>[
+        for (final type in _document.types)
+          type.copyWith(values: <String, Object?>{
+            ...type.values,
+            definition.id: definition.defaultValue,
+          }),
+      ],
     );
+    if (!_acceptCandidate(candidate)) return;
+    _commit(candidate, status: '${definition.label} parameter added');
   }
 
   Future<void> _editParameter(FamilyParameterDefinition parameter) async {
+    final core = _isCoreDimension(parameter.id);
     final result = await showDialog<_ParameterDraft>(
       context: context,
-      builder: (_) => _ParameterDialog(parameter: parameter),
+      builder: (_) => _ParameterDialog(
+        parameter: parameter,
+        lockKind: core,
+      ),
     );
     if (!mounted || result == null) return;
     final replacement = FamilyParameterDefinition(
       id: parameter.id,
       label: result.label.trim(),
-      kind: result.kind,
+      kind: core ? FamilyParameterKind.length : result.kind,
       defaultValue: result.defaultValue,
       minimum: result.minimum,
       maximum: result.maximum,
+      formula: result.formula,
     );
-    if (!_validParameterValue(replacement, replacement.defaultValue)) {
-      setState(() => _status = 'Default value is outside the allowed range');
-      return;
-    }
     final nextTypes = <FamilyTypeDefinition>[];
     for (final type in _document.types) {
       final raw = type.values[parameter.id] ?? replacement.defaultValue;
@@ -310,24 +375,23 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
         }),
       );
     }
-    _commit(
-      _document.copyWith(
-        parameters: <FamilyParameterDefinition>[
-          for (final current in _document.parameters)
-            current.id == parameter.id ? replacement : current,
-        ],
-        types: nextTypes,
-      ),
-      status: '${replacement.label} updated',
+    final candidate = _document.copyWith(
+      parameters: <FamilyParameterDefinition>[
+        for (final current in _document.parameters)
+          current.id == parameter.id ? replacement : current,
+      ],
+      types: nextTypes,
     );
+    if (!_acceptCandidate(candidate)) return;
+    _commit(candidate, status: '${replacement.label} updated');
   }
 
   Future<void> _deleteParameter(FamilyParameterDefinition parameter) async {
-    if (<String>{'width', 'depth', 'height'}.contains(parameter.id)) {
+    if (_isCoreDimension(parameter.id)) {
       setState(() => _status = 'Core dimensions cannot be removed');
       return;
     }
-    if (_parameterIsReferenced(parameter.id)) {
+    if (_parameterUsedByFeature(parameter.id)) {
       setState(() => _status =
           '${parameter.label} is used by the feature graph and cannot be removed');
       return;
@@ -336,7 +400,9 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: Text('Delete ${parameter.label}?'),
-        content: const Text('The value will be removed from every family type.'),
+        content: const Text(
+          'The parameter and its value will be removed from every family type.',
+        ),
         actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(false),
@@ -350,25 +416,32 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
       ),
     );
     if (!mounted || remove != true) return;
-    _commit(
-      _document.copyWith(
-        parameters: <FamilyParameterDefinition>[
-          for (final current in _document.parameters)
-            if (current.id != parameter.id) current,
-        ],
-        types: <FamilyTypeDefinition>[
-          for (final type in _document.types)
-            type.copyWith(values: <String, Object?>{
-              for (final entry in type.values.entries)
-                if (entry.key != parameter.id) entry.key: entry.value,
-            }),
-        ],
-      ),
-      status: '${parameter.label} deleted',
+    final candidate = _document.copyWith(
+      parameters: <FamilyParameterDefinition>[
+        for (final current in _document.parameters)
+          if (current.id != parameter.id) current,
+      ],
+      types: <FamilyTypeDefinition>[
+        for (final type in _document.types)
+          type.copyWith(values: <String, Object?>{
+            for (final entry in type.values.entries)
+              if (entry.key != parameter.id) entry.key: entry.value,
+          }),
+      ],
     );
+    // This also catches formulas that still depend on the deleted id.
+    if (!_acceptCandidate(candidate)) return;
+    _commit(candidate, status: '${parameter.label} deleted');
   }
 
-  bool _parameterIsReferenced(String id) {
+  bool _acceptCandidate(FamilyDocument candidate) {
+    final validation = FamilyDocumentValidator.validate(candidate);
+    if (validation.isValid) return true;
+    setState(() => _status = validation.errors.first);
+    return false;
+  }
+
+  bool _parameterUsedByFeature(String id) {
     for (final feature in _document.features) {
       for (final value in feature.parameters.values) {
         if (value == id) return true;
@@ -427,18 +500,22 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
         ],
       );
     }
-    final feature = FamilyFeature(
-      id: 'feature-${DateTime.now().microsecondsSinceEpoch}',
-      kind: FamilyFeatureKind.extrude,
-      label: 'Extrude ${sketch.name}',
-      inputs: <String>[sketch.id],
-      parameters: <String, Object?>{
-        'profileId': sketch.id,
-        'depth': parameterId,
-      },
-    );
     _commit(
-      document.copyWith(features: <FamilyFeature>[...document.features, feature]),
+      document.copyWith(
+        features: <FamilyFeature>[
+          ...document.features,
+          FamilyFeature(
+            id: 'feature-${DateTime.now().microsecondsSinceEpoch}',
+            kind: FamilyFeatureKind.extrude,
+            label: 'Extrude ${sketch.name}',
+            inputs: <String>[sketch.id],
+            parameters: <String, Object?>{
+              'profileId': sketch.id,
+              'depth': parameterId,
+            },
+          ),
+        ],
+      ),
     );
   }
 
@@ -470,18 +547,22 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
         ],
       );
     }
-    final feature = FamilyFeature(
-      id: 'feature-${DateTime.now().microsecondsSinceEpoch}',
-      kind: FamilyFeatureKind.revolve,
-      label: 'Revolve ${sketch.name}',
-      inputs: <String>[sketch.id],
-      parameters: <String, Object?>{
-        'profileId': sketch.id,
-        'angle': parameterId,
-      },
-    );
     _commit(
-      document.copyWith(features: <FamilyFeature>[...document.features, feature]),
+      document.copyWith(
+        features: <FamilyFeature>[
+          ...document.features,
+          FamilyFeature(
+            id: 'feature-${DateTime.now().microsecondsSinceEpoch}',
+            kind: FamilyFeatureKind.revolve,
+            label: 'Revolve ${sketch.name}',
+            inputs: <String>[sketch.id],
+            parameters: <String, Object?>{
+              'profileId': sketch.id,
+              'angle': parameterId,
+            },
+          ),
+        ],
+      ),
     );
   }
 
@@ -491,9 +572,6 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
       setState(() => _status = 'Create two solid features before a boolean');
       return;
     }
-    final approximate = kind == FamilyFeatureKind.booleanSubtract
-        ? 'Subtract preview is approximate until exact CSG is connected'
-        : 'Union preview is approximate until exact CSG is connected';
     _commit(
       _document.copyWith(
         features: <FamilyFeature>[
@@ -509,7 +587,7 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
           ),
         ],
       ),
-      status: approximate,
+      status: 'Boolean preview remains approximate until exact CSG is connected',
     );
   }
 
@@ -549,7 +627,7 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
         builder: (dialogContext) => AlertDialog(
           title: const Text('Replace current family?'),
           content: const Text(
-            'Importing a GLB/glTF model creates a new freeform-mesh family in this editor. Save current changes first if you need them.',
+            'Importing a GLB/glTF model starts a new freeform-mesh family. Save current changes first if you need them.',
           ),
           actions: <Widget>[
             TextButton(
@@ -575,14 +653,17 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
       }
       _undo.add(_document);
       _redo.clear();
-      setState(() {
-        _document = imported.document;
-        _selectedTypeId = _document.types.first.id;
-        _selectedSketchId = null;
-        _dirty = true;
-        _status =
-            'Imported ${imported.vertexCount} vertices · ${imported.faceCount} faces';
-      });
+      _assetPath = null;
+      _selectedTypeId = imported.document.types.first.id;
+      _selectedSketchId = null;
+      _nameController.text = imported.document.name;
+      _descriptionController.text = imported.document.description;
+      _setDocument(
+        imported.document,
+        dirty: true,
+        status:
+            'Imported ${imported.vertexCount} vertices · ${imported.faceCount} faces',
+      );
     } catch (error) {
       if (mounted) setState(() => _status = 'Import failed: $error');
     }
@@ -634,19 +715,32 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
   }
 
   Future<bool> _save() async {
-    final validation = FamilyDocumentValidator.validate(_document);
+    FocusManager.instance.primaryFocus?.unfocus();
+    final candidate = _withLiveMetadata(_document);
+    final validation = FamilyDocumentValidator.validate(candidate);
     if (!validation.isValid) {
-      setState(() => _status = validation.errors.first);
+      _setDocument(
+        candidate,
+        dirty: true,
+        status: validation.errors.first,
+      );
       return false;
     }
     setState(() => _status = 'Saving family...');
     try {
-      final path = await FamilyFileStore.save(_document);
+      final path = _assetPath == null
+          ? await FamilyFileStore.save(candidate)
+          : await FamilyFileStore.saveAsset(
+              candidate,
+              existingPath: _assetPath!,
+            );
       if (!mounted || path == null) return false;
-      setState(() {
-        _dirty = false;
-        _status = 'Saved: ${path.split('/').last}';
-      });
+      _assetPath = path;
+      _setDocument(
+        candidate,
+        dirty: false,
+        status: 'Saved: ${path.split('/').last}',
+      );
       return true;
     } catch (error) {
       if (mounted) setState(() => _status = 'Save failed: $error');
@@ -682,11 +776,10 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
     );
     if (!mounted || action == null) return;
     if (action == _CloseAction.save) {
-      if (await _save() && mounted) Navigator.of(context).pop();
+      if (await _save() && mounted) Navigator.of(context).pop(true);
       return;
     }
-    setState(() => _dirty = false);
-    if (mounted) Navigator.of(context).pop();
+    if (mounted) Navigator.of(context).pop(false);
   }
 
   @override
@@ -701,7 +794,7 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
       },
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('Family Editor V2'),
+          title: Text(widget.initialAsset == null ? 'Family Editor' : 'Edit Family'),
           leading: IconButton(
             tooltip: 'Close family',
             onPressed: _requestClose,
@@ -709,12 +802,12 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
           ),
           actions: <Widget>[
             IconButton(
-              tooltip: 'Undo',
+              tooltip: 'Undo structural change',
               onPressed: _undo.isEmpty ? null : _undoChange,
               icon: const Icon(Icons.undo_outlined),
             ),
             IconButton(
-              tooltip: 'Redo',
+              tooltip: 'Redo structural change',
               onPressed: _redo.isEmpty ? null : _redoChange,
               icon: const Icon(Icons.redo_outlined),
             ),
@@ -741,7 +834,7 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
             FilledButton.icon(
               onPressed: _save,
               icon: const Icon(Icons.save_outlined),
-              label: Text(_dirty ? 'Save to library' : 'Saved'),
+              label: Text(_dirty ? 'Save' : 'Saved'),
             ),
             const SizedBox(width: 12),
           ],
@@ -766,7 +859,7 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[
                   SizedBox(
-                    width: 440,
+                    width: 460,
                     child: SingleChildScrollView(child: editor),
                   ),
                   const VerticalDivider(width: 1),
@@ -806,19 +899,18 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
           _section(
             context,
             title: 'Family',
-            subtitle: 'Reusable metadata',
+            subtitle: 'Reusable identity and category',
             child: Column(
               children: <Widget>[
-                TextFormField(
-                  key: ValueKey<String>('name:${_document.name}'),
-                  initialValue: _document.name,
+                TextField(
+                  controller: _nameController,
                   decoration: const InputDecoration(
                     labelText: 'Family name',
                     border: OutlineInputBorder(),
                   ),
-                  onFieldSubmitted: (value) {
-                    final name = value.trim();
-                    if (name.isNotEmpty) _commit(_document.copyWith(name: name));
+                  onChanged: (_) {
+                    _markMetadataDirty();
+                    setState(() {});
                   },
                 ),
                 const SizedBox(height: 8),
@@ -843,17 +935,15 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
                   },
                 ),
                 const SizedBox(height: 8),
-                TextFormField(
-                  key: ValueKey<String>('description:${_document.description}'),
-                  initialValue: _document.description,
+                TextField(
+                  controller: _descriptionController,
                   minLines: 2,
-                  maxLines: 3,
+                  maxLines: 4,
                   decoration: const InputDecoration(
                     labelText: 'Description',
                     border: OutlineInputBorder(),
                   ),
-                  onFieldSubmitted: (value) =>
-                      _commit(_document.copyWith(description: value.trim())),
+                  onChanged: (_) => _markMetadataDirty(),
                 ),
               ],
             ),
@@ -862,7 +952,7 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
           _section(
             context,
             title: 'Family types',
-            subtitle: '${_document.types.length} reusable configurations',
+            subtitle: '${_document.types.length} reusable configuration${_document.types.length == 1 ? '' : 's'}',
             child: Column(
               children: <Widget>[
                 Row(
@@ -912,11 +1002,13 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
                     padding: const EdgeInsets.only(bottom: 8),
                     child: _ParameterValueEditor(
                       key: ValueKey<String>(
-                        '${_selectedType.id}:${parameter.id}:${_selectedType.valueFor(parameter)}',
+                        '${_selectedType.id}:${parameter.id}:${parameter.formula}',
                       ),
                       parameter: parameter,
-                      value: _selectedType.valueFor(parameter),
-                      onChanged: (value) => _updateTypeValue(parameter, value),
+                      rawValue: _selectedType.valueFor(parameter),
+                      effectiveValue: _effectiveValue(parameter),
+                      onChanged: (value) =>
+                          _updateTypeValueDraft(parameter, value),
                     ),
                   ),
               ],
@@ -927,7 +1019,7 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
             _section(
               context,
               title: 'Parameter definitions',
-              subtitle: 'Generic reusable parameter contract',
+              subtitle: 'Types, limits and deterministic formulas',
               child: Column(
                 children: <Widget>[
                   Align(
@@ -945,8 +1037,9 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
                       leading: Icon(_parameterIcon(parameter.kind)),
                       title: Text(parameter.label),
                       subtitle: Text(
-                        '${parameter.id} · ${parameter.kind.name}${_rangeText(parameter)}',
+                        '${parameter.id} · ${parameter.kind.name}${_rangeText(parameter)}${parameter.hasFormula ? '\n= ${parameter.formula}' : ''}',
                       ),
+                      isThreeLine: parameter.hasFormula,
                       trailing: Wrap(
                         spacing: 2,
                         children: <Widget>[
@@ -957,7 +1050,9 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
                           ),
                           IconButton(
                             tooltip: 'Delete parameter',
-                            onPressed: () => _deleteParameter(parameter),
+                            onPressed: _isCoreDimension(parameter.id)
+                                ? null
+                                : () => _deleteParameter(parameter),
                             icon: const Icon(Icons.delete_outline),
                           ),
                         ],
@@ -999,7 +1094,8 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
                         label: const Text('Revolve'),
                       ),
                       OutlinedButton.icon(
-                        onPressed: () => _addBoolean(FamilyFeatureKind.booleanUnion),
+                        onPressed: () =>
+                            _addBoolean(FamilyFeatureKind.booleanUnion),
                         icon: const Icon(Icons.merge_type_outlined),
                         label: const Text('Union'),
                       ),
@@ -1071,12 +1167,12 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
             _section(
               context,
               title: 'Quick content',
-              subtitle: 'Fast path for furniture and other authored assets',
+              subtitle: 'Fast path for authored furniture and equipment',
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[
                   const Text(
-                    'For a normal chair, table, cabinet or appliance: model it in Blender, import GLB/glTF, choose category and dimensions, then save. No Dart code or app rebuild is required.',
+                    'Model in Blender, import GLB/glTF, choose category and type dimensions, then save. The reusable asset is data-driven; no Dart change or app rebuild is required.',
                   ),
                   const SizedBox(height: 10),
                   FilledButton.tonalIcon(
@@ -1121,7 +1217,9 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
                 Text(
-                  _document.name,
+                  _nameController.text.trim().isEmpty
+                      ? _document.name
+                      : _nameController.text.trim(),
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
                         fontWeight: FontWeight.w700,
                       ),
@@ -1235,6 +1333,7 @@ final class _ParameterDraft {
     required this.defaultValue,
     this.minimum,
     this.maximum,
+    this.formula,
   });
 
   final String label;
@@ -1242,12 +1341,17 @@ final class _ParameterDraft {
   final Object? defaultValue;
   final double? minimum;
   final double? maximum;
+  final String? formula;
 }
 
 class _ParameterDialog extends StatefulWidget {
-  const _ParameterDialog({this.parameter});
+  const _ParameterDialog({
+    this.parameter,
+    this.lockKind = false,
+  });
 
   final FamilyParameterDefinition? parameter;
+  final bool lockKind;
 
   @override
   State<_ParameterDialog> createState() => _ParameterDialogState();
@@ -1258,6 +1362,7 @@ class _ParameterDialogState extends State<_ParameterDialog> {
   late final TextEditingController _default;
   late final TextEditingController _minimum;
   late final TextEditingController _maximum;
+  late final TextEditingController _formula;
   late FamilyParameterKind _kind;
 
   @override
@@ -1268,6 +1373,7 @@ class _ParameterDialogState extends State<_ParameterDialog> {
     _default = TextEditingController(text: '${parameter?.defaultValue ?? 1.0}');
     _minimum = TextEditingController(text: parameter?.minimum?.toString() ?? '');
     _maximum = TextEditingController(text: parameter?.maximum?.toString() ?? '');
+    _formula = TextEditingController(text: parameter?.formula ?? '');
     _kind = parameter?.kind ?? FamilyParameterKind.number;
   }
 
@@ -1277,6 +1383,7 @@ class _ParameterDialogState extends State<_ParameterDialog> {
     _default.dispose();
     _minimum.dispose();
     _maximum.dispose();
+    _formula.dispose();
     super.dispose();
   }
 
@@ -1284,10 +1391,13 @@ class _ParameterDialogState extends State<_ParameterDialog> {
     switch (_kind) {
       case FamilyParameterKind.boolean:
         final text = _default.text.trim().toLowerCase();
-        return text == 'true' || text == '1' || text == 'yes';
+        if (<String>{'true', '1', 'yes'}.contains(text)) return true;
+        if (<String>{'false', '0', 'no'}.contains(text)) return false;
+        return null;
       case FamilyParameterKind.text:
       case FamilyParameterKind.material:
-        return _default.text.trim();
+        final text = _default.text.trim();
+        return text.isEmpty ? null : text;
       case FamilyParameterKind.length:
       case FamilyParameterKind.number:
       case FamilyParameterKind.angle:
@@ -1297,13 +1407,11 @@ class _ParameterDialogState extends State<_ParameterDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final numeric = _kind == FamilyParameterKind.length ||
-        _kind == FamilyParameterKind.number ||
-        _kind == FamilyParameterKind.angle;
+    final numeric = _isNumericKind(_kind);
     return AlertDialog(
       title: Text(widget.parameter == null ? 'Add parameter' : 'Edit parameter'),
       content: SizedBox(
-        width: 420,
+        width: 440,
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -1318,9 +1426,12 @@ class _ParameterDialogState extends State<_ParameterDialog> {
               const SizedBox(height: 8),
               DropdownButtonFormField<FamilyParameterKind>(
                 initialValue: _kind,
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   labelText: 'Kind',
-                  border: OutlineInputBorder(),
+                  border: const OutlineInputBorder(),
+                  helperText: widget.lockKind
+                      ? 'Core dimensions must remain length parameters.'
+                      : null,
                 ),
                 items: FamilyParameterKind.values
                     .map(
@@ -1330,9 +1441,11 @@ class _ParameterDialogState extends State<_ParameterDialog> {
                       ),
                     )
                     .toList(growable: false),
-                onChanged: (kind) {
-                  if (kind != null) setState(() => _kind = kind);
-                },
+                onChanged: widget.lockKind
+                    ? null
+                    : (kind) {
+                        if (kind != null) setState(() => _kind = kind);
+                      },
               ),
               const SizedBox(height: 8),
               TextField(
@@ -1350,7 +1463,7 @@ class _ParameterDialogState extends State<_ParameterDialog> {
                       child: TextField(
                         controller: _minimum,
                         keyboardType:
-                            const TextInputType.numberWithOptions(decimal: true),
+                            const TextInputType.numberWithOptions(decimal: true, signed: true),
                         decoration: const InputDecoration(
                           labelText: 'Minimum (optional)',
                           border: OutlineInputBorder(),
@@ -1362,7 +1475,7 @@ class _ParameterDialogState extends State<_ParameterDialog> {
                       child: TextField(
                         controller: _maximum,
                         keyboardType:
-                            const TextInputType.numberWithOptions(decimal: true),
+                            const TextInputType.numberWithOptions(decimal: true, signed: true),
                         decoration: const InputDecoration(
                           labelText: 'Maximum (optional)',
                           border: OutlineInputBorder(),
@@ -1370,6 +1483,17 @@ class _ParameterDialogState extends State<_ParameterDialog> {
                       ),
                     ),
                   ],
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _formula,
+                  decoration: const InputDecoration(
+                    labelText: 'Formula (optional)',
+                    hintText: 'width / 2  or  max(depth * 3, 2)',
+                    helperText:
+                        'Supports parameter ids, + − × ÷, parentheses, pi, min, max, abs and clamp.',
+                    border: OutlineInputBorder(),
+                  ),
                 ),
               ],
             ],
@@ -1391,6 +1515,7 @@ class _ParameterDialogState extends State<_ParameterDialog> {
             final maximum = _maximum.text.trim().isEmpty
                 ? null
                 : double.tryParse(_maximum.text.trim().replaceAll(',', '.'));
+            final formula = numeric ? _formula.text.trim() : '';
             if (label.isEmpty || defaultValue == null) return;
             if (minimum != null && maximum != null && minimum > maximum) return;
             Navigator.of(context).pop(
@@ -1400,6 +1525,7 @@ class _ParameterDialogState extends State<_ParameterDialog> {
                 defaultValue: defaultValue,
                 minimum: numeric ? minimum : null,
                 maximum: numeric ? maximum : null,
+                formula: formula.isEmpty ? null : formula,
               ),
             );
           },
@@ -1410,59 +1536,108 @@ class _ParameterDialogState extends State<_ParameterDialog> {
   }
 }
 
-class _ParameterValueEditor extends StatelessWidget {
+class _ParameterValueEditor extends StatefulWidget {
   const _ParameterValueEditor({
     super.key,
     required this.parameter,
-    required this.value,
+    required this.rawValue,
+    required this.effectiveValue,
     required this.onChanged,
   });
 
   final FamilyParameterDefinition parameter;
-  final Object? value;
+  final Object? rawValue;
+  final Object? effectiveValue;
   final ValueChanged<Object?> onChanged;
 
   @override
+  State<_ParameterValueEditor> createState() => _ParameterValueEditorState();
+}
+
+class _ParameterValueEditorState extends State<_ParameterValueEditor> {
+  late TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: _displayRawValue(widget));
+  }
+
+  @override
+  void didUpdateWidget(covariant _ParameterValueEditor oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.rawValue != widget.rawValue ||
+        oldWidget.parameter.formula != widget.parameter.formula) {
+      final text = _displayRawValue(widget);
+      if (_controller.text != text) _controller.text = text;
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final parameter = widget.parameter;
+    if (parameter.hasFormula) {
+      return TextFormField(
+        initialValue: '${widget.effectiveValue ?? 'invalid'}',
+        readOnly: true,
+        decoration: InputDecoration(
+          labelText: parameter.label,
+          helperText: '${parameter.id} = ${parameter.formula}',
+          suffixText: _suffix(parameter.kind),
+          prefixIcon: const Icon(Icons.functions),
+          border: const OutlineInputBorder(),
+          isDense: true,
+        ),
+      );
+    }
     if (parameter.kind == FamilyParameterKind.boolean) {
-      final checked = value == true || value.toString().toLowerCase() == 'true';
+      final checked = widget.rawValue == true ||
+          widget.rawValue.toString().toLowerCase() == 'true';
       return SwitchListTile(
         contentPadding: const EdgeInsets.symmetric(horizontal: 4),
         title: Text(parameter.label),
         subtitle: Text(parameter.id),
         value: checked,
-        onChanged: onChanged,
+        onChanged: widget.onChanged,
       );
     }
-    final numeric = parameter.kind == FamilyParameterKind.length ||
-        parameter.kind == FamilyParameterKind.number ||
-        parameter.kind == FamilyParameterKind.angle;
-    final suffix = switch (parameter.kind) {
-      FamilyParameterKind.length => 'm',
-      FamilyParameterKind.angle => '°',
-      _ => null,
-    };
-    return TextFormField(
-      initialValue: value?.toString() ?? '',
+
+    final numeric = _isNumericKind(parameter.kind);
+    return TextField(
+      controller: _controller,
       keyboardType: numeric
           ? const TextInputType.numberWithOptions(decimal: true, signed: true)
           : TextInputType.text,
       decoration: InputDecoration(
         labelText: parameter.label,
         helperText: parameter.id,
-        suffixText: suffix,
+        suffixText: _suffix(parameter.kind),
         border: const OutlineInputBorder(),
         isDense: true,
       ),
-      onFieldSubmitted: (raw) {
+      onChanged: (raw) {
         if (!numeric) {
-          onChanged(raw.trim());
+          final value = raw.trim();
+          if (value.isNotEmpty) widget.onChanged(value);
           return;
         }
         final parsed = double.tryParse(raw.trim().replaceAll(',', '.'));
-        if (parsed != null && parsed.isFinite) onChanged(parsed);
+        if (parsed != null && parsed.isFinite) widget.onChanged(parsed);
       },
     );
+  }
+
+  static String _displayRawValue(_ParameterValueEditor widget) {
+    final value = widget.parameter.hasFormula
+        ? widget.effectiveValue
+        : widget.rawValue;
+    return value?.toString() ?? '';
   }
 }
 
@@ -1546,7 +1721,7 @@ bool _validParameterValue(FamilyParameterDefinition parameter, Object? value) {
   switch (parameter.kind) {
     case FamilyParameterKind.text:
     case FamilyParameterKind.material:
-      return value.toString().trim().isNotEmpty;
+      return value is String && value.trim().isNotEmpty;
     case FamilyParameterKind.boolean:
       return value is bool;
     case FamilyParameterKind.length:
@@ -1567,7 +1742,8 @@ Object? _coerceValue(FamilyParameterKind kind, Object? raw) {
     case FamilyParameterKind.material:
       return raw?.toString() ?? '';
     case FamilyParameterKind.boolean:
-      return raw == true || raw.toString().toLowerCase() == 'true';
+      final text = raw.toString().toLowerCase();
+      return raw == true || text == 'true' || text == '1' || text == 'yes';
     case FamilyParameterKind.length:
     case FamilyParameterKind.number:
     case FamilyParameterKind.angle:
@@ -1604,6 +1780,14 @@ List<FamilyParameterDefinition> _orderedParameters(
   ];
 }
 
+bool _isCoreDimension(String id) =>
+    id == 'width' || id == 'depth' || id == 'height';
+
+bool _isNumericKind(FamilyParameterKind kind) =>
+    kind == FamilyParameterKind.length ||
+    kind == FamilyParameterKind.number ||
+    kind == FamilyParameterKind.angle;
+
 bool _isSolidFeature(FamilyFeature feature) =>
     feature.kind == FamilyFeatureKind.box ||
     feature.kind == FamilyFeatureKind.extrude ||
@@ -1617,6 +1801,12 @@ String _rangeText(FamilyParameterDefinition parameter) {
   if (parameter.minimum == null && parameter.maximum == null) return '';
   return ' · ${parameter.minimum ?? '−∞'}…${parameter.maximum ?? '∞'}';
 }
+
+String? _suffix(FamilyParameterKind kind) => switch (kind) {
+      FamilyParameterKind.length => 'm',
+      FamilyParameterKind.angle => '°',
+      _ => null,
+    };
 
 IconData _parameterIcon(FamilyParameterKind kind) => switch (kind) {
       FamilyParameterKind.length => Icons.straighten,
