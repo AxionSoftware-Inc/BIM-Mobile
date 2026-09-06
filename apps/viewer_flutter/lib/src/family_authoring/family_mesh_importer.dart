@@ -514,28 +514,28 @@ final class _GltfMeshBuilder {
   }
 
   List<List<int>> _triangles(List<int> indices, int mode) {
-    final result = <List<int>>[];
     switch (mode) {
       case 4: // TRIANGLES
-        for (var index = 0; index + 2 < indices.length; index += 3) {
-          result.add(
-              <int>[indices[index], indices[index + 1], indices[index + 2]]);
-        }
+        return <List<int>>[
+          for (var index = 0; index + 2 < indices.length; index += 3)
+            <int>[indices[index], indices[index + 1], indices[index + 2]],
+        ];
       case 5: // TRIANGLE_STRIP
-        for (var index = 0; index + 2 < indices.length; index++) {
-          result.add(index.isEven
-              ? <int>[indices[index], indices[index + 1], indices[index + 2]]
-              : <int>[indices[index + 1], indices[index], indices[index + 2]]);
-        }
+        return <List<int>>[
+          for (var index = 0; index + 2 < indices.length; index++)
+            index.isEven
+                ? <int>[indices[index], indices[index + 1], indices[index + 2]]
+                : <int>[indices[index + 1], indices[index], indices[index + 2]],
+        ];
       case 6: // TRIANGLE_FAN
-        for (var index = 1; index + 1 < indices.length; index++) {
-          result.add(<int>[indices.first, indices[index], indices[index + 1]]);
-        }
+        return <List<int>>[
+          for (var index = 1; index + 1 < indices.length; index++)
+            <int>[indices.first, indices[index], indices[index + 1]],
+        ];
       default:
         // POINTS, LINES and LINE_STRIP have no filled faces for Family mesh.
-        break;
+        return const <List<int>>[];
     }
-    return result;
   }
 
   List<List<double>> _readAccessor(
