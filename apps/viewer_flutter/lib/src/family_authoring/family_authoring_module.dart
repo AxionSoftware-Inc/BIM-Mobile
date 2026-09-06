@@ -18,6 +18,7 @@ export 'family_file_store.dart';
 export 'family_geometry.dart';
 export 'family_library_dialog.dart';
 export 'family_mesh_importer.dart';
+export 'family_parameter_authoring.dart';
 export 'family_parameter_resolver.dart';
 export 'family_plan_symbol.dart';
 export 'family_render_scene_adapter.dart';
