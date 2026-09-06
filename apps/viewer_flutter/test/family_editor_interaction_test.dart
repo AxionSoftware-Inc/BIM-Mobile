@@ -1,121 +1,126 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:viewer_flutter/src/family_authoring/family_authoring_module.dart';
 
 void main() {
-  testWidgets('family preview supports orbit gestures and reset controls',
-      (tester) async {
-    final family = FamilyDocument.starter(name: 'Orbit Family');
-    final mesh = FamilyGeometryEvaluator.evaluateMesh(
+  test('family RenderScene adapter preserves physical XYZ dimensions', () {
+    final family = FamilyDocument.starter(name: 'Viewport Family');
+    final mesh = FamilyGeometryEvaluator.evaluateMesh(family, family.types.single);
+    final scene = FamilyRenderSceneAdapter.build(
       family,
       family.types.single,
+      mesh: mesh,
     );
 
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: SizedBox(
-            width: 600,
-            height: 420,
-            child: FamilyInteractivePreview(
-              mesh: mesh,
-              lineColor: Colors.black,
-              fillColor: Colors.blue.withValues(alpha: 0.2),
-              background: Colors.white,
-            ),
-          ),
-        ),
-      ),
-    );
-
-    expect(find.textContaining('Drag: orbit'), findsOneWidget);
-    await tester.drag(find.byType(FamilyInteractivePreview), const Offset(80, 45));
-    await tester.pump();
-    expect(tester.takeException(), isNull);
-
-    await tester.tap(find.byTooltip('Zoom in'));
-    await tester.pump();
-    await tester.tap(find.byTooltip('Reset 3D view'));
-    await tester.pump();
-    expect(tester.takeException(), isNull);
+    expect(scene.objects, hasLength(1));
+    expect(scene.objects.single.kindKey, 'proxy');
+    expect(scene.objects.single.metadata['family_editor_preview'], true);
+    expect(scene.bounds.width, closeTo(1.0, 1e-9));
+    expect(scene.bounds.depth, closeTo(1.0, 1e-9));
+    expect(scene.bounds.height, closeTo(1.0, 1e-9));
+    expect(scene.indexCount % 3, 0);
+    expect(scene.indexCount, greaterThanOrEqualTo(36));
   });
 
-  testWidgets('boolean feature exposes editable ordered operands',
-      (tester) async {
-    final starter = FamilyDocument.starter(name: 'Boolean Family');
-    final base = starter.features.single;
-    final moved = FamilyFeature(
-      id: 'moved-box',
-      kind: FamilyFeatureKind.transform,
-      label: 'Moved box',
-      inputs: <String>[base.id],
-      parameters: const <String, Object?>{
-        'translationX': 0.3,
-        'translationY': 0.0,
-        'translationZ': 0.0,
-        'rotationZ': 0.0,
-        'scale': 0.6,
-      },
-    );
-    final subtract = FamilyFeature(
-      id: 'subtract',
-      kind: FamilyFeatureKind.booleanSubtract,
-      label: 'Cut opening',
-      inputs: <String>[base.id, moved.id],
-      parameters: const <String, Object?>{'operation': 'booleanSubtract'},
-    );
-    final document = starter.copyWith(
-      features: <FamilyFeature>[base, moved, subtract],
-    );
+  group('Family Editor V4 screen workflow', () {
+    setUp(() {
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    });
 
-    FamilyDocument? changed;
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: SingleChildScrollView(
-            child: FamilyFeatureWorkbench(
-              document: document,
-              selectedFeatureId: subtract.id,
-              onSelected: (_) {},
-              onChanged: (next, _) => changed = next,
-              onStatus: (_) {},
-            ),
-          ),
-        ),
-      ),
-    );
+    tearDown(() {
+      debugDefaultTargetPlatformOverride = null;
+    });
 
-    expect(find.text('Cut opening'), findsWidgets);
-    await tester.tap(find.text('Edit'));
-    await tester.pumpAndSettle();
-    expect(find.text('Base / left'), findsOneWidget);
-    expect(find.text('Tool / right'), findsOneWidget);
-    expect(find.byTooltip('Swap operands'), findsOneWidget);
+    testWidgets('legacy route opens task-oriented V4 with shared project viewport',
+        (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1400, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
 
-    await tester.tap(find.byTooltip('Swap operands'));
-    await tester.tap(find.text('Apply'));
-    await tester.pumpAndSettle();
+      await tester.pumpWidget(
+        const MaterialApp(home: FamilyEditorV2Page()),
+      );
+      await tester.pumpAndSettle();
 
-    expect(changed, isNotNull);
-    final edited = changed!.features.last;
-    expect(edited.inputs, <String>[moved.id, base.id]);
-  });
+      expect(find.text('Family Editor'), findsOneWidget);
+      expect(find.byType(FamilyAuthoringViewport), findsOneWidget);
+      expect(find.text('Project viewport · Family preview'), findsOneWidget);
+      expect(find.text('Start here'), findsOneWidget);
+      expect(find.text('History · tap a feature to inspect or edit it'), findsOneWidget);
+      expect(find.text('Simple'), findsNothing);
+      expect(find.text('Advanced'), findsNothing);
+    });
 
-  testWidgets('legacy FamilyEditorV2 route opens interactive V3 shell',
-      (tester) async {
-    await tester.pumpWidget(
-      const MaterialApp(home: FamilyEditorV2Page()),
-    );
-    await tester.pump();
+    testWidgets('profile can be drawn, closed and extruded entirely from UI',
+        (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1400, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(const MaterialApp(home: FamilyEditorV2Page()));
+      await tester.pumpAndSettle();
 
-    expect(find.text('Family Editor'), findsOneWidget);
-    expect(find.text('Simple'), findsOneWidget);
-    expect(find.textContaining('Drag: orbit'), findsOneWidget);
+      await tester.tap(find.byIcon(Icons.polyline_outlined).first);
+      await tester.pumpAndSettle();
+      expect(find.byType(FamilySketchCanvas), findsOneWidget);
+      expect(find.textContaining('Sketch mode ·'), findsOneWidget);
 
-    await tester.tap(find.text('Advanced'));
-    await tester.pumpAndSettle();
-    expect(find.text('Geometry'), findsOneWidget);
-    expect(find.text('Feature graph'), findsOneWidget);
+      final rect = tester.getRect(find.byType(FamilySketchCanvas));
+      await tester.tapAt(Offset(rect.left + rect.width * 0.30, rect.top + rect.height * 0.32));
+      await tester.pump();
+      await tester.tapAt(Offset(rect.left + rect.width * 0.70, rect.top + rect.height * 0.32));
+      await tester.pump();
+      await tester.tapAt(Offset(rect.left + rect.width * 0.70, rect.top + rect.height * 0.68));
+      await tester.pump();
+      await tester.tapAt(Offset(rect.left + rect.width * 0.30, rect.top + rect.height * 0.68));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Close profile').first);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('4 points · Closed'), findsOneWidget);
+
+      await tester.tap(find.text('Finish').first);
+      await tester.pumpAndSettle();
+      expect(find.byType(FamilyAuthoringViewport), findsOneWidget);
+
+      await tester.tap(find.byIcon(Icons.height).first);
+      await tester.pumpAndSettle();
+      expect(find.text('1 · Profile'), findsOneWidget);
+      expect(find.text('2 · Depth'), findsOneWidget);
+      expect(find.text('3 · Create Extrude'), findsOneWidget);
+
+      await tester.tap(find.text('3 · Create Extrude'));
+      await tester.pumpAndSettle();
+      expect(find.text('Extrude'), findsWidgets);
+      expect(find.textContaining('Extrude created.'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('transform creates second solid and subtract is actionable inline',
+        (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1400, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(const MaterialApp(home: FamilyEditorV2Page()));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.open_with_outlined).first);
+      await tester.pumpAndSettle();
+      expect(find.text('Create Transform'), findsOneWidget);
+      await tester.enterText(find.widgetWithText(TextField, 'X'), '0.25');
+      await tester.tap(find.text('Create Transform'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Transform created.'), findsOneWidget);
+
+      await tester.tap(find.byIcon(Icons.call_split_outlined).first);
+      await tester.pumpAndSettle();
+      expect(find.text('1 · Base solid'), findsOneWidget);
+      expect(find.text('2 · Tool to remove'), findsOneWidget);
+      expect(find.text('3 · Create Subtract'), findsOneWidget);
+
+      await tester.tap(find.text('3 · Create Subtract'));
+      await tester.pumpAndSettle();
+      expect(find.text('Subtract'), findsWidgets);
+      expect(find.textContaining('Subtract created.'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
   });
 }
