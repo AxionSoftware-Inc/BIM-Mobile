@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'family_editor_v2_page.dart';
+import 'family_editor_v5_page.dart';
 
 export 'family_authoring_scene_builder.dart';
 export 'family_authoring_viewport.dart';
@@ -14,26 +14,28 @@ export 'family_editor_v2_page.dart';
 export 'family_editor_v3_page.dart';
 export 'family_editor_v4_page.dart';
 export 'family_editor_v5_page.dart';
-export 'family_feature_workbench.dart';
 export 'family_file_store.dart';
 export 'family_geometry.dart';
-export 'family_interactive_preview.dart';
 export 'family_library_dialog.dart';
 export 'family_mesh_importer.dart';
 export 'family_parameter_resolver.dart';
 export 'family_plan_symbol.dart';
 export 'family_render_scene_adapter.dart';
 export 'family_sketch_canvas.dart';
+export 'family_sketch_viewport.dart';
 export 'family_validation.dart';
 
 /// Single registration point for the detachable Family Authoring feature.
+///
+/// New navigation enters V5 directly. V2/V3/V4 classes remain tiny compatibility
+/// aliases for old callers only; none of them owns a viewport or editor anymore.
 abstract final class FamilyAuthoringModule {
   static const String key = 'family_authoring';
 
   static Future<void> createFamily(BuildContext context) async {
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
-        builder: (_) => const FamilyEditorV2Page(),
+        builder: (_) => const FamilyEditorV5Page(),
       ),
     );
   }
