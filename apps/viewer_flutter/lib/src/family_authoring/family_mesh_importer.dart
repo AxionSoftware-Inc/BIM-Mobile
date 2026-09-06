@@ -25,11 +25,14 @@ final class FamilyMeshImportResult {
 /// Imports Blender glTF 2.0 models and keeps the legacy OBJ parser for
 /// programmatic/backward-compatible callers.
 ///
-/// Imported glTF coordinates are treated as metres, centred on X/Z, and placed
-/// on the family ground plane. The resulting mesh is kept as editable
-/// family-local geometry and is resized by the family type values.
+/// glTF has no universal authoring-unit declaration. Callers therefore provide
+/// [unitScale] as metres per source unit (m=1, cm=0.01, mm=0.001). Geometry is
+/// centred on X/Z and placed on the family ground plane after scaling.
 abstract final class FamilyMeshImporter {
-  static Future<FamilyMeshImportResult?> pickGltf() async {
+  static Future<FamilyMeshImportResult?> pickGltf({
+    double unitScale = 1.0,
+  }) async {
+    _validateUnitScale(unitScale, 'glTF');
     const typeGroup = XTypeGroup(
       label: 'Blender glTF model',
       extensions: <String>['glb', 'gltf'],
@@ -37,10 +40,14 @@ abstract final class FamilyMeshImporter {
     final location =
         await openFile(acceptedTypeGroups: <XTypeGroup>[typeGroup]);
     if (location == null) return null;
-    return fromGltfFile(location.path);
+    return fromGltfFile(location.path, unitScale: unitScale);
   }
 
-  static Future<FamilyMeshImportResult> fromGltfFile(String path) async {
+  static Future<FamilyMeshImportResult> fromGltfFile(
+    String path, {
+    double unitScale = 1.0,
+  }) async {
+    _validateUnitScale(unitScale, 'glTF');
     final file = File(path);
     final bytes = await file.readAsBytes();
     final normalized = path.toLowerCase();
@@ -49,6 +56,7 @@ abstract final class FamilyMeshImporter {
         bytes,
         name: _fileStem(path),
         path: path,
+        unitScale: unitScale,
       );
     }
     if (!normalized.endsWith('.gltf')) {
@@ -65,6 +73,7 @@ abstract final class FamilyMeshImporter {
       name: _fileStem(path),
       path: path,
       sourceFormat: 'gltf',
+      unitScale: unitScale,
     );
   }
 
@@ -72,7 +81,9 @@ abstract final class FamilyMeshImporter {
     Uint8List bytes, {
     required String name,
     String path = '',
+    double unitScale = 1.0,
   }) {
+    _validateUnitScale(unitScale, 'glTF');
     if (bytes.length < 20) {
       throw const FormatException('The GLB file is too small.');
     }
@@ -117,6 +128,7 @@ abstract final class FamilyMeshImporter {
       name: name,
       path: path,
       sourceFormat: 'glb',
+      unitScale: unitScale,
     );
   }
 
@@ -139,9 +151,7 @@ abstract final class FamilyMeshImporter {
     String path = '',
     double unitScale = 1.0,
   }) {
-    if (!unitScale.isFinite || unitScale <= 0.0) {
-      throw const FormatException('OBJ unit scale must be positive.');
-    }
+    _validateUnitScale(unitScale, 'OBJ');
 
     final sourceVertices = <_ObjPoint>[];
     final sourceFaces = <List<int>>[];
@@ -211,6 +221,7 @@ abstract final class FamilyMeshImporter {
       name: name,
       path: path,
       sourceFormat: 'obj',
+      sourceUnitScale: unitScale,
     );
   }
 
@@ -264,18 +275,28 @@ abstract final class FamilyMeshImporter {
     required String name,
     required String path,
     required String sourceFormat,
+    required double unitScale,
   }) {
+    _validateUnitScale(unitScale, 'glTF');
     final builder = _GltfMeshBuilder(document, buffers);
     builder.build();
     if (builder.vertices.isEmpty || builder.faces.isEmpty) {
       throw const FormatException('The glTF file has no renderable triangles.');
     }
     return _buildFamilyDocument(
-      builder.vertices,
+      <List<double>>[
+        for (final vertex in builder.vertices)
+          <double>[
+            vertex[0] * unitScale,
+            vertex[1] * unitScale,
+            vertex[2] * unitScale,
+          ],
+      ],
       builder.faces,
       name: name,
       path: path,
       sourceFormat: sourceFormat,
+      sourceUnitScale: unitScale,
     );
   }
 
@@ -285,6 +306,7 @@ abstract final class FamilyMeshImporter {
     required String name,
     required String path,
     required String sourceFormat,
+    double sourceUnitScale = 1.0,
   }) {
     var minX = double.infinity;
     var maxX = -double.infinity;
@@ -338,7 +360,7 @@ abstract final class FamilyMeshImporter {
       name: familyName,
       category: FamilyCategory.genericModel,
       description:
-          'Imported Blender glTF mesh. Geometry remains family-local and type-scalable.',
+          'Imported mesh. Geometry remains family-local, uses explicit source units and is type-scalable.',
       parameters: parameters,
       types: <FamilyTypeDefinition>[
         FamilyTypeDefinition(
@@ -353,12 +375,13 @@ abstract final class FamilyMeshImporter {
       ],
       features: <FamilyFeature>[
         FamilyFeature(
-          id: 'feature-imported-obj',
+          id: 'feature-imported-mesh',
           kind: FamilyFeatureKind.freeformMesh,
           label: 'Imported ${sourceFormat.toUpperCase()} mesh',
           parameters: <String, Object?>{
             'sourceFormat': sourceFormat,
             'sourceFileName': _displayName(name),
+            'sourceUnitScaleMeters': sourceUnitScale,
             'vertices': vertices,
             'faces': sourceFaces,
           },
@@ -371,6 +394,12 @@ abstract final class FamilyMeshImporter {
       vertexCount: vertices.length,
       faceCount: sourceFaces.length,
     );
+  }
+
+  static void _validateUnitScale(double value, String label) {
+    if (!value.isFinite || value <= 0.0) {
+      throw FormatException('$label unit scale must be positive.');
+    }
   }
 
   static double _safeDimension(double value) {
@@ -533,7 +562,6 @@ final class _GltfMeshBuilder {
             <int>[indices.first, indices[index], indices[index + 1]],
         ];
       default:
-        // POINTS, LINES and LINE_STRIP have no filled faces for Family mesh.
         return const <List<int>>[];
     }
   }
@@ -703,18 +731,18 @@ final class _Mat4 {
         0,
         0,
         0,
+        1,
+        0,
+        0,
         0,
         1,
         0,
         0,
         0,
-        0,
         1,
         0,
         0,
         0,
-        0,
-        1,
       ]);
 
   factory _Mat4.fromNode(Map node) {
