@@ -3,18 +3,16 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:viewer_flutter/src/family_authoring/family_authoring_module.dart';
 
 void main() {
-  test('schema v2 remains readable and authoring edit upgrades to v3', () {
+  test('schema v3 remains readable and authoring edit upgrades to v4', () {
     final legacyJson = FamilyDocument.starter().toJson()
-      ..['schema_version'] = 2;
+      ..['schema_version'] = 3;
     final legacy = FamilyDocument.fromJson(legacyJson);
     expect(legacy, isNotNull);
     final loadedLegacy = legacy!;
-    expect(loadedLegacy.schemaVersion, 2);
-    expect(loadedLegacy.referencePlanes, isEmpty);
-    expect(loadedLegacy.constraints, isEmpty);
+    expect(loadedLegacy.schemaVersion, 3);
 
-    final edited = loadedLegacy.copyWith(name: 'Schema 3 family');
-    expect(edited.schemaVersion, 3);
+    final edited = loadedLegacy.copyWith(name: 'Schema 4 family');
+    expect(edited.schemaVersion, 4);
     expect(edited.schemaVersion, FamilyDocument.currentSchemaVersion);
   });
 
