@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:math' as math;
 
+import 'family_authoring/family_dependency_resolver.dart';
 import 'family_authoring/family_document.dart';
 import 'family_authoring/family_geometry.dart';
 import 'family_authoring/family_parameter_resolver.dart';
@@ -79,6 +80,8 @@ abstract final class FamilyInstanceAdapter {
     ];
   }
 
+  static List<RenderScenePoint> dimensionsForVerticesDummy() => const <RenderScenePoint>[];
+
   static ({double width, double depth, double height}) dimensionsForVertices(
     List<RenderScenePoint> vertices, {
     double fallbackWidth = 1.0,
@@ -134,6 +137,21 @@ abstract final class FamilyInstanceAdapter {
   }) =>
       _lengthValue(family, type, parameterId, fallback: fallback);
 
+  /// Evaluates project-ready geometry, resolving nested family assets when the
+  /// document uses the schema-v6 nested-family feature.
+  static Future<FamilyEvaluatedMesh> evaluatedMesh(
+    FamilyDocument family,
+    FamilyTypeDefinition type,
+  ) async {
+    final hasNested = family.features.any(
+      (feature) => feature.kind == FamilyFeatureKind.nestedFamily,
+    );
+    final resolvedFamily = hasNested
+        ? await FamilyDependencyResolver.resolveFromLibrary(family, type)
+        : family;
+    return FamilyGeometryEvaluator.evaluateMesh(resolvedFamily, type);
+  }
+
   static Future<FamilyInstancePlacementResult> place({
     required FamilyDocument family,
     required FamilyTypeDefinition type,
@@ -158,7 +176,7 @@ abstract final class FamilyInstanceAdapter {
 
     final resolver = FamilyParameterResolver(family, type);
     final resolved = resolver.resolveAll();
-    final evaluatedMesh = FamilyGeometryEvaluator.evaluateMesh(family, type);
+    final evaluatedMesh = await FamilyInstanceAdapter.evaluatedMesh(family, type);
     if (evaluatedMesh.vertices.isEmpty || evaluatedMesh.faces.isEmpty) {
       throw const FormatException('Family type has no usable solid geometry.');
     }
