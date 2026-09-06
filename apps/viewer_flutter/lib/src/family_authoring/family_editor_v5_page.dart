@@ -95,6 +95,7 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
   String _rotation = '0';
   String _scale = '1';
   _TransformSnapshot? _gizmoStart;
+  double? _scalarGizmoStart;
 
   String? _previewKey;
   Future<FamilyEvaluatedMesh>? _previewFuture;
@@ -247,6 +248,7 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
       _booleanBaseId = null;
       _booleanToolId = null;
       _gizmoStart = null;
+      _scalarGizmoStart = null;
       _status = null;
       _invalidatePreview();
     });
@@ -470,7 +472,7 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
       if (_transformSourceId == null) {
         return 'Tap a solid, then drag the ${_toolLabel(_tool)} gizmo.';
       }
-      return 'Drag the gizmo on the model · release to commit · Cancel to leave tool.';
+      return 'Drag the gizmo on the model · release commits one step.';
     }
     if (_tool == _Tool.union || _tool == _Tool.subtract) {
       if (_booleanBaseId == null) return '1/2 · Tap the Base solid.';
@@ -480,19 +482,29 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
           : 'Preview: Base and Tool are joined · Apply or Cancel.';
     }
     if (_tool == _Tool.extrude) {
-      return 'Live Extrude preview · change Depth, then Apply.';
+      return 'Drag the blue D handle or enter Depth · live preview · Apply when ready.';
     }
     if (_tool == _Tool.revolve) {
-      return 'Live Revolve preview · change Angle, then Apply.';
+      return 'Drag the orange ring or enter Angle · live preview · Apply when ready.';
     }
     return null;
   }
 
   FamilyGizmoMode get _gizmoMode => switch (_tool) {
+        _Tool.extrude => FamilyGizmoMode.extrude,
+        _Tool.revolve => FamilyGizmoMode.revolve,
         _Tool.move => FamilyGizmoMode.move,
         _Tool.rotate => FamilyGizmoMode.rotate,
         _Tool.scale => FamilyGizmoMode.scale,
         _ => FamilyGizmoMode.none,
+      };
+
+  bool get _showGizmo => switch (_tool) {
+        _Tool.extrude || _Tool.revolve =>
+          _profileId != null && _draftFeatureId != null,
+        _Tool.move || _Tool.rotate || _Tool.scale =>
+          _transformSourceId != null && _draftFeatureId != null,
+        _ => false,
       };
 
   void _handleViewportFeature(String? featureId) {
@@ -530,6 +542,14 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
   }
 
   void _onGizmoBegin(FamilyGizmoAxis axis) {
+    if (_tool == _Tool.extrude) {
+      _scalarGizmoStart = math.max(0.01, _parse(_extrudeDepth, 1));
+      return;
+    }
+    if (_tool == _Tool.revolve) {
+      _scalarGizmoStart = _parse(_revolveAngle, 360).clamp(1.0, 360.0).toDouble();
+      return;
+    }
     _gizmoStart = _TransformSnapshot(
       x: _parse(_tx, 0),
       y: _parse(_ty, 0),
@@ -540,6 +560,25 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
   }
 
   void _onGizmoChanged(FamilyGizmoAxis axis, double delta) {
+    if (_tool == _Tool.extrude && axis == FamilyGizmoAxis.z) {
+      final start = _scalarGizmoStart;
+      if (start == null) return;
+      setState(() {
+        _extrudeDepth = _format(math.max(0.01, start + delta));
+        _invalidatePreview();
+      });
+      return;
+    }
+    if (_tool == _Tool.revolve && axis == FamilyGizmoAxis.rotation) {
+      final start = _scalarGizmoStart;
+      if (start == null) return;
+      setState(() {
+        _revolveAngle = _format((start + delta).clamp(1.0, 360.0).toDouble());
+        _invalidatePreview();
+      });
+      return;
+    }
+
     final start = _gizmoStart;
     if (start == null) return;
     setState(() {
@@ -565,6 +604,10 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
   }
 
   void _onGizmoEnd(FamilyGizmoAxis axis) {
+    if (_tool == _Tool.extrude || _tool == _Tool.revolve) {
+      _scalarGizmoStart = null;
+      return;
+    }
     _gizmoStart = null;
     _commitTool(stayInTool: true, status: '${_toolLabel(_tool)} committed.');
   }
@@ -1244,7 +1287,7 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
           candidateFeatureIds: _candidateFeatureIds,
           selectedFeatureIds: _pickedFeatureIds,
           gizmoFeatureId: _draftFeatureId,
-          gizmoMode: _transformSourceId == null ? FamilyGizmoMode.none : _gizmoMode,
+          gizmoMode: _showGizmo ? _gizmoMode : FamilyGizmoMode.none,
           prompt: _viewportPrompt,
           onFeatureSelected: _handleViewportFeature,
           onGizmoBegin: _onGizmoBegin,
@@ -1388,8 +1431,8 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
               _Tool.select => _buildSelectionInspector(),
               _Tool.sketch => _commandCard(
                   title: 'Sketch',
-                  subtitle: 'Draw in the large canvas',
-                  body: const Text('Use Rectangle/Circle or tap points manually, then Finish.'),
+                  subtitle: 'Project plan viewport',
+                  body: const Text('Use Rectangle/Circle or tap points manually. Pinch/pan works like the project plan, then Finish.'),
                 ),
               _Tool.extrude => _buildExtrudeInspector(),
               _Tool.revolve => _buildRevolveInspector(),
@@ -1524,7 +1567,7 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
     final sketches = _document.sketches.where((sketch) => sketch.isValid).toList();
     return _commandCard(
       title: 'Extrude',
-      subtitle: 'Closed profile → solid · live preview',
+      subtitle: 'Drag blue D handle or enter exact Depth',
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
@@ -1591,7 +1634,7 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
     final sketches = _document.sketches.where((sketch) => sketch.isValid).toList();
     return _commandCard(
       title: 'Revolve',
-      subtitle: 'Closed profile → revolved solid · live preview',
+      subtitle: 'Drag orange ring or enter exact Angle',
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
@@ -1696,7 +1739,7 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
             if (_tool == _Tool.scale)
               _numericDraftField('Scale', _scale, (v) => _scale = v),
             const SizedBox(height: 8),
-            const Text('Tip: drag the coloured handles in the viewport. Releasing a gizmo commits one undo step.'),
+            const Text('Drag the coloured handles in the viewport. Releasing a gizmo commits one undo step.'),
             const SizedBox(height: 8),
             TextButton(onPressed: _cancelTool, child: const Text('Done / leave tool')),
           ],
