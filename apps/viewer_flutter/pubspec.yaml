@@ -1,7 +1,7 @@
 name: viewer_flutter
-description: Minimal read-only Flutter viewer skeleton for TabletBimEngine C API.
+description: Production tablet BIM authoring client for TabletBimEngine.
 publish_to: "none"
-version: 0.2.16+18
+version: 0.3.0+19
 
 environment:
   sdk: ">=3.5.0 <4.0.0"
