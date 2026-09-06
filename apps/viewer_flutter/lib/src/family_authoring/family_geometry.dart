@@ -240,6 +240,10 @@ abstract final class FamilyGeometryEvaluator {
               source: feature.label.isEmpty ? 'Freeform mesh' : feature.label,
               isApproximate: true,
             );
+      case FamilyFeatureKind.nestedFamily:
+        throw FormatException(
+          'Nested feature ${feature.id} must be resolved before geometry evaluation.',
+        );
       case FamilyFeatureKind.profile:
         return _boxMesh(document, type);
     }
@@ -384,6 +388,12 @@ abstract final class FamilyGeometryEvaluator {
       case FamilyFeatureKind.freeformMesh:
         return _boxShape(document, type).copyWith(
           source: feature.label.isEmpty ? 'Freeform mesh' : feature.label,
+        );
+      case FamilyFeatureKind.nestedFamily:
+        return _boxShape(document, type).copyWith(
+          source: feature.label.isEmpty
+              ? 'Nested family (resolve to preview)'
+              : feature.label,
         );
       case FamilyFeatureKind.profile:
         return _boxShape(document, type);
@@ -697,7 +707,8 @@ abstract final class FamilyGeometryEvaluator {
         feature.kind == FamilyFeatureKind.booleanUnion ||
         feature.kind == FamilyFeatureKind.booleanSubtract ||
         feature.kind == FamilyFeatureKind.transform ||
-        feature.kind == FamilyFeatureKind.freeformMesh;
+        feature.kind == FamilyFeatureKind.freeformMesh ||
+        feature.kind == FamilyFeatureKind.nestedFamily;
   }
 
   static String _featureName(FamilyFeatureKind kind) {
@@ -705,6 +716,7 @@ abstract final class FamilyGeometryEvaluator {
       FamilyFeatureKind.booleanUnion => 'Boolean union',
       FamilyFeatureKind.booleanSubtract => 'Boolean subtract',
       FamilyFeatureKind.transform => 'Transform',
+      FamilyFeatureKind.nestedFamily => 'Nested family',
       _ => kind.name,
     };
   }
