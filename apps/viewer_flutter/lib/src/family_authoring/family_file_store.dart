@@ -141,33 +141,57 @@ abstract final class FamilyFileStore {
       if (document != null) existingIds.add(document.id);
     }
 
-    // Keep the original code catalog for backwards compatibility, while new
-    // product content can ship as ordinary assets/families/*.bimfamily files.
-    // Stable ids are authoritative across both sources.
-    final seedById = <String, FamilyDocument>{};
-    void registerSeed(FamilyDocument family, String source) {
-      _validateOrThrow(family);
-      final existing = seedById[family.id];
-      if (existing != null && existing.toJsonText() != family.toJsonText()) {
-        throw FormatException(
-          'Family seed id "${family.id}" is defined differently by $source.',
-        );
-      }
-      seedById[family.id] = family;
-    }
-
-    for (final family in BuiltInFamilyCatalog.families) {
-      registerSeed(family, 'BuiltInFamilyCatalog');
-    }
-    for (final family in await FamilyBundledCatalog.load()) {
-      registerSeed(family, 'assets/families');
-    }
-
-    for (final family in seedById.values) {
+    final seeds = composeSeedCatalog(
+      legacy: BuiltInFamilyCatalog.families,
+      bundled: await FamilyBundledCatalog.load(),
+    );
+    for (final family in seeds) {
       if (existingIds.contains(family.id)) continue;
       await _saveToLibrary(family);
       existingIds.add(family.id);
     }
+  }
+
+  /// Composes the product seed catalog during the transition from Dart-defined
+  /// built-ins to code-free `.bimfamily` assets.
+  ///
+  /// Bundled assets are authoritative for a stable Family id. This lets a
+  /// legacy definition migrate by simply shipping the same id under
+  /// `assets/families/`; runtime no longer depends on the Dart definition even
+  /// if the old private builder remains temporarily for source cleanup.
+  /// Duplicate bundled ids are still rejected unless their canonical Family
+  /// documents are identical.
+  static List<FamilyDocument> composeSeedCatalog({
+    required Iterable<FamilyDocument> legacy,
+    required Iterable<FamilyDocument> bundled,
+  }) {
+    final merged = <String, FamilyDocument>{};
+    for (final family in legacy) {
+      _validateOrThrow(family);
+      merged[family.id] = family;
+    }
+
+    final bundledById = <String, FamilyDocument>{};
+    for (final family in bundled) {
+      _validateOrThrow(family);
+      final existing = bundledById[family.id];
+      if (existing != null && existing.toJsonText() != family.toJsonText()) {
+        throw FormatException(
+          'Bundled Family id "${family.id}" has conflicting definitions.',
+        );
+      }
+      bundledById[family.id] = family;
+    }
+    for (final entry in bundledById.entries) {
+      merged[entry.key] = entry.value;
+    }
+
+    final result = merged.values.toList(growable: false)
+      ..sort(
+        (left, right) =>
+            left.name.toLowerCase().compareTo(right.name.toLowerCase()),
+      );
+    return List<FamilyDocument>.unmodifiable(result);
   }
 
   static Future<List<FamilyAssetFile>> listStored() async {
