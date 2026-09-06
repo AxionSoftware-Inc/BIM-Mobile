@@ -114,14 +114,15 @@ abstract final class FamilyDocumentValidator {
         case FamilySketchConstraintKind.horizontal:
         case FamilySketchConstraintKind.vertical:
         case FamilySketchConstraintKind.coincident:
-          final b = constraint.pointBIndex;
-          if (b == null || !_validPointIndex(sketch, b)) {
-            add('Constraint ${constraint.id} requires a valid second point');
-          } else if (b == constraint.pointAIndex) {
-            add('Constraint ${constraint.id} requires two distinct points');
-          }
+          _validateTwoPointConstraint(constraint, sketch, add);
           if (constraint.referencePlaneId != null) {
             add('Constraint ${constraint.id} cannot reference a plane');
+          }
+          if (constraint.pointCIndex != null || constraint.pointDIndex != null) {
+            add('Constraint ${constraint.id} cannot use a second segment');
+          }
+          if (constraint.expression?.trim().isNotEmpty == true) {
+            add('Constraint ${constraint.id} cannot use an expression');
           }
           break;
         case FamilySketchConstraintKind.pointOnReferencePlane:
@@ -134,8 +135,45 @@ abstract final class FamilyDocumentValidator {
               'Constraint ${constraint.id} and reference plane ${plane.name} must use the same sketch',
             );
           }
-          if (constraint.pointBIndex != null) {
-            add('Constraint ${constraint.id} cannot have a second point');
+          if (constraint.pointBIndex != null ||
+              constraint.pointCIndex != null ||
+              constraint.pointDIndex != null) {
+            add('Constraint ${constraint.id} cannot use segment points');
+          }
+          if (constraint.expression?.trim().isNotEmpty == true) {
+            add('Constraint ${constraint.id} cannot use an expression');
+          }
+          break;
+        case FamilySketchConstraintKind.distance:
+          _validateTwoPointConstraint(constraint, sketch, add);
+          if (constraint.pointCIndex != null || constraint.pointDIndex != null) {
+            add('Distance constraint ${constraint.id} cannot use a second segment');
+          }
+          if (constraint.referencePlaneId != null) {
+            add('Distance constraint ${constraint.id} cannot reference a plane');
+          }
+          if (constraint.expression?.trim().isEmpty != false) {
+            add('Distance constraint ${constraint.id} requires an expression');
+          }
+          break;
+        case FamilySketchConstraintKind.parallel:
+        case FamilySketchConstraintKind.perpendicular:
+        case FamilySketchConstraintKind.equalLength:
+          _validateFourPointConstraint(constraint, sketch, add);
+          if (constraint.referencePlaneId != null) {
+            add('Constraint ${constraint.id} cannot reference a plane');
+          }
+          if (constraint.expression?.trim().isNotEmpty == true) {
+            add('Constraint ${constraint.id} cannot use an expression');
+          }
+          break;
+        case FamilySketchConstraintKind.angle:
+          _validateFourPointConstraint(constraint, sketch, add);
+          if (constraint.referencePlaneId != null) {
+            add('Angle constraint ${constraint.id} cannot reference a plane');
+          }
+          if (constraint.expression?.trim().isEmpty != false) {
+            add('Angle constraint ${constraint.id} requires an expression');
           }
           break;
       }
@@ -171,6 +209,21 @@ abstract final class FamilyDocumentValidator {
           add('Type ${type.name} · reference plane ${plane.name}: ${error.message}');
         } catch (error) {
           add('Type ${type.name} · reference plane ${plane.name}: $error');
+        }
+      }
+      for (final constraint in document.constraints) {
+        if (constraint.kind != FamilySketchConstraintKind.distance &&
+            constraint.kind != FamilySketchConstraintKind.angle) {
+          continue;
+        }
+        final expression = constraint.expression?.trim();
+        if (expression == null || expression.isEmpty) continue;
+        try {
+          resolver.resolveExpression(expression);
+        } on FormatException catch (error) {
+          add('Type ${type.name} · constraint ${constraint.id}: ${error.message}');
+        } catch (error) {
+          add('Type ${type.name} · constraint ${constraint.id}: $error');
         }
       }
       try {
@@ -241,6 +294,38 @@ abstract final class FamilyDocumentValidator {
     }
 
     return FamilyValidationResult(List<String>.unmodifiable(errors));
+  }
+
+  static void _validateTwoPointConstraint(
+    FamilySketchConstraint constraint,
+    FamilySketch sketch,
+    void Function(String) add,
+  ) {
+    final b = constraint.pointBIndex;
+    if (b == null || !_validPointIndex(sketch, b)) {
+      add('Constraint ${constraint.id} requires a valid second point');
+    } else if (b == constraint.pointAIndex) {
+      add('Constraint ${constraint.id} requires two distinct points');
+    }
+  }
+
+  static void _validateFourPointConstraint(
+    FamilySketchConstraint constraint,
+    FamilySketch sketch,
+    void Function(String) add,
+  ) {
+    _validateTwoPointConstraint(constraint, sketch, add);
+    final c = constraint.pointCIndex;
+    final d = constraint.pointDIndex;
+    if (c == null || !_validPointIndex(sketch, c)) {
+      add('Constraint ${constraint.id} requires a valid Point C');
+    }
+    if (d == null || !_validPointIndex(sketch, d)) {
+      add('Constraint ${constraint.id} requires a valid Point D');
+    }
+    if (c != null && d != null && c == d) {
+      add('Constraint ${constraint.id} second segment needs distinct points');
+    }
   }
 
   static bool _validPointIndex(FamilySketch sketch, int index) =>
