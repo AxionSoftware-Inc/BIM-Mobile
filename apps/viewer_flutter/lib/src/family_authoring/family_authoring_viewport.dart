@@ -79,8 +79,16 @@ class _FamilyAuthoringViewportState extends State<FamilyAuthoringViewport> {
     super.didUpdateWidget(oldWidget);
     final nextKey = _keyFor(widget);
     if (_sceneKey != nextKey) {
+      // A new authoring scene may expose the same feature id as the previous
+      // scene. Clear the native-selection dedupe token so the first tap in the
+      // new scene is never swallowed as an old duplicate.
+      _lastReportedFeatureId = null;
       unawaited(_configureAndLoad(resetView: false));
     } else if (oldWidget.selectedFeatureIds != widget.selectedFeatureIds) {
+      // "Change" in Boolean/Move deliberately clears the current selection.
+      // Reset the dedupe token too, otherwise choosing the same solid again on
+      // Android Filament would not report it back to the editor.
+      _lastReportedFeatureId = null;
       unawaited(_syncSelection());
     }
   }
@@ -100,7 +108,11 @@ class _FamilyAuthoringViewportState extends State<FamilyAuthoringViewport> {
       final object = scene.objectByStableId(active);
       featureId = FamilyAuthoringSceneBuilder.featureIdForObject(object);
     }
-    if (featureId != null && featureId != _lastReportedFeatureId) {
+    if (featureId == null) {
+      // Selection was cleared. Re-picking the previous object must be treated
+      // as a new user action rather than suppressed by the dedupe guard.
+      _lastReportedFeatureId = null;
+    } else if (featureId != _lastReportedFeatureId) {
       _lastReportedFeatureId = featureId;
       widget.onFeatureSelected?.call(featureId);
       widget.onFinalFeatureSelected?.call(featureId);
