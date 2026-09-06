@@ -69,9 +69,6 @@ class _FamilyInteractivePreviewState extends State<FamilyInteractivePreview> {
             _pitch = (_startPitch + delta.dy * 0.010).clamp(-1.45, 1.45);
           } else {
             _zoom = (_startZoom * details.scale).clamp(0.22, 8.0);
-            // Two-finger movement can still make a small orbit correction.
-            // This feels much less rigid on a tablet than locking rotation
-            // completely during a pinch.
             _yaw = _startYaw + delta.dx * 0.0025;
             _pitch = (_startPitch + delta.dy * 0.0025).clamp(-1.45, 1.45);
           }
@@ -270,15 +267,14 @@ class _OrbitFamilyPainter extends CustomPainter {
       }
       path.close();
       final depthShade = 0.78 +
-          ((entry.depth -
-                      faceOrder.first.depth) /
+          ((entry.depth - faceOrder.first.depth) /
                   math.max(faceOrder.last.depth - faceOrder.first.depth, 1e-6)) *
               0.22;
       canvas.drawPath(
         path,
         Paint()
           ..color = fillColor.withValues(
-            alpha: (fillColor.a * depthShade).clamp(0.0, 1.0),
+            alpha: (fillColor.a * depthShade).clamp(0.0, 1.0).toDouble(),
           ),
       );
       canvas.drawPath(path, outline);
