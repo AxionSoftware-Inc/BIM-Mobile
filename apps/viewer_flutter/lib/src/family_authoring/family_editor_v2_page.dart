@@ -582,7 +582,8 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
           ),
         ],
       ),
-      status: 'Boolean preview remains approximate until exact CSG is connected',
+      status:
+          'Boolean feature added · closed manifold solids use exact CSG',
     );
   }
 
@@ -1157,8 +1158,9 @@ class _FamilyEditorV2PageState extends State<FamilyEditorV2Page> {
                       trailing: feature.kind == FamilyFeatureKind.booleanUnion ||
                               feature.kind == FamilyFeatureKind.booleanSubtract
                           ? const Tooltip(
-                              message: 'Exact CSG kernel not connected yet',
-                              child: Icon(Icons.warning_amber_outlined),
+                              message:
+                                  'Closed manifold inputs use exact CSG; open/non-manifold inputs stay approximate.',
+                              child: Icon(Icons.check_circle_outline),
                             )
                           : const Icon(Icons.check_circle_outline),
                     ),
@@ -1850,8 +1852,9 @@ String _featureSummary(FamilyFeature feature) => switch (feature.kind) {
       FamilyFeatureKind.profile => '2D sketch input',
       FamilyFeatureKind.extrude => 'Profile → parametric solid',
       FamilyFeatureKind.revolve => 'Profile → revolved solid',
-      FamilyFeatureKind.booleanUnion => 'Approximate until exact CSG',
-      FamilyFeatureKind.booleanSubtract => 'Approximate until exact CSG',
+      FamilyFeatureKind.booleanUnion => 'Exact BSP union for closed manifold solids',
+      FamilyFeatureKind.booleanSubtract =>
+        'Exact BSP subtraction for closed manifold solids',
       FamilyFeatureKind.transform => 'Move / rotate / scale',
       FamilyFeatureKind.freeformMesh => 'Imported mesh geometry',
     };
