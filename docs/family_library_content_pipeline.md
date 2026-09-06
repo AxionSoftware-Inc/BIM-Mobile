@@ -12,7 +12,8 @@ Family assets.
 - **Import family** validates an external `.bimfamily` file and copies/updates it
   into the app-owned Library before placement. Projects do not depend on the
   original picked file remaining at its old path.
-- **Export** is an explicit external-file operation and is separate from Save.
+- **Export** is an explicit external-file operation and is separate from Save;
+  the storage API is `FamilyFileStore.exportFile()`.
 - Library placement carries the explicitly selected Family Type into the
   existing placement workflow.
 - Search, category filters, Favorites and Recent operate on Library assets, not
