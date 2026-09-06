@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:viewer_flutter/src/family_authoring/family_authoring_module.dart';
@@ -32,7 +34,7 @@ void main() {
 
   test('parallel, perpendicular and equal-length constraints project segments', () {
     final parallel = _solveOne(
-      FamilySketchConstraint(
+      const FamilySketchConstraint(
         id: 'parallel',
         sketchId: 'profile',
         kind: FamilySketchConstraintKind.parallel,
@@ -47,7 +49,7 @@ void main() {
     expect(_cross(pab, pcd).abs(), lessThan(1e-6));
 
     final perpendicular = _solveOne(
-      FamilySketchConstraint(
+      const FamilySketchConstraint(
         id: 'perpendicular',
         sketchId: 'profile',
         kind: FamilySketchConstraintKind.perpendicular,
@@ -62,7 +64,7 @@ void main() {
     expect(_dot(uab, ucd).abs(), lessThan(1e-6));
 
     final equal = _solveOne(
-      FamilySketchConstraint(
+      const FamilySketchConstraint(
         id: 'equal',
         sketchId: 'profile',
         kind: FamilySketchConstraintKind.equalLength,
@@ -109,8 +111,7 @@ void main() {
     final cosine = (_dot(ab, cd) / (_length(ab) * _length(cd)))
         .clamp(-1.0, 1.0)
         .toDouble();
-    // cos(45°) = sqrt(1/2).
-    expect(cosine, closeTo(0.70710678, 1e-6));
+    expect(cosine, closeTo(math.sqrt(0.5), 1e-6));
   });
 
   test('stage-1 pins make an incompatible distance fail validation', () {
@@ -245,21 +246,4 @@ double _cross((double, double) a, (double, double) b) =>
     a.$1 * b.$2 - a.$2 * b.$1;
 
 double _length((double, double) value) =>
-    (value.$1 * value.$1 + value.$2 * value.$2).sqrt();
-
-extension on double {
-  double sqrt() => MathSqrt.sqrt(this);
-}
-
-abstract final class MathSqrt {
-  static double sqrt(double value) {
-    // Newton is deterministic and avoids coupling the test intent to solver
-    // internals while keeping this helper tiny.
-    if (value <= 0) return 0;
-    var x = value;
-    for (var i = 0; i < 20; i++) {
-      x = 0.5 * (x + value / x);
-    }
-    return x;
-  }
-}
+    math.sqrt(value.$1 * value.$1 + value.$2 * value.$2);
