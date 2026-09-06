@@ -32,36 +32,16 @@ abstract final class FamilyDocumentValidator {
     if (document.types.isEmpty) add('At least one family type is required');
     if (document.features.isEmpty) add('At least one feature is required');
 
+    _checkUniqueIds(document.parameters.map((e) => e.id), 'parameter', add);
+    _checkUniqueIds(document.types.map((e) => e.id), 'type', add);
+    _checkUniqueIds(document.features.map((e) => e.id), 'feature', add);
+    _checkUniqueIds(document.sketches.map((e) => e.id), 'sketch', add);
     _checkUniqueIds(
-      document.parameters.map((parameter) => parameter.id),
-      'parameter',
-      add,
-    );
-    _checkUniqueIds(
-      document.types.map((type) => type.id),
-      'type',
-      add,
-    );
-    _checkUniqueIds(
-      document.features.map((feature) => feature.id),
-      'feature',
-      add,
-    );
-    _checkUniqueIds(
-      document.sketches.map((sketch) => sketch.id),
-      'sketch',
-      add,
-    );
-    _checkUniqueIds(
-      document.referencePlanes.map((plane) => plane.id),
+      document.referencePlanes.map((e) => e.id),
       'reference plane',
       add,
     );
-    _checkUniqueIds(
-      document.constraints.map((constraint) => constraint.id),
-      'constraint',
-      add,
-    );
+    _checkUniqueIds(document.constraints.map((e) => e.id), 'constraint', add);
     _checkUniqueNames(
       document.types.map((type) => type.name),
       'family type',
@@ -143,6 +123,7 @@ abstract final class FamilyDocumentValidator {
           if (constraint.referencePlaneId != null) {
             add('Constraint ${constraint.id} cannot reference a plane');
           }
+          break;
         case FamilySketchConstraintKind.pointOnReferencePlane:
           final planeId = constraint.referencePlaneId;
           final plane = planeId == null ? null : planeById[planeId];
@@ -156,6 +137,7 @@ abstract final class FamilyDocumentValidator {
           if (constraint.pointBIndex != null) {
             add('Constraint ${constraint.id} cannot have a second point');
           }
+          break;
       }
     }
 
@@ -168,8 +150,6 @@ abstract final class FamilyDocumentValidator {
       }
       final resolver = FamilyParameterResolver(document, type);
       for (final parameter in document.parameters) {
-        // Formula-driven parameters intentionally ignore their own stored type
-        // value. Validate all other explicit values before resolving chains.
         if (!parameter.hasFormula && type.values.containsKey(parameter.id)) {
           final error = _valueError(parameter, type.values[parameter.id]);
           if (error != null) {
