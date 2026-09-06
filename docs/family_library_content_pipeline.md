@@ -42,14 +42,23 @@ Two seed sources currently coexist:
 2. code-free `assets/families/*.bimfamily` discovered by
    `FamilyBundledCatalog` from Flutter's asset manifest.
 
-`FamilyFileStore.ensureBuiltInFamilies()` merges both sources by stable family
+`FamilyFileStore.ensureBuiltInFamilies()` composes both sources by stable family
 id, validates every seed and writes only ids missing from the local Library.
 Existing local assets are never overwritten by app startup, which preserves
 user edits.
 
-If two shipped sources define the same stable id with different Family
-contents, seeding fails explicitly as a packaging error instead of silently
-choosing one definition.
+Bundled `.bimfamily` content is authoritative over the legacy Dart catalog for
+the same stable id. This is the migration mechanism: moving a legacy Family
+into `assets/families/` switches runtime seeding to the code-free document
+without requiring a risky edit of the large legacy catalog in the same change.
+Conflicting duplicate ids inside the bundled asset source still fail visibly.
+
+The first migrated tranche is:
+
+- `builtin-door-single-flush-v1`;
+- `builtin-door-double-glazed-v1`;
+- `builtin-window-single-casement-v1`;
+- `builtin-window-wide-picture-v1`.
 
 The project placement command calls `ensureBuiltInFamilies()` before
 `listStored()` and before opening `FamilyLibraryDialog`, so newly shipped asset
@@ -69,16 +78,16 @@ A bundled family must:
 - carry category, parameters, formulas, types and geometry in the document;
 - avoid depending on its package filename for identity.
 
-The legacy Dart catalog can be migrated gradually. Do not create a second
-catalog implementation for future content.
+The legacy Dart catalog can be migrated gradually. Future content must not add a
+second code-defined catalog path.
 
 ## Authoring integration
 
-V5 Advanced Sketch authoring composes two separate responsibilities into one
-surface:
+V5 Advanced Sketch authoring composes three responsibilities into one surface:
 
-- `FamilyParametersPanel` — custom parameters, formulas, type values and named
-  Family Type management through `FamilyParameterAuthoring`;
+- `FamilyParametersPanel` — custom parameters, formulas and current-type edits;
+- `FamilyTypeMatrixPanel` — spreadsheet-style multi-type value editing plus
+  duplicate/rename/delete across all named Family Types;
 - geometric `FamilyConstraintsPanel` implementation — reference planes and
   sketch constraints.
 
@@ -96,6 +105,8 @@ A Family persistence/content change must preserve these invariants:
 3. Rename does not create a second Library family.
 4. Existing user-edited Library assets are not overwritten during seed.
 5. Bundled `.bimfamily` content needs no Dart catalog change.
-6. Conflicting bundled stable ids fail visibly.
-7. Library-selected Family Type remains selected in placement.
-8. Invalid external or bundled families never cross into placement.
+6. Bundled assets shadow legacy definitions with the same stable id.
+7. Conflicting duplicate ids inside bundled content fail visibly.
+8. Library-selected Family Type remains selected in placement.
+9. Multi-type edits use `FamilyParameterAuthoring` and semantic validation.
+10. Invalid external or bundled families never cross into placement.
