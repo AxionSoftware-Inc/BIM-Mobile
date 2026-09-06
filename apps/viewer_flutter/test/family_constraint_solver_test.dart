@@ -3,7 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:viewer_flutter/src/family_authoring/family_authoring_module.dart';
 
 void main() {
-  test('schema v3 remains readable and authoring edit upgrades to v4', () {
+  test('schema v3 remains readable and authoring edit upgrades to v5', () {
     final legacyJson = FamilyDocument.starter().toJson()
       ..['schema_version'] = 3;
     final legacy = FamilyDocument.fromJson(legacyJson);
@@ -11,8 +11,8 @@ void main() {
     final loadedLegacy = legacy!;
     expect(loadedLegacy.schemaVersion, 3);
 
-    final edited = loadedLegacy.copyWith(name: 'Schema 4 family');
-    expect(edited.schemaVersion, 4);
+    final edited = loadedLegacy.copyWith(name: 'Schema 5 family');
+    expect(edited.schemaVersion, 5);
     expect(edited.schemaVersion, FamilyDocument.currentSchemaVersion);
   });
 
@@ -131,7 +131,6 @@ FamilyDocument _rectangleFamily() {
     name: 'Constrained rectangle',
     plane: FamilySketchPlane.xy,
     closed: true,
-    // Intentionally crooked/raw. Constraints must produce the rectangle.
     points: <FamilySketchPoint>[
       FamilySketchPoint(x: -0.7, y: 0.4),
       FamilySketchPoint(x: 1.1, y: -0.2),
