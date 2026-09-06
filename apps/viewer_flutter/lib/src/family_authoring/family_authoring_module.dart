@@ -23,8 +23,8 @@ abstract final class FamilyAuthoringModule {
   static const String key = 'family_authoring';
 
   static Future<void> createFamily(BuildContext context) async {
-    await Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(
+    await Navigator.of(context).push<Object?>(
+      MaterialPageRoute<Object?>(
         builder: (_) => const FamilyEditorV2Page(),
       ),
     );
