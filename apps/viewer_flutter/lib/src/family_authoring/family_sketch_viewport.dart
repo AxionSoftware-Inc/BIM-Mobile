@@ -6,12 +6,12 @@ import 'package:flutter/material.dart';
 
 import '../render_scene_models.dart';
 import '../render_scene_viewport.dart';
+import '../tools/plan_sketch_geometry.dart';
 import 'family_document.dart';
 
 /// 2D Family sketch editor hosted by the same RenderScene viewport used by the
-/// project plan workspace. This deliberately reuses project pan/zoom, touch
-/// thresholds, hit testing, selection and drag semantics instead of maintaining
-/// a second fixed-scale family canvas.
+/// project plan workspace. Camera, pan/zoom, hit testing and snapping all reuse
+/// the project authoring contracts; Family owns only its local sketch points.
 class FamilySketchViewport extends StatefulWidget {
   const FamilySketchViewport({
     super.key,
@@ -29,9 +29,14 @@ class FamilySketchViewport extends StatefulWidget {
 }
 
 class _FamilySketchViewportState extends State<FamilySketchViewport> {
+  static const double _familyGridStepMeters = 0.05;
+  static const double _endpointToleranceMeters = 0.12;
+
   late final RenderSceneViewportController _controller;
   int? _dragPointIndex;
   String? _sceneKey;
+  bool _snapEnabled = true;
+  String? _snapHint;
 
   @override
   void initState() {
@@ -89,22 +94,34 @@ class _FamilySketchViewportState extends State<FamilySketchViewport> {
               }
               final point = details.modelPoint;
               if (point != null && !widget.sketch.closed) {
-                widget.onAddPoint(FamilySketchPoint(x: point.x, y: point.y));
+                final resolved = _resolvePoint(point);
+                widget.onAddPoint(
+                  FamilySketchPoint(x: resolved.point.x, y: resolved.point.y),
+                );
+                _showSnapHint(resolved.hint);
               }
             },
             onSceneDragStart: (details) {
               _dragPointIndex = _pointIndex(details.pickedObject);
+              _showSnapHint(null);
             },
             onSceneDragUpdate: (details) {
               final index = _dragPointIndex;
               final point = details.modelPoint;
               if (index == null || point == null) return;
+              final resolved = _resolvePoint(point, movingIndex: index);
               widget.onMovePoint(
                 index,
-                FamilySketchPoint(x: point.x, y: point.y),
+                FamilySketchPoint(x: resolved.point.x, y: resolved.point.y),
               );
+              _showSnapHint(resolved.hint);
             },
-            onSceneDragEnd: (_) => _dragPointIndex = null,
+            onSceneDragEnd: (_) {
+              _dragPointIndex = null;
+              Future<void>.delayed(const Duration(milliseconds: 700), () {
+                if (mounted && _dragPointIndex == null) _showSnapHint(null);
+              });
+            },
           ),
         ),
         Positioned(
@@ -120,21 +137,127 @@ class _FamilySketchViewportState extends State<FamilySketchViewport> {
             ),
             child: const Padding(
               padding: EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-              child: Text('Project plan viewport · tap to draw · drag points · pinch to zoom'),
+              child: Text(
+                'Project plan viewport · tap to draw · drag points · pinch to zoom',
+              ),
             ),
           ),
         ),
+        if (_snapHint != null)
+          Positioned(
+            left: 12,
+            bottom: 12,
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: Theme.of(context)
+                      .colorScheme
+                      .inverseSurface
+                      .withValues(alpha: 0.92),
+                  borderRadius: BorderRadius.circular(9),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                  child: Text(
+                    _snapHint!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onInverseSurface,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
         Positioned(
           right: 12,
           top: 12,
-          child: IconButton.filledTonal(
-            tooltip: 'Fit sketch',
-            onPressed: () => unawaited(_controller.fitCamera()),
-            icon: const Icon(Icons.center_focus_strong_outlined),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              FilterChip(
+                selected: _snapEnabled,
+                avatar: Icon(
+                  _snapEnabled ? Icons.magnet_on_outlined : Icons.magnet_off_outlined,
+                  size: 18,
+                ),
+                label: Text(_snapEnabled ? 'Snap 50 mm' : 'Snap off'),
+                onSelected: (enabled) {
+                  setState(() {
+                    _snapEnabled = enabled;
+                    _snapHint = enabled ? 'Grid snap · 50 mm' : null;
+                  });
+                },
+              ),
+              const SizedBox(width: 6),
+              IconButton.filledTonal(
+                tooltip: 'Fit sketch',
+                onPressed: () => unawaited(_controller.fitCamera()),
+                icon: const Icon(Icons.center_focus_strong_outlined),
+              ),
+            ],
           ),
         ),
       ],
     );
+  }
+
+  void _showSnapHint(String? hint) {
+    if (!mounted || hint == _snapHint) return;
+    setState(() => _snapHint = hint);
+  }
+
+  ({RenderScenePoint point, String? hint}) _resolvePoint(
+    RenderScenePoint raw, {
+    int? movingIndex,
+  }) {
+    if (!_snapEnabled) return (point: raw, hint: null);
+
+    final points = widget.sketch.points;
+    RenderScenePoint? reference;
+    if (movingIndex == null) {
+      if (points.isNotEmpty) {
+        final last = points.last;
+        reference = RenderScenePoint(x: last.x, y: last.y, z: 0);
+      }
+    } else if (points.length > 1) {
+      final referenceIndex = movingIndex > 0 ? movingIndex - 1 : 1;
+      final item = points[referenceIndex];
+      reference = RenderScenePoint(x: item.x, y: item.y, z: 0);
+    }
+
+    final candidates = <RenderScenePoint>[
+      for (var index = 0; index < points.length; index++)
+        if (index != movingIndex)
+          RenderScenePoint(x: points[index].x, y: points[index].y, z: 0),
+    ];
+    final resolved = PlanSketchGeometry.resolveLineEndpoint(
+      rawPoint: RenderScenePoint(x: raw.x, y: raw.y, z: 0),
+      referenceStart: reference,
+      candidatePoints: candidates,
+      useGridSnap: true,
+      gridStepMeters: _familyGridStepMeters,
+      constrainOrtho: true,
+      endpointToleranceMeters: _endpointToleranceMeters,
+    );
+
+    String hint = 'Grid · 50 mm';
+    for (final candidate in candidates) {
+      if (PlanSketchGeometry.planDistance(resolved, candidate) <= 1e-7) {
+        hint = 'Endpoint snap';
+        break;
+      }
+    }
+    if (reference != null && hint != 'Endpoint snap') {
+      if ((resolved.y - reference.y).abs() <= 1e-7 &&
+          (resolved.x - reference.x).abs() > 1e-7) {
+        hint = 'Horizontal';
+      } else if ((resolved.x - reference.x).abs() <= 1e-7 &&
+          (resolved.y - reference.y).abs() > 1e-7) {
+        hint = 'Vertical';
+      }
+    }
+    return (point: resolved, hint: hint);
   }
 
   int? _pointIndex(RenderSceneObject? object) {
@@ -182,7 +305,8 @@ class _FamilySketchViewportState extends State<FamilySketchViewport> {
       );
     }
 
-    final segmentCount = sketch.closed ? points.length : math.max(0, points.length - 1);
+    final segmentCount =
+        sketch.closed ? points.length : math.max(0, points.length - 1);
     for (var index = 0; index < segmentCount; index++) {
       final a = points[index];
       final b = points[(index + 1) % points.length];
@@ -223,8 +347,14 @@ class _FamilySketchViewportState extends State<FamilySketchViewport> {
             max: const RenderScenePoint(x: 1, y: 1, z: 0.1),
           )
         : RenderSceneBounds.union(objects.map((object) => object.bounds));
-    final vertexCount = objects.fold<int>(0, (sum, object) => sum + object.mesh.positions.length);
-    final indexCount = objects.fold<int>(0, (sum, object) => sum + object.mesh.indices.length);
+    final vertexCount = objects.fold<int>(
+      0,
+      (sum, object) => sum + object.mesh.positions.length,
+    );
+    final indexCount = objects.fold<int>(
+      0,
+      (sum, object) => sum + object.mesh.indices.length,
+    );
     final payload = <String, Object?>{
       'scene_version': 1,
       'units': 'meters',
