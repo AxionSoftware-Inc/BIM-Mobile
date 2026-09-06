@@ -11,14 +11,12 @@ another wall implementation and it does not edit a project scene directly.
   values and numeric formulas.
 - `family_validation.dart` is the semantic gate before save/import/placement.
 - `family_file_store.dart` owns validated persistence and local Library state.
-- `family_editor_v2_page.dart` is the production authoring surface for both new
-  and existing library assets.
-- `family_editor_page.dart` remains in-tree only as the previous editor/reference.
+- `family_editor_v2_page.dart` is the single production authoring surface for
+  both new and existing library assets.
 - `family_library_dialog.dart` owns search, filters, type choice, favorites,
   recents, cached previews and the edit-existing-family workflow.
-- `family_instance_adapter.dart` is the project boundary. It consumes a
-  validated/resolved family and never copies the authoring feature graph into
-  every project instance.
+- `family_instance_adapter.dart` is the project boundary and the shared resolver
+  facade used by placement and Inspector code.
 
 The family contract has three independent layers:
 
@@ -56,12 +54,14 @@ Family Editor preview
         -> FamilyGeometryEvaluator
         -> FamilyPlanSymbolGenerator
         -> FamilyInstanceAdapter/native creation
+        -> Project Inspector edits
         -> persisted effective instance values
 ```
 
-Do not bypass `FamilyParameterResolver` in a new geometry/placement path and
-read `type.values` directly for an effective dimension. Doing so would make
-plan, 3D and saved project instances disagree.
+Do not bypass `FamilyParameterResolver`/`FamilyInstanceAdapter.resolvedValues`
+in a new geometry/placement/Inspector path and read `type.values` directly for
+an effective dimension. Doing so would make plan, 3D and saved project
+instances disagree.
 
 ## Authoring UX
 
@@ -84,8 +84,8 @@ depend on pressing Enter or dismissing the keyboard first. Formula-driven type
 fields are read-only and show the effective computed value.
 
 The same editor accepts an optional `FamilyAssetFile`. When opened from Library,
-Save updates that stable asset path. Importing GLB/glTF while editing intentionally
-starts a new family asset rather than overwriting the original family.
+Save updates that stable asset path. Importing GLB/glTF while editing
+intentionally starts a new family asset rather than overwriting the original.
 
 ## Library
 
@@ -137,7 +137,7 @@ Keep this validation at the file/project boundary even when the editor already
 prevents the same error in its UI. External `.bimfamily` files do not pass
 through the editor.
 
-## Project integration rule
+## Project integration and Inspector rule
 
 Project instances reference a family asset and stable type id, then persist
 placement plus effective instance values. They must not copy the family feature
@@ -148,6 +148,13 @@ family asset semantic.
 If a formula is invalid, placement fails before an element is created. Door and
 Window use the hosted-opening path; Wall Sweep is projected onto its selected
 wall; free-standing supported families use native family/proxy geometry.
+
+Inspector reconstructs the selected Family Type from the asset and stored
+instance dependency values, then resolves formulas again before geometry and
+metadata are committed. Formula-driven fields are read-only in Inspector.
+Changing a dependency therefore updates 3D geometry, plan symbol and persisted
+effective formula values together; restart cannot surface a stale formula
+snapshot.
 
 The Library's selected type is an in-memory placement preference. The source
 `.bimfamily` is not reordered or rewritten just to place a type.
@@ -169,8 +176,8 @@ as finished:
 
 1. **Exact CSG**. Boolean union/subtract preview remains explicitly approximate
    until a robust solid kernel is connected.
-2. **Geometric constraint solver**. Numeric dependency formulas are now real,
-   but Revit-class reference planes, alignment/equality locks, dimensional
+2. **Geometric constraint solver**. Numeric dependency formulas are real, but
+   Revit-class reference planes, alignment/equality locks, dimensional
    constraints and a geometric constraint graph are not implemented yet.
 3. **Nested families**. Child-family dependency/version/transform semantics need
    a real dependency model before they can safely ship.
@@ -195,7 +202,7 @@ At minimum, family changes should preserve these workflows:
 4. rename an existing family -> Save -> stable id updates one asset, not a
    duplicate file;
 5. create formula parameter -> change its dependency in a Family Type -> 3D,
-   plan symbol and placed effective values all change consistently;
+   plan symbol, Inspector and placed effective values all change consistently;
 6. cyclic/unknown/invalid formulas cannot be saved or placed;
 7. external invalid `.bimfamily` cannot enter the reusable library;
 8. import GLB/glTF -> save -> reopen -> place repeatedly;
