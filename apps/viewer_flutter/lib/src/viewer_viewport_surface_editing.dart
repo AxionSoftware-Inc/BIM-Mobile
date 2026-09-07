@@ -402,6 +402,8 @@ extension _ViewerViewportSurfaceEditing on _ViewerHomePageState {
         return target?.kindKey == 'wall' && start != null && end != null;
       case RenderSceneInteractionMode.trimExtend:
         return _trimTool.isReady;
+      case RenderSceneInteractionMode.addRoom:
+        return _draftRoomValid && _draftRoom != null;
       case RenderSceneInteractionMode.addFloor:
       case RenderSceneInteractionMode.addCeiling:
       case RenderSceneInteractionMode.addRoof:
@@ -574,6 +576,9 @@ extension _ViewerViewportSurfaceEditing on _ViewerHomePageState {
         return;
       case RenderSceneInteractionMode.trimExtend:
         await _commitTrimExtend();
+        return;
+      case RenderSceneInteractionMode.addRoom:
+        await _commitRoomPlacement();
         return;
       case RenderSceneInteractionMode.addFloor:
       case RenderSceneInteractionMode.addCeiling:

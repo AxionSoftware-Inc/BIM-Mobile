@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../app_brand.dart';
 import '../render_scene_models.dart';
 import '../render_scene_viewport_painter.dart';
 import '../render_scene_viewport_planar.dart';
@@ -498,7 +499,7 @@ class _SheetTitleBlock extends StatelessWidget {
                   child: Align(
                     alignment: Alignment.bottomLeft,
                     child: Text(
-                      'TABLET BIM · PROJECT DOCUMENTATION',
+                      'ARVELA · PROJECT DOCUMENTATION',
                       style: TextStyle(fontSize: 8, letterSpacing: 0.5),
                     ),
                   ),

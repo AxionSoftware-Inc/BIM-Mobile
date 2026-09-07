@@ -147,6 +147,9 @@ mixin _FallbackSceneOverlayMixin {
         final fillColor = isBoundarySketch
             ? const Color(0xFFFFD1E4).withValues(alpha: 0.28)
             : switch (surface.kind) {
+                'room-valid' => const Color(0xFF22C55E).withValues(alpha: 0.25),
+                'room-invalid' =>
+                  const Color(0xFFEF4444).withValues(alpha: 0.22),
                 'ceiling' => const Color(0xFF60A5FA).withValues(alpha: 0.18),
                 'roof' => const Color(0xFFF59E0B).withValues(alpha: 0.18),
                 _ => const Color(0xFF10B981).withValues(alpha: 0.18),
@@ -154,6 +157,8 @@ mixin _FallbackSceneOverlayMixin {
         final strokeColor = isBoundarySketch
             ? const Color(0xFFE11D72)
             : switch (surface.kind) {
+                'room-valid' => const Color(0xFF16A34A),
+                'room-invalid' => const Color(0xFFDC2626),
                 'ceiling' => const Color(0xFF2563EB),
                 'roof' => const Color(0xFFD97706),
                 _ => const Color(0xFF059669),
@@ -790,8 +795,8 @@ mixin _FallbackSceneOverlayMixin {
     // During an arc edit the transient third point is authoritative for the
     // handle position; using the committed midpoint as well would paint a
     // second, jumping handle under the finger.
-    final midpoint = draftWallArc?.control ??
-        RenderSceneEditor.wallMidpointPoint(object);
+    final midpoint =
+        draftWallArc?.control ?? RenderSceneEditor.wallMidpointPoint(object);
     final handles = <RenderScenePoint>[start, end];
     if (midpoint != null) handles.add(midpoint);
     final fill = Paint()

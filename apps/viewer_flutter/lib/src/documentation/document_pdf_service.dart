@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
+import '../app_brand.dart';
 import '../app_project_storage.dart';
 import '../atomic_file_writer.dart';
 import '../render_scene_models.dart';
@@ -45,7 +46,7 @@ class DocumentPdfService {
     final document = pw.Document(
       title: _pdfSafe(settings.projectName),
       author: _pdfSafe(settings.author),
-      creator: 'Tablet BIM Documentation',
+      creator: '${ArvelaBrand.name} Documentation',
       subject: 'Architectural floor plan sheet set',
     );
     for (final sheet in sheets) {
@@ -108,7 +109,7 @@ class DocumentPdfService {
     final document = pw.Document(
       title: _pdfSafe('${settings.projectName} ${sheet.number}'),
       author: _pdfSafe(settings.author),
-      creator: 'Tablet BIM Documentation',
+      creator: '${ArvelaBrand.name} Documentation',
       subject: 'Composed architectural sheet',
     );
     const pageMargin = 20.0;

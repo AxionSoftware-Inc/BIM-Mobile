@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'render_scene_models.dart';
 import 'render_scene_viewport_types.dart';
 import 'view_presentation.dart';
+import 'quantity_schedule_dialog.dart';
 
 /// A view that has been opened in the model workspace.
 ///
@@ -15,6 +16,7 @@ enum OpenedViewKind {
   elevation,
   section,
   sheet,
+  schedule,
 }
 
 @immutable
@@ -27,6 +29,7 @@ class OpenedViewTab {
     this.levelId,
     this.section,
     this.sheetId,
+    this.scheduleKind,
     RenderSceneDisplayStyle displayStyle = RenderSceneDisplayStyle.solid,
     bool shadowsEnabled = false,
     RenderSceneOrbitProjectionStyle orbitProjectionStyle =
@@ -44,6 +47,7 @@ class OpenedViewTab {
   final int? levelId;
   final RenderSceneSection? section;
   final String? sheetId;
+  final ProjectScheduleKind? scheduleKind;
   final ViewPresentation presentation;
 
   RenderSceneDisplayStyle get displayStyle => presentation.displayStyle;
@@ -65,6 +69,7 @@ class OpenedViewTab {
       levelId: levelId,
       section: section,
       sheetId: sheetId,
+      scheduleKind: scheduleKind,
       displayStyle: displayStyle ?? this.displayStyle,
       shadowsEnabled: shadowsEnabled ?? this.shadowsEnabled,
       orbitProjectionStyle: orbitProjectionStyle ?? this.orbitProjectionStyle,
@@ -199,4 +204,5 @@ IconData _openedViewIcon(OpenedViewKind kind) => switch (kind) {
       OpenedViewKind.elevation => Icons.straighten,
       OpenedViewKind.section => Icons.content_cut_outlined,
       OpenedViewKind.sheet => Icons.insert_drive_file_outlined,
+      OpenedViewKind.schedule => Icons.table_chart_outlined,
     };

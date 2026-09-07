@@ -103,10 +103,18 @@ class NativeDraftOverlayPainter extends CustomPainter {
       final isBoundarySketch = surface.boundarySketch;
       final strokeColor = isBoundarySketch
           ? const Color(0xFFE11D72)
-          : const Color(0xFF2563EB).withValues(alpha: 0.9);
+          : switch (surface.kind) {
+              'room-valid' => const Color(0xFF16A34A),
+              'room-invalid' => const Color(0xFFDC2626),
+              _ => const Color(0xFF2563EB).withValues(alpha: 0.9),
+            };
       final fillColor = isBoundarySketch
           ? const Color(0xFFFFD1E4).withValues(alpha: 0.28)
-          : const Color(0xFF2563EB).withValues(alpha: 0.10);
+          : switch (surface.kind) {
+              'room-valid' => const Color(0xFF22C55E).withValues(alpha: 0.25),
+              'room-invalid' => const Color(0xFFEF4444).withValues(alpha: 0.22),
+              _ => const Color(0xFF2563EB).withValues(alpha: 0.10),
+            };
       final committedCount = (surface.committedPointCount ?? points.length)
           .clamp(0, points.length);
       final committed = points.take(committedCount).toList(growable: false);

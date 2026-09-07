@@ -4,6 +4,12 @@ part of 'viewer_app.dart';
 
 /// Workspace composition, toolbar controls and panels.
 extension _ViewerWorkspaceLayout on _ViewerHomePageState {
+  bool get _isScheduleWorkspace {
+    final tabId = _activeViewTabId;
+    return tabId != null &&
+        _openedViewTabById(tabId)?.kind == OpenedViewKind.schedule;
+  }
+
   Widget _buildWorkspace(BuildContext context) {
     final fullScene = _scene;
     final scene = fullScene == null ? null : _sceneForViewport(fullScene);
@@ -47,7 +53,8 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
                         mode: _interactionMode,
                         enabled: scene != null &&
                             !_workspaceBusy &&
-                            _sheetWorkspace.activeSheet == null,
+                            _sheetWorkspace.activeSheet == null &&
+                            !_isScheduleWorkspace,
                         onModeChanged: _setInteractionMode,
                       ),
                       Expanded(
@@ -357,6 +364,16 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
                 ),
                 const SizedBox(width: 6),
                 _toolbarChoiceButton(
+                  label: 'Room',
+                  selected:
+                      _interactionMode == RenderSceneInteractionMode.addRoom,
+                  onPressed: scene == null
+                      ? null
+                      : () => _setInteractionMode(
+                          RenderSceneInteractionMode.addRoom),
+                ),
+                const SizedBox(width: 6),
+                _toolbarChoiceButton(
                   label: 'Move opening',
                   selected: _interactionMode ==
                       RenderSceneInteractionMode.moveOpening,
@@ -489,6 +506,7 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
       viewPresentationById:
           Map<String, OpenedViewTab>.unmodifiable(_viewPresentationById),
       onOpenSheet: _openSheetViewTab,
+      onOpenSchedule: (kind) => unawaited(_openScheduleViewTab(kind)),
     );
   }
 
@@ -517,6 +535,14 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
   Widget _buildViewportPanel(BuildContext context) {
     final sheet = _sheetWorkspace.activeSheet;
     final scene = _scene;
+    final activeTab =
+        _activeViewTabId == null ? null : _openedViewTabById(_activeViewTabId!);
+    if (scene != null && activeTab?.kind == OpenedViewKind.schedule) {
+      return QuantityScheduleWorkspace(
+        scene: scene,
+        kind: activeTab?.scheduleKind ?? ProjectScheduleKind.rooms,
+      );
+    }
     if (sheet != null && scene != null) {
       return SheetCanvas(
         controller: _sheetWorkspace,
@@ -636,15 +662,26 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
             ),
             const Divider(height: 1),
             Expanded(
-              child: switch (_sidePanelTab) {
-                WorkspaceSidePanelTab.projectBrowser =>
-                  _buildProjectBrowserPanel(context, scene),
-                WorkspaceSidePanelTab.inspector => _buildInspectorPanel(
-                    context: context,
-                    scene: scene,
-                    inspectorTarget: inspectorTarget,
-                  ),
-              },
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onHorizontalDragEnd: (details) {
+                  final velocity = details.primaryVelocity ?? 0.0;
+                  if (velocity.abs() < 180) return;
+                  final next = velocity < 0
+                      ? WorkspaceSidePanelTab.inspector
+                      : WorkspaceSidePanelTab.projectBrowser;
+                  if (next != _sidePanelTab) _selectSidePanelTab(next);
+                },
+                child: switch (_sidePanelTab) {
+                  WorkspaceSidePanelTab.projectBrowser =>
+                    _buildProjectBrowserPanel(context, scene),
+                  WorkspaceSidePanelTab.inspector => _buildInspectorPanel(
+                      context: context,
+                      scene: scene,
+                      inspectorTarget: inspectorTarget,
+                    ),
+                },
+              ),
             ),
           ],
         ),
@@ -902,6 +939,7 @@ IconData _toolbarIcon(String label) => switch (label) {
       'Move wall' => Icons.open_with_outlined,
       'Door' => Icons.door_front_door_outlined,
       'Window' => Icons.window_outlined,
+      'Room' => Icons.meeting_room_outlined,
       'Move opening' => Icons.compare_arrows_outlined,
       'Floor' => Icons.layers_outlined,
       'Ceiling' => Icons.space_dashboard_outlined,

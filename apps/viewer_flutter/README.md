@@ -1,6 +1,6 @@
-# viewer_flutter
+# Arvela
 
-Flutter BIM authoring application for TabletBimEngine. Android uses the
+Flutter BIM authoring application for Arvela. Android uses the
 native Filament viewport; macOS, Linux and Windows keep a renderer-neutral
 Flutter fallback for development and tests.
 

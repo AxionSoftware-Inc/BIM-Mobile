@@ -1,6 +1,6 @@
 # Family Authoring boundary
 
-Family Authoring is a reusable-content authoring product inside Tablet BIM. It
+Family Authoring is a reusable-content authoring product inside Arvela. It
 owns family documents and geometry intent; it does **not** own another project
 renderer, another orbit camera, or another wall implementation.
 

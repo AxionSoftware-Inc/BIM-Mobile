@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
+import 'app_brand.dart';
 import 'app_project_storage.dart';
 import 'atomic_file_writer.dart';
 import 'render_scene_viewport_types.dart';
@@ -146,7 +147,7 @@ abstract final class ViewerAppSettingsStore {
 
 ThemeData viewerThemeFor(AppThemeMode mode) {
   if (mode == AppThemeMode.light) {
-    return ThemeData(
+    return ArvelaBrand.applyTypography(ThemeData(
       colorScheme: ColorScheme.fromSeed(
         seedColor: const Color(0xFF1F5D4E),
         brightness: Brightness.light,
@@ -154,7 +155,7 @@ ThemeData viewerThemeFor(AppThemeMode mode) {
       scaffoldBackgroundColor: const Color(0xFFF3F6F4),
       useMaterial3: true,
       visualDensity: VisualDensity.standard,
-    );
+    ));
   }
 
   final isAmoled = mode == AppThemeMode.amoledBlack;
@@ -174,7 +175,7 @@ ThemeData viewerThemeFor(AppThemeMode mode) {
     surfaceContainerHighest:
         isAmoled ? const Color(0xFF121212) : const Color(0xFF384045),
   );
-  return ThemeData(
+  return ArvelaBrand.applyTypography(ThemeData(
     colorScheme: scheme,
     scaffoldBackgroundColor: surface,
     canvasColor: surface,
@@ -185,7 +186,7 @@ ThemeData viewerThemeFor(AppThemeMode mode) {
     ),
     useMaterial3: true,
     visualDensity: VisualDensity.standard,
-  );
+  ));
 }
 
 ThemeData viewerAccessibilityTheme(

@@ -80,6 +80,10 @@ extension _ViewerViewportInput on _ViewerHomePageState {
       case RenderSceneInteractionMode.trimExtend:
         await _handleTrimExtendTap(tappedObject, modelPoint);
         return;
+      case RenderSceneInteractionMode.addRoom:
+        _updateRoomPlacementPreview(details);
+        await _commitRoomPlacement(point: modelPoint);
+        return;
       case RenderSceneInteractionMode.addFloor:
       case RenderSceneInteractionMode.addCeiling:
       case RenderSceneInteractionMode.addRoof:
@@ -205,6 +209,9 @@ extension _ViewerViewportInput on _ViewerHomePageState {
         );
         return;
       case RenderSceneInteractionMode.trimExtend:
+        return;
+      case RenderSceneInteractionMode.addRoom:
+        _updateRoomPlacementPreview(details);
         return;
       case RenderSceneInteractionMode.addFloor:
       case RenderSceneInteractionMode.addCeiling:

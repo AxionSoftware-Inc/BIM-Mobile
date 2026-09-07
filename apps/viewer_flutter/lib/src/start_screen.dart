@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import 'app_brand.dart';
 import 'ifc_template_catalog.dart';
 import 'project_recovery_store.dart';
 import 'workspace_chrome.dart';
@@ -183,13 +184,13 @@ class StartScreen extends StatelessWidget {
                       const SizedBox(height: 28),
                       const _StartSectionHeader(
                         title: 'IFC sample projects',
-                        trailing: 'Download on first open',
+                        trailing: 'Bundled in app',
                       ),
                       const SizedBox(height: 12),
                       _StartCardGrid(
                         columnCount: columnCount,
                         gap: cardGap,
-                        children: onlineIfcTemplates
+                        children: defaultIfcTemplates
                             .map(
                               (template) => _IfcTemplateCard(
                                 template: template,
@@ -245,7 +246,7 @@ class _StartHeader extends StatelessWidget {
         ),
         const SizedBox(width: 10),
         Text(
-          'Tablet BIM',
+          ArvelaBrand.name,
           style: theme.textTheme.titleLarge?.copyWith(
             fontWeight: FontWeight.w700,
             letterSpacing: -0.2,

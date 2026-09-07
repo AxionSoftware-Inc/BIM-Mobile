@@ -1,6 +1,6 @@
 # IFC/RVT exchange contract
 
-Tablet BIM keeps authored coordinates in metres and stores project display
+Arvela keeps authored coordinates in metres and stores project display
 units separately. Elements can carry typed metadata values (`text`, `number`,
 `boolean`, `length`, `area`, `volume`, `angle`, and `element_reference`). The
 same contract is available through the native API and the Flutter FFI layer.
@@ -10,11 +10,11 @@ same contract is available through the native API and the Flutter FFI layer.
 The current exporter writes an IFC4 STEP container with semantic IFC entities
 for levels, walls, openings, rooms, slabs, roofs, columns, beams, and stairs.
 It also writes a `TBE_DOCUMENT_JSON_HEX` IFC comment. That sidecar is the
-lossless Tablet BIM interchange channel: it preserves exact geometry,
+lossless Arvela interchange channel: it preserves exact geometry,
 constraints, relations, project units, and typed metadata without converting
 them to a lossy mesh.
 
-Importing an IFC exported by Tablet BIM is lossless. Third-party IFC files are
+Importing an IFC exported by Arvela is lossless. Third-party IFC files are
 also accepted through a conservative semantic fallback for storeys, walls,
 doors, windows, slabs, roofs, columns, beams, and stairs. When a swept
 profile, placement relation, or host relation cannot be resolved, the imported

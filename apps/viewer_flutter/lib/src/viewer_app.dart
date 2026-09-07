@@ -12,6 +12,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'app_brand.dart';
 import 'authoring_command_service.dart';
 import 'app_project_storage.dart';
 import 'app_settings.dart';
@@ -39,6 +40,7 @@ import 'project_recovery_store.dart';
 import 'project_unit_settings.dart';
 import 'project_session_controller.dart';
 import 'project_browser_panel.dart';
+import 'quantity_schedule_dialog.dart';
 import 'render_scene_editor.dart';
 import 'render_scene_estimator.dart';
 import 'render_scene_models.dart';
@@ -77,6 +79,7 @@ part 'viewer_viewport_stair_editing.dart';
 part 'viewer_form_widgets.dart';
 part 'viewer_viewport_wall_editing.dart';
 part 'viewer_viewport_surface_editing.dart';
+part 'viewer_viewport_room_placement.dart';
 part 'viewer_inspector_draft_widgets.dart';
 part 'viewer_inspector_estimate_widgets.dart';
 part 'viewer_inspector_info_widgets.dart';
@@ -133,7 +136,7 @@ class _ViewerHomePageState extends State<ViewerHomePage>
   bool _projectHasChanges = false;
   bool _canUndo = false;
   bool _canRedo = false;
-  String _currentProjectName = 'Tablet BIM Project';
+  String _currentProjectName = ArvelaBrand.projectName;
   final ProjectRecoveryStore _recoveryStore = ProjectRecoveryStore();
   Timer? _recoveryAutosaveTimer;
   bool _recoveryWriteInFlight = false;
@@ -175,6 +178,9 @@ class _ViewerHomePageState extends State<ViewerHomePage>
   RenderScenePoint? _draftWallStart;
   RenderScenePoint? _draftWallEnd;
   RenderSceneObject? _draftMoveTarget;
+  RenderSceneObject? _draftRoom;
+  RenderScenePoint? _draftRoomPoint;
+  bool _draftRoomValid = false;
   RenderScenePoint? _moveAnchorPoint;
   RenderScenePoint? _moveWallOriginalStart;
   RenderScenePoint? _moveWallOriginalEnd;
@@ -257,6 +263,7 @@ class _ViewerHomePageState extends State<ViewerHomePage>
             RenderSceneSurfaceDrawMode.autoRoom => const <String>{},
             _ => const <String>{},
           },
+        RenderSceneInteractionMode.addRoom => const <String>{},
         _ => const <String>{},
       };
 

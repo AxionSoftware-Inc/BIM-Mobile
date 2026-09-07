@@ -1060,7 +1060,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    tbe::core::Project project{"Tablet BIM Sample"};
+    tbe::core::Project project{"Arvela Sample"};
     auto& document = project.active_document();
     tbe::core::CommandProcessor commands;
 

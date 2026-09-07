@@ -92,6 +92,7 @@ enum RenderSceneInteractionMode {
   moveWall,
   moveOpening,
   trimExtend,
+  addRoom,
   addFloor,
   addCeiling,
   addRoof,
@@ -116,6 +117,7 @@ extension RenderSceneInteractionModeX on RenderSceneInteractionMode {
         RenderSceneInteractionMode.moveWall => 'Move wall',
         RenderSceneInteractionMode.moveOpening => 'Move opening',
         RenderSceneInteractionMode.trimExtend => 'Trim / Extend',
+        RenderSceneInteractionMode.addRoom => 'Room',
         RenderSceneInteractionMode.addFloor => 'Floor',
         RenderSceneInteractionMode.addCeiling => 'Ceiling',
         RenderSceneInteractionMode.addRoof => 'Roof',
@@ -128,6 +130,7 @@ extension RenderSceneInteractionModeX on RenderSceneInteractionMode {
         RenderSceneInteractionMode.addWindow => true,
         RenderSceneInteractionMode.moveWall => true,
         RenderSceneInteractionMode.trimExtend => true,
+        RenderSceneInteractionMode.addRoom => true,
         // Inspector property editing must not force a 3D selection into plan.
         // The numeric commit is view-independent; direct placement remains a
         // separate gesture path.

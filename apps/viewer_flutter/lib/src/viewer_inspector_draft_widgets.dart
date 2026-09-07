@@ -685,6 +685,7 @@ class _DraftEditorCardState extends State<_DraftEditorCard> {
         RenderSceneInteractionMode.addFloor => Icons.layers_outlined,
         RenderSceneInteractionMode.addCeiling => Icons.layers_clear_outlined,
         RenderSceneInteractionMode.addRoof => Icons.roofing_outlined,
+        RenderSceneInteractionMode.addRoom => Icons.meeting_room_outlined,
         RenderSceneInteractionMode.addDoor ||
         RenderSceneInteractionMode.addWindow ||
         RenderSceneInteractionMode.moveOpening =>

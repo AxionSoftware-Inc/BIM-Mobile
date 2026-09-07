@@ -220,7 +220,17 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
   }
 
   void _onSelectionChangedForWorkspace() {
-    if (!mounted || _selectionController.isEmpty) return;
+    if (!mounted) return;
+    if (_selectionController.isEmpty) {
+      if (_showSidePanel &&
+          _sidePanelTab != WorkspaceSidePanelTab.projectBrowser) {
+        _updateViewportState(() {
+          _showSidePanel = true;
+          _sidePanelTab = WorkspaceSidePanelTab.projectBrowser;
+        });
+      }
+      return;
+    }
     if (_showSidePanel && _sidePanelTab == WorkspaceSidePanelTab.inspector) {
       return;
     }
@@ -923,7 +933,7 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
       builder: (context) => AlertDialog(
         title: const Text('Close project?'),
         content: const Text(
-          'Save the open project before leaving Tablet BIM?',
+          'Save the open project before leaving ${ArvelaBrand.name}?',
         ),
         actions: <Widget>[
           TextButton(
@@ -1086,7 +1096,7 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
         builder: (context) => DocumentationWorkspacePage(
           scene: _sheetSourceScene ?? scene,
           activeLevelId: _activeLevelId,
-          initialProjectName: 'Tablet BIM Project',
+          initialProjectName: ArvelaBrand.projectName,
           composedSheet: composedSheet,
           composedScenes: Map<String, RenderScene>.unmodifiable(
             _sheetViewScenes,
@@ -1246,10 +1256,24 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
         if (section != null) await _openProjectSection(section);
       case OpenedViewKind.sheet:
         if (tab.sheetId != null) _openSheet(tab.sheetId!);
+      case OpenedViewKind.schedule:
+        // Schedules are rendered in the main workspace from the current
+        // authoritative scene; no camera or native navigation is required.
+        break;
     }
     if (tab.kind != OpenedViewKind.sheet) {
       await _restoreViewPresentation(tab);
     }
+  }
+
+  Future<void> _openScheduleViewTab(ProjectScheduleKind kind) {
+    final isRoomSchedule = kind == ProjectScheduleKind.rooms;
+    return _openViewTab(OpenedViewTab(
+      id: isRoomSchedule ? 'schedule-rooms' : 'schedule-quantities',
+      label: isRoomSchedule ? 'Room schedule' : 'Quantity takeoff',
+      kind: OpenedViewKind.schedule,
+      scheduleKind: kind,
+    ));
   }
 
   Future<void> _open3dViewTab() {

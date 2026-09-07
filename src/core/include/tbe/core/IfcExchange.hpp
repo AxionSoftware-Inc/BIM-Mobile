@@ -40,7 +40,7 @@ struct IfcExchangeReport {
 
 /// Writes an IFC4 STEP document containing standard semantic entities. The
 /// TBE semantic sidecar is stored as an IFC comment so authored dimensions,
-/// relations and typed metadata survive a lossless Tablet BIM round-trip.
+/// relations and typed metadata survive a lossless Arvela round-trip.
 void export_ifc(const Document& document, const std::filesystem::path& path, IfcExchangeReport* report = nullptr);
 
 // Keep the proven lightweight reader available as a compatibility fallback,
@@ -56,6 +56,9 @@ void export_ifc(const Document& document, const std::filesystem::path& path, Ifc
 /// runs additive geometry/property recovery plus explicit source coverage
 /// accounting. Unsupported physical products are reported, never silently
 /// omitted from import diagnostics.
+/// The native STEP geometry path handles faceted BREP, mapped BREP and common
+/// extruded profiles; products whose representation is still outside that path
+/// retain semantic metadata and an explicit lightweight envelope warning.
 Document import_ifc(const std::filesystem::path& path, std::string document_name, IfcExchangeReport* report = nullptr);
 
 #ifndef TBE_LEGACY_IFC_IMPORT_IMPL

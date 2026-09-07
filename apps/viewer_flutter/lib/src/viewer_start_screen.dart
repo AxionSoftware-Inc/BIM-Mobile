@@ -51,7 +51,7 @@ class _ViewerAppState extends State<ViewerApp> {
   Widget build(BuildContext context) {
     final baseTheme = viewerThemeFor(_settings.appTheme);
     return MaterialApp(
-      title: 'Tablet BIM',
+      title: ArvelaBrand.name,
       debugShowCheckedModeBanner: false,
       theme: viewerAccessibilityTheme(
         baseTheme,
@@ -200,7 +200,7 @@ class _StartScreenGateState extends State<_StartScreenGate> {
     AppTelemetry.track('project_open_started');
     try {
       const typeGroup = XTypeGroup(
-        label: 'BIM projects',
+        label: '${ArvelaBrand.name} projects',
         extensions: <String>['json', 'tbe.json'],
       );
       final file = await openFile(acceptedTypeGroups: <XTypeGroup>[typeGroup]);

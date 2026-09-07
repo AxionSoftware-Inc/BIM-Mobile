@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 
+import 'app_brand.dart';
 import 'render_scene_viewport_planar.dart';
 import 'render_scene_viewport_types.dart';
 
-/// Compact project chrome for a professional tablet BIM workspace.
+/// Compact project chrome for the professional Arvela BIM workspace.
 class WorkspaceAppBar extends StatelessWidget implements PreferredSizeWidget {
   const WorkspaceAppBar({
     super.key,
@@ -74,14 +75,14 @@ class WorkspaceAppBar extends StatelessWidget implements PreferredSizeWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           if (onReturnToStart == null)
-            const Text('Tablet BIM')
+            const Text(ArvelaBrand.name)
           else
             InkWell(
               onTap: busy ? null : () => onReturnToStart?.call(),
               borderRadius: BorderRadius.circular(8),
               child: const Padding(
                 padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                child: Text('Tablet BIM'),
+                child: Text(ArvelaBrand.name),
               ),
             ),
           if (subtitle != null && subtitle.isNotEmpty)
@@ -696,6 +697,8 @@ const List<_AuthoringTool> _primaryTools = <_AuthoringTool>[
       Icons.door_front_door_outlined, 'Door'),
   _AuthoringTool(
       RenderSceneInteractionMode.addWindow, Icons.window_outlined, 'Window'),
+  _AuthoringTool(
+      RenderSceneInteractionMode.addRoom, Icons.meeting_room_outlined, 'Room'),
   _AuthoringTool(
       RenderSceneInteractionMode.addFloor, Icons.layers_outlined, 'Floor'),
   _AuthoringTool(RenderSceneInteractionMode.addCeiling,

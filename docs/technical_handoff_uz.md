@@ -1,4 +1,4 @@
-# Tablet BIM — texnik handoff
+# Arvela — texnik handoff
 
 Bu hujjat kontekst limiti yoki agent almashganda loyihani uzmasdan davom ettirish uchun yozilgan. Bu yerda aytilganlar koddagi amaldagi holatni bildiradi; marketing va'dasi emas.
 

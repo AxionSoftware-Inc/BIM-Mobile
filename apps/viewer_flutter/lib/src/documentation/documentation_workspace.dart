@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:pdf/pdf.dart';
 import 'package:printing/printing.dart';
 
+import '../app_brand.dart';
 import '../render_scene_models.dart';
 import 'document_models.dart';
 import 'document_pdf_service.dart';
@@ -13,7 +14,7 @@ class DocumentationWorkspacePage extends StatefulWidget {
     super.key,
     required this.scene,
     required this.activeLevelId,
-    this.initialProjectName = 'Tablet BIM Project',
+    this.initialProjectName = ArvelaBrand.projectName,
     this.composedSheet,
     this.composedScenes = const <String, RenderScene>{},
   });

@@ -1,5 +1,5 @@
 name: viewer_flutter
-description: Production tablet BIM authoring client for TabletBimEngine.
+description: Arvela — a production tablet BIM authoring client.
 publish_to: "none"
 version: 0.3.0+30
 
@@ -29,3 +29,4 @@ flutter:
     - assets/sample_project.json
     - assets/render_scene.json
     - assets/families/
+    - assets/ifc_samples/

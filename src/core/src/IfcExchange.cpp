@@ -981,7 +981,7 @@ void export_ifc(const Document& document, const std::filesystem::path& path, Ifc
     file << "ISO-10303-21;\nHEADER;\n"
          << "FILE_DESCRIPTION(('ViewDefinition [CoordinationView_V2.0]'),'2;1');\n"
          << "FILE_NAME('" << path.filename().string() << "'," << now
-         << ",('Tablet BIM'),('AxionSoftware-Inc'),'Tablet BIM IFC4 exporter','Tablet BIM','');\n"
+         << ",('Arvela'),('AxionSoftware-Inc'),'Arvela IFC4 exporter','Arvela','');\n"
          << "FILE_SCHEMA(('IFC4'));\nENDSEC;\nDATA;\n";
 
     // These are intentionally simple semantic entities. Geometry consumers

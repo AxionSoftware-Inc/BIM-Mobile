@@ -4,6 +4,7 @@ import 'documentation/document_models.dart';
 import 'project_browser_views.dart';
 import 'render_scene_models.dart';
 import 'render_scene_viewport_types.dart';
+import 'quantity_schedule_dialog.dart';
 import 'view_tabs.dart';
 
 /// Complete Project Browser presentation feature.
@@ -28,6 +29,7 @@ class ProjectBrowserPanel extends StatelessWidget {
     this.activeSheetId,
     required this.onCreateSheet,
     required this.onOpenSheet,
+    required this.onOpenSchedule,
   });
 
   final RenderScene? scene;
@@ -45,6 +47,7 @@ class ProjectBrowserPanel extends StatelessWidget {
   final String? activeSheetId;
   final VoidCallback onCreateSheet;
   final ValueChanged<String> onOpenSheet;
+  final ValueChanged<ProjectScheduleKind> onOpenSchedule;
 
   @override
   Widget build(BuildContext context) {
@@ -91,6 +94,52 @@ class ProjectBrowserPanel extends StatelessWidget {
                         activeSheetId: activeSheetId,
                         onCreateSheet: onCreateSheet,
                         onOpenSheet: onOpenSheet,
+                      ),
+                      const Divider(height: 20),
+                      Material(
+                        color: Colors.transparent,
+                        child: ExpansionTile(
+                          key: const PageStorageKey<String>(
+                              'project-browser-schedules'),
+                          dense: true,
+                          visualDensity: VisualDensity.compact,
+                          initiallyExpanded: true,
+                          backgroundColor: Colors.transparent,
+                          collapsedBackgroundColor: Colors.transparent,
+                          leading:
+                              const Icon(Icons.table_chart_outlined, size: 18),
+                          title: const Text('Schedules'),
+                          children: <Widget>[
+                            ListTile(
+                              dense: true,
+                              visualDensity: VisualDensity.compact,
+                              minLeadingWidth: 24,
+                              contentPadding:
+                                  const EdgeInsets.symmetric(horizontal: 12),
+                              leading: const Icon(Icons.meeting_room_outlined,
+                                  size: 18),
+                              title: const Text('Room schedule'),
+                              subtitle: const Text(
+                                  'Area, perimeter and boundary walls'),
+                              onTap: () =>
+                                  onOpenSchedule(ProjectScheduleKind.rooms),
+                            ),
+                            ListTile(
+                              dense: true,
+                              visualDensity: VisualDensity.compact,
+                              minLeadingWidth: 24,
+                              contentPadding:
+                                  const EdgeInsets.symmetric(horizontal: 12),
+                              leading: const Icon(Icons.calculate_outlined,
+                                  size: 18),
+                              title: const Text('Quantity takeoff'),
+                              subtitle: const Text(
+                                  'Walls, floors, openings and cost lines'),
+                              onTap: () => onOpenSchedule(
+                                  ProjectScheduleKind.quantities),
+                            ),
+                          ],
+                        ),
                       ),
                       const Divider(height: 20),
                       Padding(

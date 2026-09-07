@@ -36,6 +36,8 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
 
   Future<void> _clearSelection() async {
     _updateViewportState(() {
+      _showSidePanel = true;
+      _sidePanelTab = WorkspaceSidePanelTab.projectBrowser;
       _statusMessage = 'Selection cleared';
     });
 
@@ -125,6 +127,25 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
       _stairTool
         ..setBaseLevelId(base?.levelId)
         ..setTopLevelId(top?.levelId);
+    }
+
+    if (mode == RenderSceneInteractionMode.addRoom &&
+        _engineBackedMode &&
+        _engineRepository != null) {
+      try {
+        final result = await _authoringCommands.detectRooms();
+        await _applyEngineSceneResult(
+          result,
+          message: 'Room tool ready: closed room boundaries detected.',
+        );
+      } catch (error) {
+        if (mounted) {
+          _updateViewportState(() {
+            _editStatusMessage = 'Room detection failed: $error';
+            _statusMessage = _editStatusMessage;
+          });
+        }
+      }
     }
 
     if (mode == RenderSceneInteractionMode.moveOpening &&
@@ -358,6 +379,9 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
       _draftWallStart = null;
       _draftWallEnd = null;
       _draftMoveTarget = null;
+      _draftRoom = null;
+      _draftRoomPoint = null;
+      _draftRoomValid = false;
       _moveAnchorPoint = null;
       _moveWallOriginalStart = null;
       _moveWallOriginalEnd = null;

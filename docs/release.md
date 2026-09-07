@@ -1,4 +1,4 @@
-# Tablet BIM production release
+# Arvela production release
 
 The app version is controlled by `apps/viewer_flutter/pubspec.yaml`. The current
 release line is `0.2.16+18` (`versionName` `0.2.16`, Android `versionCode` `18`).

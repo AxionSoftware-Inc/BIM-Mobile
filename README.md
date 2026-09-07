@@ -1,6 +1,6 @@
-# Tablet BIM Engine
+# Arvela Engine
 
-Tablet-first CAD/BIM engine foundation built around a small C++ core, with room for Open CASCADE geometry, mobile rendering, cloud sync, and future Flutter UI integration.
+Arvela's tablet-first CAD/BIM engine foundation is built around a small C++ core, with room for Open CASCADE geometry, mobile rendering, cloud sync, and Flutter UI integration.
 
 ## Current Shape
 

@@ -17,7 +17,7 @@ void registerWorkspaceDocumentationTests() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Tablet BIM'), findsOneWidget);
+    expect(find.text('Arvela'), findsOneWidget);
     expect(find.text('Level 1 plan'), findsOneWidget);
     expect(find.text('3D View'), findsOneWidget);
     expect(find.byTooltip('Floor plan'), findsOneWidget);

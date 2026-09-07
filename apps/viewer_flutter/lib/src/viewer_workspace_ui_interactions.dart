@@ -310,6 +310,9 @@ extension _ViewerWorkspaceInteractions on _ViewerHomePageState {
           announce: true,
         );
         return;
+      case RenderSceneInteractionMode.addRoom:
+        _updateRoomPlacementPreview(details);
+        return;
       case RenderSceneInteractionMode.addFloor:
       case RenderSceneInteractionMode.addCeiling:
       case RenderSceneInteractionMode.addRoof:
@@ -429,6 +432,9 @@ extension _ViewerWorkspaceInteractions on _ViewerHomePageState {
       case RenderSceneInteractionMode.addWindow:
         _handleSceneHover(details);
         return;
+      case RenderSceneInteractionMode.addRoom:
+        _updateRoomPlacementPreview(details);
+        return;
       case RenderSceneInteractionMode.addWall:
       case RenderSceneInteractionMode.addFloor:
       case RenderSceneInteractionMode.addCeiling:
@@ -494,6 +500,10 @@ extension _ViewerWorkspaceInteractions on _ViewerHomePageState {
             _editStatusMessage = draft.message;
           });
         }
+        return;
+      case RenderSceneInteractionMode.addRoom:
+        _updateRoomPlacementPreview(details);
+        await _commitRoomPlacement(point: details.modelPoint);
         return;
       case RenderSceneInteractionMode.addFloor:
       case RenderSceneInteractionMode.addCeiling:

@@ -36,6 +36,6 @@ if [[ -z "$DEVICE_ID" ]]; then
 fi
 
 cd "$APP_DIR"
-echo "Running Tablet BIM on Android device: $DEVICE_ID"
+echo "Running Arvela on Android device: $DEVICE_ID"
 echo "Flutter terminal: r = hot reload, R = hot restart, q = quit"
 flutter run -d "$DEVICE_ID"
