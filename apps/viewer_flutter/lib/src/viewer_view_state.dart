@@ -157,50 +157,76 @@ extension _ViewerViewState on _ViewerHomePageState {
         (_activeLevelId == levelId && !wasGeneratedSection)) {
       return;
     }
-    var activeScene = initialScene;
+
+    // The active level is authoring/navigation state. It must never replace
+    // the authoritative full-building scene with the engine's level-scoped
+    // render snapshot. Doing so makes a later 3D transition reuse only the
+    // nearby storeys and is the root cause of roofs/floors disappearing after
+    // repeated 2D <-> 3D switching.
+    var authoritativeScene = initialScene;
     if (wasGeneratedSection) {
-      // Selecting a plan level is an explicit navigation away from the
-      // generated cut scene. The engine call below reloads the authoritative
-      // model snapshot for that level.
       _updateViewportState(() => _activeSectionView = null);
       await _viewportController.setSectionView(null);
     }
+
     final repository = _engineRepository;
     if (_engineBackedMode && repository != null) {
-      final result = await _sceneViews.activateLevel(levelId);
-      if (!mounted) {
-        return;
-      }
-      final loadedScene = result.scene;
-      if (loadedScene == null) {
-        final detail = result.errors.isEmpty
+      final levelResult = await _sceneViews.activateLevel(levelId);
+      if (!mounted) return;
+      if (levelResult.scene == null) {
+        final detail = levelResult.errors.isEmpty
             ? 'The engine returned an empty RenderScene.'
-            : result.errors.join('\n');
+            : levelResult.errors.join('\n');
         throw StateError('Level $levelId activation failed: $detail');
       }
-      activeScene = loadedScene;
+
+      // Restore render scope immediately after the engine has accepted the
+      // active authoring level. Plan isolation belongs to the viewport policy,
+      // not to the document snapshot. This also guarantees that native BIM
+      // geometry cannot remain stuck in a level-only scope when 3D is opened.
+      final fullResult = await _sceneViews.setFullSceneRenderScope(true);
+      if (!mounted) return;
+      if (fullResult.scene != null) {
+        authoritativeScene = fullResult.scene!;
+      } else {
+        // Preserve the previous known-full scene rather than promoting the
+        // temporary level snapshot. Surface the engine warning without
+        // corrupting presentation state.
+        _engineLoadDiagnostic = fullResult.errors.isEmpty
+            ? 'Full-building render scope returned no scene.'
+            : fullResult.errors.join('\n');
+      }
     }
-    final level = activeScene.levelById(levelId);
+
+    final level = authoritativeScene.levelById(levelId) ??
+        initialScene.levelById(levelId);
     _updateViewportState(() {
-      _scene = activeScene;
+      _scene = authoritativeScene;
       _activeLevelId = levelId;
       _draftFloorTopElevationMeters = level?.elevationMeters ?? 0.0;
       _draftSurfaceHeightMeters = level?.defaultWallHeightMeters ??
           _ViewerHomePageState._defaultWallHeightMeters;
-      _statusMessage = 'Active level changed.';
+      _statusMessage = level == null
+          ? 'Active level changed.'
+          : '${level.name} · active level';
       if (_usesProjectionDefaultVisibility) {
-        _visibleKinds = _defaultVisibleKindsForProjection(activeScene);
+        _visibleKinds = _defaultVisibleKindsForProjection(authoritativeScene);
       } else {
         _visibleKinds = _sanitizeVisibleKinds(
           visibleKinds: _visibleKinds,
-          scene: _sceneForViewport(activeScene),
+          scene: _sceneForViewport(authoritativeScene),
         );
       }
       if (_usesProjectionDefaultDisplayStyle) {
         _displayStyle = _defaultDisplayStyleForProjection();
       }
     });
-    await _viewportController.loadRenderScene(_sceneForViewport(activeScene));
+
+    // Only this presentation snapshot is level-filtered. `_scene` remains the
+    // complete building, so switching back to 3D is always lossless.
+    await _viewportController.loadRenderScene(
+      _sceneForViewport(authoritativeScene),
+    );
     await _viewportController.setVisibleKinds(_visibleKinds);
     await _viewportController.setProjectionMode(_projectionMode);
     await _viewportController.setOrbitProjectionStyle(_orbitProjectionStyle);
