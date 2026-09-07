@@ -495,6 +495,186 @@ class _ViewerHomePageState extends State<ViewerHomePage>
     if (mounted) setState(callback);
   }
 
+  /// Production import entrypoint. Instance methods intentionally override the
+  /// legacy IFC extension methods in viewer_project_lifecycle.dart, allowing a
+  /// safe migration without deleting the old reader path in the same release.
+  Future<void> _importIfc() async {
+    if (_isBusy) return;
+    final importService = ModelImportService<ViewerEngineSession>.standard(
+      lifecycle: _projectLifecycle,
+    );
+    try {
+      final typeGroup = XTypeGroup(
+        label: 'BIM / 3D models',
+        extensions: importService.registry.extensions,
+      );
+      final file = await openFile(
+        acceptedTypeGroups: <XTypeGroup>[typeGroup],
+      );
+      if (file == null || !mounted) return;
+      await _loadIfcPath(file.path, projectName: file.name);
+    } catch (error) {
+      if (!mounted) return;
+      _updateViewportState(() {
+        _isBusy = false;
+        _loadError = error.toString();
+        _statusMessage = 'Model import failed.';
+      });
+    }
+  }
+
+  /// Compatibility name retained for existing start-screen callers. The
+  /// implementation is format-neutral and resolves its adapter by extension.
+  Future<void> _loadIfcPath(
+    String path, {
+    required String projectName,
+  }) async {
+    if (_isBusy) return;
+    final generation = ++_sceneLoadGeneration;
+    final importService = ModelImportService<ViewerEngineSession>.standard(
+      lifecycle: _projectLifecycle,
+    );
+    ModelImportCandidate<ViewerEngineSession>? candidate;
+    var committed = false;
+    try {
+      _updateViewportState(() {
+        _isBusy = true;
+        _loadError = null;
+        _activeSectionView = null;
+        _statusMessage = 'Reading $projectName...';
+      });
+
+      // Parsing/cache validation happens in a fresh session. The open project
+      // is untouched until this returns a valid semantic scene.
+      candidate = await importService.prepare(
+        path: path,
+        displayName: projectName,
+      );
+      if (!mounted || generation != _sceneLoadGeneration) {
+        candidate.session.dispose();
+        return;
+      }
+
+      final importedSession = candidate.session;
+      final source = candidate.source;
+      final initialScene = candidate.initialScene;
+      final runtimeCachePath = candidate.runtimeCachePath;
+      final origin = candidate.origin;
+
+      // This is the transaction commit. ProjectSessionController disposes the
+      // previous session only after the candidate has parsed and validated.
+      _projectSession.activate(importedSession);
+      committed = true;
+      _currentProjectName = projectName;
+      _engineLoadDiagnostic = null;
+
+      await _applyLoadResult(
+        initialScene,
+        sourceLabel: origin == ModelImportOrigin.semanticCache
+            ? '$projectName · semantic cache'
+            : projectName,
+        resetProjectChanges: true,
+      );
+      if (!mounted || generation != _sceneLoadGeneration) return;
+
+      // Semantic hydration is mandatory and independent from the renderer
+      // cache. This fixes the old split-brain path where a successful .bimcache
+      // prevented Flutter's authoritative scene from ever receiving details.
+      _hydrateSecondaryScene(
+        session: importedSession,
+        generation: generation,
+        sourceLabel: projectName,
+      );
+
+      if (runtimeCachePath != null &&
+          source.format.supportsNativeRuntimeCache &&
+          source.format.id == 'ifc' &&
+          _viewportController.backend == RenderSceneViewportBackend.native) {
+        _prepareImportedRuntimeCache(
+          sourcePath: source.path,
+          cachePath: runtimeCachePath,
+          session: importedSession,
+          generation: generation,
+          sourceLabel: projectName,
+        );
+      }
+    } catch (error) {
+      if (!committed) candidate?.session.dispose();
+      if (!mounted) return;
+      _updateViewportState(() {
+        _isBusy = false;
+        _loadError = error.toString();
+        _statusMessage = 'Model import failed.';
+      });
+    }
+  }
+
+  void _prepareImportedRuntimeCache({
+    required String sourcePath,
+    required String cachePath,
+    required ViewerEngineSession session,
+    required int generation,
+    required String sourceLabel,
+  }) {
+    unawaited(() async {
+      // The primary semantic scene paints first. Runtime geometry is an
+      // optional acceleration stage and is never allowed to become document
+      // authority or block authoring when it fails.
+      await Future<void>.delayed(Duration.zero);
+      if (!mounted ||
+          generation != _sceneLoadGeneration ||
+          !identical(_projectSession.session, session)) {
+        return;
+      }
+      try {
+        final bridgeReady = await _viewportController.waitForNativeBridge();
+        if (!bridgeReady || !mounted) return;
+        _updateViewportState(() {
+          _statusMessage = '$sourceLabel · optimizing native 3D...';
+        });
+        final payload = await _viewportController.prepareNativeBimCache(
+          sourceIfcPath: sourcePath,
+          cachePath: cachePath,
+        );
+        if (payload == null ||
+            !mounted ||
+            generation != _sceneLoadGeneration ||
+            !identical(_projectSession.session, session)) {
+          return;
+        }
+
+        // Ignore payload['scene']: it is a compact renderer envelope, not the
+        // BIM document. Rebind the current semantic scene while preserving the
+        // native buffers that were just attached.
+        final semanticScene = _scene;
+        if (semanticScene != null) {
+          await _viewportController.updateRenderScene(
+            _sceneForViewport(semanticScene),
+            resetView: false,
+            preserveNativeGeometry: true,
+            visibleKinds: _visibleKinds,
+          );
+          await _viewportController.setProjectionMode(_projectionMode);
+          await _viewportController.setOrbitProjectionStyle(
+            _orbitProjectionStyle,
+          );
+          await _viewportController.setDisplayStyle(_displayStyle);
+        }
+        if (mounted && generation == _sceneLoadGeneration) {
+          _updateViewportState(() {
+            _statusMessage = '$sourceLabel · native 3D ready';
+          });
+        }
+      } catch (error) {
+        if (!mounted || generation != _sceneLoadGeneration) return;
+        _updateViewportState(() {
+          _engineLoadDiagnostic = 'Native import cache deferred: $error';
+          _statusMessage = '$sourceLabel · semantic model ready';
+        });
+      }
+    }());
+  }
+
   Future<void> _runViewNavigation(Future<void> Function() operation) {
     return _viewNavigation.run(() async {
       if (mounted) {
