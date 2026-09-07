@@ -238,11 +238,7 @@ class _StartHeader extends StatelessWidget {
               color: colors.primary.withValues(alpha: 0.36),
             ),
           ),
-          child: Icon(
-            Icons.view_in_ar_outlined,
-            color: colors.primary,
-            size: 21,
-          ),
+          child: ArvelaMark(size: 22, color: colors.primary),
         ),
         const SizedBox(width: 10),
         Text(
