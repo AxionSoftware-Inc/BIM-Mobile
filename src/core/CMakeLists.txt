@@ -15,7 +15,7 @@ add_library(tbe_core
     src/Document.cpp
     src/Element.cpp
     src/IfcExchange.cpp
-    src/IfcImportPipelineV2.cpp
+    src/IfcImportPipelineProduction.cpp
     src/JobSystem.cpp
     src/Project.cpp
     src/ProjectCatalog.cpp
@@ -23,9 +23,9 @@ add_library(tbe_core
 )
 
 # Keep the existing reader compiled as a compatibility semantic stage while
-# exposing IfcImportPipelineV2.cpp as the production `import_ifc` symbol. The
-# source-local definition makes the old function emit as `import_ifc_legacy`
-# only in its own translation unit; callers remain unaware of the split.
+# the production pipeline runs additive placement/geometry fidelity recovery.
+# IfcImportPipelineProduction.cpp compiles V2 as an internal implementation
+# detail and exposes the only public `import_ifc` symbol.
 set_source_files_properties(
     src/IfcExchange.cpp
     PROPERTIES COMPILE_DEFINITIONS TBE_LEGACY_IFC_IMPORT_IMPL=1
