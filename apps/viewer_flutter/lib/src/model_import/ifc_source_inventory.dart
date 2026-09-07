@@ -1,8 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'model_import_models.dart';
-
 /// One renderable IFC product discovered directly in the source STEP stream.
 ///
 /// This inventory is deliberately independent from the native importer. It is
@@ -98,11 +96,8 @@ class IfcSourceInventory {
 class IfcSourceInventoryReader {
   const IfcSourceInventoryReader();
 
-  Future<IfcSourceInventory> read(ModelImportSource source) async {
-    if (source.format.id != 'ifc') {
-      throw ArgumentError.value(source.format.id, 'format', 'Expected IFC.');
-    }
-    final file = File(source.path);
+  Future<IfcSourceInventory> readPath(String path) async {
+    final file = File(path);
     var assignmentCount = 0;
     final products = <IfcSourceProduct>[];
     final typeCounts = <String, int>{};
