@@ -1,5 +1,6 @@
 import '../render_scene_models.dart';
 import '../viewer_project_session.dart';
+import 'model_import_audit.dart';
 
 /// Stable description of one source-model format.
 ///
@@ -49,6 +50,31 @@ class ModelImportSource {
 
 enum ModelImportOrigin { semanticCache, sourceFile }
 
+enum ModelImportStage {
+  inspecting,
+  inventory,
+  semanticCache,
+  parsing,
+  validating,
+  checkpointing,
+  runtimeCache,
+  ready,
+}
+
+class ModelImportProgress {
+  const ModelImportProgress({
+    required this.stage,
+    required this.fraction,
+    required this.message,
+  });
+
+  final ModelImportStage stage;
+  final double fraction;
+  final String message;
+}
+
+typedef ModelImportProgressCallback = void Function(ModelImportProgress progress);
+
 /// A fully validated candidate. Ownership is transferred to the workspace only
 /// after this object is returned; failed imports dispose their candidate session
 /// before the active project can be touched.
@@ -59,6 +85,7 @@ class ModelImportCandidate<T extends ViewerEngineSession> {
     required this.initialScene,
     required this.origin,
     required this.runtimeCachePath,
+    required this.audit,
   });
 
   final T session;
@@ -66,6 +93,7 @@ class ModelImportCandidate<T extends ViewerEngineSession> {
   final RenderSceneLoadResult initialScene;
   final ModelImportOrigin origin;
   final String? runtimeCachePath;
+  final ModelImportAudit audit;
 }
 
 class ModelImportRegistry {
@@ -78,9 +106,9 @@ class ModelImportRegistry {
             id: 'ifc',
             label: 'IFC model',
             extensions: <String>['ifc'],
-            semanticCacheVersion: 3,
+            semanticCacheVersion: 4,
             supportsNativeRuntimeCache: true,
-            runtimeCacheVersion: 5,
+            runtimeCacheVersion: 6,
           ),
         ],
       );
