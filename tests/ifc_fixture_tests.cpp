@@ -205,6 +205,51 @@ void validate_mapped_nested_placement(const std::filesystem::path& path) {
     assert(std::abs(level->level()->elevation_meters - 3.0) < 1.0e-6);
 }
 
+void validate_profile_pnindex_fidelity(const std::filesystem::path& path) {
+    tbe::core::IfcExchangeReport report;
+    const auto document = tbe::core::import_ifc(path, "Profile PnIndex fidelity", &report);
+    assert(report.silent_dropped_products == 0);
+    assert(report.source_physical_products == 2);
+
+    const auto* column = element_by_ifc_guid(document, "C1");
+    const auto* furniture = element_by_ifc_guid(document, "FPN");
+    assert(column != nullptr);
+    assert(furniture != nullptr);
+    const auto* column_mesh = mesh_for(*column);
+    const auto* furniture_mesh = mesh_for(*furniture);
+    assert(column_mesh != nullptr && !column_mesh->vertices.empty());
+    assert(furniture_mesh != nullptr && !furniture_mesh->vertices.empty());
+
+    // IfcRectangleProfileDef is (ProfileType, ProfileName, Position, XDim,
+    // YDim). The old recovery path shifted these attributes left and produced
+    // a degenerate extrusion. Product placement (10,20), profile position
+    // (2,3), XDim=2 and YDim=1 must produce these exact level-relative bounds.
+    const auto column_bounds = bounds_for(*column_mesh);
+    assert(std::abs(column_bounds.min_x - 11.0) < 1.0e-6);
+    assert(std::abs(column_bounds.max_x - 13.0) < 1.0e-6);
+    assert(std::abs(column_bounds.min_y - 22.5) < 1.0e-6);
+    assert(std::abs(column_bounds.max_y - 23.5) < 1.0e-6);
+    assert(std::abs(column_bounds.min_z - 0.0) < 1.0e-6);
+    assert(std::abs(column_bounds.max_z - 4.0) < 1.0e-6);
+
+    // PnIndex=(3,4,5,6) means CoordIndex addresses those four entries of the
+    // coordinate list, not entries 1..4 directly. The two leading 100m junk
+    // points are deliberate: ignoring PnIndex would make this assertion fail
+    // dramatically while still yielding a syntactically valid mesh.
+    const auto furniture_bounds = bounds_for(*furniture_mesh);
+    assert(std::abs(furniture_bounds.min_x - 5.0) < 1.0e-6);
+    assert(std::abs(furniture_bounds.max_x - 7.0) < 1.0e-6);
+    assert(std::abs(furniture_bounds.min_y - 6.0) < 1.0e-6);
+    assert(std::abs(furniture_bounds.max_y - 7.0) < 1.0e-6);
+    assert(std::abs(furniture_bounds.min_z) < 1.0e-6);
+    assert(std::abs(furniture_bounds.max_z) < 1.0e-6);
+
+    const auto column_exact = column->metadata().find("ifc_exact_geometry");
+    const auto furniture_exact = furniture->metadata().find("ifc_exact_geometry");
+    assert(column_exact != column->metadata().end() && column_exact->second.value == "true");
+    assert(furniture_exact != furniture->metadata().end() && furniture_exact->second.value == "true");
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -221,6 +266,7 @@ int main(int argc, char** argv) {
         const auto stem = std::filesystem::path(argv[index]).stem().string();
         if (stem == "multi-storey-containment") validate_multi_storey_containment(argv[index]);
         if (stem == "mapped-nested-placement") validate_mapped_nested_placement(argv[index]);
+        if (stem == "profile-pnindex-fidelity") validate_profile_pnindex_fidelity(argv[index]);
     }
     return 0;
 }
