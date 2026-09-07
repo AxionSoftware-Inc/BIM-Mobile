@@ -3,6 +3,9 @@ import 'project_lifecycle_service.dart';
 import 'project_session_controller.dart';
 import 'viewer_project_session.dart';
 
+export 'model_import/model_import_models.dart';
+export 'model_import/model_import_service.dart';
+
 /// Dependencies owned by one workspace instance.
 ///
 /// Production construction is kept in one composition root. Widgets receive
