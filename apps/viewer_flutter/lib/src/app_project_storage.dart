@@ -12,6 +12,9 @@ import 'package:flutter/services.dart';
 abstract final class AppProjectStorage {
   static const MethodChannel _channel = MethodChannel('tbe/app_storage');
   static const String _appDirectoryName = 'TabletBIM';
+  static const String _ifcFidelityMigrationMarker =
+      '.ifc-fidelity-cache-v5';
+  static Future<void>? _storageMigration;
 
   static Future<Directory> projectDirectory() async {
     String? path;
@@ -36,7 +39,41 @@ abstract final class AppProjectStorage {
     if (!await directory.exists()) {
       await directory.create(recursive: true);
     }
+
+    // IFC import fidelity changed materially after the placement/mapped-item
+    // recovery rewrite. Older semantic/native caches can otherwise hide the
+    // fixed importer and make a newly installed build reopen the previously
+    // scattered model. This one-shot storage migration removes only IFC
+    // acceleration artifacts; projects, recovery state and Family Library
+    // content remain untouched.
+    final migration = _storageMigration ??= _migrateIfcFidelityCache(directory);
+    try {
+      await migration;
+    } catch (_) {
+      // Cache invalidation is best-effort. A failed migration must never make
+      // the persistent project directory unavailable; the next app process
+      // will retry because the marker is written only after successful cleanup.
+      _storageMigration = null;
+    }
     return directory;
+  }
+
+  static Future<void> _migrateIfcFidelityCache(Directory root) async {
+    final marker = File(
+      '${root.path}${Platform.pathSeparator}$_ifcFidelityMigrationMarker',
+    );
+    if (await marker.exists()) return;
+
+    final ifcCache = Directory(
+      '${root.path}${Platform.pathSeparator}ifc-cache',
+    );
+    if (await ifcCache.exists()) {
+      await ifcCache.delete(recursive: true);
+    }
+    await marker.writeAsString(
+      'IFC placement/profile/tessellation fidelity cache generation 5\n',
+      flush: true,
+    );
   }
 
   /// Pure host-path resolver kept public for deterministic platform tests.
