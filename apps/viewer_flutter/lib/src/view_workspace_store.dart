@@ -29,6 +29,10 @@ final class ViewWorkspaceStore {
     final firstLevel = scene.levels.isEmpty ? null : scene.levels.first;
     final planId = firstLevel == null ? null : floorPlanId(firstLevel.levelId);
 
+    // Keep both canonical navigation destinations alive. The compact viewport
+    // 2D/3D switch changes the active *view*, not only the camera projection;
+    // therefore its target tab must exist even before the user opens 3D from
+    // Project Browser. Extra elevations/sections are still opened on demand.
     _tabs
       ..clear()
       ..addAll(<OpenedViewTab>[
@@ -40,13 +44,12 @@ final class ViewWorkspaceStore {
             projectionMode: RenderSceneProjectionMode.topDown,
             levelId: firstLevel.levelId,
           ),
-        if (firstLevel == null)
-          OpenedViewTab(
-            id: threeDViewId,
-            label: '3D View',
-            kind: OpenedViewKind.threeD,
-            projectionMode: RenderSceneProjectionMode.isometric,
-          ),
+        OpenedViewTab(
+          id: threeDViewId,
+          label: '3D View',
+          kind: OpenedViewKind.threeD,
+          projectionMode: RenderSceneProjectionMode.isometric,
+        ),
       ]);
     _savedPresentations.clear();
     _sheetSourceScene = null;
