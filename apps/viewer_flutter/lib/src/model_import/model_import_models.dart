@@ -106,9 +106,14 @@ class ModelImportRegistry {
             id: 'ifc',
             label: 'IFC model',
             extensions: <String>['ifc'],
-            semanticCacheVersion: 4,
+            // Version 5 is the first placement-safe semantic cache. Never load
+            // v4 caches produced by the old IFC recovery path: those could
+            // contain source-origin mapped items and missing/incorrect levels.
+            semanticCacheVersion: 5,
             supportsNativeRuntimeCache: true,
-            runtimeCacheVersion: 6,
+            // Runtime cache coordinates depend on the semantic placement
+            // contract, so invalidate the pre-v2 render cache as well.
+            runtimeCacheVersion: 7,
           ),
         ],
       );
