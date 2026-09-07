@@ -8,9 +8,33 @@
 
 namespace tbe::core {
 
+struct IfcImportIssue {
+    int step_id{};
+    std::string global_id{};
+    std::string entity_type{};
+    std::string stage{};
+    std::string message{};
+};
+
 struct IfcExchangeReport {
     std::size_t exported_elements{};
     std::size_t imported_elements{};
+
+    // Source-vs-result quality accounting. Every physical source product must
+    // finish in one of the accounted buckets below; unsupported products are
+    // explicit issues rather than silent drops.
+    std::size_t source_physical_products{};
+    std::size_t native_semantic_products{};
+    std::size_t exact_mesh_products{};
+    std::size_t recovered_proxy_products{};
+    std::size_t approximate_products{};
+    std::size_t failed_geometry_products{};
+    std::size_t source_products_without_guid{};
+    std::size_t duplicate_source_identity_products{};
+    std::size_t silent_dropped_products{};
+    std::size_t imported_property_values{};
+
+    std::vector<IfcImportIssue> issues{};
     std::vector<std::string> warnings{};
 };
 
@@ -29,8 +53,9 @@ void export_ifc(const Document& document, const std::filesystem::path& path, Ifc
 #endif
 
 /// Production import entrypoint. It preserves the semantic importer and then
-/// recovers modern IFC4 tessellated products that the lightweight reader could
-/// not decode, keeping render geometry and BIM identity in the same document.
+/// runs additive geometry/property recovery plus explicit source coverage
+/// accounting. Unsupported physical products are reported, never silently
+/// omitted from import diagnostics.
 Document import_ifc(const std::filesystem::path& path, std::string document_name, IfcExchangeReport* report = nullptr);
 
 #ifndef TBE_LEGACY_IFC_IMPORT_IMPL
