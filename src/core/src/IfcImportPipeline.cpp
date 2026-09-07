@@ -7,7 +7,6 @@
 #include <cstdlib>
 #include <fstream>
 #include <limits>
-#include <map>
 #include <optional>
 #include <sstream>
 #include <string_view>
@@ -47,6 +46,15 @@ struct Bounds3 {
     };
     bool valid{};
 };
+
+struct RecoveredMesh {
+    MeshBuffer mesh{};
+    bool exact{true};
+    std::string stage{"tessellation"};
+};
+
+using GuidIndex = std::unordered_map<std::string, ElementId>;
+using LevelIndex = std::vector<std::pair<ElementId, double>>;
 
 std::string trim(std::string value) {
     const auto first = std::find_if_not(value.begin(), value.end(), [](unsigned char ch) {
@@ -124,8 +132,7 @@ std::vector<StepEntity> parse_step_entities(std::string_view contents) {
         entities.push_back(StepEntity{
             .id = static_cast<int>(id),
             .type = std::move(type),
-            .arguments = split_step_arguments(
-                contents.substr(open + 1, close - open - 2)),
+            .arguments = split_step_arguments(contents.substr(open + 1, close - open - 2)),
         });
         cursor = contents.find(';', close);
         if (cursor == std::string_view::npos) break;
@@ -182,6 +189,28 @@ std::string step_string(const std::string& value) {
     return result;
 }
 
+std::string untyped_value(std::string value) {
+    value = trim(std::move(value));
+    if (value.empty() || value == "$" || value == "*") return {};
+    const auto open = value.find('(');
+    if (open != std::string::npos && value.back() == ')') {
+        value = trim(value.substr(open + 1, value.size() - open - 2));
+    }
+    const auto text = step_string(value);
+    return text.empty() ? value : text;
+}
+
+std::string metadata_key_part(std::string value) {
+    for (auto& ch : value) {
+        if (!std::isalnum(static_cast<unsigned char>(ch)) && ch != '_' && ch != '-') ch = '_';
+    }
+    while (value.find("__") != std::string::npos) {
+        value.replace(value.find("__"), 2, "_");
+    }
+    if (value.size() > 80) value.resize(80);
+    return value.empty() ? std::string{"unnamed"} : value;
+}
+
 std::vector<std::vector<double>> nested_number_tuples(std::string_view value) {
     std::vector<std::vector<double>> tuples;
     int depth = 0;
@@ -192,8 +221,7 @@ std::vector<std::vector<double>> nested_number_tuples(std::string_view value) {
             if (depth == 2) tuple_start = index + 1;
         } else if (value[index] == ')') {
             if (depth == 2 && tuple_start != std::string_view::npos) {
-                const auto parts = split_step_arguments(
-                    value.substr(tuple_start, index - tuple_start));
+                const auto parts = split_step_arguments(value.substr(tuple_start, index - tuple_start));
                 std::vector<double> tuple;
                 tuple.reserve(parts.size());
                 bool valid = true;
@@ -313,23 +341,17 @@ std::optional<Point3> cartesian_point(
     const auto found = entities.find(id);
     if (found == entities.end() || found->second.type != "IFCCARTESIANPOINT" ||
         found->second.arguments.empty()) return std::nullopt;
-    auto tuples = nested_number_tuples('(' + found->second.arguments.front() + ')');
-    if (tuples.empty()) {
-        auto raw = found->second.arguments.front();
-        if (raw.size() >= 2 && raw.front() == '(' && raw.back() == ')') {
-            raw = raw.substr(1, raw.size() - 2);
-        }
-        const auto parts = split_step_arguments(raw);
-        if (parts.size() < 2) return std::nullopt;
-        return Point3{
-            step_number(parts[0]).value_or(0.0),
-            step_number(parts[1]).value_or(0.0),
-            parts.size() > 2 ? step_number(parts[2]).value_or(0.0) : 0.0,
-        };
+    auto raw = found->second.arguments.front();
+    if (raw.size() >= 2 && raw.front() == '(' && raw.back() == ')') {
+        raw = raw.substr(1, raw.size() - 2);
     }
-    const auto& tuple = tuples.front();
-    if (tuple.size() < 2) return std::nullopt;
-    return Point3{tuple[0], tuple[1], tuple.size() > 2 ? tuple[2] : 0.0};
+    const auto parts = split_step_arguments(raw);
+    if (parts.size() < 2) return std::nullopt;
+    return Point3{
+        step_number(parts[0]).value_or(0.0),
+        step_number(parts[1]).value_or(0.0),
+        parts.size() > 2 ? step_number(parts[2]).value_or(0.0) : 0.0,
+    };
 }
 
 std::optional<Point3> direction(
@@ -425,6 +447,27 @@ double length_scale(const std::vector<StepEntity>& entities) {
     return 1.0;
 }
 
+void append_polygon(
+    const std::vector<Point3>& polygon,
+    const Transform3& transform,
+    double unit_scale,
+    MeshBuffer& output
+) {
+    if (polygon.size() < 3) return;
+    const auto base = static_cast<std::uint32_t>(output.vertices.size());
+    output.vertices.reserve(output.vertices.size() + polygon.size());
+    for (const auto point : polygon) {
+        output.vertices.push_back(scale(transform_point(transform, point), unit_scale));
+    }
+    for (std::size_t index = 1; index + 1 < polygon.size(); ++index) {
+        output.indices.insert(output.indices.end(), {
+            base,
+            base + static_cast<std::uint32_t>(index),
+            base + static_cast<std::uint32_t>(index + 1),
+        });
+    }
+}
+
 void append_indexed_faces(
     const std::vector<Point3>& points,
     const std::vector<std::vector<int>>& faces,
@@ -473,12 +516,25 @@ std::vector<Point3> point_list(
     return result;
 }
 
-void append_tessellated_item(
+std::vector<Point3> polyloop_points(
+    const StepEntity& loop,
+    const std::unordered_map<int, StepEntity>& entities
+) {
+    std::vector<Point3> result;
+    if (loop.type != "IFCPOLYLOOP" || loop.arguments.empty()) return result;
+    for (const auto point_id : references_in(loop.arguments.front())) {
+        const auto point = cartesian_point(point_id, entities);
+        if (point.has_value()) result.push_back(*point);
+    }
+    return result;
+}
+
+void append_geometry_item(
     int id,
     const std::unordered_map<int, StepEntity>& entities,
     const Transform3& transform,
     double unit_scale,
-    MeshBuffer& output,
+    RecoveredMesh& output,
     std::unordered_set<int>& recursion_guard
 ) {
     if (!recursion_guard.insert(id).second) return;
@@ -488,6 +544,7 @@ void append_tessellated_item(
         return;
     }
     const auto& entity = found->second;
+
     if (entity.type == "IFCTRIANGULATEDFACESET" && entity.arguments.size() > 3) {
         const auto point_refs = references_in(entity.arguments[0]);
         if (!point_refs.empty()) {
@@ -496,7 +553,7 @@ void append_tessellated_item(
                 nested_integer_tuples(entity.arguments[3]),
                 transform,
                 unit_scale,
-                output);
+                output.mesh);
         }
     } else if (entity.type == "IFCPOLYGONALFACESET" && entity.arguments.size() > 2) {
         const auto point_refs = references_in(entity.arguments[0]);
@@ -508,6 +565,10 @@ void append_tessellated_item(
                 face->second.type != "IFCINDEXEDPOLYGONALFACEWITHVOIDS") continue;
             auto indices = integer_list(face->second.arguments[0]);
             if (indices.size() >= 3) faces.push_back(std::move(indices));
+            if (face->second.type == "IFCINDEXEDPOLYGONALFACEWITHVOIDS") {
+                output.exact = false;
+                output.stage = "polygonal-face-set-with-voids";
+            }
         }
         if (!point_refs.empty()) {
             append_indexed_faces(
@@ -515,37 +576,109 @@ void append_tessellated_item(
                 faces,
                 transform,
                 unit_scale,
-                output);
+                output.mesh);
+        }
+    } else if (entity.type == "IFCFACETEDBREP" ||
+               entity.type == "IFCMANIFOLDSOLIDBREP" ||
+               entity.type == "IFCADVANCEDBREP") {
+        if (entity.type == "IFCADVANCEDBREP") {
+            output.exact = false;
+            output.stage = "advanced-brep-boundary";
+        } else if (output.stage == "tessellation") {
+            output.stage = "faceted-brep";
+        }
+        for (const auto child : references_in(entity.arguments.empty() ? std::string{} : entity.arguments[0])) {
+            append_geometry_item(child, entities, transform, unit_scale, output, recursion_guard);
+        }
+    } else if (entity.type == "IFCCLOSEDSHELL" ||
+               entity.type == "IFCOPENSHELL" ||
+               entity.type == "IFCCONNECTEDFACESET" ||
+               entity.type == "IFCSHELLBASEDSURFACEMODEL" ||
+               entity.type == "IFCFACEBASEDSURFACEMODEL") {
+        for (const auto& argument : entity.arguments) {
+            for (const auto child : references_in(argument)) {
+                append_geometry_item(child, entities, transform, unit_scale, output, recursion_guard);
+            }
+        }
+    } else if (entity.type == "IFCFACE" || entity.type == "IFCADVANCEDFACE") {
+        if (entity.type == "IFCADVANCEDFACE") {
+            output.exact = false;
+            output.stage = "advanced-face-boundary";
+        }
+        if (!entity.arguments.empty()) {
+            bool emitted_outer = false;
+            for (const auto bound_id : references_in(entity.arguments.front())) {
+                const auto bound = entities.find(bound_id);
+                if (bound == entities.end() || bound->second.arguments.empty()) continue;
+                if (bound->second.type != "IFCFACEOUTERBOUND" &&
+                    bound->second.type != "IFCFACEBOUND") continue;
+                if (bound->second.type == "IFCFACEBOUND" && emitted_outer) {
+                    output.exact = false;
+                    output.stage = "brep-face-with-inner-bound";
+                    continue;
+                }
+                const auto loop_ref = step_reference(bound->second.arguments[0]);
+                if (!loop_ref.has_value()) continue;
+                const auto loop = entities.find(*loop_ref);
+                if (loop == entities.end()) continue;
+                const auto points = polyloop_points(loop->second, entities);
+                if (points.size() >= 3) {
+                    append_polygon(points, transform, unit_scale, output.mesh);
+                    emitted_outer = true;
+                }
+            }
+        }
+    } else if (entity.type == "IFCBOOLEANRESULT" ||
+               entity.type == "IFCBOOLEANCLIPPINGRESULT") {
+        // Showing the first operand is preferable to dropping the entire wall
+        // or slab, but it is explicitly marked approximate because the cut is
+        // not evaluated by this lightweight recovery stage.
+        if (entity.arguments.size() > 1) {
+            output.exact = false;
+            output.stage = "boolean-first-operand";
+            for (const auto child : references_in(entity.arguments[1])) {
+                append_geometry_item(child, entities, transform, unit_scale, output, recursion_guard);
+            }
+        }
+    } else if (entity.type == "IFCCSGSOLID" && !entity.arguments.empty()) {
+        output.exact = false;
+        output.stage = "csg-tree-fallback";
+        for (const auto child : references_in(entity.arguments[0])) {
+            append_geometry_item(child, entities, transform, unit_scale, output, recursion_guard);
         }
     } else if (entity.type == "IFCREPRESENTATIONMAP" && entity.arguments.size() > 1) {
         for (const auto representation_id : references_in(entity.arguments[1])) {
-            append_tessellated_item(
+            append_geometry_item(
                 representation_id, entities, transform, unit_scale, output, recursion_guard);
         }
     } else if (entity.type == "IFCMAPPEDITEM" && !entity.arguments.empty()) {
+        // Mapping source geometry is preserved. The mature semantic importer
+        // remains responsible for placement when it understands the product.
+        // Unknown mapped proxies are marked approximate until mapped-target
+        // affine transforms are promoted into this recovery stage.
+        output.exact = false;
+        output.stage = "mapped-item-source";
         for (const auto map_id : references_in(entity.arguments[0])) {
-            append_tessellated_item(
-                map_id, entities, transform, unit_scale, output, recursion_guard);
+            append_geometry_item(map_id, entities, transform, unit_scale, output, recursion_guard);
         }
     } else if (entity.type == "IFCSHAPEREPRESENTATION" ||
                entity.type == "IFCREPRESENTATION") {
         if (entity.arguments.size() > 3) {
             for (const auto item_id : references_in(entity.arguments[3])) {
-                append_tessellated_item(
-                    item_id, entities, transform, unit_scale, output, recursion_guard);
+                append_geometry_item(item_id, entities, transform, unit_scale, output, recursion_guard);
             }
         }
     }
     recursion_guard.erase(id);
 }
 
-MeshBuffer product_tessellated_mesh(
+RecoveredMesh product_recovered_mesh(
     const StepEntity& product,
     const std::unordered_map<int, StepEntity>& entities,
     double unit_scale,
     std::unordered_map<int, Transform3>& placement_cache
 ) {
-    MeshBuffer output;
+    RecoveredMesh output;
     if (product.arguments.size() <= 6) return output;
     const auto shape_id = step_reference(product.arguments[6]);
     if (!shape_id.has_value()) return output;
@@ -560,7 +693,7 @@ MeshBuffer product_tessellated_mesh(
     }
     std::unordered_set<int> recursion_guard;
     for (const auto representation_id : references_in(shape->second.arguments[2])) {
-        append_tessellated_item(
+        append_geometry_item(
             representation_id, entities, transform, unit_scale, output, recursion_guard);
     }
     return output;
@@ -611,31 +744,50 @@ MeshBuffer relative_to_level(MeshBuffer mesh, double elevation) {
     return mesh;
 }
 
-void mark_exact(Element& element, const StepEntity& source) {
-    if (!source.arguments.empty()) {
-        const auto guid = step_string(source.arguments.front());
-        if (!guid.empty()) {
-            element.metadata()["ifc_guid"] = MetadataValue{
-                .kind = MetadataValueKind::Text,
-                .value = guid,
-            };
-        }
-    }
-    element.metadata()["ifc_entity"] = MetadataValue{
-        .kind = MetadataValueKind::Text,
-        .value = source.type,
-    };
-    element.metadata()["ifc_exact_geometry"] = MetadataValue{
-        .kind = MetadataValueKind::Boolean,
-        .value = "true",
-    };
-    element.metadata()["ifc_import_note"] = MetadataValue{
-        .kind = MetadataValueKind::Text,
-        .value = "IFC4 tessellated geometry recovered by the staged importer.",
+std::string source_guid(const StepEntity& entity) {
+    return entity.arguments.empty() ? std::string{} : step_string(entity.arguments.front());
+}
+
+void set_metadata(Element& element, std::string key, std::string value,
+                  MetadataValueKind kind = MetadataValueKind::Text) {
+    if (value.empty()) return;
+    element.metadata()[std::move(key)] = MetadataValue{
+        .kind = kind,
+        .value = std::move(value),
     };
 }
 
-bool assign_mesh(Document& document, Element& element, const StepEntity& source, MeshBuffer mesh) {
+void mark_source_identity(
+    Element& element,
+    const StepEntity& source,
+    bool exact_geometry,
+    std::string geometry_stage
+) {
+    const auto guid = source_guid(source);
+    set_metadata(element, "ifc_guid", guid);
+    set_metadata(element, "ifc_entity", source.type);
+    set_metadata(element, "ifc_step_id", std::to_string(source.id), MetadataValueKind::Number);
+    if (source.arguments.size() > 2) {
+        set_metadata(element, "ifc_source_name", step_string(source.arguments[2]));
+    }
+    if (source.arguments.size() > 4) {
+        set_metadata(element, "ifc_source_object_type", step_string(source.arguments[4]));
+    }
+    set_metadata(
+        element,
+        "ifc_exact_geometry",
+        exact_geometry ? "true" : "false",
+        MetadataValueKind::Boolean);
+    set_metadata(element, "ifc_geometry_stage", geometry_stage);
+}
+
+bool assign_mesh(
+    Document& document,
+    Element& element,
+    const StepEntity& source,
+    RecoveredMesh recovered
+) {
+    auto& mesh = recovered.mesh;
     if (mesh.vertices.empty() || mesh.indices.empty()) return false;
     const auto elevation = level_elevation(document, element_level_id(element));
     mesh = relative_to_level(std::move(mesh), elevation);
@@ -677,25 +829,8 @@ bool assign_mesh(Document& document, Element& element, const StepEntity& source,
     case ElementKind::Room:
         return false;
     }
-    mark_exact(element, source);
+    mark_source_identity(element, source, recovered.exact, recovered.stage);
     return true;
-}
-
-std::string source_guid(const StepEntity& entity) {
-    return entity.arguments.empty() ? std::string{} : step_string(entity.arguments.front());
-}
-
-Element* find_by_ifc_guid(Document& document, const std::string& guid) {
-    if (guid.empty()) return nullptr;
-    ElementId id{};
-    for (const auto& element : document.elements()) {
-        const auto found = element.metadata().find("ifc_guid");
-        if (found != element.metadata().end() && found->second.value == guid) {
-            id = element.id();
-            break;
-        }
-    }
-    return id == 0 ? nullptr : document.find_ptr(id);
 }
 
 bool is_physical_product(const StepEntity& entity,
@@ -707,29 +842,54 @@ bool is_physical_product(const StepEntity& entity,
     const auto shape = entities.find(*shape_id);
     if (shape == entities.end() || shape->second.type != "IFCPRODUCTDEFINITIONSHAPE") return false;
     return entity.type != "IFCSPACE" && entity.type != "IFCANNOTATION" &&
+           entity.type != "IFCOPENINGELEMENT" && entity.type != "IFCVOIDINGFEATURE" &&
            entity.type != "IFCBUILDINGSTOREY" && entity.type != "IFCBUILDING" &&
            entity.type != "IFCSITE" && entity.type != "IFCPROJECT";
 }
 
-std::pair<ElementId, double> nearest_level(Document& document, double z) {
-    ElementId best_id{};
-    double best_elevation{};
-    double best_distance = std::numeric_limits<double>::max();
+GuidIndex build_guid_index(const Document& document) {
+    GuidIndex index;
+    index.reserve(document.elements().size());
+    for (const auto& element : document.elements()) {
+        const auto found = element.metadata().find("ifc_guid");
+        if (found == element.metadata().end() || found->second.value.empty()) continue;
+        index.emplace(found->second.value, element.id());
+    }
+    return index;
+}
+
+LevelIndex build_level_index(const Document& document) {
+    LevelIndex levels;
     for (const auto& element : document.elements()) {
         const auto* level = element.level();
-        if (level == nullptr) continue;
-        const auto distance = std::abs(z - level->elevation_meters);
+        if (level != nullptr) levels.emplace_back(element.id(), level->elevation_meters);
+    }
+    std::sort(levels.begin(), levels.end(), [](const auto& left, const auto& right) {
+        return left.second < right.second;
+    });
+    return levels;
+}
+
+std::pair<ElementId, double> nearest_level(
+    Document& document,
+    LevelIndex& levels,
+    double z
+) {
+    if (levels.empty()) {
+        const auto id = document.create_level("Level 1", 0.0, 3.0);
+        levels.emplace_back(id, 0.0);
+        return {id, 0.0};
+    }
+    auto best = levels.front();
+    auto best_distance = std::abs(z - best.second);
+    for (const auto& level : levels) {
+        const auto distance = std::abs(z - level.second);
         if (distance < best_distance) {
+            best = level;
             best_distance = distance;
-            best_id = element.id();
-            best_elevation = level->elevation_meters;
         }
     }
-    if (best_id == 0) {
-        best_id = document.create_level("Level 1", 0.0, 3.0);
-        best_elevation = 0.0;
-    }
-    return {best_id, best_elevation};
+    return best;
 }
 
 std::string product_name(const StepEntity& entity) {
@@ -740,6 +900,71 @@ std::string product_name(const StepEntity& entity) {
     return entity.type + " " + std::to_string(entity.id);
 }
 
+void add_issue(
+    IfcExchangeReport* report,
+    const StepEntity& source,
+    std::string stage,
+    std::string message
+) {
+    if (report == nullptr) return;
+    report->issues.push_back(IfcImportIssue{
+        .step_id = source.id,
+        .global_id = source_guid(source),
+        .entity_type = source.type,
+        .stage = std::move(stage),
+        .message = std::move(message),
+    });
+}
+
+std::size_t attach_property_sets(
+    Document& document,
+    const std::vector<StepEntity>& parsed,
+    const std::unordered_map<int, StepEntity>& entities,
+    const GuidIndex& guid_index
+) {
+    std::unordered_map<int, std::vector<std::pair<std::string, std::string>>> psets;
+    psets.reserve(256);
+
+    for (const auto& pset : parsed) {
+        if (pset.type != "IFCPROPERTYSET" || pset.arguments.size() <= 4) continue;
+        const auto pset_name = metadata_key_part(step_string(pset.arguments[2]));
+        auto& values = psets[pset.id];
+        for (const auto property_id : references_in(pset.arguments[4])) {
+            const auto property = entities.find(property_id);
+            if (property == entities.end() || property->second.arguments.empty()) continue;
+            const auto& item = property->second;
+            if (item.type == "IFCPROPERTYSINGLEVALUE" && item.arguments.size() > 2) {
+                const auto name = metadata_key_part(step_string(item.arguments[0]));
+                const auto value = untyped_value(item.arguments[2]);
+                if (!value.empty()) values.emplace_back("ifc_pset." + pset_name + "." + name, value);
+            }
+        }
+    }
+
+    std::size_t imported = 0;
+    for (const auto& relation : parsed) {
+        if (relation.type != "IFCRELDEFINESBYPROPERTIES" || relation.arguments.size() <= 5) continue;
+        const auto pset_ref = step_reference(relation.arguments[5]);
+        if (!pset_ref.has_value()) continue;
+        const auto values = psets.find(*pset_ref);
+        if (values == psets.end() || values->second.empty()) continue;
+        for (const auto object_id : references_in(relation.arguments[4])) {
+            const auto source = entities.find(object_id);
+            if (source == entities.end()) continue;
+            const auto guid = source_guid(source->second);
+            const auto imported_id = guid_index.find(guid);
+            if (imported_id == guid_index.end()) continue;
+            auto* element = document.find_ptr(imported_id->second);
+            if (element == nullptr) continue;
+            for (const auto& [key, value] : values->second) {
+                set_metadata(*element, key, value);
+                ++imported;
+            }
+        }
+    }
+    return imported;
+}
+
 } // namespace
 
 Document import_ifc(
@@ -747,9 +972,9 @@ Document import_ifc(
     std::string document_name,
     IfcExchangeReport* report
 ) {
-    // First retain the mature semantic/IFC2x3 path. Recovery below is additive:
-    // it replaces missing geometry or creates an exact proxy, never deletes a
-    // semantic element produced by the compatibility importer.
+    // The compatibility importer remains the semantic authority. Every stage
+    // below is additive: recover source geometry/properties and audit coverage
+    // without deleting semantic elements already produced by the mature path.
     auto document = import_ifc_legacy(path, std::move(document_name), report);
 
     std::ifstream file(path, std::ios::binary);
@@ -765,28 +990,77 @@ Document import_ifc(
     std::unordered_map<int, StepEntity> entities;
     entities.reserve(parsed.size());
     for (const auto& entity : parsed) entities.emplace(entity.id, entity);
+
     const auto unit_scale = length_scale(parsed);
     std::unordered_map<int, Transform3> placement_cache;
+    placement_cache.reserve(parsed.size() / 8 + 16);
+    auto guid_index = build_guid_index(document);
+    auto levels = build_level_index(document);
+    std::unordered_set<std::string> source_guids;
+    source_guids.reserve(parsed.size() / 4 + 16);
 
     std::size_t recovered_existing = 0;
     std::size_t recovered_proxies = 0;
+    std::size_t native_semantic = 0;
+    std::size_t exact_mesh = 0;
+    std::size_t approximate = 0;
+    std::size_t failed = 0;
+    std::size_t source_products = 0;
+    std::size_t source_without_guid = 0;
+    std::size_t duplicate_source_guid = 0;
+
     for (const auto& source : parsed) {
         if (!is_physical_product(source, entities)) continue;
-        auto mesh = product_tessellated_mesh(
-            source, entities, unit_scale, placement_cache);
-        if (mesh.vertices.empty() || mesh.indices.empty()) continue;
-
+        ++source_products;
         const auto guid = source_guid(source);
-        if (auto* existing = find_by_ifc_guid(document, guid); existing != nullptr) {
-            if (assign_mesh(document, *existing, source, std::move(mesh))) {
+        if (guid.empty()) {
+            ++source_without_guid;
+        } else if (!source_guids.insert(guid).second) {
+            ++duplicate_source_guid;
+        }
+
+        Element* existing = nullptr;
+        if (!guid.empty()) {
+            const auto indexed = guid_index.find(guid);
+            if (indexed != guid_index.end()) existing = document.find_ptr(indexed->second);
+        }
+
+        auto recovered = product_recovered_mesh(source, entities, unit_scale, placement_cache);
+        const auto has_recovered_mesh =
+            !recovered.mesh.vertices.empty() && !recovered.mesh.indices.empty();
+
+        if (existing != nullptr) {
+            ++native_semantic;
+            mark_source_identity(*existing, source, false, "native-semantic");
+            if (has_recovered_mesh && assign_mesh(document, *existing, source, std::move(recovered))) {
                 ++recovered_existing;
+                const auto exact = existing->metadata().find("ifc_exact_geometry");
+                if (exact != existing->metadata().end() && exact->second.value == "true") {
+                    ++exact_mesh;
+                } else {
+                    ++approximate;
+                }
             }
             continue;
         }
 
-        const auto bounds = mesh_bounds(mesh);
-        if (!bounds.valid) continue;
-        const auto [level_id, elevation] = nearest_level(document, bounds.minimum.z);
+        if (!has_recovered_mesh) {
+            ++failed;
+            add_issue(
+                report,
+                source,
+                "geometry-recovery",
+                "No supported semantic or recoverable source geometry representation was found.");
+            continue;
+        }
+
+        const auto bounds = mesh_bounds(recovered.mesh);
+        if (!bounds.valid) {
+            ++failed;
+            add_issue(report, source, "geometry-bounds", "Recovered mesh has no finite bounds.");
+            continue;
+        }
+        const auto [level_id, elevation] = nearest_level(document, levels, bounds.minimum.z);
         const auto width = std::max(0.01, bounds.maximum.x - bounds.minimum.x);
         const auto depth = std::max(0.01, bounds.maximum.y - bounds.minimum.y);
         const auto height = std::max(0.01, bounds.maximum.z - bounds.minimum.z);
@@ -794,6 +1068,8 @@ Document import_ifc(
             (bounds.minimum.x + bounds.maximum.x) * 0.5,
             (bounds.minimum.y + bounds.maximum.y) * 0.5,
         };
+        const auto was_exact = recovered.exact;
+        const auto stage = recovered.stage;
         const auto id = document.create_proxy(
             product_name(source),
             level_id,
@@ -801,21 +1077,46 @@ Document import_ifc(
             width,
             depth,
             height,
-            relative_to_level(std::move(mesh), elevation));
+            relative_to_level(std::move(recovered.mesh), elevation));
         if (auto* created = document.find_ptr(id); created != nullptr) {
-            mark_exact(*created, source);
+            mark_source_identity(*created, source, was_exact, stage);
+            if (!guid.empty()) guid_index[guid] = id;
         }
         ++recovered_proxies;
+        if (was_exact) {
+            ++exact_mesh;
+        } else {
+            ++approximate;
+        }
     }
+
+    const auto imported_properties = attach_property_sets(document, parsed, entities, guid_index);
 
     if (report != nullptr) {
         report->imported_elements = document.elements().size();
+        report->source_physical_products = source_products;
+        report->native_semantic_products = native_semantic;
+        report->exact_mesh_products = exact_mesh;
+        report->recovered_proxy_products = recovered_proxies;
+        report->approximate_products = approximate;
+        report->failed_geometry_products = failed;
+        report->source_products_without_guid = source_without_guid;
+        report->duplicate_source_identity_products = duplicate_source_guid;
+        report->silent_dropped_products = 0;
+        report->imported_property_values = imported_properties;
+        report->warnings.push_back(
+            "IFC import coverage: source=" + std::to_string(source_products) +
+            ", native=" + std::to_string(native_semantic) +
+            ", exact_mesh=" + std::to_string(exact_mesh) +
+            ", proxy=" + std::to_string(recovered_proxies) +
+            ", approximate=" + std::to_string(approximate) +
+            ", failed_geometry=" + std::to_string(failed) +
+            ", silent_dropped=0, properties=" + std::to_string(imported_properties) + ".");
         if (recovered_existing != 0 || recovered_proxies != 0) {
             report->warnings.push_back(
-                "IFC4 tessellation recovery: restored exact mesh for " +
+                "IFC staged recovery: restored source mesh for " +
                 std::to_string(recovered_existing) + " semantic elements and " +
-                std::to_string(recovered_proxies) +
-                " additional physical products that the legacy reader could not render.");
+                std::to_string(recovered_proxies) + " additional physical products.");
         }
     }
     return document;
