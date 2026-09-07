@@ -212,14 +212,15 @@ class IfcSourceInventoryReader {
     for (final prefix in _nonRenderablePrefixes) {
       if (type.startsWith(prefix)) return false;
     }
-    // IfcProduct contributes ObjectPlacement and Representation as inherited
-    // attributes 6 and 7. A real renderable product may legally omit one of
-    // them with '$', but geometry-bearing products normally expose a reference
-    // in Representation. This keeps property/type/style entities out without
-    // hard-coding every current and future IFC product subtype.
+
+    // Match the native production importer: a source product only contributes
+    // to geometry coverage when its inherited IfcProduct.Representation is an
+    // actual STEP reference. Products with Representation=$ are legitimate IFC
+    // objects, but they carry no product shape and must not be reported as a
+    // silently dropped renderable object.
     final placement = arguments[5];
     final representation = arguments[6];
-    final hasProductShape = representation == r'$' || representation.startsWith('#');
+    final hasProductShape = representation.startsWith('#');
     final hasPlacement = placement == r'$' || placement.startsWith('#');
     return hasProductShape && hasPlacement;
   }
