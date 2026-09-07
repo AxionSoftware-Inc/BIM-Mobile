@@ -31,6 +31,7 @@ add_test(
         "${CMAKE_SOURCE_DIR}/tests/fixtures/ifc/Building-Architecture.ifc"
         "${CMAKE_SOURCE_DIR}/tests/fixtures/ifc/Building-Architecture-IFC4X3.ifc"
         "${CMAKE_SOURCE_DIR}/tests/fixtures/ifc/mapped-nested-placement.ifc"
+        "${CMAKE_SOURCE_DIR}/tests/fixtures/ifc/profile-pnindex-fidelity.ifc"
 )
 
 add_test(
