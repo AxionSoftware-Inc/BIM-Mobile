@@ -225,27 +225,15 @@ class _StartHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final colors = theme.colorScheme;
     return Row(
       children: <Widget>[
-        Container(
-          width: 36,
-          height: 36,
-          decoration: BoxDecoration(
-            color: colors.surface,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(
-              color: colors.primary.withValues(alpha: 0.36),
-            ),
-          ),
-          child: ArvelaMark(size: 22, color: colors.primary),
-        ),
-        const SizedBox(width: 10),
         Text(
           ArvelaBrand.name,
-          style: theme.textTheme.titleLarge?.copyWith(
-            fontWeight: FontWeight.w700,
-            letterSpacing: -0.2,
+          style: theme.textTheme.headlineSmall?.copyWith(
+            fontFamily: ArvelaBrand.displayFontFamily,
+            fontFamilyFallback: ArvelaBrand.fontFallback,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 0.35,
           ),
         ),
         const Spacer(),
