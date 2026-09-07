@@ -178,7 +178,7 @@ class _FamilySketchViewportState extends State<FamilySketchViewport> {
               FilterChip(
                 selected: _snapEnabled,
                 avatar: Icon(
-                  _snapEnabled ? Icons.magnet_on_outlined : Icons.magnet_off_outlined,
+                  _snapEnabled ? Icons.gps_fixed : Icons.gps_off,
                   size: 18,
                 ),
                 label: Text(_snapEnabled ? 'Snap 50 mm' : 'Snap off'),

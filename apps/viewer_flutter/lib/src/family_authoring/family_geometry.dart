@@ -623,7 +623,7 @@ abstract final class FamilyGeometryEvaluator {
         if (index == null || index < 0 || index >= vertices.length) return null;
         indices.add(index);
       }
-      faces.add(FamilyMeshFace(List<int>.unmodifiable(indices));
+      faces.add(FamilyMeshFace(List<int>.unmodifiable(indices)));
     }
     if (vertices.isEmpty || faces.isEmpty) return null;
     return FamilyEvaluatedMesh(
