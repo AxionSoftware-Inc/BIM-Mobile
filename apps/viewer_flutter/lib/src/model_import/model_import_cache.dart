@@ -3,6 +3,7 @@ import 'dart:io';
 
 import '../app_project_storage.dart';
 import '../atomic_file_writer.dart';
+import 'ifc_source_inventory.dart';
 import 'model_import_models.dart';
 
 class ModelImportSemanticCacheEntry {
@@ -39,10 +40,16 @@ class ModelImportCacheStore {
     return '${baseName.isEmpty ? source.format.id : baseName}_$hash';
   }
 
-  String _semanticSignature(ModelImportSource source) =>
-      'tbe-import-semantic-v${source.format.semanticCacheVersion}|'
+  String _sourceFingerprint(ModelImportSource source) =>
       '${source.format.id}|${source.path}|${source.byteSize}|'
       '${source.modifiedMilliseconds}';
+
+  String _semanticSignature(ModelImportSource source) =>
+      'tbe-import-semantic-v${source.format.semanticCacheVersion}|'
+      '${_sourceFingerprint(source)}';
+
+  String _inventorySignature(ModelImportSource source) =>
+      'tbe-ifc-inventory-v1|${_sourceFingerprint(source)}';
 
   Future<ModelImportSemanticCacheEntry?> readSemantic(
     ModelImportSource source,
@@ -83,6 +90,44 @@ class ModelImportCacheStore {
     } catch (_) {
       // Import remains valid even when a document provider or filesystem does
       // not allow a local acceleration cache.
+    }
+  }
+
+  Future<IfcSourceInventory?> readIfcInventory(ModelImportSource source) async {
+    if (source.format.id != 'ifc') return null;
+    try {
+      final directory = await _formatDirectory(source);
+      final key = _sourceKey(source);
+      final cached = File(
+        '${directory.path}${Platform.pathSeparator}$key.inventory.json',
+      );
+      final signatureFile = File('${cached.path}.sig');
+      if (!await cached.exists() || await cached.length() <= 0) return null;
+      if (!await signatureFile.exists() ||
+          await signatureFile.readAsString() != _inventorySignature(source)) {
+        return null;
+      }
+      return IfcSourceInventory.fromJson(jsonDecode(await cached.readAsString()));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> writeIfcInventory(
+    ModelImportSource source,
+    IfcSourceInventory inventory,
+  ) async {
+    if (source.format.id != 'ifc') return;
+    try {
+      final directory = await _formatDirectory(source);
+      final key = _sourceKey(source);
+      final cached = File(
+        '${directory.path}${Platform.pathSeparator}$key.inventory.json',
+      );
+      await atomicWriteString(cached, jsonEncode(inventory.toJson()));
+      await atomicWriteString(File('${cached.path}.sig'), _inventorySignature(source));
+    } catch (_) {
+      // Inventory is diagnostic acceleration only; source import remains valid.
     }
   }
 
