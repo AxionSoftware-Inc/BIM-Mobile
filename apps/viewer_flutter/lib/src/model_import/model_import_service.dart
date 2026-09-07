@@ -140,7 +140,11 @@ class ModelImportService<T extends ViewerEngineSession> {
     }
 
     _progress(onProgress, ModelImportStage.inventory, 0.08, 'Inventorying IFC products…');
-    final sourceInventory = await _ifcInventoryReader.readPath(source.path);
+    var sourceInventory = await _cache.readIfcInventory(source);
+    if (sourceInventory == null) {
+      sourceInventory = await _ifcInventoryReader.readPath(source.path);
+      await _cache.writeIfcInventory(source, sourceInventory);
+    }
 
     _progress(onProgress, ModelImportStage.semanticCache, 0.14, 'Checking semantic cache…');
     final cached = await _cache.readSemantic(source);
