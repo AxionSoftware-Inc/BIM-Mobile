@@ -4,6 +4,8 @@ import '../project_lifecycle_service.dart';
 import '../render_scene_models.dart';
 import '../viewer_project_session.dart';
 import '../viewer_scene_gateway.dart';
+import 'ifc_source_inventory.dart';
+import 'model_import_audit.dart';
 import 'model_import_cache.dart';
 import 'model_import_models.dart';
 
@@ -52,12 +54,14 @@ class ModelImportService<T extends ViewerEngineSession> {
     required ModelImportRegistry registry,
     required Iterable<ModelImportAdapter<T>> adapters,
     ModelImportCacheStore? cache,
+    IfcSourceInventoryReader? ifcInventoryReader,
   })  : _lifecycle = lifecycle,
         registry = registry,
         _adapters = <String, ModelImportAdapter<T>>{
           for (final adapter in adapters) adapter.descriptor.id: adapter,
         },
-        _cache = cache ?? ModelImportCacheStore();
+        _cache = cache ?? ModelImportCacheStore(),
+        _ifcInventoryReader = ifcInventoryReader ?? const IfcSourceInventoryReader();
 
   factory ModelImportService.standard({
     required ProjectLifecycleService<T> lifecycle,
@@ -76,7 +80,23 @@ class ModelImportService<T extends ViewerEngineSession> {
   final ProjectLifecycleService<T> _lifecycle;
   final Map<String, ModelImportAdapter<T>> _adapters;
   final ModelImportCacheStore _cache;
+  final IfcSourceInventoryReader _ifcInventoryReader;
   final ModelImportRegistry registry;
+
+  void _progress(
+    ModelImportProgressCallback? callback,
+    ModelImportStage stage,
+    double fraction,
+    String message,
+  ) {
+    callback?.call(
+      ModelImportProgress(
+        stage: stage,
+        fraction: fraction.clamp(0.0, 1.0),
+        message: message,
+      ),
+    );
+  }
 
   Future<ModelImportSource> inspectSource({
     required String path,
@@ -102,7 +122,9 @@ class ModelImportService<T extends ViewerEngineSession> {
   Future<ModelImportCandidate<T>> prepare({
     required String path,
     required String displayName,
+    ModelImportProgressCallback? onProgress,
   }) async {
+    _progress(onProgress, ModelImportStage.inspecting, 0.02, 'Inspecting model source…');
     final source = await inspectSource(path: path, displayName: displayName);
     final adapter = _adapters[source.format.id];
     if (adapter == null) {
@@ -111,6 +133,16 @@ class ModelImportService<T extends ViewerEngineSession> {
       );
     }
 
+    if (source.format.id != 'ifc') {
+      throw UnsupportedError(
+        '${source.format.label} does not yet provide a source coverage audit.',
+      );
+    }
+
+    _progress(onProgress, ModelImportStage.inventory, 0.08, 'Inventorying IFC products…');
+    final sourceInventory = await _ifcInventoryReader.readPath(source.path);
+
+    _progress(onProgress, ModelImportStage.semanticCache, 0.14, 'Checking semantic cache…');
     final cached = await _cache.readSemantic(source);
     if (cached != null) {
       ProjectSessionResult<T>? cachedLaunch;
@@ -120,13 +152,20 @@ class ModelImportService<T extends ViewerEngineSession> {
           json: cached.json,
           sourcePath: cached.path,
         );
+        _progress(onProgress, ModelImportStage.validating, 0.62, 'Validating cached BIM scene…');
         final initialScene = await _validatedInitialScene(cachedLaunch.session);
+        final audit = ModelImportAudit.build(
+          source: sourceInventory,
+          scene: initialScene.scene!,
+        );
+        _progress(onProgress, ModelImportStage.ready, 1.0, audit.compactSummary);
         return ModelImportCandidate<T>(
           session: cachedLaunch.session,
           source: source,
           initialScene: initialScene,
           origin: ModelImportOrigin.semanticCache,
           runtimeCachePath: await _cache.runtimeCachePath(source),
+          audit: audit,
         );
       } catch (_) {
         cachedLaunch?.session.dispose();
@@ -138,16 +177,27 @@ class ModelImportService<T extends ViewerEngineSession> {
 
     ProjectSessionResult<T>? launch;
     try {
+      _progress(onProgress, ModelImportStage.parsing, 0.20, 'Parsing IFC semantics and geometry…');
       launch = await adapter.importSource(source);
+      _progress(onProgress, ModelImportStage.validating, 0.68, 'Validating imported BIM scene…');
       final initialScene = await _validatedInitialScene(launch.session);
+      final audit = ModelImportAudit.build(
+        source: sourceInventory,
+        scene: initialScene.scene!,
+      );
+      _progress(onProgress, ModelImportStage.checkpointing, 0.78, 'Writing semantic checkpoint…');
       final semanticJson = await adapter.semanticCheckpoint(launch.session);
       await _cache.writeSemantic(source, semanticJson);
+      _progress(onProgress, ModelImportStage.runtimeCache, 0.90, 'Preparing native render acceleration…');
+      final runtimeCachePath = await _cache.runtimeCachePath(source);
+      _progress(onProgress, ModelImportStage.ready, 1.0, audit.compactSummary);
       return ModelImportCandidate<T>(
         session: launch.session,
         source: source,
         initialScene: initialScene,
         origin: ModelImportOrigin.sourceFile,
-        runtimeCachePath: await _cache.runtimeCachePath(source),
+        runtimeCachePath: runtimeCachePath,
+        audit: audit,
       );
     } catch (_) {
       launch?.session.dispose();
