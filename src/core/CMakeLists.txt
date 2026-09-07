@@ -15,10 +15,20 @@ add_library(tbe_core
     src/Document.cpp
     src/Element.cpp
     src/IfcExchange.cpp
+    src/IfcImportPipeline.cpp
     src/JobSystem.cpp
     src/Project.cpp
     src/ProjectCatalog.cpp
     src/Units.cpp
+)
+
+# Keep the existing reader compiled as a compatibility stage while exposing
+# IfcImportPipeline.cpp as the production `import_ifc` symbol. The source-local
+# definition makes the old function emit as `import_ifc_legacy` only in its own
+# translation unit; callers remain unaware of the split.
+set_source_files_properties(
+    src/IfcExchange.cpp
+    PROPERTIES COMPILE_DEFINITIONS TBE_LEGACY_IFC_IMPORT_IMPL=1
 )
 
 set_target_properties(tbe_core_geometry PROPERTIES POSITION_INDEPENDENT_CODE ON)
