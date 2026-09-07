@@ -488,22 +488,15 @@ class ViewportControlDeck extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
-            _DeckIconButton(
-              tooltip: 'Floor plan',
-              selected: projectionMode == RenderSceneProjectionMode.topDown,
+            _DeckViewToggleButton(
+              tooltip: is3D ? 'Open floor plan view' : 'Open 3D view',
+              label: is3D ? '2D' : '3D',
               enabled: hasScene,
-              icon: Icons.grid_view_outlined,
+              icon: is3D ? Icons.grid_view_outlined : Icons.view_in_ar_outlined,
               onPressed: () => onProjectionChanged(
-                RenderSceneProjectionMode.topDown,
-              ),
-            ),
-            _DeckIconButton(
-              tooltip: '3D view',
-              selected: projectionMode == RenderSceneProjectionMode.isometric,
-              enabled: hasScene,
-              icon: Icons.view_in_ar_outlined,
-              onPressed: () => onProjectionChanged(
-                RenderSceneProjectionMode.isometric,
+                is3D
+                    ? RenderSceneProjectionMode.topDown
+                    : RenderSceneProjectionMode.isometric,
               ),
             ),
             PopupMenuButton<RenderSceneDisplayStyle>(
@@ -626,6 +619,37 @@ class _PaletteToolButton extends StatelessWidget {
                 ],
               ),
             ),
+          ),
+        ),
+      );
+}
+
+class _DeckViewToggleButton extends StatelessWidget {
+  const _DeckViewToggleButton({
+    required this.tooltip,
+    required this.label,
+    required this.enabled,
+    required this.icon,
+    required this.onPressed,
+  });
+
+  final String tooltip;
+  final String label;
+  final bool enabled;
+  final IconData icon;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) => Tooltip(
+        message: tooltip,
+        child: FilledButton.tonalIcon(
+          onPressed: enabled ? onPressed : null,
+          icon: Icon(icon, size: 19),
+          label: Text(label),
+          style: FilledButton.styleFrom(
+            visualDensity: VisualDensity.compact,
+            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 10),
+            minimumSize: const Size(68, 40),
           ),
         ),
       );
