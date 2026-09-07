@@ -38,6 +38,39 @@ const tbe::core::MeshBuffer* mesh_for(const tbe::core::Element& element) {
     return nullptr;
 }
 
+const tbe::core::Element* element_by_ifc_guid(
+    const tbe::core::Document& document,
+    const std::string& guid
+) {
+    for (const auto& element : document.elements()) {
+        const auto found = element.metadata().find("ifc_guid");
+        if (found != element.metadata().end() && found->second.value == guid) return &element;
+    }
+    return nullptr;
+}
+
+struct Bounds {
+    double min_x{1.0e100};
+    double min_y{1.0e100};
+    double min_z{1.0e100};
+    double max_x{-1.0e100};
+    double max_y{-1.0e100};
+    double max_z{-1.0e100};
+};
+
+Bounds bounds_for(const tbe::core::MeshBuffer& mesh) {
+    Bounds bounds;
+    for (const auto& point : mesh.vertices) {
+        bounds.min_x = std::min(bounds.min_x, point.x);
+        bounds.min_y = std::min(bounds.min_y, point.y);
+        bounds.min_z = std::min(bounds.min_z, point.z);
+        bounds.max_x = std::max(bounds.max_x, point.x);
+        bounds.max_y = std::max(bounds.max_y, point.y);
+        bounds.max_z = std::max(bounds.max_z, point.z);
+    }
+    return bounds;
+}
+
 void validate_fixture(const std::filesystem::path& path, bool require_mesh) {
     assert(std::filesystem::exists(path));
 
@@ -93,8 +126,6 @@ void validate_fixture(const std::filesystem::path& path, bool require_mesh) {
                   << " [" << issue.stage << "] " << issue.message << "\n";
     }
     if (require_mesh) {
-        // Known-good fixtures must produce renderable geometry, not only
-        // semantic envelopes or metadata records.
         assert(meshed_elements > 0);
         assert(mesh_vertices > 0);
         assert(mesh_triangles > 0);
@@ -126,6 +157,54 @@ void validate_multi_storey_containment(const std::filesystem::path& path) {
     }
 }
 
+void validate_mapped_nested_placement(const std::filesystem::path& path) {
+    tbe::core::IfcExchangeReport report;
+    const auto document = tbe::core::import_ifc(path, "Mapped nested placement", &report);
+    assert(report.silent_dropped_products == 0);
+    assert(report.source_physical_products == 2);
+
+    const auto* first = element_by_ifc_guid(document, "F1");
+    const auto* second = element_by_ifc_guid(document, "F2");
+    assert(first != nullptr);
+    assert(second != nullptr);
+    const auto* first_mesh = mesh_for(*first);
+    const auto* second_mesh = mesh_for(*second);
+    assert(first_mesh != nullptr && !first_mesh->vertices.empty());
+    assert(second_mesh != nullptr && !second_mesh->vertices.empty());
+
+    const auto first_exact = first->metadata().find("ifc_exact_geometry");
+    const auto second_exact = second->metadata().find("ifc_exact_geometry");
+    assert(first_exact != first->metadata().end() && first_exact->second.value == "true");
+    assert(second_exact != second->metadata().end() && second_exact->second.value == "true");
+    assert(first->metadata().find("ifc_mapping_source_step_id") != first->metadata().end());
+    assert(second->metadata().find("ifc_mapping_source_step_id") != second->metadata().end());
+
+    // Storey elevation is represented by the engine level, therefore meshes
+    // are level-relative in Z. Mapped target translation (2 m in local X),
+    // product translation and a 90-degree product rotation must each be
+    // applied exactly once.
+    const auto a = bounds_for(*first_mesh);
+    const auto b = bounds_for(*second_mesh);
+    assert(std::abs(a.min_x - 0.5) < 1.0e-6);
+    assert(std::abs(a.max_x - 1.0) < 1.0e-6);
+    assert(std::abs(a.min_y - 4.0) < 1.0e-6);
+    assert(std::abs(a.max_y - 5.0) < 1.0e-6);
+    assert(std::abs(a.min_z) < 1.0e-6);
+    assert(std::abs(a.max_z) < 1.0e-6);
+    assert(std::abs(b.min_x - 4.5) < 1.0e-6);
+    assert(std::abs(b.max_x - 5.0) < 1.0e-6);
+    assert(std::abs(b.min_y - 4.0) < 1.0e-6);
+    assert(std::abs(b.max_y - 5.0) < 1.0e-6);
+    assert(std::abs(b.min_z) < 1.0e-6);
+    assert(std::abs(b.max_z) < 1.0e-6);
+
+    assert(first->proxy() != nullptr && second->proxy() != nullptr);
+    assert(first->proxy()->level_id == second->proxy()->level_id);
+    const auto* level = document.find_ptr(first->proxy()->level_id);
+    assert(level != nullptr && level->level() != nullptr);
+    assert(std::abs(level->level()->elevation_meters - 3.0) < 1.0e-6);
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -139,9 +218,9 @@ int main(int argc, char** argv) {
     assert(first_path < argc);
     for (int index = first_path; index < argc; ++index) validate_fixture(argv[index], require_mesh);
     for (int index = first_path; index < argc; ++index) {
-        if (std::filesystem::path(argv[index]).stem() == "multi-storey-containment") {
-            validate_multi_storey_containment(argv[index]);
-        }
+        const auto stem = std::filesystem::path(argv[index]).stem().string();
+        if (stem == "multi-storey-containment") validate_multi_storey_containment(argv[index]);
+        if (stem == "mapped-nested-placement") validate_mapped_nested_placement(argv[index]);
     }
     return 0;
 }
