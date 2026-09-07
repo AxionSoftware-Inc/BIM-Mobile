@@ -46,6 +46,15 @@ void validate_fixture(const std::filesystem::path& path, bool require_mesh) {
     assert(report.imported_elements > 0);
     assert(document.elements().size() == report.imported_elements);
 
+    // Every source physical product is accounted for. Failed geometry remains
+    // an explicit diagnostic issue; it must never disappear silently.
+    assert(report.silent_dropped_products == 0);
+    assert(report.source_physical_products ==
+           report.native_semantic_products +
+           report.recovered_proxy_products +
+           report.failed_geometry_products);
+    assert(report.issues.size() >= report.failed_geometry_products);
+
     std::size_t meshed_elements{};
     std::size_t mesh_vertices{};
     std::size_t mesh_triangles{};
@@ -71,9 +80,18 @@ void validate_fixture(const std::filesystem::path& path, bool require_mesh) {
               << report.imported_elements << " elements, "
               << meshed_elements << " meshed, "
               << mesh_vertices << " vertices, "
-              << mesh_triangles << " triangles, "
+              << mesh_triangles << " triangles, source="
+              << report.source_physical_products << ", native="
+              << report.native_semantic_products << ", proxy="
+              << report.recovered_proxy_products << ", failed="
+              << report.failed_geometry_products << ", properties="
+              << report.imported_property_values << ", "
               << report.warnings.size() << " warnings\n";
     for (const auto& warning : report.warnings) std::cout << "  warning: " << warning << "\n";
+    for (const auto& issue : report.issues) {
+        std::cout << "  issue: #" << issue.step_id << " " << issue.entity_type
+                  << " [" << issue.stage << "] " << issue.message << "\n";
+    }
     if (require_mesh) {
         // Known-good fixtures must produce renderable geometry, not only
         // semantic envelopes or metadata records.
