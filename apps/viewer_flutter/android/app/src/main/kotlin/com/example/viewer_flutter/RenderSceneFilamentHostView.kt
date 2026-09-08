@@ -207,6 +207,7 @@ private data class EdgeBatchKey(
   val tileZ: Int,
   val curvedWall: Boolean = false,
   val nativeKindMask: Long? = null,
+  val nativeChunkIndex: Int? = null,
 )
 
 private data class EdgePointKey(val x: Long, val y: Long, val z: Long)
@@ -238,6 +239,7 @@ private data class FaceBatchEntry(
   val vertexCount: Int,
   val indexCount: Int,
   val nativeKindMask: Long? = null,
+  val nativeChunkIndex: Int? = null,
   var attached: Boolean = false,
 )
 
@@ -553,6 +555,11 @@ internal class RenderSceneFilamentHostView(
   private val nativeCachePendingChunks = ArrayDeque<Int>()
   private val nativeCacheResidentChunks = linkedSetOf<Int>()
   private var nativeCacheFullBounds: SceneBounds? = null
+  // NATIVE_STREAMING_WORKING_SET_V2: residency is camera/budget bounded.
+  // Knowing every cache chunk must never imply keeping every GPU resource alive.
+  private val nativeSpatialStreamingPolicy = NativeSpatialStreamingPolicy()
+  private var nativeCacheTargetResidentBytes = 0L
+  private var nativeCacheEvictionCount = 0L
   private var currentSceneFingerprint: Long? = null
   private var selectedElementId: Long? = null
   private var selectedElementIds = emptySet<Long>()
@@ -1050,9 +1057,23 @@ internal class RenderSceneFilamentHostView(
     nativeCacheUploadPosted = false
     nativeCacheReprioritizePosted = false
     nativeCachePendingChunks.clear()
-    nativeCacheResidentChunks.clear()
+
+    val cache = nativeBimCache
+    val currentEngine = engine
+    if (cache != null && currentEngine != null) {
+      // Destroy Filament resources before dropping direct native views. This
+      // order prevents a buffer from being invalidated while the driver still
+      // references it and also prevents double-destroy during global cleanup.
+      nativeCacheResidentChunks.toList().forEach { index ->
+        destroyNativeBimCacheChunk(currentEngine, scene, cache, index)
+      }
+    } else {
+      cache?.chunks?.forEach(NativeBimCacheChunk::releaseGeometryView)
+      nativeCacheResidentChunks.clear()
+    }
+    nativeCacheTargetResidentBytes = 0L
     nativeCacheFullBounds = null
-    nativeBimCache?.close()
+    cache?.close()
     nativeBimCache = null
   }
 
@@ -1172,8 +1193,10 @@ internal class RenderSceneFilamentHostView(
       units = "meters",
       coordinateSystem = "X/Y plan, Z up",
       objectCount = cache.primitives.size,
-      vertexCount = cache.chunks.sumOf { it.positions.capacity() / 12 },
-      indexCount = cache.chunks.sumOf { it.indices.capacity() },
+      // The Flutter/Kotlin semantic scene owns no mesh payload. Exact GPU
+      // counts are resident-working-set metrics, not startup metadata.
+      vertexCount = 0,
+      indexCount = 0,
       levels = levels,
       objects = objects,
     )
@@ -1530,6 +1553,7 @@ internal class RenderSceneFilamentHostView(
           tileX = kotlin.math.floor((geometry.bounds.min.x + geometry.bounds.max.x) * 0.5 / 24.0).toInt(),
           tileZ = kotlin.math.floor((geometry.bounds.min.z + geometry.bounds.max.z) * 0.5 / 24.0).toInt(),
           nativeKindMask = chunk.kindMask,
+        nativeChunkIndex = index,
         )
         edgeChunks.getOrPut(key) { mutableListOf() }.add(geometry)
       }
@@ -2190,7 +2214,7 @@ internal class RenderSceneFilamentHostView(
     removeCallbacks(benchmarkTick)
     val allFrameIntervals = benchmark.frameIntervalsMs.values.flatten()
     val allCpuSubmit = benchmark.cpuSubmitMs.values.flatten()
-    val processMemory = (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()).toDouble() / (1024.0 * 1024.0)
+    val processMemory = (NativeProcessMemoryTelemetry.snapshot()["totalPssMb"] as? Double) ?: 0.0
     val nativeHeapMb = android.os.Debug.getNativeHeapAllocatedSize().toDouble() / (1024.0 * 1024.0)
     val gcNow = android.os.Debug.getRuntimeStat("art.gc.gc-count")?.toLongOrNull()
     val gcDelta = if (benchmark.gcCountAtStart != null && gcNow != null) gcNow - benchmark.gcCountAtStart!! else -1L
@@ -2550,9 +2574,13 @@ internal class RenderSceneFilamentHostView(
     nativeCacheResidentChunks.clear()
     nativeCacheEdgeBudgetRemaining = NATIVE_CACHE_EDGE_SEGMENT_BUDGET
     val revision = nativeCacheUploadRevision
-    cache.chunks.indices
-      .sortedBy { index -> nativeCacheChunkDistanceSquared(cache, index) }
-      .forEach(nativeCachePendingChunks::addLast)
+    val initialDecision = nativeSpatialStreamingPolicy.decide(
+      camera = nativeCacheStreamingCamera(),
+      chunks = nativeSpatialStreamingPolicy.chunksFromCache(cache.chunks),
+      currentResident = nativeCacheResidentChunks,
+    )
+    nativeCacheTargetResidentBytes = initialDecision.targetResidentBytes
+    initialDecision.loadOrder.forEach(nativeCachePendingChunks::addLast)
     uploadNativeBimCacheChunks(
       engine = engine,
       scene = scene,
@@ -2638,6 +2666,7 @@ internal class RenderSceneFilamentHostView(
               tileX = kotlin.math.floor((geometry.bounds.min.x + geometry.bounds.max.x) * 0.5 / 24.0).toInt(),
               tileZ = kotlin.math.floor((geometry.bounds.min.z + geometry.bounds.max.z) * 0.5 / 24.0).toInt(),
               nativeKindMask = chunk.kindMask,
+            nativeChunkIndex = index,
             )
             edgeChunks.getOrPut(key) { mutableListOf() }.add(geometry)
           }
@@ -2654,7 +2683,7 @@ internal class RenderSceneFilamentHostView(
     requestRender(250L)
 
     if (nativeCachePendingChunks.isEmpty()) {
-      statusMessage = "Loaded ${nativeCacheResidentChunks.size}/${cache.chunks.size} native BIM chunks."
+      statusMessage = "Resident ${nativeCacheResidentChunks.size}/${cache.chunks.size} native BIM chunks (camera-bounded working set)."
       Log.i(TAG, statusMessage)
       rendererBenchmark?.takeIf { it.mode == "NEW_BIMCACHE" }?.let(::markBenchmarkFullSceneReady)
       updateStatus()
@@ -2688,22 +2717,118 @@ internal class RenderSceneFilamentHostView(
 
   private fun scheduleNativeBimCacheReprioritization() {
     val cache = nativeBimCache ?: return
-    if (nativeCachePendingChunks.size < 2 || nativeCacheReprioritizePosted) return
+    if (nativeCacheReprioritizePosted) return
     val revision = nativeCacheUploadRevision
     nativeCacheReprioritizePosted = true
-    // Sorting on every MotionEvent can itself make a large model feel heavy.
-    // Coalesce a gesture into one short delayed reorder instead; uploads that
-    // already reached Filament remain valid LOD0 geometry and are never
-    // touched.
     postDelayed({
       nativeCacheReprioritizePosted = false
       if (disposed || revision != nativeCacheUploadRevision || cache !== nativeBimCache) return@postDelayed
-      val nearestFirst = nativeCachePendingChunks
-        .toList()
-        .sortedBy { index -> nativeCacheChunkDistanceSquared(cache, index) }
+
+      val decision = nativeSpatialStreamingPolicy.decide(
+        camera = nativeCacheStreamingCamera(),
+        chunks = nativeSpatialStreamingPolicy.chunksFromCache(cache.chunks),
+        currentResident = nativeCacheResidentChunks,
+      )
+      nativeCacheTargetResidentBytes = decision.targetResidentBytes
+
+      // Evict first so a camera jump cannot transiently hold both the old and
+      // new working sets and spike tablet GPU/native memory.
+      val currentEngine = engine ?: return@postDelayed
+      val currentScene = scene
+      decision.evict.forEach { index ->
+        destroyNativeBimCacheChunk(currentEngine, currentScene, cache, index)
+      }
+
       nativeCachePendingChunks.clear()
-      nearestFirst.forEach(nativeCachePendingChunks::addLast)
+      decision.loadOrder.forEach(nativeCachePendingChunks::addLast)
+      if (nativeCachePendingChunks.isNotEmpty()) {
+        val currentSceneRequired = currentScene ?: return@postDelayed
+        val fallbackMaterial = material ?: return@postDelayed
+        nativeCacheEdgeBudgetRemaining = NATIVE_CACHE_EDGE_SEGMENT_BUDGET
+        uploadNativeBimCacheChunks(
+          engine = currentEngine,
+          scene = currentSceneRequired,
+          cache = cache,
+          fallbackMaterial = fallbackMaterial,
+          revision = revision,
+          maxChunks = NATIVE_CACHE_STEADY_UPLOAD_CHUNKS,
+        )
+      } else {
+        updateMetrics()
+        syncVisibility()
+        renderDirty = true
+        requestRender(250L)
+      }
     }, NATIVE_CACHE_REPRIORITIZE_DELAY_MS)
+  }
+
+  /**
+   * Returns the orbit camera in native cache coordinates (X/Y plan, Z up).
+   * Filament uses X/Y-up/-Z-plan, so both position and direction need the same
+   * axis conversion. Keeping this conversion here prevents policy drift from
+   * the native picking/cache transform contract.
+   */
+  private fun nativeCacheStreamingCamera(): NativeSpatialStreamingPolicy.Camera {
+    val center = orbitCenter
+    val eye = if (projectionMode == "topDown") {
+      ScenePoint(center.x, center.y + max(orbitDistance, topDownZoom * 2.5), center.z)
+    } else {
+      val cosPitch = cos(orbitPitchRadians)
+      ScenePoint(
+        center.x + orbitDistance * cosPitch * cos(orbitYawRadians),
+        center.y + orbitDistance * sin(orbitPitchRadians),
+        center.z + orbitDistance * cosPitch * sin(orbitYawRadians),
+      )
+    }
+    val forward = ScenePoint(center.x - eye.x, center.y - eye.y, center.z - eye.z)
+    return NativeSpatialStreamingPolicy.Camera(
+      position = ScenePoint(eye.x, -eye.z, eye.y),
+      forward = ScenePoint(forward.x, -forward.z, forward.y),
+    )
+  }
+
+  /**
+   * Frees one streamed chunk completely: scene attachment, Filament entity,
+   * buffers/material instances and finally Kotlin's direct-buffer view.
+   *
+   * Removing entries from the batch lists is essential. Global teardown later
+   * iterates those lists, so leaving an evicted entry there would double-free
+   * Filament resources.
+   */
+  private fun destroyNativeBimCacheChunk(
+    engine: Engine,
+    scene: Scene?,
+    cache: NativeBimCacheBridge.NativeBimCache,
+    chunkIndex: Int,
+  ) {
+    val faceIterator = faceBatches.iterator()
+    while (faceIterator.hasNext()) {
+      val batch = faceIterator.next()
+      if (batch.nativeChunkIndex != chunkIndex) continue
+      if (batch.attached) scene?.removeEntity(batch.entity)
+      engine.destroyEntity(batch.entity)
+      engine.destroyMaterialInstance(batch.materialInstance)
+      engine.destroyVertexBuffer(batch.vertexBuffer)
+      engine.destroyIndexBuffer(batch.indexBuffer)
+      EntityManager.get().destroy(batch.entity)
+      faceIterator.remove()
+    }
+
+    val edgeIterator = edgeBatches.iterator()
+    while (edgeIterator.hasNext()) {
+      val batch = edgeIterator.next()
+      if (batch.key.nativeChunkIndex != chunkIndex) continue
+      if (batch.attached) scene?.removeEntity(batch.entity)
+      engine.destroyEntity(batch.entity)
+      engine.destroyMaterialInstance(batch.materialInstance)
+      engine.destroyVertexBuffer(batch.vertexBuffer)
+      engine.destroyIndexBuffer(batch.indexBuffer)
+      EntityManager.get().destroy(batch.entity)
+      edgeIterator.remove()
+    }
+
+    cache.chunks.getOrNull(chunkIndex)?.releaseGeometryView()
+    if (nativeCacheResidentChunks.remove(chunkIndex)) nativeCacheEvictionCount += 1L
   }
 
   private fun createNativeBimCacheChunk(
@@ -2812,6 +2937,7 @@ internal class RenderSceneFilamentHostView(
           vertexCount = vertexCount,
           indexCount = indexCount,
           nativeKindMask = chunk.kindMask,
+          nativeChunkIndex = index,
           attached = visible,
         ),
       )
@@ -2964,8 +3090,14 @@ internal class RenderSceneFilamentHostView(
           entry.attached = true
           attachedEntities.add(entry.entity)
         }
-        edgeGeometryFor(objectData, geometry, wallJunctionElevations)?.let { edge ->
-          edgeChunks.getOrPut(edgeBatchKey(objectData, geometry.bounds)) { mutableListOf() }.add(edge)
+        // Large compatibility campuses intentionally use bounds-only proxy
+        // geometry. Their complete faces keep every storey visible, while a
+        // per-object architectural edge pass would materialize another large
+        // triangle/edge working set and exhaust the tablet Java heap.
+        if (!sceneState.proxyGeometry) {
+          edgeGeometryFor(objectData, geometry, wallJunctionElevations)?.let { edge ->
+            edgeChunks.getOrPut(edgeBatchKey(objectData, geometry.bounds)) { mutableListOf() }.add(edge)
+          }
         }
       } catch (error: Throwable) {
         failedObjects += 1
@@ -2991,7 +3123,9 @@ internal class RenderSceneFilamentHostView(
       }
     }
     if (batchFaces) createFaceBatches(engine, scene, faceChunks)
-    createEdgeBatches(engine, scene, edgeChunks)
+    if (!sceneState.proxyGeometry) {
+      createEdgeBatches(engine, scene, edgeChunks)
+    }
     if (projectionMode == "isometric") {
       createGridBatch(engine, scene, sceneState)
     }
@@ -3116,6 +3250,15 @@ internal class RenderSceneFilamentHostView(
     val engine = engine ?: return
     val scene = scene ?: return
     val sceneState = currentScene ?: return
+    if (sceneState.proxyGeometry) {
+      // Proxy geometry is already deliberately edge-free. Do not rebuild the
+      // expensive overlay when the projection changes on a large campus.
+      destroyEdgeBatches(engine, scene)
+      edgeGeometryCache.clear()
+      updateMetrics()
+      renderDirty = true
+      return
+    }
     destroyEdgeBatches(engine, scene)
     // The cache key includes revisions, but not projection mode. Clear it
     // when switching between plan and 3D so the lighter top-down geometry is
@@ -5661,12 +5804,14 @@ internal class RenderSceneFilamentHostView(
       bounds = bounds,
       objectCount = cache?.primitives?.size
         ?: (entries.size + faceBatches.sumOf { it.objectCount } + instanceFaceGroups.sumOf { it.objectCount }),
-      vertexCount = cache?.chunks?.sumOf { it.positions.capacity() / 12 }
-        ?: (entries.sumOf { it.vertexBuffer.vertexCount } + faceBatches.sumOf { it.vertexCount } +
-          instanceFaceGroups.sumOf { it.vertexCount * it.objectCount }),
-      indexCount = cache?.chunks?.sumOf { it.indices.capacity() }
-        ?: (entries.sumOf { it.indexBuffer.indexCount } + faceBatches.sumOf { it.indexCount } +
-          instanceFaceGroups.sumOf { it.indexCount * it.objectCount }),
+      // Resident counts only. Reading cache.positions/indices here would
+      // defeat lazy CPU streaming during a diagnostics/status refresh.
+      vertexCount = entries.sumOf { it.vertexBuffer.vertexCount } +
+        faceBatches.sumOf { it.vertexCount } +
+        instanceFaceGroups.sumOf { it.vertexCount * it.objectCount },
+      indexCount = entries.sumOf { it.indexBuffer.indexCount } +
+        faceBatches.sumOf { it.indexCount } +
+        instanceFaceGroups.sumOf { it.indexCount * it.objectCount },
       edgeBatchCount = edgeBatches.size,
       edgeVertexCount = edgeBatches.sumOf { it.vertexCount },
       edgeIndexCount = edgeBatches.sumOf { it.indexCount },
@@ -5727,6 +5872,9 @@ internal class RenderSceneFilamentHostView(
     "nativeCacheChunks" to (nativeBimCache?.chunks?.size ?: 0),
     "nativeCacheResidentChunks" to nativeCacheResidentChunks.size,
     "nativeCachePendingChunks" to nativeCachePendingChunks.size,
+    "nativeCacheTargetResidentMb" to nativeCacheTargetResidentBytes.toDouble() / (1024.0 * 1024.0),
+    "nativeCacheEvictions" to nativeCacheEvictionCount,
+    "processMemory" to NativeProcessMemoryTelemetry.snapshot(),
     "faceBatches" to faceBatches.size,
     "instanceGroups" to sceneMetrics.instanceGroupCount,
     "instancedObjects" to sceneMetrics.instancedObjectCount,
@@ -5769,7 +5917,7 @@ internal class RenderSceneFilamentHostView(
     val processCpuMs = Process.getElapsedCpuTime()
     cpuPercent = ((processCpuMs - telemetryCpuMs).toDouble() / elapsedMs.toDouble() * 100.0).coerceAtLeast(0.0)
     framesPerSecond = (renderedFrameCount - telemetryFrameCount).toDouble() * 1000.0 / elapsedMs.toDouble()
-    residentMemoryMb = (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()).toDouble() / (1024.0 * 1024.0)
+    residentMemoryMb = (NativeProcessMemoryTelemetry.snapshot()["totalPssMb"] as? Double) ?: 0.0
     nativeThreadCount = java.io.File("/proc/self/task").list()?.size ?: Thread.activeCount()
     telemetrySampleMs = nowMs
     telemetryCpuMs = processCpuMs

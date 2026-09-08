@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
@@ -345,8 +344,15 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
   }
 
   @override
-  Future<void> loadRenderScene(RenderScene scene) async {
-    await updateRenderScene(scene, resetView: true);
+  Future<void> loadRenderScene(
+    RenderScene scene, {
+    RenderSceneProjectionMode? payloadProjectionMode,
+  }) async {
+    await updateRenderScene(
+      scene,
+      resetView: true,
+      payloadProjectionMode: payloadProjectionMode,
+    );
   }
 
   Future<void> updateRenderScene(
@@ -354,6 +360,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     bool resetView = false,
     bool preserveNativeGeometry = false,
     Set<String>? visibleKinds,
+    RenderSceneProjectionMode? payloadProjectionMode,
   }) async {
     final contractIssues = RenderSceneCoordinateContract.issuesForScene(scene);
     if (contractIssues.isNotEmpty) {
@@ -399,7 +406,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
       if (!_nativeGeometryActive) {
         await _invokeNow(
           'loadRenderSceneJson',
-          jsonEncode(_nativeScenePayload(scene)),
+          _nativeScenePayload(scene, projectionMode: payloadProjectionMode),
         );
       }
       // The authoritative scene was just sent above. The remaining bridge

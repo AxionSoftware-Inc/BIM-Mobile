@@ -441,13 +441,17 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
       _ => null,
     };
     final buildingCount =
-        template == _ResidentialTemplateKind.campus6x9 ? 6 : 1;
-    final storyCount = template == _ResidentialTemplateKind.default3 ? 3 : 9;
+        template == _ResidentialTemplateKind.campus6x9 ? 10 : 1;
+    final storyCount = template == _ResidentialTemplateKind.default3
+        ? 3
+        : template == _ResidentialTemplateKind.campus6x9
+            ? 30
+            : 9;
     final label = switch (template) {
       _ResidentialTemplateKind.default3 => '3-storey starter building',
       _ResidentialTemplateKind.tower9 => '9-storey residential building',
       _ResidentialTemplateKind.campus6x9 =>
-        'Residential campus with six 9-storey buildings',
+        'Performance campus with ten 30-storey buildings',
       _ResidentialTemplateKind.modern3 =>
         'Modern glass courtyard house with site landscape',
       _ResidentialTemplateKind.glassTower9 =>
@@ -1598,7 +1602,10 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
         preserveNativeGeometry: _viewportController.hasNativeGeometry,
       );
     } else {
-      await _viewportController.loadRenderScene(_sceneForViewport(scene));
+      await _viewportController.loadRenderScene(
+        _sceneForViewport(scene),
+        payloadProjectionMode: _projectionMode,
+      );
     }
     await _viewportController.setVisibleKinds(_visibleKinds);
     await _viewportController.setProjectionMode(_projectionMode);

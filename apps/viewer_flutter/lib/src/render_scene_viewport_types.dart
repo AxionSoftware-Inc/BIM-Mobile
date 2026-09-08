@@ -345,7 +345,10 @@ abstract class RenderSceneViewportActions extends ChangeNotifier
   RenderSceneSurfaceDraft? get draftSurface;
   RenderSceneObjectMoveDraft? get draftObjectMove;
 
-  Future<void> loadRenderScene(RenderScene scene);
+  Future<void> loadRenderScene(
+    RenderScene scene, {
+    RenderSceneProjectionMode? payloadProjectionMode,
+  });
   Future<void> clearScene();
   Future<void> fitCamera();
   Future<void> setVisibleKinds(Set<String> kinds);
