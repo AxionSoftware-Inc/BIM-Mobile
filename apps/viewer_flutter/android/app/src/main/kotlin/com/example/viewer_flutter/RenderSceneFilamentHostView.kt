@@ -646,12 +646,9 @@ internal class RenderSceneFilamentHostView(
   private var projectionMode = "topDown"
   private var orbitProjectionStyle = "orthographic"
   // VIEWPORT FREEZE (2026-08-27): keep the 4c61f3c Solid/Shaded contract
-  // intact. In Solid, faces stay filled and the edge pass stays depth-tested
-  // and Revit-like. Do not replace this with PrimitiveType.LINES, a Canvas
-  // overlay, full-mesh edges, or a style-specific shortcut: each of those
-  // regressions has already turned Solid into Wireframe or removed borders
-  // on the connected tablet. Any future renderer work must be isolated and
-  // tablet-verified before changing this path.
+  // intact. Faces stay filled and every scene uses the depth-tested,
+  // Revit-like edge pass. Large bounds-only scenes only bypass the distance
+  // LOD gate; they do not switch to an unoccluded wireframe-like pass.
   private var displayStyle = "solid"
   private var viewportTheme = "light"
   private var shadowsEnabled = false
@@ -3505,8 +3502,8 @@ internal class RenderSceneFilamentHostView(
       openingVisibleInPlan(key.kind) &&
       !(projectionMode == "topDown" && key.kind == "wall") &&
       (displayStyle == "wireframe" || projectionMode != "isometric" ||
-        (isometricEdgeDetailVisible &&
-          (!key.curvedWall || isometricCurvedWallEdgeVisible)))
+        currentScene?.proxyGeometry == true ||
+        (isometricEdgeDetailVisible && (!key.curvedWall || isometricCurvedWallEdgeVisible)))
 
   private fun baseColorForObject(objectData: SceneObject): FloatArray =
     kindColor(normalizeKind(objectData.kind))
@@ -3911,6 +3908,17 @@ internal class RenderSceneFilamentHostView(
       wallFaceEdges
     }
     val boundedEdges = capGenericMeshEdges(objectData, importedEdges)
+    // Bounds-only stress scenes are viewed at city/model-fit scale. Their
+    // otherwise-correct 10 mm edge ribbon falls below one reliable tablet
+    // raster sample, so keep the same depth-tested pass but give only this
+    // proxy representation a readable line weight.
+    val edgeRadiusScale = if (currentScene?.proxyGeometry == true &&
+      projectionMode == "isometric"
+    ) {
+      10.0
+    } else {
+      1.0
+    }
     val generated = RenderSceneEdgeGeometry.build(
       projectionMode,
       points,
@@ -3923,6 +3931,7 @@ internal class RenderSceneFilamentHostView(
       wallAxisEnd = renderWallAxis?.end,
       wallArcCenter = wallArcCenter,
       wallArcRadius = wallArcRadius,
+      radiusScale = edgeRadiusScale,
     ) ?: return null
     if (!clipVolume.active && elementId != null) {
       edgeGeometryCache[elementId] = CachedEdgeGeometry(
