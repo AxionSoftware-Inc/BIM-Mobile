@@ -96,6 +96,55 @@ class NativeSpatialStreamingPolicyTest {
     assertEquals(8_000L, decision.targetResidentBytes)
   }
 
+  @Test
+  fun tenThirtyFloorBuildingsDoNotForceThreeHundredResidentChunks() {
+    val policy = NativeSpatialStreamingPolicy(
+      NativeSpatialStreamingPolicy.Config(
+        maxResidentChunks = 72,
+        maxResidentBytes = 288L * 1024L * 1024L,
+        alwaysResidentDistanceMeters = 45.0,
+        streamDistanceMeters = 230.0,
+      ),
+    )
+    val floorBytes = 6L * 1024L * 1024L
+    val chunks = buildList {
+      var index = 0
+      for (building in 0 until 10) {
+        val buildingX = (building % 5) * 140.0
+        val buildingY = (building / 5) * 160.0
+        for (floor in 0 until 30) {
+          val z = floor * 3.2
+          add(
+            NativeSpatialStreamingPolicy.Chunk(
+              index = index++,
+              bounds = SceneBounds(
+                min = ScenePoint(buildingX - 22.0, buildingY - 18.0, z),
+                max = ScenePoint(buildingX + 22.0, buildingY + 18.0, z + 3.2),
+              ),
+              estimatedGpuBytes = floorBytes,
+            ),
+          )
+        }
+      }
+    }
+    val previouslyResident = (0 until 72).toSet()
+
+    val decision = policy.decide(
+      camera = NativeSpatialStreamingPolicy.Camera(
+        position = ScenePoint(-55.0, 0.0, 35.0),
+        forward = ScenePoint(1.0, 0.0, 0.0),
+      ),
+      chunks = chunks,
+      currentResident = previouslyResident,
+    )
+
+    assertEquals(300, chunks.size)
+    assertTrue(decision.keepResident.size + decision.loadOrder.size <= 48)
+    assertTrue(decision.targetResidentBytes <= 288L * 1024L * 1024L)
+    assertTrue(decision.evict.isNotEmpty())
+    assertTrue(decision.keepResident.size + decision.loadOrder.size < chunks.size / 4)
+  }
+
   private fun chunk(
     index: Int,
     x: Double,
