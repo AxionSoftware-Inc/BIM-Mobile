@@ -928,7 +928,7 @@ const List<_AuthoringTool> _secondaryTools = <_AuthoringTool>[
 const List<_AnnotationTool> _annotationTools = <_AnnotationTool>[
   _AnnotationTool(
     AnnotationWorkspaceTool.text,
-    Icons.text_fields_outlined,
+    Icons.text_fields,
     'Text',
     'Place a view-scoped text note',
   ),
