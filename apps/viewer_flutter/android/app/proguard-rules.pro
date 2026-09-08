@@ -8,6 +8,28 @@
 -keep class com.example.viewer_flutter.RenderScenePlatformViewFactory { *; }
 -keep class com.example.viewer_flutter.RenderSceneViewportStabilityGuardFactory { *; }
 
+# The release stability policy deliberately reaches a few private renderer
+# members through a narrow reflection boundary. Keep only those names so the
+# policy still works after R8 while the rest of the host remains obfuscated.
+-keepclassmembers class com.example.viewer_flutter.RenderSceneFilamentHostView {
+    <fields>;
+    *** handleTouchEvent(android.view.MotionEvent);
+    *** syncVisualOverlay();
+    *** rebuildScene();
+    *** syncVisibility();
+    *** refreshTintState();
+    *** requestRender(long);
+}
+-keepclassmembers class com.example.viewer_flutter.FilamentSceneMetrics {
+    <fields>;
+}
+-keepclassmembers class com.example.viewer_flutter.SceneBounds {
+    <fields>;
+}
+-keepclassmembers class com.example.viewer_flutter.ScenePoint {
+    <fields>;
+}
+
 # NativeBimCacheBridge uses the legacy JNI name-based lookup contract. Keeping
 # this exact class and its external methods is required for release builds.
 -keep class com.example.viewer_flutter.NativeBimCacheBridge { *; }
