@@ -9,10 +9,21 @@ import 'render_scene_models.dart';
 
 /// Compact, data-oriented semantic storage for large BIM scenes.
 ///
-/// RenderSceneObject remains an authoring/compatibility facade during the
-/// migration, but runtime analytics and spatial indexing can operate on these
-/// structure-of-arrays tables instead of retaining one heavyweight object
-/// graph per BIM element.
+/// Runtime code should prefer this structure-of-arrays representation over a
+/// `RenderSceneObject` graph. The legacy object model remains an authoring /
+/// compatibility facade while the migration is in progress, but it must not
+/// become the long-lived runtime authority for a campus-scale scene.
+///
+/// Memory policy:
+/// * IDs/revisions keep integer precision.
+/// * World-space coordinates keep one Float64 origin per scene.
+/// * Per-instance bounds and physical parameters are Float32 *relative* to
+///   that origin. BIM dimensions are small enough for Float32, while the
+///   Float64 origin prevents georeferenced projects from losing world-space
+///   precision.
+/// * Arrays are allocated at their final size. We deliberately avoid building
+///   temporary `List<double>` / `List<int>` columns because boxed Dart numbers
+///   can create a much larger transient heap spike than the final typed data.
 final class BimCompactInstanceStore {
   BimCompactInstanceStore._({
     required this.prototypes,
@@ -34,127 +45,181 @@ final class BimCompactInstanceStore {
 
   int get instanceCount => instances.length;
 
-  /// Single-pass migration boundary from the legacy object scene to compact
-  /// typed arrays. Downstream code no longer needs per-instance metadata maps.
+  /// Two-pass migration boundary from the legacy object scene to compact typed
+  /// arrays. Pass one only classifies/counts rows. Pass two writes directly
+  /// into final buffers, avoiding a second boxed representation at load time.
   factory BimCompactInstanceStore.fromScene(RenderScene scene) {
+    final objectCount = scene.objects.length;
+    final kindCodes = Uint8List(objectCount);
+    var wallCount = 0;
+    var openingCount = 0;
+    var surfaceCount = 0;
+    var roomCount = 0;
+
+    for (var index = 0; index < objectCount; index += 1) {
+      final kind = BimCompactKind.fromSceneKind(scene.objects[index].kindKey);
+      kindCodes[index] = kind.index;
+      switch (kind) {
+        case BimCompactKind.wall:
+          wallCount += 1;
+          break;
+        case BimCompactKind.door:
+        case BimCompactKind.window:
+          openingCount += 1;
+          break;
+        case BimCompactKind.floor:
+        case BimCompactKind.slab:
+        case BimCompactKind.ceiling:
+        case BimCompactKind.roof:
+          surfaceCount += 1;
+          break;
+        case BimCompactKind.room:
+          roomCount += 1;
+          break;
+        case BimCompactKind.column:
+        case BimCompactKind.beam:
+        case BimCompactKind.stair:
+        case BimCompactKind.proxy:
+        case BimCompactKind.unknown:
+          break;
+      }
+    }
+
+    final originX = _finiteOrZero(
+      (scene.bounds.min.x + scene.bounds.max.x) * 0.5,
+    );
+    final originY = _finiteOrZero(
+      (scene.bounds.min.y + scene.bounds.max.y) * 0.5,
+    );
+    final originZ = _finiteOrZero(
+      (scene.bounds.min.z + scene.bounds.max.z) * 0.5,
+    );
+
+    final elementIds = Int64List(objectCount);
+    final prototypeIds = Uint32List(objectCount);
+    final levelIds = Int32List(objectCount);
+    final revisions = Uint32List(objectCount);
+    final bounds = Float32List(objectCount * 6);
+
+    final wallInstanceIndices = Uint32List(wallCount);
+    final wallLengths = Float32List(wallCount);
+    final wallThicknesses = Float32List(wallCount);
+    final wallHeights = Float32List(wallCount);
+    final wallBaseOffsets = Float32List(wallCount);
+    final wallTopOffsets = Float32List(wallCount);
+
+    final openingInstanceIndices = Uint32List(openingCount);
+    final openingHostWallIds = Int64List(openingCount);
+    final openingWidths = Float32List(openingCount);
+    final openingHeights = Float32List(openingCount);
+    final openingSills = Float32List(openingCount);
+    final openingOffsets = Float32List(openingCount);
+
+    final surfaceInstanceIndices = Uint32List(surfaceCount);
+    final surfaceAreas = Float32List(surfaceCount);
+    final surfaceThicknesses = Float32List(surfaceCount);
+    final surfaceOffsets = Float32List(surfaceCount);
+
+    final roomInstanceIndices = Uint32List(roomCount);
+    final roomAreas = Float32List(roomCount);
+    final roomPerimeters = Float32List(roomCount);
+
     final prototypeRegistry = _PrototypeRegistry();
+    var wallRow = 0;
+    var openingRow = 0;
+    var surfaceRow = 0;
+    var roomRow = 0;
 
-    final elementIds = <int>[];
-    final prototypeIds = <int>[];
-    final kindCodes = <int>[];
-    final levelIds = <int>[];
-    final revisions = <int>[];
-    final bounds = <double>[];
-
-    final wallInstanceIndices = <int>[];
-    final wallLengths = <double>[];
-    final wallThicknesses = <double>[];
-    final wallHeights = <double>[];
-    final wallBaseOffsets = <double>[];
-    final wallTopOffsets = <double>[];
-
-    final openingInstanceIndices = <int>[];
-    final openingHostWallIds = <int>[];
-    final openingWidths = <double>[];
-    final openingHeights = <double>[];
-    final openingSills = <double>[];
-    final openingOffsets = <double>[];
-
-    final surfaceInstanceIndices = <int>[];
-    final surfaceAreas = <double>[];
-    final surfaceThicknesses = <double>[];
-    final surfaceOffsets = <double>[];
-
-    final roomInstanceIndices = <int>[];
-    final roomAreas = <double>[];
-    final roomPerimeters = <double>[];
-
-    for (final object in scene.objects) {
-      final kind = BimCompactKind.fromSceneKind(object.kindKey);
-      final typeKey = _prototypeTypeKey(object, kind);
+    for (var instanceIndex = 0;
+        instanceIndex < objectCount;
+        instanceIndex += 1) {
+      final object = scene.objects[instanceIndex];
+      final kind = BimCompactKind.values[kindCodes[instanceIndex]];
       final prototypeId = prototypeRegistry.idFor(
         kind: kind,
-        typeKey: typeKey,
+        typeKey: _prototypeTypeKey(object, kind),
         materialCategory: object.materialCategory,
       );
-      final instanceIndex = elementIds.length;
 
-      elementIds.add(object.elementId ?? missingId);
-      prototypeIds.add(prototypeId);
-      kindCodes.add(kind.index);
-      levelIds.add(object.levelId ?? missingId);
-      revisions.add(object.revision);
-      bounds.addAll(<double>[
-        object.bounds.min.x,
-        object.bounds.min.y,
-        object.bounds.min.z,
-        object.bounds.max.x,
-        object.bounds.max.y,
-        object.bounds.max.z,
-      ]);
+      elementIds[instanceIndex] = object.elementId ?? missingId;
+      prototypeIds[instanceIndex] = prototypeId;
+      levelIds[instanceIndex] = object.levelId ?? missingId;
+      revisions[instanceIndex] = object.revision;
+      final boundsOffset = instanceIndex * 6;
+      bounds[boundsOffset] = object.bounds.min.x - originX;
+      bounds[boundsOffset + 1] = object.bounds.min.y - originY;
+      bounds[boundsOffset + 2] = object.bounds.min.z - originZ;
+      bounds[boundsOffset + 3] = object.bounds.max.x - originX;
+      bounds[boundsOffset + 4] = object.bounds.max.y - originY;
+      bounds[boundsOffset + 5] = object.bounds.max.z - originZ;
 
       switch (kind) {
         case BimCompactKind.wall:
           final parameters = WallElementParameters.fromObject(object);
-          wallInstanceIndices.add(instanceIndex);
-          wallLengths.add(_positiveOr(
+          wallInstanceIndices[wallRow] = instanceIndex;
+          wallLengths[wallRow] = _positiveOr(
             parameters.lengthMeters,
             _max2(object.bounds.width, object.bounds.depth),
-          ));
-          wallThicknesses.add(_positiveOr(
+          );
+          wallThicknesses[wallRow] = _positiveOr(
             parameters.thicknessMeters,
             _minPositive(object.bounds.width, object.bounds.depth),
-          ));
-          wallHeights.add(_positiveOr(
+          );
+          wallHeights[wallRow] = _positiveOr(
             parameters.heightMeters,
             object.bounds.height,
-          ));
-          wallBaseOffsets.add(parameters.baseOffsetMeters);
-          wallTopOffsets.add(parameters.topOffsetMeters);
+          );
+          wallBaseOffsets[wallRow] = parameters.baseOffsetMeters;
+          wallTopOffsets[wallRow] = parameters.topOffsetMeters;
+          wallRow += 1;
           break;
         case BimCompactKind.door:
         case BimCompactKind.window:
           final parameters = OpeningElementParameters.fromObject(object);
-          openingInstanceIndices.add(instanceIndex);
-          openingHostWallIds.add(parameters.hostWallId ?? missingId);
-          openingWidths.add(_positiveOr(
+          openingInstanceIndices[openingRow] = instanceIndex;
+          openingHostWallIds[openingRow] =
+              parameters.hostWallId ?? missingId;
+          openingWidths[openingRow] = _positiveOr(
             parameters.widthMeters,
             object.bounds.width,
-          ));
-          openingHeights.add(_positiveOr(
+          );
+          openingHeights[openingRow] = _positiveOr(
             parameters.heightMeters,
             object.bounds.height,
-          ));
-          openingSills.add(parameters.sillHeightMeters ?? 0.0);
-          openingOffsets.add(parameters.offsetMeters ?? 0.0);
+          );
+          openingSills[openingRow] = parameters.sillHeightMeters ?? 0.0;
+          openingOffsets[openingRow] = parameters.offsetMeters ?? 0.0;
+          openingRow += 1;
           break;
         case BimCompactKind.floor:
         case BimCompactKind.slab:
         case BimCompactKind.ceiling:
         case BimCompactKind.roof:
           final parameters = SurfaceElementParameters.fromObject(object);
-          surfaceInstanceIndices.add(instanceIndex);
-          surfaceAreas.add(_positiveOr(
+          surfaceInstanceIndices[surfaceRow] = instanceIndex;
+          surfaceAreas[surfaceRow] = _positiveOr(
             parameters.areaSquareMeters,
             object.bounds.width * object.bounds.depth,
-          ));
-          surfaceThicknesses.add(_positiveOr(
+          );
+          surfaceThicknesses[surfaceRow] = _positiveOr(
             parameters.thicknessMeters,
             object.bounds.height,
-          ));
-          surfaceOffsets.add(parameters.verticalOffsetMeters ?? 0.0);
+          );
+          surfaceOffsets[surfaceRow] = parameters.verticalOffsetMeters ?? 0.0;
+          surfaceRow += 1;
           break;
         case BimCompactKind.room:
           final parameters = RoomElementParameters.fromObject(object);
-          roomInstanceIndices.add(instanceIndex);
-          roomAreas.add(_positiveOr(
+          roomInstanceIndices[roomRow] = instanceIndex;
+          roomAreas[roomRow] = _positiveOr(
             parameters.areaSquareMeters,
             object.bounds.width * object.bounds.depth,
-          ));
-          roomPerimeters.add(_positiveOr(
+          );
+          roomPerimeters[roomRow] = _positiveOr(
             parameters.perimeterMeters,
             (object.bounds.width + object.bounds.depth) * 2.0,
-          ));
+          );
+          roomRow += 1;
           break;
         case BimCompactKind.column:
         case BimCompactKind.beam:
@@ -168,39 +233,42 @@ final class BimCompactInstanceStore {
     return BimCompactInstanceStore._(
       prototypes: List<BimPrototype>.unmodifiable(prototypeRegistry.values),
       instances: BimSpatialInstanceTable._(
-        elementIds: Int64List.fromList(elementIds),
-        prototypeIds: Uint32List.fromList(prototypeIds),
-        kindCodes: Uint8List.fromList(kindCodes),
-        levelIds: Int32List.fromList(levelIds),
-        revisions: Uint32List.fromList(revisions),
-        bounds: Float64List.fromList(bounds),
+        originX: originX,
+        originY: originY,
+        originZ: originZ,
+        elementIds: elementIds,
+        prototypeIds: prototypeIds,
+        kindCodes: kindCodes,
+        levelIds: levelIds,
+        revisions: revisions,
+        bounds: bounds,
       ),
       walls: BimWallParameterTable._(
-        instanceIndices: Uint32List.fromList(wallInstanceIndices),
-        lengths: Float64List.fromList(wallLengths),
-        thicknesses: Float64List.fromList(wallThicknesses),
-        heights: Float64List.fromList(wallHeights),
-        baseOffsets: Float64List.fromList(wallBaseOffsets),
-        topOffsets: Float64List.fromList(wallTopOffsets),
+        instanceIndices: wallInstanceIndices,
+        lengths: wallLengths,
+        thicknesses: wallThicknesses,
+        heights: wallHeights,
+        baseOffsets: wallBaseOffsets,
+        topOffsets: wallTopOffsets,
       ),
       openings: BimOpeningParameterTable._(
-        instanceIndices: Uint32List.fromList(openingInstanceIndices),
-        hostWallIds: Int64List.fromList(openingHostWallIds),
-        widths: Float64List.fromList(openingWidths),
-        heights: Float64List.fromList(openingHeights),
-        sillHeights: Float64List.fromList(openingSills),
-        offsets: Float64List.fromList(openingOffsets),
+        instanceIndices: openingInstanceIndices,
+        hostWallIds: openingHostWallIds,
+        widths: openingWidths,
+        heights: openingHeights,
+        sillHeights: openingSills,
+        offsets: openingOffsets,
       ),
       surfaces: BimSurfaceParameterTable._(
-        instanceIndices: Uint32List.fromList(surfaceInstanceIndices),
-        areas: Float64List.fromList(surfaceAreas),
-        thicknesses: Float64List.fromList(surfaceThicknesses),
-        verticalOffsets: Float64List.fromList(surfaceOffsets),
+        instanceIndices: surfaceInstanceIndices,
+        areas: surfaceAreas,
+        thicknesses: surfaceThicknesses,
+        verticalOffsets: surfaceOffsets,
       ),
       rooms: BimRoomParameterTable._(
-        instanceIndices: Uint32List.fromList(roomInstanceIndices),
-        areas: Float64List.fromList(roomAreas),
-        perimeters: Float64List.fromList(roomPerimeters),
+        instanceIndices: roomInstanceIndices,
+        areas: roomAreas,
+        perimeters: roomPerimeters,
       ),
     );
   }
@@ -257,10 +325,16 @@ final class BimPrototype {
   final String materialCategory;
 }
 
-/// Common columns shared by all BIM instances. Bounds use six consecutive
-/// doubles per row: minX/minY/minZ/maxX/maxY/maxZ.
+/// Common columns shared by all BIM instances.
+///
+/// `bounds` stores six Float32 values per row in local scene coordinates:
+/// minX/minY/minZ/maxX/maxY/maxZ. Public accessors restore the Float64 scene
+/// origin. Do not expose or persist the local buffer as world coordinates.
 final class BimSpatialInstanceTable {
   const BimSpatialInstanceTable._({
+    required this.originX,
+    required this.originY,
+    required this.originZ,
     required this.elementIds,
     required this.prototypeIds,
     required this.kindCodes,
@@ -269,23 +343,29 @@ final class BimSpatialInstanceTable {
     required this.bounds,
   });
 
+  final double originX;
+  final double originY;
+  final double originZ;
   final Int64List elementIds;
   final Uint32List prototypeIds;
   final Uint8List kindCodes;
   final Int32List levelIds;
   final Uint32List revisions;
-  final Float64List bounds;
+  final Float32List bounds;
 
   int get length => elementIds.length;
 
-  double minX(int index) => bounds[index * 6];
-  double minY(int index) => bounds[index * 6 + 1];
-  double minZ(int index) => bounds[index * 6 + 2];
-  double maxX(int index) => bounds[index * 6 + 3];
-  double maxY(int index) => bounds[index * 6 + 4];
-  double maxZ(int index) => bounds[index * 6 + 5];
+  double minX(int index) => originX + bounds[index * 6];
+  double minY(int index) => originY + bounds[index * 6 + 1];
+  double minZ(int index) => originZ + bounds[index * 6 + 2];
+  double maxX(int index) => originX + bounds[index * 6 + 3];
+  double maxY(int index) => originY + bounds[index * 6 + 4];
+  double maxZ(int index) => originZ + bounds[index * 6 + 5];
 }
 
+/// Physical wall dimensions are deliberately Float32. They are local BIM
+/// measurements rather than global survey coordinates, so Float64 only doubles
+/// memory/bandwidth without improving practical authoring precision.
 final class BimWallParameterTable {
   const BimWallParameterTable._({
     required this.instanceIndices,
@@ -297,11 +377,11 @@ final class BimWallParameterTable {
   });
 
   final Uint32List instanceIndices;
-  final Float64List lengths;
-  final Float64List thicknesses;
-  final Float64List heights;
-  final Float64List baseOffsets;
-  final Float64List topOffsets;
+  final Float32List lengths;
+  final Float32List thicknesses;
+  final Float32List heights;
+  final Float32List baseOffsets;
+  final Float32List topOffsets;
 
   int get length => instanceIndices.length;
 }
@@ -318,10 +398,10 @@ final class BimOpeningParameterTable {
 
   final Uint32List instanceIndices;
   final Int64List hostWallIds;
-  final Float64List widths;
-  final Float64List heights;
-  final Float64List sillHeights;
-  final Float64List offsets;
+  final Float32List widths;
+  final Float32List heights;
+  final Float32List sillHeights;
+  final Float32List offsets;
 
   int get length => instanceIndices.length;
 }
@@ -335,9 +415,9 @@ final class BimSurfaceParameterTable {
   });
 
   final Uint32List instanceIndices;
-  final Float64List areas;
-  final Float64List thicknesses;
-  final Float64List verticalOffsets;
+  final Float32List areas;
+  final Float32List thicknesses;
+  final Float32List verticalOffsets;
 
   int get length => instanceIndices.length;
 }
@@ -350,8 +430,8 @@ final class BimRoomParameterTable {
   });
 
   final Uint32List instanceIndices;
-  final Float64List areas;
-  final Float64List perimeters;
+  final Float32List areas;
+  final Float32List perimeters;
 
   int get length => instanceIndices.length;
 }
@@ -405,6 +485,8 @@ int _prototypeTypeKey(RenderSceneObject object, BimCompactKind kind) {
       return 0;
   }
 }
+
+double _finiteOrZero(double value) => value.isFinite ? value : 0.0;
 
 double _positiveOr(double? value, double fallback) {
   if (value != null && value.isFinite && value > 0) return value;
