@@ -181,7 +181,7 @@ final class BimSpatialGridIndex {
         result.add(index);
         continue;
       }
-      final distance = math.sqrt(distanceSquared).coerceAtLeast(1e-9);
+      final distance = math.max(math.sqrt(distanceSquared), 1e-9);
       final dot = (dx * fx + dy * fy + dz * fz) / distance;
       if (dot >= rearDotThreshold) result.add(index);
     }
@@ -197,9 +197,9 @@ final class BimSpatialGridIndex {
   static int _pack(int x, int y, int z) {
     const bias = 1 << 20;
     const mask = (1 << 21) - 1;
-    final bx = (x + bias).clamp(0, mask);
-    final by = (y + bias).clamp(0, mask);
-    final bz = (z + bias).clamp(0, mask);
+    final bx = (x + bias).clamp(0, mask).toInt();
+    final by = (y + bias).clamp(0, mask).toInt();
+    final bz = (z + bias).clamp(0, mask).toInt();
     return (bx << 42) | (by << 21) | bz;
   }
 
