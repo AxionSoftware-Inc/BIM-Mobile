@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'annotations/annotation_workspace_runtime.dart';
 import 'render_scene_models.dart';
 import 'render_scene_viewport_types.dart';
 import 'view_presentation.dart';
@@ -94,8 +95,40 @@ class OpenedViewTabBar extends StatelessWidget {
   final ValueChanged<String> onSelect;
   final ValueChanged<String> onClose;
 
+  void _syncAnnotationViewContext() {
+    final id = activeTabId;
+    if (id == null) {
+      AnnotationWorkspaceRuntime.activateView(
+        workspaceViewId: '',
+        levelId: 0,
+        acceptsAnnotations: false,
+      );
+      return;
+    }
+    final index = tabs.indexWhere((tab) => tab.id == id);
+    if (index < 0) {
+      AnnotationWorkspaceRuntime.activateView(
+        workspaceViewId: '',
+        levelId: 0,
+        acceptsAnnotations: false,
+      );
+      return;
+    }
+    final tab = tabs[index];
+    // Schedules/sheets have their own documentation surfaces. Model viewport
+    // annotations remain tied to 3D/plan/elevation/section view identities.
+    final acceptsAnnotations =
+        tab.kind != OpenedViewKind.schedule && tab.kind != OpenedViewKind.sheet;
+    AnnotationWorkspaceRuntime.activateView(
+      workspaceViewId: tab.id,
+      levelId: tab.levelId ?? 0,
+      acceptsAnnotations: acceptsAnnotations,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    _syncAnnotationViewContext();
     final theme = Theme.of(context);
     return Material(
       color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.72),
