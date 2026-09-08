@@ -192,7 +192,10 @@ final class FamilyInstanceStore {
             typeId: typeId,
             parameterSignature: seed.parameterSignature,
             geometryKey: seed.geometryKey,
-            representations: seed.representations,
+            // A seed cannot know its final interned variant id. Normalize the
+            // representation descriptor here so render batching can trust that
+            // descriptor.geometryVariantId == this row's id.
+            representations: _withVariantId(seed.representations, id),
           ),
         );
         return id;
@@ -284,4 +287,25 @@ final class FamilyInstanceStore {
       z: halfExtents[offset + 2],
     );
   }
+}
+
+FamilyRepresentationSet _withVariantId(
+  FamilyRepresentationSet source,
+  int variantId,
+) {
+  final model = source.model3d;
+  return FamilyRepresentationSet(
+    plan: source.plan,
+    elevation: source.elevation,
+    section: source.section,
+    model3d: model == null
+        ? null
+        : Family3dRepresentationDescriptor(
+            geometryVariantId: variantId,
+            proxyAssetKey: model.proxyAssetKey,
+            lowAssetKey: model.lowAssetKey,
+            mediumAssetKey: model.mediumAssetKey,
+            fullAssetKey: model.fullAssetKey,
+          ),
+  );
 }
