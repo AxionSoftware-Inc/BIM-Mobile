@@ -1,3 +1,7 @@
+import 'dart:io';
+
+import 'annotations/annotation_sidecar_store.dart';
+import 'annotations/annotation_workspace_runtime.dart';
 import 'render_scene_models.dart';
 import 'viewer_engine_contracts.dart';
 import 'viewer_project_session.dart';
@@ -26,6 +30,8 @@ class ProjectLifecycleService<T extends ViewerProjectSession> {
       : _sessionFactory = sessionFactory;
 
   final ViewerSessionFactory<T> _sessionFactory;
+  final AnnotationSidecarStore _annotationSidecar =
+      const AnnotationSidecarStore();
 
   Future<ProjectSessionResult<T>> createBlankProject({
     T? existingSession,
@@ -37,6 +43,9 @@ class ProjectLifecycleService<T extends ViewerProjectSession> {
       final renderScene = await session.createBlankProject(
         projectName: projectName,
       );
+      // A new BIM document must never inherit view annotations from the
+      // previously open project. Annotation history is a separate document.
+      AnnotationWorkspaceRuntime.resetProject();
       return ProjectSessionResult<T>(
         session: session,
         createdSession: createdSession,
@@ -60,6 +69,7 @@ class ProjectLifecycleService<T extends ViewerProjectSession> {
         buildingCount: buildingCount,
         storyCount: storyCount,
       );
+      AnnotationWorkspaceRuntime.resetProject();
       return ProjectSessionResult<T>(
         session: session,
         createdSession: createdSession,
@@ -81,6 +91,7 @@ class ProjectLifecycleService<T extends ViewerProjectSession> {
       final renderScene = await session.createShowcaseTemplate(
         templateKind: templateKind,
       );
+      AnnotationWorkspaceRuntime.resetProject();
       return ProjectSessionResult<T>(
         session: session,
         createdSession: createdSession,
@@ -104,6 +115,7 @@ class ProjectLifecycleService<T extends ViewerProjectSession> {
         json: json,
         sourcePath: sourcePath,
       );
+      await _restoreAnnotations(sourcePath);
       return ProjectSessionResult<T>(
         session: session,
         createdSession: true,
@@ -122,6 +134,7 @@ class ProjectLifecycleService<T extends ViewerProjectSession> {
     final session = await _sessionFactory.create();
     try {
       final load = await session.loadFromIfc(ifcPath: ifcPath);
+      AnnotationWorkspaceRuntime.resetProject();
       return ProjectSessionResult<T>(
         session: session,
         createdSession: true,
@@ -139,6 +152,7 @@ class ProjectLifecycleService<T extends ViewerProjectSession> {
     final session = await _sessionFactory.create();
     try {
       final load = await session.loadFromPackage(packagePath: packagePath);
+      await _restoreAnnotations(packagePath);
       return ProjectSessionResult<T>(
         session: session,
         createdSession: true,
@@ -147,6 +161,27 @@ class ProjectLifecycleService<T extends ViewerProjectSession> {
     } catch (_) {
       session.dispose();
       rethrow;
+    }
+  }
+
+  Future<void> _restoreAnnotations(String? projectPath) async {
+    AnnotationWorkspaceRuntime.cancelDraft();
+    if (projectPath == null || projectPath.trim().isEmpty) {
+      AnnotationWorkspaceRuntime.document.reset();
+      return;
+    }
+    try {
+      final store = await _annotationSidecar.load(File(projectPath));
+      if (store == null) {
+        AnnotationWorkspaceRuntime.document.reset();
+      } else {
+        AnnotationWorkspaceRuntime.document.replaceStore(store);
+      }
+    } catch (_) {
+      // Documentation corruption must never make the authoritative BIM project
+      // unopenable. Start with an empty annotation document; the user can save
+      // a fresh versioned sidecar without touching model geometry.
+      AnnotationWorkspaceRuntime.document.reset();
     }
   }
 }
