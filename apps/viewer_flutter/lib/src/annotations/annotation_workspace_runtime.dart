@@ -10,10 +10,10 @@ abstract final class AnnotationWorkspaceRuntime {
   static final AnnotationDocumentController document =
       AnnotationDocumentController();
 
-  static AnnotationDraftPoint? dimensionStart;
+  static AnnotationDraftPoint? twoPointStart;
 
   static void cancelDraft() {
-    dimensionStart = null;
+    twoPointStart = null;
   }
 
   static void resetProject() {
