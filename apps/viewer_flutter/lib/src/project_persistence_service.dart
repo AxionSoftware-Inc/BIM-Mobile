@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'annotations/annotation_sidecar_store.dart';
+import 'annotations/annotation_workspace_runtime.dart';
 import 'viewer_engine_contracts.dart';
 import 'viewer_project_gateway.dart';
 
@@ -16,11 +18,23 @@ class ProjectPersistenceService {
 
   final ViewerProjectGateway? Function() _repository;
   final bool Function() _engineEnabled;
+  final AnnotationSidecarStore _annotationSidecar =
+      const AnnotationSidecarStore();
 
   Future<String> exportJson() => _requireRepository().saveProjectJson();
 
-  Future<File> saveToDefaultLocation() =>
-      _requireRepository().saveProjectToDefaultLocation();
+  Future<File> saveToDefaultLocation() async {
+    final projectFile =
+        await _requireRepository().saveProjectToDefaultLocation();
+    // Annotation persistence is part of an explicit project save. The sidecar
+    // remains separate from BIM geometry so documentation edits never rebuild
+    // or invalidate the native runtime cache.
+    await _annotationSidecar.save(
+      projectFile: projectFile,
+      store: AnnotationWorkspaceRuntime.document.store,
+    );
+    return projectFile;
+  }
 
   Future<ViewerLoadResult> replaceFromJson({
     required String projectName,
