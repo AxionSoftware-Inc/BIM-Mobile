@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <type_traits>
 
 namespace tbe::api::runtime_cache {
 
