@@ -7,9 +7,15 @@ import java.nio.IntBuffer
 /**
  * JNI access to an engine-owned `.bimcache` file.
  *
- * Only compact metadata crosses the Kotlin boundary. Vertex/index arrays stay
- * in native memory and are exposed as direct buffers for Filament; Dart never
- * receives the mesh payload.
+ * MEMORY/STREAMING CONTRACT:
+ * - Dart never receives vertex/index payloads.
+ * - Opening a cache builds only a compact chunk/semantic manifest.
+ * - A chunk's direct native geometry view is requested lazily when the
+ *   renderer actually chooses that chunk for residency.
+ *
+ * This matters for campus-size projects: progressive GPU upload is not enough
+ * if Kotlin eagerly creates direct-buffer views for every floor/building at
+ * startup. Lazy geometry lets the CPU and GPU working sets follow the camera.
  */
 internal object NativeBimCacheBridge {
   // Must match RuntimeSceneCache.cpp. These IDs exist only in the runtime
@@ -69,8 +75,7 @@ internal object NativeBimCacheBridge {
       val chunks = buildList {
         repeat(nativeChunkCount(handle)) { index ->
           val bounds = nativeChunkBounds(handle, index) ?: return@repeat
-          val positions = nativeChunkPositions(handle, index) ?: return@repeat
-          val indices = nativeChunkIndices(handle, index) ?: return@repeat
+          if (bounds.size != 6) return@repeat
           val primitiveRanges = nativeChunkPrimitiveRanges(handle, index)
           val primitiveMetadata = nativeChunkPrimitiveMetadata(handle, index)
             ?.toList()
@@ -94,7 +99,8 @@ internal object NativeBimCacheBridge {
             ?: emptyList()
           primitiveOffset += ranges.size
           val kindMask = nativeChunkKindMask(handle, index)
-          if (bounds.size != 6 || positions.capacity() < 12 || indices.capacity() < Int.SIZE_BYTES) return@repeat
+          val estimatedIndexCount = ranges.sumOf { range -> range.indexCount.coerceAtLeast(0) }
+
           add(
             NativeBimCacheChunk(
               levelId = nativeChunkLevelId(handle, index),
@@ -102,9 +108,29 @@ internal object NativeBimCacheBridge {
               kindMask = kindMask,
               kind = primaryKindFromMask(kindMask),
               sourceBounds = sceneBounds(bounds),
-              positions = positions.duplicate().order(ByteOrder.nativeOrder()).apply { rewind() },
-              indices = indices.duplicate().order(ByteOrder.nativeOrder()).asIntBuffer().apply { rewind() },
+              estimatedIndexCount = estimatedIndexCount,
               primitiveRanges = ranges,
+              geometryLoader = {
+                // The cache handle stays open for the lifetime of the viewport.
+                // These direct views are therefore safe while the chunk is
+                // resident and are not requested for cold/off-screen chunks.
+                val positions = nativeChunkPositions(handle, index)
+                  ?: return@NativeBimCacheChunk null
+                val rawIndices = nativeChunkIndices(handle, index)
+                  ?: return@NativeBimCacheChunk null
+                if (positions.capacity() < 12 || rawIndices.capacity() < Int.SIZE_BYTES) {
+                  return@NativeBimCacheChunk null
+                }
+                NativeBimCacheGeometry(
+                  positions = positions.duplicate()
+                    .order(ByteOrder.nativeOrder())
+                    .apply { rewind() },
+                  indices = rawIndices.duplicate()
+                    .order(ByteOrder.nativeOrder())
+                    .asIntBuffer()
+                    .apply { rewind() },
+                )
+              },
             ),
           )
         }
@@ -148,9 +174,13 @@ internal object NativeBimCacheBridge {
   }
 
   /**
-   * Produces the compact semantic envelope that Flutter needs for project
-   * chrome, selection and 2D metadata. Meshes never cross this boundary: the
-   * native cache remains the sole owner of vertex/index buffers.
+   * Produces the semantic envelope Flutter needs for project chrome,
+   * selection and 2D metadata. Meshes never cross this boundary.
+   *
+   * Do not touch [NativeBimCacheChunk.positions]/indices here. Doing so would
+   * defeat lazy CPU streaming during project startup. Geometry counts in this
+   * semantic envelope are intentionally zero because the Dart scene contains
+   * no mesh; native estimated counts are reported separately for diagnostics.
    */
   fun describe(cachePath: String, sourceIfcPath: String): Map<String, Any?>? {
     val cache = open(cachePath, sourceIfcPath) ?: return null
@@ -179,8 +209,10 @@ internal object NativeBimCacheBridge {
         "units" to "meters",
         "coordinate_system" to "X/Y plan, Z up",
         "object_count" to cache.primitives.size,
-        "vertex_count" to cache.chunks.sumOf { it.positions.capacity() / 12 },
-        "index_count" to cache.chunks.sumOf { it.indices.capacity() },
+        "vertex_count" to 0,
+        "index_count" to 0,
+        "native_cache_estimated_index_count" to cache.chunks.sumOf { it.estimatedIndexCount },
+        "native_cache_estimated_gpu_bytes" to cache.chunks.sumOf { it.estimatedGpuBytes },
         "bounds" to bounds.toMap(),
         "levels" to levels,
         "materials" to emptyList<Map<String, Any?>>(),
@@ -415,16 +447,66 @@ internal object NativeBimCacheBridge {
   }
 }
 
-internal data class NativeBimCacheChunk(
+internal data class NativeBimCacheGeometry(
+  val positions: ByteBuffer,
+  val indices: IntBuffer,
+)
+
+/**
+ * Lightweight chunk manifest. Geometry is a lazy direct-native view.
+ *
+ * [estimatedGpuBytes] intentionally uses an index-derived upper-bound style
+ * estimate. Exact driver allocation accounting is not available here and, more
+ * importantly, querying exact vertex buffers would eagerly materialize the
+ * very geometry this class is designed to keep cold.
+ */
+internal class NativeBimCacheChunk(
   val levelId: Long,
   val materialCategory: String,
   val kindMask: Long,
   val kind: String,
   val sourceBounds: SceneBounds,
-  val positions: ByteBuffer,
-  val indices: IntBuffer,
+  val estimatedIndexCount: Int,
   val primitiveRanges: List<NativeBimCachePrimitiveRange> = emptyList(),
-)
+  private val geometryLoader: () -> NativeBimCacheGeometry?,
+) {
+  @Volatile
+  private var loadedGeometry: NativeBimCacheGeometry? = null
+
+  val estimatedGpuBytes: Long
+    get() = estimatedIndexCount.toLong().coerceAtLeast(0L) * 16L + 4096L
+
+  fun geometry(): NativeBimCacheGeometry? {
+    loadedGeometry?.let { return it }
+    return synchronized(this) {
+      loadedGeometry ?: geometryLoader()?.also { loadedGeometry = it }
+    }
+  }
+
+  val positions: ByteBuffer
+    get() = geometry()?.positions ?: EMPTY_BYTE_BUFFER.duplicate()
+
+  val indices: IntBuffer
+    get() = geometry()?.indices ?: EMPTY_INT_BUFFER.duplicate()
+
+  /**
+   * Drops Kotlin's direct-buffer views after the renderer has destroyed the
+   * corresponding Filament resources. The native cache remains authoritative,
+   * so a later camera revisit can materialize fresh views without reparsing IFC.
+   */
+  fun releaseGeometryView() {
+    synchronized(this) {
+      loadedGeometry = null
+    }
+  }
+
+  companion object {
+    private val EMPTY_BYTE_BUFFER = ByteBuffer.allocateDirect(0).order(ByteOrder.nativeOrder())
+    private val EMPTY_INT_BUFFER = ByteBuffer.allocateDirect(0)
+      .order(ByteOrder.nativeOrder())
+      .asIntBuffer()
+  }
+}
 
 internal data class NativeBimCachePrimitiveRange(
   val firstIndex: Int,
