@@ -5,10 +5,10 @@ import 'bim_compact_instance_store.dart';
 
 /// Compact CSR-style 3D grid over BIM instance bounds.
 ///
-/// The index allocates objects per occupied spatial cell, not per BIM element.
-/// Once built, cell keys, offsets and instance indices are dense typed arrays.
-/// This is the semantic-side counterpart to the native chunk streamer: camera
-/// queries touch only nearby cells instead of scanning every building/floor.
+/// The persistent representation is dense typed data. Build-time buckets are
+/// temporary, but camera queries intentionally do *not* allocate a `Set<int>`
+/// or one object per candidate. A reusable generation-stamp table de-duplicates
+/// instance indices, which keeps orbit/pan queries predictable under GC.
 final class BimSpatialGridIndex {
   BimSpatialGridIndex._({
     required this.cellSizeX,
@@ -17,7 +17,9 @@ final class BimSpatialGridIndex {
     required this.cellKeys,
     required this.cellOffsets,
     required this.instanceIndices,
-  });
+    required int instanceCount,
+  })  : _queryMarks = Uint32List(instanceCount),
+        _queryScratch = Uint32List(instanceCount);
 
   factory BimSpatialGridIndex.build(
     BimCompactInstanceStore store, {
@@ -37,9 +39,9 @@ final class BimSpatialGridIndex {
       final maxCellY = _cell(instances.maxY(index), cellSizeY);
       final maxCellZ = _cell(instances.maxZ(index), cellSizeZ);
 
-      // Large imported proxy meshes should not explode the grid by occupying
-      // tens of thousands of cells. They are inserted at their center and can
-      // later be handled by the coarse building/proxy hierarchy.
+      // Large imported proxies are indexed by their center. Expanding one
+      // campus shell through every occupied cell can otherwise make the index
+      // itself larger than the geometry it is meant to accelerate.
       final cellCount = (maxCellX - minCellX + 1) *
           (maxCellY - minCellY + 1) *
           (maxCellZ - minCellZ + 1);
@@ -71,12 +73,21 @@ final class BimSpatialGridIndex {
 
     final keys = buckets.keys.toList()..sort();
     final offsets = Uint32List(keys.length + 1);
-    final flattened = <int>[];
-    for (var cellIndex = 0; cellIndex < keys.length; cellIndex += 1) {
-      offsets[cellIndex] = flattened.length;
-      flattened.addAll(buckets[keys[cellIndex]]!);
+    var membershipCount = 0;
+    for (final key in keys) {
+      membershipCount += buckets[key]!.length;
     }
-    offsets[keys.length] = flattened.length;
+    final flattened = Uint32List(membershipCount);
+    var writeOffset = 0;
+    for (var cellIndex = 0; cellIndex < keys.length; cellIndex += 1) {
+      offsets[cellIndex] = writeOffset;
+      final bucket = buckets[keys[cellIndex]]!;
+      for (final instanceIndex in bucket) {
+        flattened[writeOffset] = instanceIndex;
+        writeOffset += 1;
+      }
+    }
+    offsets[keys.length] = writeOffset;
 
     return BimSpatialGridIndex._(
       cellSizeX: cellSizeX,
@@ -84,7 +95,8 @@ final class BimSpatialGridIndex {
       cellSizeZ: cellSizeZ,
       cellKeys: Int64List.fromList(keys),
       cellOffsets: offsets,
-      instanceIndices: Uint32List.fromList(flattened),
+      instanceIndices: flattened,
+      instanceCount: instances.length,
     );
   }
 
@@ -95,11 +107,17 @@ final class BimSpatialGridIndex {
   final Uint32List cellOffsets;
   final Uint32List instanceIndices;
 
+  // One stamp and one candidate scratch array are shared by sequential camera
+  // queries on this isolate. This index is intentionally not cross-isolate
+  // mutable state; workers should build/read their own index snapshot.
+  final Uint32List _queryMarks;
+  final Uint32List _queryScratch;
+  int _queryGeneration = 0;
+
   int get occupiedCellCount => cellKeys.length;
 
   /// Returns unique instance indices intersecting a coarse camera neighborhood.
-  /// Precise frustum/clip tests are intentionally left to the renderer/native
-  /// BVH; this index only avoids the global O(N) scan.
+  /// Only the final exact-size Uint32List is allocated per query.
   Uint32List queryAabb({
     required double minX,
     required double minY,
@@ -108,35 +126,23 @@ final class BimSpatialGridIndex {
     required double maxY,
     required double maxZ,
   }) {
-    final firstX = _cell(minX, cellSizeX);
-    final firstY = _cell(minY, cellSizeY);
-    final firstZ = _cell(minZ, cellSizeZ);
-    final lastX = _cell(maxX, cellSizeX);
-    final lastY = _cell(maxY, cellSizeY);
-    final lastZ = _cell(maxZ, cellSizeZ);
-    final unique = <int>{};
-
-    for (var x = firstX; x <= lastX; x += 1) {
-      for (var y = firstY; y <= lastY; y += 1) {
-        for (var z = firstZ; z <= lastZ; z += 1) {
-          final key = _pack(x, y, z);
-          final cellIndex = _binarySearch(cellKeys, key);
-          if (cellIndex < 0) continue;
-          final start = cellOffsets[cellIndex];
-          final end = cellOffsets[cellIndex + 1];
-          for (var offset = start; offset < end; offset += 1) {
-            unique.add(instanceIndices[offset]);
-          }
-        }
-      }
-    }
-    final result = unique.toList()..sort();
-    return Uint32List.fromList(result);
+    final count = _collectAabbCandidates(
+      minX: minX,
+      minY: minY,
+      minZ: minZ,
+      maxX: maxX,
+      maxY: maxY,
+      maxZ: maxZ,
+    );
+    final result = Uint32List(count);
+    result.setRange(0, count, _queryScratch);
+    result.sort();
+    return result;
   }
 
-  /// Coarse Google-Earth-style camera query. It first visits only grid cells in
-  /// [radiusMeters], then keeps near items or items in front of the camera.
-  /// The result is an input candidate set for exact native frustum/BVH tests.
+  /// Coarse Google-Earth-style camera query. Candidate de-duplication is done
+  /// in the reusable stamp/scratch arrays, then exact camera relevance is
+  /// written back into the same scratch buffer before one final allocation.
   Uint32List queryCameraNeighborhood(
     BimCompactInstanceStore store, {
     required double cameraX,
@@ -149,7 +155,7 @@ final class BimSpatialGridIndex {
     double alwaysKeepMeters = 50.0,
     double rearDotThreshold = -0.12,
   }) {
-    final candidates = queryAabb(
+    final candidateCount = _collectAabbCandidates(
       minX: cameraX - radiusMeters,
       minY: cameraY - radiusMeters,
       minZ: cameraZ - radiusMeters,
@@ -166,9 +172,12 @@ final class BimSpatialGridIndex {
     final radiusSquared = radiusMeters * radiusMeters;
     final nearSquared = alwaysKeepMeters * alwaysKeepMeters;
     final instances = store.instances;
-    final result = <int>[];
+    var resultCount = 0;
 
-    for (final index in candidates) {
+    for (var candidateOffset = 0;
+        candidateOffset < candidateCount;
+        candidateOffset += 1) {
+      final index = _queryScratch[candidateOffset];
       final centerX = (instances.minX(index) + instances.maxX(index)) * 0.5;
       final centerY = (instances.minY(index) + instances.maxY(index)) * 0.5;
       final centerZ = (instances.minZ(index) + instances.maxZ(index)) * 0.5;
@@ -178,15 +187,66 @@ final class BimSpatialGridIndex {
       final distanceSquared = dx * dx + dy * dy + dz * dz;
       if (distanceSquared > radiusSquared) continue;
       if (distanceSquared <= nearSquared) {
-        result.add(index);
+        _queryScratch[resultCount++] = index;
         continue;
       }
       final distance = math.max(math.sqrt(distanceSquared), 1e-9);
       final dot = (dx * fx + dy * fy + dz * fz) / distance;
-      if (dot >= rearDotThreshold) result.add(index);
+      if (dot >= rearDotThreshold) {
+        _queryScratch[resultCount++] = index;
+      }
     }
 
-    return Uint32List.fromList(result);
+    final result = Uint32List(resultCount);
+    result.setRange(0, resultCount, _queryScratch);
+    return result;
+  }
+
+  int _collectAabbCandidates({
+    required double minX,
+    required double minY,
+    required double minZ,
+    required double maxX,
+    required double maxY,
+    required double maxZ,
+  }) {
+    final firstX = _cell(minX, cellSizeX);
+    final firstY = _cell(minY, cellSizeY);
+    final firstZ = _cell(minZ, cellSizeZ);
+    final lastX = _cell(maxX, cellSizeX);
+    final lastY = _cell(maxY, cellSizeY);
+    final lastZ = _cell(maxZ, cellSizeZ);
+    final generation = _nextGeneration();
+    var count = 0;
+
+    for (var x = firstX; x <= lastX; x += 1) {
+      for (var y = firstY; y <= lastY; y += 1) {
+        for (var z = firstZ; z <= lastZ; z += 1) {
+          final cellIndex = _binarySearch(cellKeys, _pack(x, y, z));
+          if (cellIndex < 0) continue;
+          final start = cellOffsets[cellIndex];
+          final end = cellOffsets[cellIndex + 1];
+          for (var offset = start; offset < end; offset += 1) {
+            final instanceIndex = instanceIndices[offset];
+            if (_queryMarks[instanceIndex] == generation) continue;
+            _queryMarks[instanceIndex] = generation;
+            _queryScratch[count++] = instanceIndex;
+          }
+        }
+      }
+    }
+    return count;
+  }
+
+  int _nextGeneration() {
+    _queryGeneration = (_queryGeneration + 1) & 0xffffffff;
+    if (_queryGeneration == 0) {
+      // A 32-bit stamp wraps only after billions of queries. Clearing here is
+      // still cheaper and safer than letting an ancient mark become current.
+      _queryMarks.fillRange(0, _queryMarks.length, 0);
+      _queryGeneration = 1;
+    }
+    return _queryGeneration;
   }
 
   static int _cell(double coordinate, double cellSize) =>
