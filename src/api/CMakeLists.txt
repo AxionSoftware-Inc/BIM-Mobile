@@ -35,7 +35,11 @@ set(TBE_CAPI_SHARED_SOURCES
 # Android's Filament view consumes the compiled runtime cache through JNI
 # direct buffers. Keep the desktop C ABI free of JNI dependencies.
 if(ANDROID)
-    list(APPEND TBE_CAPI_SHARED_SOURCES src/AndroidBimCacheJni.cpp)
+    # LARGE-SCENE CONTRACT: Android maps `.bimcache` read-only and hands
+    # chunk-local views to Filament. Do not switch this back to the legacy
+    # heap-loading bridge: doing so makes the entire campus geometry resident
+    # in native RAM before camera-driven streaming can make a decision.
+    list(APPEND TBE_CAPI_SHARED_SOURCES src/AndroidBimCacheMmapJni.cpp)
 endif()
 
 add_library(tbe_capi_shared SHARED ${TBE_CAPI_SHARED_SOURCES})
