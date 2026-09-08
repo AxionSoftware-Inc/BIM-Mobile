@@ -370,9 +370,23 @@ enum _WorkspaceMoreAction {
   toggleBrowser,
 }
 
-/// Touch-first authoring palette. The short labels keep the tools discoverable
-/// without requiring the user to remember what an abstract icon means.
-class AuthoringToolPalette extends StatelessWidget {
+/// Main workspace tool disciplines.
+///
+/// Keep this boundary explicit. Model tools mutate BIM geometry; Annotate tools
+/// mutate view-scoped documentation. Mixing the two would make annotations
+/// unnecessarily participate in geometry rebuilds and large-scene streaming.
+enum WorkspaceToolTab { model, annotate }
+
+enum AnnotationWorkspaceTool { text, dimension, tag, detailLine, symbol }
+
+/// Touch-first authoring palette with a real Model / Annotate discipline tab.
+///
+/// Annotation selection is intentionally local in this first integration.
+/// NEXT: connect [AnnotationWorkspaceTool] to an AnnotationCommandController
+/// that writes the data-oriented AnnotationStore for the active view. Until
+/// then switching to Annotate forces Select mode so a previously active wall
+/// or door tool cannot mutate the model behind the annotation UI.
+class AuthoringToolPalette extends StatefulWidget {
   const AuthoringToolPalette({
     super.key,
     required this.mode,
@@ -385,6 +399,23 @@ class AuthoringToolPalette extends StatelessWidget {
   final ValueChanged<RenderSceneInteractionMode> onModeChanged;
 
   @override
+  State<AuthoringToolPalette> createState() => _AuthoringToolPaletteState();
+}
+
+class _AuthoringToolPaletteState extends State<AuthoringToolPalette> {
+  WorkspaceToolTab _tab = WorkspaceToolTab.model;
+  AnnotationWorkspaceTool _annotationTool = AnnotationWorkspaceTool.text;
+
+  void _setTab(WorkspaceToolTab value) {
+    if (_tab == value) return;
+    setState(() => _tab = value);
+    if (value == WorkspaceToolTab.annotate &&
+        widget.mode != RenderSceneInteractionMode.select) {
+      widget.onModeChanged(RenderSceneInteractionMode.select);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Align(
@@ -392,7 +423,7 @@ class AuthoringToolPalette extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.only(top: 28),
         child: SizedBox(
-          width: 88,
+          width: 104,
           child: Material(
             elevation: 3,
             color: theme.colorScheme.surface.withValues(alpha: 0.90),
@@ -404,35 +435,63 @@ class AuthoringToolPalette extends StatelessWidget {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: <Widget>[
-                    for (final tool in _primaryTools)
-                      _PaletteToolButton(
-                        tool: tool,
-                        selected: mode == tool.mode,
-                        enabled: enabled,
-                        onPressed: () => onModeChanged(tool.mode),
-                      ),
-                    const Divider(height: 20),
-                    PopupMenuButton<RenderSceneInteractionMode>(
-                      tooltip: 'More editing tools',
-                      enabled: enabled,
-                      icon: const Icon(Icons.edit_note_outlined),
-                      onSelected: onModeChanged,
-                      itemBuilder: (context) =>
-                          <PopupMenuEntry<RenderSceneInteractionMode>>[
-                        for (final tool in _secondaryTools)
-                          CheckedPopupMenuItem<RenderSceneInteractionMode>(
-                            value: tool.mode,
-                            checked: mode == tool.mode,
-                            child: Row(
-                              children: <Widget>[
-                                Icon(tool.icon, size: 18),
-                                const SizedBox(width: 10),
-                                Text(tool.label),
-                              ],
-                            ),
-                          ),
-                      ],
+                    _WorkspaceToolTabSelector(
+                      active: _tab,
+                      enabled: widget.enabled,
+                      onChanged: _setTab,
                     ),
+                    const Divider(height: 16),
+                    if (_tab == WorkspaceToolTab.model) ...<Widget>[
+                      for (final tool in _primaryTools)
+                        _PaletteToolButton(
+                          tool: tool,
+                          selected: widget.mode == tool.mode,
+                          enabled: widget.enabled,
+                          onPressed: () => widget.onModeChanged(tool.mode),
+                        ),
+                      const Divider(height: 20),
+                      PopupMenuButton<RenderSceneInteractionMode>(
+                        tooltip: 'More editing tools',
+                        enabled: widget.enabled,
+                        icon: const Icon(Icons.edit_note_outlined),
+                        onSelected: widget.onModeChanged,
+                        itemBuilder: (context) =>
+                            <PopupMenuEntry<RenderSceneInteractionMode>>[
+                          for (final tool in _secondaryTools)
+                            CheckedPopupMenuItem<RenderSceneInteractionMode>(
+                              value: tool.mode,
+                              checked: widget.mode == tool.mode,
+                              child: Row(
+                                children: <Widget>[
+                                  Icon(tool.icon, size: 18),
+                                  const SizedBox(width: 10),
+                                  Text(tool.label),
+                                ],
+                              ),
+                            ),
+                        ],
+                      ),
+                    ] else ...<Widget>[
+                      for (final tool in _annotationTools)
+                        _AnnotationPaletteToolButton(
+                          tool: tool,
+                          selected: _annotationTool == tool.tool,
+                          enabled: widget.enabled,
+                          onPressed: () => setState(
+                            () => _annotationTool = tool.tool,
+                          ),
+                        ),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(8, 8, 8, 6),
+                        child: Text(
+                          'View-scoped',
+                          textAlign: TextAlign.center,
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -442,6 +501,87 @@ class AuthoringToolPalette extends StatelessWidget {
       ),
     );
   }
+}
+
+class _WorkspaceToolTabSelector extends StatelessWidget {
+  const _WorkspaceToolTabSelector({
+    required this.active,
+    required this.enabled,
+    required this.onChanged,
+  });
+
+  final WorkspaceToolTab active;
+  final bool enabled;
+  final ValueChanged<WorkspaceToolTab> onChanged;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+        child: Column(
+          children: <Widget>[
+            _WorkspaceToolTabButton(
+              label: 'Model',
+              icon: Icons.view_in_ar_outlined,
+              selected: active == WorkspaceToolTab.model,
+              enabled: enabled,
+              onPressed: () => onChanged(WorkspaceToolTab.model),
+            ),
+            const SizedBox(height: 3),
+            _WorkspaceToolTabButton(
+              label: 'Annotate',
+              icon: Icons.draw_outlined,
+              selected: active == WorkspaceToolTab.annotate,
+              enabled: enabled,
+              onPressed: () => onChanged(WorkspaceToolTab.annotate),
+            ),
+          ],
+        ),
+      );
+}
+
+class _WorkspaceToolTabButton extends StatelessWidget {
+  const _WorkspaceToolTabButton({
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.enabled,
+    required this.onPressed,
+  });
+
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final bool enabled;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) => Material(
+        color: selected
+            ? Theme.of(context).colorScheme.primaryContainer
+            : Colors.transparent,
+        borderRadius: BorderRadius.circular(9),
+        child: InkWell(
+          onTap: enabled ? onPressed : null,
+          borderRadius: BorderRadius.circular(9),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 6),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: <Widget>[
+                Icon(icon, size: 16),
+                const SizedBox(width: 4),
+                Flexible(
+                  child: Text(
+                    label,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.labelSmall,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
 }
 
 class ViewportControlDeck extends StatelessWidget {
@@ -626,6 +766,56 @@ class _PaletteToolButton extends StatelessWidget {
       );
 }
 
+class _AnnotationPaletteToolButton extends StatelessWidget {
+  const _AnnotationPaletteToolButton({
+    required this.tool,
+    required this.selected,
+    required this.enabled,
+    required this.onPressed,
+  });
+
+  final _AnnotationTool tool;
+  final bool selected;
+  final bool enabled;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 4),
+        child: Tooltip(
+          message: tool.description,
+          child: InkWell(
+            onTap: enabled ? onPressed : null,
+            borderRadius: BorderRadius.circular(10),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 160),
+              padding: const EdgeInsets.symmetric(vertical: 7, horizontal: 4),
+              decoration: BoxDecoration(
+                color: selected
+                    ? Theme.of(context).colorScheme.tertiaryContainer
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Icon(tool.icon, size: 21),
+                  const SizedBox(height: 2),
+                  Text(
+                    tool.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.labelSmall,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+}
+
 class _DeckViewToggleButton extends StatelessWidget {
   const _DeckViewToggleButton({
     required this.tooltip,
@@ -689,6 +879,15 @@ class _AuthoringTool {
   final String label;
 }
 
+class _AnnotationTool {
+  const _AnnotationTool(this.tool, this.icon, this.label, this.description);
+
+  final AnnotationWorkspaceTool tool;
+  final IconData icon;
+  final String label;
+  final String description;
+}
+
 const List<_AuthoringTool> _primaryTools = <_AuthoringTool>[
   _AuthoringTool(
       RenderSceneInteractionMode.select, Icons.ads_click_outlined, 'Select'),
@@ -723,6 +922,39 @@ const List<_AuthoringTool> _secondaryTools = <_AuthoringTool>[
     RenderSceneInteractionMode.trimExtend,
     Icons.call_merge_outlined,
     'Trim / Extend',
+  ),
+];
+
+const List<_AnnotationTool> _annotationTools = <_AnnotationTool>[
+  _AnnotationTool(
+    AnnotationWorkspaceTool.text,
+    Icons.text_fields_outlined,
+    'Text',
+    'Place a view-scoped text note',
+  ),
+  _AnnotationTool(
+    AnnotationWorkspaceTool.dimension,
+    Icons.straighten_outlined,
+    'Dim',
+    'Create a persistent linear/aligned dimension',
+  ),
+  _AnnotationTool(
+    AnnotationWorkspaceTool.tag,
+    Icons.sell_outlined,
+    'Tag',
+    'Tag a BIM element without copying its data',
+  ),
+  _AnnotationTool(
+    AnnotationWorkspaceTool.detailLine,
+    Icons.timeline_outlined,
+    'Detail',
+    'Draw view-only detail linework',
+  ),
+  _AnnotationTool(
+    AnnotationWorkspaceTool.symbol,
+    Icons.category_outlined,
+    'Symbol',
+    'Place a shared annotation/detail symbol',
   ),
 ];
 
