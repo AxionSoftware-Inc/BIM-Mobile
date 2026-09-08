@@ -1,6 +1,7 @@
 add_library(tbe_api
     src/EngineApi.cpp
     src/RuntimeSceneCache.cpp
+    src/RuntimeSceneCacheChunking.cpp
 )
 
 set_target_properties(tbe_api PROPERTIES POSITION_INDEPENDENT_CODE ON)
