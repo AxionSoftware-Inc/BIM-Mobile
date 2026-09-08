@@ -106,6 +106,47 @@ kotlin {
     }
 }
 
+// TEMPORARY MIGRATION HOOK (native streaming V2)
+//
+// GitHub's Contents API can replace this ~330 KB host file but cannot apply a
+// small guarded hunk, and hosted Actions for this repository currently fail
+// before a runner starts. Keep the source transformation deterministic and in
+// the repository instead: the first Android Kotlin compile applies the guarded
+// patch locally, later compiles are no-ops because the script has a marker.
+//
+// This task deliberately runs before every Kotlin compilation and the patch is
+// idempotent. Once the generated source change is committed normally, remove
+// both this hook and .github/scripts/codex_fix_native_streaming.py.
+val nativeStreamingPatchScript = projectDir.resolve("../../../../.github/scripts/codex_fix_native_streaming.py")
+val nativeStreamingHost = projectDir.resolve(
+    "src/main/kotlin/com/example/viewer_flutter/RenderSceneFilamentHostView.kt"
+)
+val applyNativeStreamingPatch = tasks.register<Exec>("applyNativeStreamingPatch") {
+    group = "build setup"
+    description = "Apply guarded native BIM streaming/resource-lifecycle migration"
+    workingDir(projectDir.resolve("../../../.."))
+    val pythonExecutable = System.getenv("PYTHON")?.takeIf { it.isNotBlank() } ?: "python3"
+    commandLine(pythonExecutable, nativeStreamingPatchScript.absolutePath)
+    inputs.file(nativeStreamingPatchScript)
+    // The task edits this source only once; forcing execution keeps Gradle from
+    // caching a pre-migration state when switching branches/worktrees.
+    outputs.upToDateWhen { false }
+    doFirst {
+        require(nativeStreamingPatchScript.isFile) {
+            "Missing native streaming patch script: ${nativeStreamingPatchScript.absolutePath}"
+        }
+        require(nativeStreamingHost.isFile) {
+            "Missing Filament host source: ${nativeStreamingHost.absolutePath}"
+        }
+    }
+}
+
+tasks.configureEach {
+    if (name.startsWith("compile") && name.endsWith("Kotlin")) {
+        dependsOn(applyNativeStreamingPatch)
+    }
+}
+
 dependencies {
     implementation("com.google.android.filament:filament-android:1.71.6")
     implementation("com.google.android.filament:filament-utils-android:1.71.6")
