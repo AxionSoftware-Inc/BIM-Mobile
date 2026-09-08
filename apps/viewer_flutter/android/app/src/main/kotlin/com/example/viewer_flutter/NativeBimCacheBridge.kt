@@ -18,8 +18,6 @@ import java.nio.IntBuffer
  * startup. Lazy geometry lets the CPU and GPU working sets follow the camera.
  */
 internal object NativeBimCacheBridge {
-  // Must match RuntimeSceneCache.cpp. These IDs exist only in the runtime
-  // cache when an IFC export has collapsed a full CAD symbol into one proxy.
   private const val virtualIfcPartTag = 0x4000000000000000L
   private const val virtualIfcPartSourceMask = 0x00003FFFFFFFFFFFL
   private const val virtualIfcPartOrdinalMask = 0xFFFFL
@@ -110,16 +108,16 @@ internal object NativeBimCacheBridge {
               sourceBounds = sceneBounds(bounds),
               estimatedIndexCount = estimatedIndexCount,
               primitiveRanges = ranges,
-              geometryLoader = {
+              geometryLoader = loader@{
                 // The cache handle stays open for the lifetime of the viewport.
                 // These direct views are therefore safe while the chunk is
                 // resident and are not requested for cold/off-screen chunks.
                 val positions = nativeChunkPositions(handle, index)
-                  ?: return@NativeBimCacheChunk null
+                  ?: return@loader null
                 val rawIndices = nativeChunkIndices(handle, index)
-                  ?: return@NativeBimCacheChunk null
+                  ?: return@loader null
                 if (positions.capacity() < 12 || rawIndices.capacity() < Int.SIZE_BYTES) {
-                  return@NativeBimCacheChunk null
+                  return@loader null
                 }
                 NativeBimCacheGeometry(
                   positions = positions.duplicate()
@@ -424,7 +422,6 @@ internal object NativeBimCacheBridge {
 
     fun pick(origin: ScenePoint, direction: ScenePoint, visibleKinds: Set<String>): Long? {
       if (closed) return null
-      // Filament: X/Y-up/-Z-plan. Cache: X/Y-plan/Z-up.
       val elementId = nativePick(
         handle,
         origin.x,
