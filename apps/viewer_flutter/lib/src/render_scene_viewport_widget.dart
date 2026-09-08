@@ -5,6 +5,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'family_runtime/family_2d_viewport_overlay.dart';
 import 'render_scene_editor.dart';
 import 'render_scene_level_overlay.dart';
 import 'render_scene_models.dart';
@@ -130,6 +131,10 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
         fit: StackFit.expand,
         children: <Widget>[
           viewport,
+          // Family representations are resolved independently from 3D family
+          // geometry. Plan/elevation/section can therefore stay on a cheap
+          // vector/generated path even when a family owns a detailed mesh.
+          Family2dViewportOverlay(controller: widget.controller),
           if (AnnotationWorkspaceRuntime.activeViewId != 0)
             AnnotationViewportOverlay(
               controller: widget.controller,
