@@ -38,6 +38,13 @@ class RenderScene {
   final String source;
   final RenderSceneDiagnostics diagnostics;
 
+  // Selection/inspector lookups used to linearly scan every BIM object. Keep
+  // the immutable scene API, but attach a lazy weak index only after the first
+  // lookup. Expando does not keep a dead scene alive and scenes that never use
+  // element lookup pay zero Map memory.
+  static final Expando<Map<int, RenderSceneObject>> _objectIndexes =
+      Expando<Map<int, RenderSceneObject>>('RenderScene.objectIndex');
+
   int get triangleCount => indexCount ~/ 3;
 
   Map<String, int> get kindCounts => diagnostics.kindCounts;
@@ -48,31 +55,26 @@ class RenderScene {
     }
     return objects
         .where((object) => visibleKinds.contains(object.kindKey))
-        .toList();
+        .toList(growable: false);
   }
 
   RenderSceneObject? objectById(int? elementId) {
-    if (elementId == null) {
-      return null;
-    }
-    for (final object in objects) {
-      if (object.elementId == elementId) {
-        return object;
+    if (elementId == null) return null;
+    var index = _objectIndexes[this];
+    if (index == null) {
+      index = <int, RenderSceneObject>{};
+      for (final object in objects) {
+        final id = object.elementId;
+        if (id != null) index[id] = object;
       }
+      _objectIndexes[this] = index;
     }
-    return null;
+    return index[elementId];
   }
 
   RenderSceneObject? objectByStableId(String? elementId) {
-    if (elementId == null || elementId.isEmpty) {
-      return null;
-    }
-    for (final object in objects) {
-      if (object.elementId?.toString() == elementId) {
-        return object;
-      }
-    }
-    return null;
+    if (elementId == null || elementId.isEmpty) return null;
+    return objectById(int.tryParse(elementId));
   }
 
   RenderSceneMaterial? materialById(int? materialId) {
@@ -84,13 +86,9 @@ class RenderScene {
   }
 
   RenderSceneLevel? levelById(int? levelId) {
-    if (levelId == null) {
-      return null;
-    }
+    if (levelId == null) return null;
     for (final level in levels) {
-      if (level.levelId == levelId) {
-        return level;
-      }
+      if (level.levelId == levelId) return level;
     }
     return null;
   }
@@ -99,9 +97,7 @@ class RenderScene {
     int? levelId, {
     bool includeUnassigned = false,
   }) {
-    if (levelId == null) {
-      return this;
-    }
+    if (levelId == null) return this;
     final filteredObjects = objects
         .where(
           (object) =>
@@ -109,23 +105,14 @@ class RenderScene {
               (includeUnassigned && object.levelId == null),
         )
         .toList(growable: false);
-    final vertexCount = filteredObjects.fold<int>(
-        0, (sum, object) => sum + object.mesh.positions.length);
-    final indexCount = filteredObjects.fold<int>(
-        0, (sum, object) => sum + object.mesh.indices.length);
-    final result = parseRenderSceneJson(
-      jsonEncode(
-        <String, Object?>{
-          ...toJson(),
-          'object_count': filteredObjects.length,
-          'vertex_count': vertexCount,
-          'index_count': indexCount,
-          'objects': filteredObjects.map((object) => object.toJson()).toList(),
-        },
-      ),
-      source: '$source @ level $levelId',
+
+    // MEMORY CONTRACT: never serialize an in-memory scene to JSON merely to
+    // create a viewport filter. The old encode -> giant String -> decode path
+    // temporarily duplicated meshes, metadata maps and every numeric value.
+    return _copyWithObjects(
+      filteredObjects,
+      sourceLabel: '$source @ level $levelId',
     );
-    return result.scene ?? this;
   }
 
   /// Non-destructive plan view range. The semantic project remains complete;
@@ -138,74 +125,114 @@ class RenderScene {
     bool stripFamilyMeshes = false,
   }) {
     const tolerance = 1e-6;
-    final filteredObjects = objects.where(
-      (object) {
-        // A roof is a separate top-level object, not part of a storey floor
-        // plan. Its footprint at the roof level used to leak into the active
-        // plan range and add a second set of heavy perimeter lines.
-        if (object.kindKey == 'roof') return false;
-        // Beams are overhead framing in the floor-plan convention. Their
-        // legacy meshes can be authored at local Z=0, so bounds alone
-        // would incorrectly draw them through a 2 m plan cut.
-        if (object.kindKey == 'beam') return false;
-        // Use an open interval at the next level. A Level 1 wall ending
-        // at 3.20 m must not be shown again in the Level 2 plan merely
-        // because its top coincides with that level's elevation.
-        final crossesCutBand = object.bounds.max.z > bottomMeters + tolerance &&
-            object.bounds.min.z < topMeters - tolerance;
-        // Slabs/floors may sit exactly at their owning level elevation;
-        // retain those base-level objects without admitting geometry
-        // owned by the storey below.
-        final isActiveLevelBaseObject = object.levelId == activeLevelId &&
-            object.bounds.min.z <= bottomMeters + tolerance &&
-            object.bounds.max.z >= bottomMeters - tolerance;
-        return crossesCutBand || isActiveLevelBaseObject;
-      },
-    ).toList(growable: false);
-    final encodedObjects = filteredObjects.map((object) {
-      if (!stripFamilyMeshes || !_isFamilyPlanObject(object)) {
-        return object.toJson();
+    final filteredObjects = <RenderSceneObject>[];
+    for (final object in objects) {
+      // A roof is a separate top-level object, not part of a storey floor plan.
+      if (object.kindKey == 'roof' || object.kindKey == 'beam') continue;
+      final crossesCutBand = object.bounds.max.z > bottomMeters + tolerance &&
+          object.bounds.min.z < topMeters - tolerance;
+      final isActiveLevelBaseObject = object.levelId == activeLevelId &&
+          object.bounds.min.z <= bottomMeters + tolerance &&
+          object.bounds.max.z >= bottomMeters - tolerance;
+      if (!crossesCutBand && !isActiveLevelBaseObject) continue;
+
+      if (stripFamilyMeshes && _isFamilyPlanObject(object)) {
+        // Keep semantic identity/metadata for plan symbols and picking, but do
+        // not duplicate a family mesh that the plan renderer intentionally
+        // does not draw. This shallow object reuses bounds/metadata strings.
+        filteredObjects.add(
+          RenderSceneObject(
+            elementId: object.elementId,
+            kind: object.kind,
+            levelId: object.levelId,
+            selectable: object.selectable,
+            visibleByDefault: object.visibleByDefault,
+            revision: object.revision,
+            bounds: object.bounds,
+            mesh: RenderSceneMesh.empty(),
+            materialCategory: object.materialCategory,
+            metadata: object.metadata,
+            featureEdges: const <RenderSceneFeatureEdge>[],
+          ),
+        );
+      } else {
+        filteredObjects.add(object);
       }
-      final encoded = Map<String, Object?>.from(object.toJson());
-      encoded['mesh'] = RenderSceneMesh.empty().toJson();
-      encoded.remove('feature_edges');
-      return encoded;
-    }).toList(growable: false);
-    final vertexCount = stripFamilyMeshes
-        ? filteredObjects.fold<int>(
-            0,
-            (sum, object) =>
-                sum +
-                (_isFamilyPlanObject(object)
-                    ? 0
-                    : object.mesh.positions.length),
-          )
-        : filteredObjects.fold<int>(
-            0,
-            (sum, object) => sum + object.mesh.positions.length,
-          );
-    final indexCount = stripFamilyMeshes
-        ? filteredObjects.fold<int>(
-            0,
-            (sum, object) =>
-                sum +
-                (_isFamilyPlanObject(object) ? 0 : object.mesh.indices.length),
-          )
-        : filteredObjects.fold<int>(
-            0,
-            (sum, object) => sum + object.mesh.indices.length,
-          );
-    final result = parseRenderSceneJson(
-      jsonEncode(<String, Object?>{
-        ...toJson(),
-        'object_count': filteredObjects.length,
-        'vertex_count': vertexCount,
-        'index_count': indexCount,
-        'objects': encodedObjects,
-      }),
-      source: '$source @ view range',
+    }
+    return _copyWithObjects(
+      List<RenderSceneObject>.unmodifiable(filteredObjects),
+      sourceLabel: '$source @ view range',
     );
-    return result.scene ?? this;
+  }
+
+  RenderScene _copyWithObjects(
+    List<RenderSceneObject> filteredObjects, {
+    required String sourceLabel,
+  }) {
+    var filteredVertexCount = 0;
+    var filteredIndexCount = 0;
+    var selectableObjectCount = 0;
+    var visibleObjectCount = 0;
+    var missingGeometryCount = 0;
+    var invalidBoundsCount = 0;
+    var invalidIndexCount = 0;
+    final kindCounts = <String, int>{};
+    final levelIds = <int>{};
+
+    for (final object in filteredObjects) {
+      filteredVertexCount += object.mesh.positions.length;
+      filteredIndexCount += object.mesh.indices.length;
+      if (object.selectable) selectableObjectCount += 1;
+      if (object.visibleByDefault) visibleObjectCount += 1;
+      if (!object.mesh.hasGeometry) missingGeometryCount += 1;
+      if (!object.bounds.isFinite) invalidBoundsCount += 1;
+      invalidIndexCount += object.mesh.invalidIndexCount;
+      final levelId = object.levelId;
+      if (levelId != null) levelIds.add(levelId);
+      kindCounts[object.kindKey] = (kindCounts[object.kindKey] ?? 0) + 1;
+    }
+
+    final filteredBounds = RenderSceneBounds.union(
+      filteredObjects.map((object) => object.bounds),
+      fallback: RenderSceneBounds.zero(),
+    );
+    final filteredDiagnostics = RenderSceneDiagnostics(
+      source: sourceLabel,
+      objectCount: filteredObjects.length,
+      selectableObjectCount: selectableObjectCount,
+      visibleObjectCount: visibleObjectCount,
+      vertexCount: filteredVertexCount,
+      indexCount: filteredIndexCount,
+      triangleCount: filteredIndexCount ~/ 3,
+      levelCount: levelIds.length,
+      missingGeometryCount: missingGeometryCount,
+      invalidBoundsCount: invalidBoundsCount,
+      invalidIndexCount: invalidIndexCount,
+      kindCounts: kindCounts,
+      // Filtering is a view operation, not a new parse. Reuse diagnostics
+      // rather than copying potentially large warning/error lists.
+      warnings: diagnostics.warnings,
+      errors: diagnostics.errors,
+    );
+
+    return RenderScene(
+      sceneVersion: sceneVersion,
+      units: units,
+      coordinateSystem: coordinateSystem,
+      objectCount: filteredObjects.length,
+      vertexCount: filteredVertexCount,
+      indexCount: filteredIndexCount,
+      bounds: filteredBounds,
+      objects: filteredObjects,
+      levels: levels,
+      materials: materials,
+      wallTypes: wallTypes,
+      floorTypes: floorTypes,
+      roofTypes: roofTypes,
+      sections: sections,
+      source: sourceLabel,
+      diagnostics: filteredDiagnostics,
+    );
   }
 
   static bool _isFamilyPlanObject(RenderSceneObject object) {
@@ -567,9 +594,6 @@ List<RenderSceneLevel> _inferLevelsFromObjects(
     var elevation = candidates.isEmpty
         ? index * 3.0
         : candidates.reduce((left, right) => left < right ? left : right);
-    // Legacy snapshots often contain level ids but no level records and
-    // store every local mesh at z=0. Keep those levels usable and
-    // deterministic instead of stacking every inferred level together.
     if (!elevation.isFinite || elevation <= previousElevation + 1e-6) {
       elevation =
           previousElevation.isFinite ? previousElevation + 3.0 : index * 3.0;
