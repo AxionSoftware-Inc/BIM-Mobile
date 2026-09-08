@@ -1,10 +1,12 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../render_scene_models.dart';
 import '../render_scene_viewport_controller.dart';
 import '../render_scene_viewport_projection.dart';
+import '../render_scene_viewport_types.dart';
 import '../workspace_view_runtime_context.dart';
 import 'family_instance_store.dart';
 import 'family_render_batches.dart';
@@ -14,10 +16,13 @@ import 'family_spatial_streaming.dart';
 
 /// Lightweight family overlay for floor/elevation/section views.
 ///
-/// IMPORTANT: this path never asks FamilyRepresentationPolicy for model3d.
-/// The 2D view therefore stays independent from detailed family meshes. SVG is
-/// merely one possible source encoding; generated/compact-vector/bounds-proxy
-/// representations share the same batched runtime contract.
+/// IMPORTANT RUNTIME CONTRACT:
+/// - this path never requests FamilyViewRepresentation.model3d;
+/// - view radius follows the actual planar camera, not total project bounds;
+/// - Android top-down is already painted by NativeSelectionOverlay, so Flutter
+///   must not draw the same family symbol a second time;
+/// - SVG is an optional source encoding only. Generated/compact-vector/bounds
+///   representations use the same batched placement path.
 class Family2dViewportOverlay extends StatelessWidget {
   const Family2dViewportOverlay({
     super.key,
@@ -32,6 +37,18 @@ class Family2dViewportOverlay extends StatelessWidget {
     if (scene == null || !WorkspaceViewRuntimeContext.isTwoDimensional) {
       return const SizedBox.shrink();
     }
+
+    // The Android native top-down renderer already owns family plan symbols
+    // and deliberately suppresses their 3D mesh. Drawing this Flutter overlay
+    // on top would double strokes and double per-frame projection work. Keep
+    // Flutter as the fallback renderer and as the elevation/section path.
+    final nativeAndroidPlan =
+        defaultTargetPlatform == TargetPlatform.android &&
+            controller.backend == RenderSceneViewportBackend.native &&
+            WorkspaceViewRuntimeContext.kind ==
+                WorkspaceRuntimeViewKind.floorPlan;
+    if (nativeAndroidPlan) return const SizedBox.shrink();
+
     final runtime = FamilyRuntimeSceneCache.forScene(scene);
     if (runtime.store.isEmpty) return const SizedBox.shrink();
 
@@ -49,9 +66,6 @@ class Family2dViewportOverlay extends StatelessWidget {
                   : 1,
             );
             final center = controller.planCamera.center;
-            // Camera-neighbourhood filtering is intentionally conservative.
-            // Exact screen clipping happens in the painter; the spatial query
-            // prevents a million-family campus from becoming an O(N) frame.
             final visible = runtime.spatialIndex.queryCamera(
               FamilyStreamingCamera(
                 x: center.x,
@@ -61,7 +75,10 @@ class Family2dViewportOverlay extends StatelessWidget {
                 forwardY: 0,
                 forwardZ: 0,
               ),
-              radiusMeters: _queryRadius(scene),
+              // Use the actual screen coverage. A fixed 400 m radius either
+              // omitted visible families in a zoomed-out campus or queried far
+              // too much data in a close room plan.
+              radiusMeters: _queryRadius(size),
               rearDotThreshold: -1,
               levelId: WorkspaceViewRuntimeContext.kind ==
                           WorkspaceRuntimeViewKind.floorPlan &&
@@ -99,14 +116,14 @@ class Family2dViewportOverlay extends StatelessWidget {
     );
   }
 
-  double _queryRadius(RenderScene scene) {
-    final dx = scene.bounds.max.x - scene.bounds.min.x;
-    final dy = scene.bounds.max.y - scene.bounds.min.y;
-    final dz = scene.bounds.max.z - scene.bounds.min.z;
-    final diagonal = math.sqrt(dx * dx + dy * dy + dz * dz);
-    // Cap prevents an accidentally gigantic georeferenced project from
-    // defeating spatial streaming; nearby camera cells remain sufficient.
-    return diagonal.isFinite ? diagonal.clamp(80.0, 400.0) : 180.0;
+  double _queryRadius(Size size) {
+    final zoom = controller.planCamera.zoom;
+    if (!zoom.isFinite || zoom <= 1e-6) return 180.0;
+    final halfDiagonalPixels =
+        math.sqrt(size.width * size.width + size.height * size.height) * 0.5;
+    // 35% margin keeps symbols resident just outside the screen during a pan,
+    // avoiding visible pop-in without querying the whole project.
+    return math.max(24.0, halfDiagonalPixels / zoom * 1.35).toDouble();
   }
 }
 
