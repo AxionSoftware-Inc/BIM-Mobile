@@ -33,25 +33,30 @@ class AnnotationViewportOverlay extends StatelessWidget {
     }
     final colors = Theme.of(context).colorScheme;
     return IgnorePointer(
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final size = Size(
-            math.max(constraints.maxWidth, 1),
-            math.max(constraints.maxHeight, 1),
-          );
-          return CustomPaint(
-            size: size,
-            painter: _AnnotationPainter(
-              controller: controller,
-              store: store,
-              plan: AnnotationRenderPlanner.forView(store, viewId),
-              units: units,
-              lineColor: colors.primary,
-              textColor: colors.onSurface,
-              tagBackground: colors.surface.withValues(alpha: 0.92),
-            ),
-          );
-        },
+      child: AnimatedBuilder(
+        animation: controller,
+        builder: (context, _) => LayoutBuilder(
+          builder: (context, constraints) {
+            final width = constraints.maxWidth.isFinite
+                ? math.max(constraints.maxWidth, 1)
+                : 1.0;
+            final height = constraints.maxHeight.isFinite
+                ? math.max(constraints.maxHeight, 1)
+                : 1.0;
+            return CustomPaint(
+              size: Size(width, height),
+              painter: _AnnotationPainter(
+                controller: controller,
+                store: store,
+                plan: AnnotationRenderPlanner.forView(store, viewId),
+                units: units,
+                lineColor: colors.primary,
+                textColor: colors.onSurface,
+                tagBackground: colors.surface.withValues(alpha: 0.92),
+              ),
+            );
+          },
+        ),
       ),
     );
   }
@@ -89,18 +94,13 @@ final class _AnnotationPainter extends CustomPainter {
       padding: 48,
     );
 
-    final textRow = <int, int>{};
-    for (var row = 0; row < store.text.annotationIndices.length; row++) {
-      textRow[store.text.annotationIndices[row]] = row;
-    }
-    final dimensionRow = <int, int>{};
-    for (var row = 0; row < store.dimensions.annotationIndices.length; row++) {
-      dimensionRow[store.dimensions.annotationIndices[row]] = row;
-    }
-    final tagRow = <int, int>{};
-    for (var row = 0; row < store.tags.annotationIndices.length; row++) {
-      tagRow[store.tags.annotationIndices[row]] = row;
-    }
+    final textRow = _rowLookup(store.length, store.text.annotationIndices);
+    final dimensionRow =
+        _rowLookup(store.length, store.dimensions.annotationIndices);
+    final tagRow = _rowLookup(store.length, store.tags.annotationIndices);
+    final detailRow =
+        _rowLookup(store.length, store.detailLines.annotationIndices);
+    final symbolRow = _rowLookup(store.length, store.symbols.annotationIndices);
 
     for (final batch in plan.batches) {
       final style = store.styles[batch.styleId];
@@ -108,7 +108,7 @@ final class _AnnotationPainter extends CustomPainter {
         case AnnotationKind.text:
           for (final annotationIndex in batch.annotationIndices) {
             final row = textRow[annotationIndex];
-            if (row == null) continue;
+            if (row < 0) continue;
             final anchor = _anchor(annotationIndex);
             final point = projection.project(anchor).screen;
             _paintLabel(
@@ -122,13 +122,13 @@ final class _AnnotationPainter extends CustomPainter {
         case AnnotationKind.linearDimension:
           for (final annotationIndex in batch.annotationIndices) {
             final row = dimensionRow[annotationIndex];
-            if (row == null) continue;
+            if (row < 0) continue;
             _paintDimension(canvas, projection, row, style);
           }
         case AnnotationKind.tag:
           for (final annotationIndex in batch.annotationIndices) {
             final row = tagRow[annotationIndex];
-            if (row == null) continue;
+            if (row < 0) continue;
             final anchor = _anchor(annotationIndex);
             final point = projection.project(anchor).screen;
             _paintLabel(
@@ -140,12 +140,28 @@ final class _AnnotationPainter extends CustomPainter {
             );
           }
         case AnnotationKind.detailLine:
+          for (final annotationIndex in batch.annotationIndices) {
+            final row = detailRow[annotationIndex];
+            if (row < 0) continue;
+            _paintDetailLine(canvas, projection, row, style);
+          }
         case AnnotationKind.symbol:
-          // Their packed payload tables are the next renderer extension. They
-          // intentionally remain no-op rather than falling back to 3D objects.
-          break;
+          for (final annotationIndex in batch.annotationIndices) {
+            final row = symbolRow[annotationIndex];
+            if (row < 0) continue;
+            _paintSymbol(canvas, projection, annotationIndex, row, style);
+          }
       }
     }
+  }
+
+  Int32List _rowLookup(int length, Uint32List annotationIndices) {
+    final rows = Int32List(length)..fillRange(0, length, -1);
+    for (var row = 0; row < annotationIndices.length; row++) {
+      final annotationIndex = annotationIndices[row];
+      if (annotationIndex < length) rows[annotationIndex] = row;
+    }
+    return rows;
   }
 
   RenderScenePoint _anchor(int annotationIndex) {
@@ -207,6 +223,61 @@ final class _AnnotationPainter extends CustomPainter {
     );
   }
 
+  void _paintDetailLine(
+    Canvas canvas,
+    RenderSceneProjection projection,
+    int row,
+    AnnotationStyle style,
+  ) {
+    final offset = row * 3;
+    final start = projection
+        .project(RenderScenePoint(
+          x: store.detailLines.startPoints[offset],
+          y: store.detailLines.startPoints[offset + 1],
+          z: store.detailLines.startPoints[offset + 2],
+        ))
+        .screen;
+    final end = projection
+        .project(RenderScenePoint(
+          x: store.detailLines.endPoints[offset],
+          y: store.detailLines.endPoints[offset + 1],
+          z: store.detailLines.endPoints[offset + 2],
+        ))
+        .screen;
+    canvas.drawLine(
+      start,
+      end,
+      Paint()
+        ..color = lineColor
+        ..strokeWidth = math.max(style.lineWeight.toDouble(), 1)
+        ..style = PaintingStyle.stroke,
+    );
+  }
+
+  void _paintSymbol(
+    Canvas canvas,
+    RenderSceneProjection projection,
+    int annotationIndex,
+    int row,
+    AnnotationStyle style,
+  ) {
+    final point = projection.project(_anchor(annotationIndex)).screen;
+    final scale = store.symbols.scales[row].clamp(0.25, 8.0);
+    final rotation = store.symbols.rotations[row];
+    final radius = 8.0 * scale;
+    final paint = Paint()
+      ..color = lineColor
+      ..strokeWidth = math.max(style.lineWeight.toDouble(), 1)
+      ..style = PaintingStyle.stroke;
+    canvas.save();
+    canvas.translate(point.dx, point.dy);
+    canvas.rotate(rotation);
+    canvas.drawCircle(Offset.zero, radius, paint);
+    canvas.drawLine(Offset(-radius, 0), Offset(radius, 0), paint);
+    canvas.drawLine(Offset(0, -radius), Offset(0, radius), paint);
+    canvas.restore();
+  }
+
   void _paintLabel(
     Canvas canvas,
     Offset point,
@@ -252,11 +323,7 @@ final class _AnnotationPainter extends CustomPainter {
   bool shouldRepaint(covariant _AnnotationPainter oldDelegate) =>
       oldDelegate.store != store ||
       oldDelegate.plan.viewId != plan.viewId ||
-      oldDelegate.controller.sceneRevision != controller.sceneRevision ||
-      oldDelegate.controller.fitRevision != controller.fitRevision ||
-      oldDelegate.controller.projectionMode != controller.projectionMode ||
-      oldDelegate.controller.planCamera != controller.planCamera ||
-      oldDelegate.controller.camera != controller.camera ||
       oldDelegate.lineColor != lineColor ||
-      oldDelegate.textColor != textColor;
+      oldDelegate.textColor != textColor ||
+      oldDelegate.tagBackground != tagBackground;
 }
