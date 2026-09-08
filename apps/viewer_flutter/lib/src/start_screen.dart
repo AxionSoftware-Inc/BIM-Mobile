@@ -3,7 +3,6 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import 'app_brand.dart';
-import 'ifc_template_catalog.dart';
 import 'project_recovery_store.dart';
 import 'workspace_chrome.dart';
 
@@ -16,7 +15,6 @@ class StartScreen extends StatelessWidget {
     required this.onCreateFamily,
     required this.onSelectTemplate,
     required this.onSettings,
-    this.onSelectIfcTemplate,
     this.recoveryEntry,
     this.onRecover,
     this.onDismissRecovery,
@@ -29,7 +27,6 @@ class StartScreen extends StatelessWidget {
   final VoidCallback onCreateFamily;
   final ValueChanged<WorkspaceTemplate> onSelectTemplate;
   final VoidCallback onSettings;
-  final ValueChanged<IfcTemplate>? onSelectIfcTemplate;
   final ProjectRecoveryEntry? recoveryEntry;
   final VoidCallback? onRecover;
   final VoidCallback? onDismissRecovery;
@@ -140,6 +137,16 @@ class StartScreen extends StatelessWidget {
                                     ),
                           ),
                           _TemplateCard(
+                            template: WorkspaceTemplate.town9,
+                            title: 'Meadow town',
+                            icon: Icons.location_city_rounded,
+                            onPressed: busy
+                                ? null
+                                : () => onSelectTemplate(
+                                      WorkspaceTemplate.town9,
+                                    ),
+                          ),
+                          _TemplateCard(
                             template: WorkspaceTemplate.modern3,
                             title: 'Modern glass house',
                             icon: Icons.house_siding_outlined,
@@ -180,26 +187,6 @@ class StartScreen extends StatelessWidget {
                                     ),
                           ),
                         ],
-                      ),
-                      const SizedBox(height: 28),
-                      const _StartSectionHeader(
-                        title: 'IFC sample projects',
-                        trailing: 'Bundled in app',
-                      ),
-                      const SizedBox(height: 12),
-                      _StartCardGrid(
-                        columnCount: columnCount,
-                        gap: cardGap,
-                        children: defaultIfcTemplates
-                            .map(
-                              (template) => _IfcTemplateCard(
-                                template: template,
-                                onPressed: busy || onSelectIfcTemplate == null
-                                    ? null
-                                    : () => onSelectIfcTemplate!(template),
-                              ),
-                            )
-                            .toList(),
                       ),
                     ],
                   ),
@@ -311,33 +298,6 @@ class _StartCardGrid extends StatelessWidget {
   }
 }
 
-class _IfcTemplateCard extends StatelessWidget {
-  const _IfcTemplateCard({
-    required this.template,
-    required this.onPressed,
-  });
-
-  final IfcTemplate template;
-  final VoidCallback? onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colors = theme.colorScheme;
-    return _StartProjectCard(
-      title: template.title,
-      icon: Icons.cloud_download_outlined,
-      onPressed: onPressed,
-      preview: _IfcTemplatePreview(
-        kind: template.kind,
-        primary: colors.primary,
-        secondary: colors.tertiary,
-        surface: colors.surfaceContainerHighest,
-      ),
-    );
-  }
-}
-
 class _StartProjectCard extends StatelessWidget {
   const _StartProjectCard({
     required this.title,
@@ -407,180 +367,6 @@ class _StartProjectCard extends StatelessWidget {
       ),
     );
   }
-}
-
-class _IfcTemplatePreview extends StatelessWidget {
-  const _IfcTemplatePreview({
-    required this.kind,
-    required this.primary,
-    required this.secondary,
-    required this.surface,
-  });
-
-  final IfcTemplateKind kind;
-  final Color primary;
-  final Color secondary;
-  final Color surface;
-
-  @override
-  Widget build(BuildContext context) {
-    return CustomPaint(
-      painter: _IfcTemplatePreviewPainter(
-        kind: kind,
-        primary: primary,
-        secondary: secondary,
-        surface: surface,
-      ),
-      child: const SizedBox.expand(),
-    );
-  }
-}
-
-class _IfcTemplatePreviewPainter extends CustomPainter {
-  const _IfcTemplatePreviewPainter({
-    required this.kind,
-    required this.primary,
-    required this.secondary,
-    required this.surface,
-  });
-
-  final IfcTemplateKind kind;
-  final Color primary;
-  final Color secondary;
-  final Color surface;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    canvas.drawRect(
-      Offset.zero & size,
-      Paint()..color = surface.withValues(alpha: 0.44),
-    );
-    switch (kind) {
-      case IfcTemplateKind.building:
-        _drawBuilding(canvas, size, floors: 5, widthFactor: 0.34);
-      case IfcTemplateKind.structure:
-        _drawBuilding(canvas, size, floors: 4, widthFactor: 0.41);
-        _drawStructuralFrame(canvas, size);
-      case IfcTemplateKind.infrastructure:
-        _drawRoad(canvas, size);
-    }
-  }
-
-  void _drawBuilding(
-    Canvas canvas,
-    Size size, {
-    required int floors,
-    required double widthFactor,
-  }) {
-    final center = Offset(size.width * 0.5, size.height * 0.73);
-    final width = size.width * widthFactor;
-    final depth = size.width * 0.18;
-    final floorHeight = size.height * 0.075;
-    final height = floorHeight * floors;
-    final footprint = <Offset>[
-      Offset(center.dx - width, center.dy),
-      Offset(center.dx, center.dy + depth * 0.5),
-      Offset(center.dx + width, center.dy),
-      Offset(center.dx, center.dy - depth * 0.5),
-    ];
-    final top =
-        footprint.map((point) => Offset(point.dx, point.dy - height)).toList();
-    final outline = Paint()
-      ..color = primary.withValues(alpha: 0.62)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.3;
-    for (final edge in <int>[0, 1]) {
-      final next = edge + 1;
-      final face = Path()
-        ..moveTo(footprint[edge].dx, footprint[edge].dy)
-        ..lineTo(footprint[next].dx, footprint[next].dy)
-        ..lineTo(top[next].dx, top[next].dy)
-        ..lineTo(top[edge].dx, top[edge].dy)
-        ..close();
-      canvas.drawPath(
-        face,
-        Paint()..color = primary.withValues(alpha: edge == 0 ? 0.17 : 0.11),
-      );
-      canvas.drawPath(face, outline);
-    }
-    final roof = Path()..moveTo(top.first.dx, top.first.dy);
-    for (final point in top.skip(1)) {
-      roof.lineTo(point.dx, point.dy);
-    }
-    roof.close();
-    canvas.drawPath(roof, Paint()..color = secondary.withValues(alpha: 0.22));
-    canvas.drawPath(roof, outline);
-
-    final detail = Paint()
-      ..color = secondary.withValues(alpha: 0.5)
-      ..strokeWidth = 1.2;
-    for (var floor = 1; floor < floors; floor++) {
-      final y = center.dy - floorHeight * floor;
-      canvas.drawLine(
-        Offset(center.dx - width * 0.96, y),
-        Offset(center.dx, y + depth * 0.47),
-        detail,
-      );
-      canvas.drawLine(
-        Offset(center.dx, y + depth * 0.47),
-        Offset(center.dx + width * 0.96, y),
-        detail,
-      );
-    }
-  }
-
-  void _drawStructuralFrame(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = secondary.withValues(alpha: 0.55)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.1;
-    final left = size.width * 0.30;
-    final right = size.width * 0.70;
-    final top = size.height * 0.20;
-    final bottom = size.height * 0.72;
-    for (final x in <double>[left, (left + right) / 2, right]) {
-      canvas.drawLine(Offset(x, top), Offset(x, bottom), paint);
-    }
-    for (var index = 0; index < 4; index++) {
-      final y = top + (bottom - top) * index / 4;
-      canvas.drawLine(Offset(left, y), Offset(right, y), paint);
-    }
-  }
-
-  void _drawRoad(Canvas canvas, Size size) {
-    final road = Path()
-      ..moveTo(size.width * 0.12, size.height * 0.74)
-      ..lineTo(size.width * 0.40, size.height * 0.20)
-      ..lineTo(size.width * 0.60, size.height * 0.20)
-      ..lineTo(size.width * 0.88, size.height * 0.74)
-      ..close();
-    canvas.drawPath(
-      road,
-      Paint()..color = primary.withValues(alpha: 0.15),
-    );
-    canvas.drawPath(
-      road,
-      Paint()
-        ..color = primary.withValues(alpha: 0.58)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.4,
-    );
-    final centerLine = Paint()
-      ..color = secondary.withValues(alpha: 0.65)
-      ..strokeWidth = 1.5;
-    canvas.drawLine(
-      Offset(size.width * 0.5, size.height * 0.22),
-      Offset(size.width * 0.5, size.height * 0.73),
-      centerLine,
-    );
-  }
-
-  @override
-  bool shouldRepaint(covariant _IfcTemplatePreviewPainter oldDelegate) =>
-      oldDelegate.kind != kind ||
-      oldDelegate.primary != primary ||
-      oldDelegate.secondary != secondary ||
-      oldDelegate.surface != surface;
 }
 
 class _RecoveryBanner extends StatelessWidget {
@@ -833,6 +619,33 @@ class _TemplatePreviewPainter extends CustomPainter {
             scale: 0.43,
             offsetX: offset.dx,
             offsetY: offset.dy,
+          );
+        }
+      case WorkspaceTemplate.town9:
+        _drawCampusGround(canvas, size);
+        final offsets = <Offset>[
+          const Offset(-0.30, -0.16),
+          const Offset(-0.10, -0.20),
+          const Offset(0.12, -0.17),
+          const Offset(0.32, -0.12),
+          const Offset(-0.28, 0.05),
+          const Offset(-0.07, 0.02),
+          const Offset(0.15, 0.05),
+          const Offset(0.34, 0.08),
+          const Offset(-0.25, 0.23),
+          const Offset(-0.04, 0.20),
+          const Offset(0.18, 0.23),
+          const Offset(0.37, 0.20),
+        ];
+        for (var index = 0; index < offsets.length; index++) {
+          _drawBuilding(
+            canvas,
+            size,
+            floors: 9,
+            scale: 0.24 + (index % 4) * 0.025,
+            offsetX: offsets[index].dx,
+            offsetY: offsets[index].dy,
+            modern: index % 5 == 0 || index % 5 == 3,
           );
         }
       case WorkspaceTemplate.modern3:

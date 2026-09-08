@@ -32,7 +32,6 @@ import 'elements/opening_type_catalog.dart';
 import 'elements/wall_parameters.dart';
 import 'elements/wall_type_catalog.dart';
 import 'inspector_controller.dart';
-import 'ifc_template_catalog.dart';
 import 'property_editor.dart';
 import 'project_lifecycle_service.dart';
 import 'project_persistence_service.dart';
@@ -437,6 +436,8 @@ class _ViewerHomePageState extends State<ViewerHomePage>
         return _ResidentialTemplateKind.tower9;
       case WorkspaceTemplate.campus6x9:
         return _ResidentialTemplateKind.campus6x9;
+      case WorkspaceTemplate.town9:
+        return _ResidentialTemplateKind.town9;
       case WorkspaceTemplate.modern3:
         return _ResidentialTemplateKind.modern3;
       case WorkspaceTemplate.glassTower9:

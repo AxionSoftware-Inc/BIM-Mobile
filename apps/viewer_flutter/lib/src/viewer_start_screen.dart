@@ -7,6 +7,7 @@ enum _ResidentialTemplateKind {
   default3,
   tower9,
   campus6x9,
+  town9,
   modern3,
   glassTower9,
   glassCampus6x9,
@@ -142,7 +143,6 @@ class _StartScreenGate extends StatefulWidget {
 
 class _StartScreenGateState extends State<_StartScreenGate> {
   WorkspaceTemplate? _selectedTemplate;
-  String? _ifcPath;
   String? _projectJson;
   String? _projectName;
   String? _projectPath;
@@ -151,7 +151,6 @@ class _StartScreenGateState extends State<_StartScreenGate> {
   bool _busy = false;
   ProjectRecoveryEntry? _recoveryEntry;
   final ProjectRecoveryStore _recoveryStore = ProjectRecoveryStore();
-  final IfcTemplateDownloader _ifcDownloader = IfcTemplateDownloader();
 
   @override
   void initState() {
@@ -209,7 +208,6 @@ class _StartScreenGateState extends State<_StartScreenGate> {
       if (!mounted) return;
       setState(() {
         _errorMessage = null;
-        _ifcPath = null;
         _projectJson = json;
         _projectName = file.name;
         _projectPath = file.path;
@@ -228,7 +226,6 @@ class _StartScreenGateState extends State<_StartScreenGate> {
     AppTelemetry.track('blank_project_started');
     setState(() {
       _errorMessage = null;
-      _ifcPath = null;
       _selectedTemplate = null;
       _projectJson = null;
       _projectName = null;
@@ -251,7 +248,6 @@ class _StartScreenGateState extends State<_StartScreenGate> {
     );
     setState(() {
       _errorMessage = null;
-      _ifcPath = null;
       _selectedTemplate = template;
       _projectJson = null;
       _projectName = null;
@@ -265,56 +261,17 @@ class _StartScreenGateState extends State<_StartScreenGate> {
     });
   }
 
-  Future<void> _selectIfcTemplate(IfcTemplate template) async {
-    if (_busy) return;
-    AppTelemetry.track(
-      'ifc_template_selected',
-      properties: <String, Object?>{'template': template.id},
-    );
-    setState(() {
-      _errorMessage = null;
-      _busy = true;
-    });
-    try {
-      final path = await _ifcDownloader.download(template);
-      if (!mounted) return;
-      setState(() {
-        _ifcPath = path;
-        _selectedTemplate = null;
-        _projectJson = null;
-        _projectName = template.title;
-        _projectPath = path;
-        _createBlank = false;
-        _busy = false;
-      });
-    } catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _busy = false;
-        _errorMessage = 'Could not download ${template.title}: $error';
-      });
-    }
-  }
-
-  @override
-  void dispose() {
-    _ifcDownloader.close();
-    super.dispose();
-  }
-
   @override
   Widget build(BuildContext context) {
     final template = _selectedTemplate;
-    final ifcPath = _ifcPath;
     final json = _projectJson;
-    if (template != null || ifcPath != null || json != null || _createBlank) {
-      final Object gateKey = template ?? ifcPath ?? json ?? 'blank-project';
+    if (template != null || json != null || _createBlank) {
+      final Object gateKey = template ?? json ?? 'blank-project';
       return ViewerHomePage(
         key: ValueKey<Object>(gateKey),
         source: const AssetRenderSceneSource(),
         preferEngineBackedBundledSample: true,
         initialTemplate: template,
-        initialIfcPath: ifcPath,
         initialBlankProject: _createBlank,
         initialProjectJson: json,
         initialProjectName: _projectName,
@@ -328,7 +285,6 @@ class _StartScreenGateState extends State<_StartScreenGate> {
       onCreate: _createProject,
       onCreateFamily: () => unawaited(_createFamily()),
       onSelectTemplate: _selectTemplate,
-      onSelectIfcTemplate: _selectIfcTemplate,
       onSettings: () => _showSettings(context),
       recoveryEntry: _recoveryEntry,
       onRecover: _recoverProject,
@@ -360,7 +316,6 @@ class _StartScreenGateState extends State<_StartScreenGate> {
     if (_busy) return;
     setState(() {
       _selectedTemplate = null;
-      _ifcPath = null;
       _projectJson = null;
       _projectName = null;
       _projectPath = null;

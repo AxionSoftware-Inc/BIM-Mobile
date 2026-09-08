@@ -553,18 +553,21 @@ Project make_showcase_template(int template_kind) {
     if (template_kind == 3) {
         return make_professional_house_template();
     }
-    if (template_kind < 0 || template_kind > 3) {
-        throw std::invalid_argument("showcase template kind must be 0, 1, 2 or 3");
+    if (template_kind < 0 || template_kind > 4) {
+        throw std::invalid_argument("showcase template kind must be 0, 1, 2, 3 or 4");
     }
 
     const auto is_campus = template_kind == 2;
-    const auto building_count = is_campus ? 6 : 1;
+    const auto is_town = template_kind == 4;
+    const auto building_count = is_town ? 12 : (is_campus ? 6 : 1);
     const auto story_count = template_kind == 0 ? 3 : 9;
     const auto project_name = template_kind == 0
         ? "Modern Glass Courtyard House"
         : template_kind == 1
             ? "Modern Glass Residential Tower"
-            : "Modern Glass Courtyard Campus";
+            : is_town
+                ? "Arvela Meadow Town"
+                : "Modern Glass Courtyard Campus";
     Project project{project_name};
     auto& document = project.active_document();
     // The showcase fixture is intentionally authored as one deterministic
@@ -608,15 +611,21 @@ Project make_showcase_template(int template_kind) {
     constexpr double pitch_y = 20.0;
     constexpr double margin_x = 4.0;
     constexpr double margin_y = 5.0;
-    const auto columns = is_campus ? 3 : 1;
-    const auto rows = is_campus ? 2 : 1;
+    const auto columns = is_town ? 4 : (is_campus ? 3 : 1);
+    const auto rows = is_town ? 3 : (is_campus ? 2 : 1);
+    const auto max_building_width = is_town ? 19.0 : width;
+    const auto max_building_depth = is_town ? 12.0 : depth;
     const auto site_min_x = -margin_x;
     const auto site_min_y = -margin_y;
     const auto site_max_x = is_campus
         ? 5.0 + (columns - 1) * pitch_x + width + margin_x
+        : is_town
+            ? 5.0 + (columns - 1) * pitch_x + max_building_width + margin_x
         : 5.0 + width + margin_x;
     const auto site_max_y = is_campus
         ? (rows - 1) * pitch_y + depth + margin_y
+        : is_town
+            ? (rows - 1) * pitch_y + max_building_depth + margin_y
         : depth + margin_y;
     const auto rectangle = [](double min_x, double min_y, double max_x, double max_y) {
         return std::vector<Point2>{
@@ -643,13 +652,63 @@ Project make_showcase_template(int template_kind) {
             levels.front(), rectangle(site_min_x, 18.2, site_max_x, 22.0),
             0.08, asphalt, asphalt_assembly, -0.34);
     }
+    if (is_town) {
+        // A small town reads better as a connected street network than as a
+        // grid of isolated towers. Split the north/south roads at each
+        // east/west road so their coplanar intersections never shimmer on
+        // mobile depth buffers.
+        std::vector<double> horizontal_road_starts;
+        for (int row = 0; row < rows - 1; ++row) {
+            const auto road_start = 5.0 + ((row + 1) * pitch_y) - 6.8;
+            horizontal_road_starts.push_back(road_start);
+            document.create_slab(
+                levels.front(), rectangle(site_min_x, road_start, site_max_x, road_start + 3.8),
+                0.08, asphalt, asphalt_assembly, -0.34);
+        }
+        for (int column = 1; column < columns; ++column) {
+            const auto road_start = 5.0 + (column * pitch_x) - 2.2;
+            auto segment_start = site_min_y;
+            for (const auto road_y : horizontal_road_starts) {
+                document.create_slab(
+                    levels.front(), rectangle(road_start, segment_start, road_start + 2.2, road_y),
+                    0.08, asphalt, asphalt_assembly, -0.34);
+                segment_start = road_y + 3.8;
+            }
+            document.create_slab(
+                levels.front(), rectangle(road_start, segment_start, road_start + 2.2, site_max_y),
+                0.08, asphalt, asphalt_assembly, -0.34);
+        }
+        const auto plaza_x = 5.0 + (1.5 * pitch_x);
+        const auto plaza_y = 5.0 + pitch_y - 5.5;
+        document.create_slab(
+            levels.front(), rectangle(plaza_x, plaza_y, plaza_x + 9.0, plaza_y + 5.0),
+            0.06, paving, paving_assembly, -0.25);
+    }
     for (int building = 0; building < building_count; ++building) {
         const auto column = building % columns;
         const auto row = building / columns;
         const auto origin_x = 5.0 + static_cast<double>(column) * pitch_x;
         const auto origin_y = 5.0 + static_cast<double>(row) * pitch_y;
-        const std::vector<Point2> footprint = rectangle(
-            origin_x, origin_y, origin_x + width, origin_y + depth);
+        const auto variant = is_town ? building % 4 : 0;
+        const auto is_office = is_town && (building % 5 == 0 || building % 5 == 3);
+        const auto width = is_town
+            ? (variant == 3 ? 19.0 : (variant == 1 ? 16.0 : (variant == 2 ? 13.0 : 12.0)))
+            : 14.0;
+        const auto depth = is_town
+            ? (variant == 3 ? 8.0 : (variant == 1 ? 10.0 : (variant == 2 ? 12.0 : 9.0)))
+            : 10.0;
+        const auto building_label = std::string(is_office ? "Office " : "Residential ") +
+            std::to_string(building + 1) + " ";
+        const std::vector<Point2> footprint = is_town && variant == 2
+            ? std::vector<Point2>{
+                {.x = origin_x, .y = origin_y},
+                {.x = origin_x + width, .y = origin_y},
+                {.x = origin_x + width, .y = origin_y + depth * 0.50},
+                {.x = origin_x + width * 0.58, .y = origin_y + depth * 0.50},
+                {.x = origin_x + width * 0.58, .y = origin_y + depth},
+                {.x = origin_x, .y = origin_y + depth},
+            }
+            : rectangle(origin_x, origin_y, origin_x + width, origin_y + depth);
 
         // Each entrance gets a short paving apron. The walk stays outside the
         // footprint, so the site never fights the building's floor slabs.
@@ -671,9 +730,9 @@ Project make_showcase_template(int template_kind) {
             perimeter.reserve(4);
             for (std::size_t edge = 0; edge < footprint.size(); ++edge) {
                 const auto wall_id = document.create_wall(
-                    "Building " + std::to_string(building + 1) + " curtain wall",
+                    building_label + "curtain wall",
                     Line2{.start = footprint[edge], .end = footprint[(edge + 1) % footprint.size()]},
-                    0.24,
+                    is_town ? (is_office ? 0.30 : 0.28) : 0.24,
                     3.2,
                     level_id);
                 // Keep the entrance and facade glazing on solid host walls.
@@ -719,32 +778,51 @@ Project make_showcase_template(int template_kind) {
                 }
             }
             // Both door and window offsets have a 0.80 m corner clearance.
-            document.create_door(
-                "Building " + std::to_string(building + 1) + " core door",
-                front_core_wall_id,
-                1.30, 1.0, 2.1);
+            // The town's compact/L-shaped variants keep a single robust main
+            // entry; the facade windows are added only to the regular campus
+            // rectangles where their host intervals are deterministic.
+            if (!is_town) {
+                document.create_door(
+                    "Building " + std::to_string(building + 1) + " core door",
+                    front_core_wall_id,
+                    1.30, 1.0, 2.1);
+            }
 
             document.create_door(
                 "Building " + std::to_string(building + 1) + " main entry",
                 perimeter.front(), width * 0.5 - 0.65, 1.30, 2.20);
-            document.create_window(
+            if (!is_town) document.create_window(
                 "Building " + std::to_string(building + 1) + " front glazing",
                 perimeter.front(), 2.40, 1.80, 1.45, 0.90);
-            document.create_window(
-                "Building " + std::to_string(building + 1) + " rear glazing",
-                perimeter[2], 4.20, 2.20, 1.45, 0.90);
-            document.create_window(
+            if (!is_town && !(variant == 2)) {
+                document.create_window(
+                    "Building " + std::to_string(building + 1) + " rear glazing",
+                    perimeter[2], 4.20, 2.20, 1.45, 0.90);
+            }
+            if (!is_town) document.create_window(
                 "Building " + std::to_string(building + 1) + " front window A",
                 perimeter.front(), 9.20, 1.60, 1.35, 1.00);
-            document.create_window(
+            if (!is_town) document.create_window(
                 "Building " + std::to_string(building + 1) + " front window B",
-                perimeter.front(), 11.40, 1.60, 1.35, 1.00);
-            document.create_window(
-                "Building " + std::to_string(building + 1) + " rear window A",
-                perimeter[2], 1.50, 1.60, 1.35, 1.00);
-            document.create_window(
-                "Building " + std::to_string(building + 1) + " rear window B",
-                perimeter[2], 7.60, 1.60, 1.35, 1.00);
+                perimeter.front(), width >= 14.0 ? width - 2.60 : 7.20, 1.60, 1.35, 1.00);
+            if (!is_town && variant == 2) {
+                // The L-wing's short rear edge cannot host the same offsets as
+                // a rectangle. Use its long return edge instead and keep both
+                // openings comfortably away from the corners.
+                document.create_window(
+                    "Building " + std::to_string(building + 1) + " rear window A",
+                    perimeter[4], 1.00, 1.60, 1.20, 1.00);
+                document.create_window(
+                    "Building " + std::to_string(building + 1) + " rear window B",
+                    perimeter[4], 4.40, 1.60, 1.20, 1.00);
+            } else if (!is_town) {
+                document.create_window(
+                    "Building " + std::to_string(building + 1) + " rear window A",
+                    perimeter[2], 1.50, 1.60, 1.35, 1.00);
+                document.create_window(
+                    "Building " + std::to_string(building + 1) + " rear window B",
+                    perimeter[2], std::max(1.0, width - 5.00), 1.60, 1.35, 1.00);
+            }
 
             document.create_column(level_id, {.x = origin_x + 1.2, .y = origin_y + 1.2}, 0.28, 0.28, 3.2, concrete);
             document.create_column(level_id, {.x = origin_x + width - 1.2, .y = origin_y + 1.2}, 0.28, 0.28, 3.2, concrete);

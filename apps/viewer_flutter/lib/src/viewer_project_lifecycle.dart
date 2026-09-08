@@ -438,6 +438,7 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
       _ResidentialTemplateKind.glassTower9 => 1,
       _ResidentialTemplateKind.glassCampus6x9 => 2,
       _ResidentialTemplateKind.professionalHouse => 3,
+      _ResidentialTemplateKind.town9 => 4,
       _ => null,
     };
     final buildingCount =
@@ -452,6 +453,8 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
       _ResidentialTemplateKind.tower9 => '9-storey residential building',
       _ResidentialTemplateKind.campus6x9 =>
         'Performance campus with ten 30-storey buildings',
+      _ResidentialTemplateKind.town9 =>
+        'Arvela Meadow Town · residences, offices and green streets',
       _ResidentialTemplateKind.modern3 =>
         'Modern glass courtyard house with site landscape',
       _ResidentialTemplateKind.glassTower9 =>

@@ -259,6 +259,7 @@ enum WorkspaceTemplate {
   default3,
   tower9,
   campus6x9,
+  town9,
   modern3,
   glassTower9,
   glassCampus6x9,

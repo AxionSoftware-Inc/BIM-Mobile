@@ -1950,6 +1950,38 @@ int main() {
         assert(nearly_equal(foundation->bounds.max.z, 0.0, 1.0e-6));
     }
 
+    // The town preset is deliberately denser and more varied than the six
+    // building showcase: it must contain the full nine-storey level stack,
+    // a real grass/asphalt/paving site and enough facade variation to keep
+    // offices visually distinct from the residential blocks.
+    {
+        auto town_result = tbe::api::create_session("Meadow Town Template Test");
+        assert(town_result.ok() && town_result.value.has_value());
+        auto town = std::move(*town_result.value);
+        const auto created = town->create_showcase_template(4);
+        assert(created.ok() && created.value.has_value());
+        const auto scene = town->get_render_scene();
+        assert(scene.ok() && scene.value.has_value());
+        assert(scene.value->levels.size() == 10u);
+        assert(scene.value->objects.size() > 2000u);
+        assert(std::any_of(scene.value->floor_types.begin(), scene.value->floor_types.end(), [](const auto& type) {
+            return type.surface_key == "grass";
+        }));
+        assert(std::any_of(scene.value->floor_types.begin(), scene.value->floor_types.end(), [](const auto& type) {
+            return type.surface_key == "asphalt";
+        }));
+        assert(std::any_of(scene.value->floor_types.begin(), scene.value->floor_types.end(), [](const auto& type) {
+            return type.surface_key == "paving";
+        }));
+        const auto glass_wall_count = std::count_if(
+            scene.value->objects.begin(), scene.value->objects.end(), [](const auto& object) {
+                const auto type = object.metadata.find("wall_type_name");
+                return object.kind == tbe::api::ApiElementKind::Wall &&
+                       type != object.metadata.end() && type->second == "Exterior Glass Wall";
+            });
+        assert(glass_wall_count >= 80u);
+    }
+
     // The professional two-storey house is a separate preset: it must prove
     // that the project can carry architectural, structural, site and family
     // content together without falling back to the older glass showcase.
