@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import '../render_scene_models.dart';
 import 'family_instance_store.dart';
@@ -128,8 +129,8 @@ abstract final class FamilySceneRuntimeCompiler {
         x: centerX,
         y: centerY,
         z: centerZ,
-        rotationZ: _sin(halfAngle),
-        rotationW: _cos(halfAngle),
+        rotationZ: math.sin(halfAngle),
+        rotationW: math.cos(halfAngle),
         halfExtentX: halfX > 0 ? halfX : 0.05,
         halfExtentY: halfY > 0 ? halfY : 0.05,
         halfExtentZ: halfZ > 0 ? halfZ : 0.05,
@@ -211,28 +212,5 @@ abstract final class FamilySceneRuntimeCompiler {
       hash = (hash * 0x100000001b3) & 0xFFFFFFFFFFFFFFFF;
     }
     return hash.toRadixString(16).padLeft(16, '0');
-  }
-
-  // Small Taylor-free wrappers avoid pulling a math dependency into callers;
-  // dart:core does not expose trig, so use the standard identities via helper
-  // imports in one place if rotation metadata becomes common. Current project
-  // family placement is normally unrotated in runtime metadata.
-  static double _sin(double value) {
-    // Sufficiently accurate range reduction + polynomial for quaternion seed.
-    const tau = 6.283185307179586;
-    var x = value % tau;
-    if (x > 3.141592653589793) x -= tau;
-    if (x < -3.141592653589793) x += tau;
-    final x2 = x * x;
-    return x * (1 - x2 / 6 + x2 * x2 / 120 - x2 * x2 * x2 / 5040);
-  }
-
-  static double _cos(double value) {
-    const tau = 6.283185307179586;
-    var x = value % tau;
-    if (x > 3.141592653589793) x -= tau;
-    if (x < -3.141592653589793) x += tau;
-    final x2 = x * x;
-    return 1 - x2 / 2 + x2 * x2 / 24 - x2 * x2 * x2 / 720;
   }
 }
