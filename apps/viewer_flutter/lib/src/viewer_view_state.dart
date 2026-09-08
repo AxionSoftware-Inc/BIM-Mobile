@@ -226,6 +226,7 @@ extension _ViewerViewState on _ViewerHomePageState {
     // complete building, so switching back to 3D is always lossless.
     await _viewportController.loadRenderScene(
       _sceneForViewport(authoritativeScene),
+      payloadProjectionMode: _projectionMode,
     );
     await _viewportController.setVisibleKinds(_visibleKinds);
     await _viewportController.setProjectionMode(_projectionMode);

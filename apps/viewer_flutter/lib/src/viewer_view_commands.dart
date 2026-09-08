@@ -401,15 +401,17 @@ extension _ViewerViewCommands on _ViewerHomePageState {
     });
 
     final repository = _engineRepository;
-    if (_viewportController.backend == RenderSceneViewportBackend.native) {
+    if (_viewportController.backend == RenderSceneViewportBackend.native &&
+        _viewportController.hasNativeGeometry) {
       // Native rendering owns projection changes even when the current scene
-      // came from the compatibility JSON path and has no native BIM cache.
-      // Falling through to the repository scope reload here can reset an
-      // explicit "show all" filter (represented by an empty visibleKinds
-      // set), and can temporarily drop family instances from the new view.
-      // Preserve native geometry only when a native BIM cache is actually
-      // active; ordinary JSON scenes are rehydrated from their semantic scene
-      // without going through the repository reload path.
+      // has already been replaced by an engine-owned BIM cache. Do not ask
+      // the repository for a JSON scope refresh in that case: the cache owns
+      // the full 3D geometry and Flutter only changes projection/visibility.
+      // Compatibility RenderScene payloads must fall through to the engine
+      // scope reload below. On Android they use the same native PlatformView,
+      // but their current scene may still be the nearby +/-1-level snapshot;
+      // short-circuiting here made 3D show only two or three floors while all
+      // levels remained present in the browser.
       if (scene != null) {
         await _viewportController.setVisibleKinds(_visibleKinds);
       }

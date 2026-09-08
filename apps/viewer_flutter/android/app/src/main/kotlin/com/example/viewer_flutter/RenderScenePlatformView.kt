@@ -59,6 +59,11 @@ internal data class SceneState(
   val indexCount: Int,
   val levels: List<SceneLevel>,
   val objects: List<SceneObject>,
+  // Large compatibility scenes may intentionally carry bounds-only proxy
+  // geometry. Their faces are still useful for a complete campus overview,
+  // but generating a second architectural edge mesh for every object can
+  // exceed a tablet's Java heap before Filament gets to draw the upper floors.
+  val proxyGeometry: Boolean = false,
 )
 
 internal fun normalizeKind(value: String): String {
@@ -156,6 +161,7 @@ internal fun toSceneState(payload: Any?): SceneState? {
     indexCount = indexCount,
     levels = levels.sortedBy { it.elevationMeters },
     objects = objects,
+    proxyGeometry = sceneRoot["proxy_geometry"] == true || sceneRoot["proxyGeometry"] == true,
   )
 }
 
@@ -174,8 +180,12 @@ internal fun parseFeatureEdges(payload: Any?): List<SceneFeatureEdge> {
 
 private fun normalizeScenePayload(payload: Any?): Map<String, Any?>? {
   return when (payload) {
+    // StandardMessageCodec already gives us nested Maps/Lists. Rebuilding the
+    // entire mesh payload here doubles the peak Java heap during a full 3D
+    // scope reload and can OOM large tablet models. Only normalize the root
+    // keys; the typed scene parser below reads nested values without copying.
     is Map<*, *> -> payload.entries.associate { (key, value) ->
-      key.toString() to normalizeJsonValue(value)
+      key.toString() to value
     }
     is String -> try {
       val parsed = JSONObject(payload)

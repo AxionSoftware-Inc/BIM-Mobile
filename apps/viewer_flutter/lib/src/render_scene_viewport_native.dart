@@ -38,7 +38,7 @@ extension _RenderSceneViewportNative on RenderSceneViewportController {
     if (includeScene && currentScene != null && !_nativeGeometryActive) {
       await _invokeNow(
         'loadRenderSceneJson',
-        jsonEncode(_nativeScenePayload(currentScene)),
+        _nativeScenePayload(currentScene),
       );
     }
 
@@ -84,9 +84,17 @@ extension _RenderSceneViewportNative on RenderSceneViewportController {
   /// 3D mesh is deliberately omitted while the native projection is 2D. The
   /// selection overlay draws the persisted family plan symbol instead. When
   /// switching to 3D this method returns the authoritative scene unchanged.
-  Map<String, Object?> _nativeScenePayload(RenderScene scene) {
+  Map<String, Object?> _nativeScenePayload(
+    RenderScene scene, {
+    RenderSceneProjectionMode? projectionMode,
+  }) {
     final payload = Map<String, Object?>.from(scene.toJson());
-    if (_projectionMode != RenderSceneProjectionMode.topDown) {
+    final effectiveProjectionMode = projectionMode ?? _projectionMode;
+    final useLargeSceneProxyGeometry =
+        effectiveProjectionMode != RenderSceneProjectionMode.topDown &&
+        scene.objects.length > 500;
+    if (effectiveProjectionMode != RenderSceneProjectionMode.topDown &&
+        !useLargeSceneProxyGeometry) {
       return payload;
     }
 
@@ -100,7 +108,12 @@ extension _RenderSceneViewportNative on RenderSceneViewportController {
           (object.kindKey == 'column' || object.kindKey == 'proxy') &&
               assetId != null &&
               assetId.toString().trim().isNotEmpty;
-      if (isFamilyPlanObject) {
+      if (isFamilyPlanObject || useLargeSceneProxyGeometry) {
+        // A full stress-campus mesh is too large to materialize twice across
+        // Dart, StandardMessageCodec and Kotlin's scene objects. Native
+        // RenderScene falls back to a bounded box when the mesh is empty, so
+        // every level remains present in 3D without the heap spike that used
+        // to hide the upper floors or kill the Android process.
         encoded['mesh'] = RenderSceneMesh.empty().toJson();
         encoded.remove('feature_edges');
       } else {
@@ -113,6 +126,9 @@ extension _RenderSceneViewportNative on RenderSceneViewportController {
     payload['vertex_count'] = vertexCount;
     payload['index_count'] = indexCount;
     payload['objects'] = objects;
+    if (useLargeSceneProxyGeometry) {
+      payload['proxy_geometry'] = true;
+    }
     return payload;
   }
 
