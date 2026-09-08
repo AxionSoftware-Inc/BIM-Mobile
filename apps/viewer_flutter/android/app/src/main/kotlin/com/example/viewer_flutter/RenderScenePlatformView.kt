@@ -60,9 +60,9 @@ internal data class SceneState(
   val levels: List<SceneLevel>,
   val objects: List<SceneObject>,
   // Large compatibility scenes may intentionally carry bounds-only proxy
-  // geometry. Their faces are still useful for a complete campus overview,
-  // but generating a second architectural edge mesh for every object can
-  // exceed a tablet's Java heap before Filament gets to draw the upper floors.
+  // geometry. Their faces are still useful for a complete campus overview;
+  // the native renderer derives only a bounded box-outline pass from these
+  // bounds so edge readability does not require retaining a second full mesh.
   val proxyGeometry: Boolean = false,
 )
 

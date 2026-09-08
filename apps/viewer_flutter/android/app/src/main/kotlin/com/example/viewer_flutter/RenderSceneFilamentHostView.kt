@@ -3091,13 +3091,12 @@ internal class RenderSceneFilamentHostView(
           attachedEntities.add(entry.entity)
         }
         // Large compatibility campuses intentionally use bounds-only proxy
-        // geometry. Their complete faces keep every storey visible, while a
-        // per-object architectural edge pass would materialize another large
-        // triangle/edge working set and exhaust the tablet Java heap.
-        if (!sceneState.proxyGeometry) {
-          edgeGeometryFor(objectData, geometry, wallJunctionElevations)?.let { edge ->
-            edgeChunks.getOrPut(edgeBatchKey(objectData, geometry.bounds)) { mutableListOf() }.add(edge)
-          }
+        // faces. Keep their edge pass too: edgeGeometryFor sees the empty
+        // mesh, derives a twelve-segment bounds outline and applies the same
+        // global budget, so the user keeps architectural linework without a
+        // second full imported mesh in the tablet heap.
+        edgeGeometryFor(objectData, geometry, wallJunctionElevations)?.let { edge ->
+          edgeChunks.getOrPut(edgeBatchKey(objectData, geometry.bounds)) { mutableListOf() }.add(edge)
         }
       } catch (error: Throwable) {
         failedObjects += 1
@@ -3123,9 +3122,7 @@ internal class RenderSceneFilamentHostView(
       }
     }
     if (batchFaces) createFaceBatches(engine, scene, faceChunks)
-    if (!sceneState.proxyGeometry) {
-      createEdgeBatches(engine, scene, edgeChunks)
-    }
+    createEdgeBatches(engine, scene, edgeChunks)
     if (projectionMode == "isometric") {
       createGridBatch(engine, scene, sceneState)
     }
@@ -3250,15 +3247,8 @@ internal class RenderSceneFilamentHostView(
     val engine = engine ?: return
     val scene = scene ?: return
     val sceneState = currentScene ?: return
-    if (sceneState.proxyGeometry) {
-      // Proxy geometry is already deliberately edge-free. Do not rebuild the
-      // expensive overlay when the projection changes on a large campus.
-      destroyEdgeBatches(engine, scene)
-      edgeGeometryCache.clear()
-      updateMetrics()
-      renderDirty = true
-      return
-    }
+    // Bounds-only proxy scenes still receive a cheap twelve-segment outline;
+    // only their source mesh is omitted by the Dart/native hand-off.
     destroyEdgeBatches(engine, scene)
     // The cache key includes revisions, but not projection mode. Clear it
     // when switching between plan and 3D so the lighter top-down geometry is

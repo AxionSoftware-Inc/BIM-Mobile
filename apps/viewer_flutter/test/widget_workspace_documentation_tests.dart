@@ -75,8 +75,10 @@ void registerWorkspaceDocumentationTests() {
     expect(find.text('Residential campus'), findsOneWidget);
     expect(find.text('Wall #11'), findsNothing);
 
+    // IFC sample cards were intentionally removed from the launch page; the
+    // template grid is now the only project grid.
     final grids = tester.widgetList<GridView>(find.byType(GridView)).toList();
-    expect(grids, hasLength(2));
+    expect(grids, hasLength(1));
     for (final grid in grids) {
       final delegate =
           grid.gridDelegate as SliverGridDelegateWithFixedCrossAxisCount;
