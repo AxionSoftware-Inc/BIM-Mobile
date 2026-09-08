@@ -4,6 +4,7 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
 import 'elements/room_parameters.dart';
+import 'quantity_schedule_service.dart';
 import 'render_scene_editor.dart';
 import 'render_scene_estimator.dart';
 import 'render_scene_models.dart';
@@ -22,8 +23,6 @@ class QuantityScheduleWorkspace extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final detected = RenderSceneEditor.detectRooms(scene);
-    final summary = RenderSceneEstimator.summarize(detected);
     final title = kind == ProjectScheduleKind.rooms
         ? 'Room schedule'
         : 'Quantity takeoff';
@@ -55,7 +54,7 @@ class QuantityScheduleWorkspace extends StatelessWidget {
                       Text(title,
                           style: Theme.of(context).textTheme.titleMedium),
                       Text(
-                        'Live table from the current model · refreshes when this tab is opened',
+                        'Calculated on demand in the background · cached until the model changes',
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
                     ],
@@ -80,9 +79,7 @@ class QuantityScheduleWorkspace extends StatelessWidget {
                 clipBehavior: Clip.antiAlias,
                 child: Padding(
                   padding: const EdgeInsets.all(12),
-                  child: kind == ProjectScheduleKind.rooms
-                      ? _RoomScheduleTable(scene: detected)
-                      : _QuantityScheduleTable(summary: summary),
+                  child: _ScheduleFutureBody(scene: scene, kind: kind),
                 ),
               ),
             ),
@@ -93,17 +90,53 @@ class QuantityScheduleWorkspace extends StatelessWidget {
   }
 }
 
+class _ScheduleFutureBody extends StatelessWidget {
+  const _ScheduleFutureBody({required this.scene, required this.kind});
+
+  final RenderScene scene;
+  final ProjectScheduleKind kind;
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<QuantityScheduleResult>(
+      future: QuantityScheduleService.forScene(scene),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Center(
+            child: SelectableText('Schedule calculation failed: ${snapshot.error}'),
+          );
+        }
+        final result = snapshot.data;
+        if (result == null) {
+          return const Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                CircularProgressIndicator(),
+                SizedBox(height: 12),
+                Text('Calculating BIM schedule in background…'),
+              ],
+            ),
+          );
+        }
+        return kind == ProjectScheduleKind.rooms
+            ? _RoomScheduleTable(scene: result.detectedScene)
+            : _QuantityScheduleTable(summary: result.summary);
+      },
+    );
+  }
+}
+
 Future<void> exportProjectScheduleCsv(
   BuildContext context, {
   required RenderScene scene,
   required ProjectScheduleKind kind,
 }) async {
-  final detected = RenderSceneEditor.detectRooms(scene);
-  final summary = RenderSceneEstimator.summarize(detected);
   final isRoomSchedule = kind == ProjectScheduleKind.rooms;
   final suggestedName =
       isRoomSchedule ? 'room_schedule.csv' : 'quantity_takeoff.csv';
   try {
+    final result = await QuantityScheduleService.forScene(scene);
     final location = await getSaveLocation(
       suggestedName: suggestedName,
       acceptedTypeGroups: <XTypeGroup>[
@@ -113,8 +146,8 @@ Future<void> exportProjectScheduleCsv(
     if (location == null) return;
     await File(location.path).writeAsString(
       isRoomSchedule
-          ? _roomScheduleCsv(detected)
-          : _quantityScheduleCsv(summary),
+          ? _roomScheduleCsv(result.detectedScene)
+          : _quantityScheduleCsv(result.summary),
       flush: true,
     );
     if (context.mounted) {
@@ -201,8 +234,6 @@ class QuantityScheduleDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final detected = RenderSceneEditor.detectRooms(scene);
-    final summary = RenderSceneEstimator.summarize(detected);
     return AlertDialog(
       title: Row(
         children: <Widget>[
@@ -218,9 +249,7 @@ class QuantityScheduleDialog extends StatelessWidget {
       content: SizedBox(
         width: 760,
         height: 520,
-        child: kind == ProjectScheduleKind.rooms
-            ? _RoomScheduleTable(scene: detected)
-            : _QuantityScheduleTable(summary: summary),
+        child: _ScheduleFutureBody(scene: scene, kind: kind),
       ),
       actions: <Widget>[
         TextButton(
@@ -253,7 +282,7 @@ class _RoomScheduleTable extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
         Text(
-            '${rooms.length} room(s) · automatically refreshed from wall boundaries',
+            '${rooms.length} room(s) · calculated only while this schedule is requested',
             style: Theme.of(context).textTheme.bodySmall),
         const SizedBox(height: 10),
         Expanded(
@@ -307,55 +336,23 @@ class _QuantityScheduleTable extends StatelessWidget {
   Widget build(BuildContext context) {
     final rows = <({String label, String quantity, String unit})>[
       (label: 'Rooms', quantity: summary.roomCount.toString(), unit: 'pcs'),
-      (
-        label: 'Room area',
-        quantity: summary.totalRoomArea.toStringAsFixed(2),
-        unit: 'm²'
-      ),
+      (label: 'Room area', quantity: summary.totalRoomArea.toStringAsFixed(2), unit: 'm²'),
       (label: 'Walls', quantity: summary.wallCount.toString(), unit: 'pcs'),
-      (
-        label: 'Net wall volume',
-        quantity: summary.wallNetVolume.toStringAsFixed(2),
-        unit: 'm³'
-      ),
-      (
-        label: 'Brick masonry',
-        quantity: summary.brickCount.toString(),
-        unit: 'pcs'
-      ),
+      (label: 'Net wall volume', quantity: summary.wallNetVolume.toStringAsFixed(2), unit: 'm³'),
+      (label: 'Brick masonry', quantity: summary.brickCount.toString(), unit: 'pcs'),
       (label: 'Floors', quantity: summary.floorCount.toString(), unit: 'pcs'),
-      (
-        label: 'Floor area',
-        quantity: summary.floorArea.toStringAsFixed(2),
-        unit: 'm²'
-      ),
-      (
-        label: 'Concrete',
-        quantity: summary.floorConcreteVolume.toStringAsFixed(2),
-        unit: 'm³'
-      ),
-      (
-        label: 'Ceilings',
-        quantity: summary.ceilingCount.toString(),
-        unit: 'pcs'
-      ),
-      (
-        label: 'Ceiling area',
-        quantity: summary.ceilingArea.toStringAsFixed(2),
-        unit: 'm²'
-      ),
+      (label: 'Floor area', quantity: summary.floorArea.toStringAsFixed(2), unit: 'm²'),
+      (label: 'Concrete', quantity: summary.floorConcreteVolume.toStringAsFixed(2), unit: 'm³'),
+      (label: 'Ceilings', quantity: summary.ceilingCount.toString(), unit: 'pcs'),
+      (label: 'Ceiling area', quantity: summary.ceilingArea.toStringAsFixed(2), unit: 'm²'),
       (label: 'Doors', quantity: summary.doorCount.toString(), unit: 'pcs'),
       (label: 'Windows', quantity: summary.windowCount.toString(), unit: 'pcs'),
-      (
-        label: 'Opening area',
-        quantity: summary.openingArea.toStringAsFixed(2),
-        unit: 'm²'
-      ),
+      (label: 'Opening area', quantity: summary.openingArea.toStringAsFixed(2), unit: 'm²'),
     ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
-        Text('Live quantities from the current model',
+        Text('Live quantities from the requested model snapshot',
             style: Theme.of(context).textTheme.bodySmall),
         const SizedBox(height: 10),
         Expanded(
