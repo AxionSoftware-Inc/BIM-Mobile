@@ -18,6 +18,7 @@ import 'render_scene_viewport_projection.dart';
 import 'render_scene_viewport_types.dart';
 import 'viewport_interaction.dart';
 import 'viewport_gesture_controller.dart';
+import 'workspace_chrome.dart';
 
 part 'render_scene_viewport_support_widgets.dart';
 part 'render_scene_viewport_fallback.dart';
@@ -77,6 +78,7 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
   void initState() {
     super.initState();
     widget.controller.addListener(_handleControllerChanged);
+    AnnotationWorkspaceRuntime.document.addListener(_handleAnnotationChanged);
   }
 
   @override
@@ -91,13 +93,16 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
   @override
   void dispose() {
     widget.controller.removeListener(_handleControllerChanged);
+    AnnotationWorkspaceRuntime.document.removeListener(_handleAnnotationChanged);
     super.dispose();
   }
 
   void _handleControllerChanged() {
-    if (mounted) {
-      setState(() {});
-    }
+    if (mounted) setState(() {});
+  }
+
+  void _handleAnnotationChanged() {
+    if (mounted) setState(() {});
   }
 
   bool get _shouldUseNativeAndroidView {
@@ -105,15 +110,35 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
         defaultTargetPlatform == TargetPlatform.android;
   }
 
+  bool get _annotationModeActive =>
+      WorkspaceToolSelection.tab == WorkspaceToolTab.annotate &&
+      AnnotationWorkspaceRuntime.activeViewAcceptsAnnotations &&
+      AnnotationWorkspaceRuntime.activeViewId != 0;
+
   @override
   Widget build(BuildContext context) {
+    final viewport = _buildViewport(context);
     return Semantics(
       container: true,
       label: widget.controller.projectionMode.is3D
           ? '3D model viewport'
           : '2D drawing viewport',
-      hint: 'One finger selects or draws. Two fingers pan and zoom.',
-      child: _buildViewport(context),
+      hint: _annotationModeActive
+          ? 'Tap to place the selected view annotation.'
+          : 'One finger selects or draws. Two fingers pan and zoom.',
+      child: Stack(
+        fit: StackFit.expand,
+        children: <Widget>[
+          viewport,
+          if (AnnotationWorkspaceRuntime.activeViewId != 0)
+            AnnotationViewportOverlay(
+              controller: widget.controller,
+              store: AnnotationWorkspaceRuntime.document.store,
+              viewId: AnnotationWorkspaceRuntime.activeViewId,
+              units: widget.units,
+            ),
+        ],
+      ),
     );
   }
 
@@ -131,7 +156,7 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
       return _FallbackRenderSceneView(
         controller: widget.controller,
         interactionMode: widget.interactionMode,
-        onSceneTap: widget.onSceneTap,
+        onSceneTap: _routeSceneTap,
         onSceneDragStart: widget.onSceneDragStart,
         onSceneDragUpdate: widget.onSceneDragUpdate,
         onSceneDragEnd: widget.onSceneDragEnd,
@@ -163,7 +188,7 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
     return _FallbackRenderSceneView(
       controller: widget.controller,
       interactionMode: widget.interactionMode,
-      onSceneTap: widget.onSceneTap,
+      onSceneTap: _routeSceneTap,
       onSceneDragStart: widget.onSceneDragStart,
       onSceneDragUpdate: widget.onSceneDragUpdate,
       onSceneDragEnd: widget.onSceneDragEnd,
@@ -180,6 +205,193 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
       draftWallEditElementId: widget.draftWallEditElementId,
       showDiagnostics: widget.showDiagnostics,
       units: widget.units,
+    );
+  }
+
+  void _routeSceneTap(RenderSceneTapDetails details) {
+    if (!_annotationModeActive) {
+      widget.onSceneTap?.call(details);
+      return;
+    }
+    // Annotation taps are consumed here and never forwarded to model
+    // authoring. This keeps view documentation outside wall/floor rebuilds.
+    unawaited(_handleAnnotationTap(details));
+  }
+
+  Future<void> _handleAnnotationTap(RenderSceneTapDetails details) async {
+    final point = details.modelPoint;
+    final viewId = AnnotationWorkspaceRuntime.activeViewId;
+    if (point == null || viewId == 0) {
+      _showAnnotationMessage('Tap inside the active model view.');
+      return;
+    }
+    final scene = widget.controller.scene;
+    final levelId = AnnotationWorkspaceRuntime.activeLevelId != 0
+        ? AnnotationWorkspaceRuntime.activeLevelId
+        : details.pickedObject?.levelId ??
+            (scene != null && scene.levels.isNotEmpty
+                ? scene.levels.first.levelId
+                : 0);
+    final pickedId = details.pickedObject?.elementId;
+
+    switch (WorkspaceToolSelection.annotationTool) {
+      case AnnotationWorkspaceTool.text:
+        final value = await _promptText(
+          title: 'Text note',
+          hint: 'Enter annotation text',
+        );
+        if (!mounted || value == null || value.isEmpty) return;
+        AnnotationWorkspaceRuntime.document.addText(
+          viewId: viewId,
+          levelId: levelId,
+          x: point.x,
+          y: point.y,
+          z: point.z,
+          value: value,
+        );
+        _showAnnotationMessage('Text note placed.');
+      case AnnotationWorkspaceTool.dimension:
+        final start = AnnotationWorkspaceRuntime.draftStart;
+        if (start == null) {
+          AnnotationWorkspaceRuntime.draftStart = AnnotationDraftPoint(
+            point: point,
+            referenceElementId: pickedId,
+          );
+          _showAnnotationMessage('Dimension start set. Tap the second point.');
+          return;
+        }
+        AnnotationWorkspaceRuntime.cancelDraft();
+        AnnotationWorkspaceRuntime.document.addLinearDimension(
+          viewId: viewId,
+          levelId: levelId,
+          anchorX: (start.point.x + point.x) * 0.5,
+          anchorY: (start.point.y + point.y) * 0.5,
+          anchorZ: (start.point.z + point.z) * 0.5,
+          startX: start.point.x,
+          startY: start.point.y,
+          startZ: start.point.z,
+          endX: point.x,
+          endY: point.y,
+          endZ: point.z,
+          referenceAId: start.referenceElementId,
+          referenceBId: pickedId,
+        );
+        _showAnnotationMessage('Dimension placed.');
+      case AnnotationWorkspaceTool.tag:
+        final object = details.pickedObject;
+        final elementId = object?.elementId;
+        if (object == null || elementId == null) {
+          _showAnnotationMessage('Tap a BIM element to place a tag.');
+          return;
+        }
+        final metadataName = object.metadata['name'] ??
+            object.metadata['family_name'] ??
+            object.metadata['familyName'];
+        final defaultLabel = metadataName?.toString().trim().isNotEmpty == true
+            ? metadataName.toString().trim()
+            : '${object.kind} $elementId';
+        final label = await _promptText(
+          title: 'Tag label',
+          hint: 'Tag text',
+          initialValue: defaultLabel,
+        );
+        if (!mounted || label == null || label.isEmpty) return;
+        AnnotationWorkspaceRuntime.document.addTag(
+          viewId: viewId,
+          levelId: levelId,
+          x: point.x,
+          y: point.y,
+          z: point.z,
+          targetElementId: elementId,
+          label: label,
+        );
+        _showAnnotationMessage('Tag placed.');
+      case AnnotationWorkspaceTool.detailLine:
+        final start = AnnotationWorkspaceRuntime.draftStart;
+        if (start == null) {
+          AnnotationWorkspaceRuntime.draftStart = AnnotationDraftPoint(
+            point: point,
+            referenceElementId: pickedId,
+          );
+          _showAnnotationMessage('Detail-line start set. Tap the end point.');
+          return;
+        }
+        AnnotationWorkspaceRuntime.cancelDraft();
+        AnnotationWorkspaceRuntime.document.addDetailLine(
+          viewId: viewId,
+          levelId: levelId,
+          startX: start.point.x,
+          startY: start.point.y,
+          startZ: start.point.z,
+          endX: point.x,
+          endY: point.y,
+          endZ: point.z,
+        );
+        _showAnnotationMessage('Detail line placed.');
+      case AnnotationWorkspaceTool.symbol:
+        final assetKey = await _promptText(
+          title: 'Annotation symbol',
+          hint: 'Shared symbol key',
+          initialValue: 'builtin:marker',
+        );
+        if (!mounted || assetKey == null || assetKey.isEmpty) return;
+        AnnotationWorkspaceRuntime.document.addSymbol(
+          viewId: viewId,
+          levelId: levelId,
+          x: point.x,
+          y: point.y,
+          z: point.z,
+          assetKey: assetKey,
+        );
+        _showAnnotationMessage('Symbol placed.');
+    }
+  }
+
+  Future<String?> _promptText({
+    required String title,
+    required String hint,
+    String initialValue = '',
+  }) async {
+    final textController = TextEditingController(text: initialValue);
+    try {
+      return await showDialog<String>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text(title),
+          content: TextField(
+            controller: textController,
+            autofocus: true,
+            minLines: 1,
+            maxLines: 3,
+            decoration: InputDecoration(hintText: hint),
+            onSubmitted: (value) =>
+                Navigator.of(dialogContext).pop(value.trim()),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () =>
+                  Navigator.of(dialogContext).pop(textController.text.trim()),
+              child: const Text('Place'),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      textController.dispose();
+    }
+  }
+
+  void _showAnnotationMessage(String value) {
+    if (!mounted) return;
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(
+        content: Text(value),
+        duration: const Duration(milliseconds: 1400),
+      ),
     );
   }
 }
