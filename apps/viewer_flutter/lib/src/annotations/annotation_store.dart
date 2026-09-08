@@ -34,7 +34,7 @@ final class AnnotationStyle {
       '$name\u0000$textHeightMeters\u0000$lineWeight\u0000$arrowSizeMeters';
 }
 
-/// Interned annotation text. Ten thousand "Kitchen" tags keep one string.
+/// Interned annotation text and symbol asset keys.
 final class AnnotationStringPool {
   AnnotationStringPool._(this.values);
 
@@ -86,6 +86,34 @@ final class AnnotationTagTable {
   final Uint32List labelStringIds;
 }
 
+final class AnnotationDetailLineTable {
+  const AnnotationDetailLineTable({
+    required this.annotationIndices,
+    required this.startPoints,
+    required this.endPoints,
+  });
+
+  final Uint32List annotationIndices;
+  final Float64List startPoints;
+  final Float64List endPoints;
+}
+
+/// Shared-symbol placement table. Asset keys are interned in [strings], so a
+/// repeated north arrow/detail marker keeps one string and N compact rows.
+final class AnnotationSymbolTable {
+  const AnnotationSymbolTable({
+    required this.annotationIndices,
+    required this.assetStringIds,
+    required this.rotations,
+    required this.scales,
+  });
+
+  final Uint32List annotationIndices;
+  final Uint32List assetStringIds;
+  final Float32List rotations;
+  final Float32List scales;
+}
+
 /// Structure-of-arrays annotation database.
 ///
 /// Common rows contain identity/view/style/anchor only. Kind-specific payloads
@@ -97,6 +125,7 @@ final class AnnotationTagTable {
 /// - query only the active view;
 /// - text renderer should use a shared glyph atlas;
 /// - lines/arrows should be batched by style;
+/// - symbols should be instanced by asset/style;
 /// - automatic temporary dimensions/snaps are generated overlays, not rows in
 ///   this persistent store unless the user explicitly commits them.
 final class AnnotationStore {
@@ -113,6 +142,8 @@ final class AnnotationStore {
     required this.text,
     required this.dimensions,
     required this.tags,
+    required this.detailLines,
+    required this.symbols,
     required this.viewKeys,
     required this.viewOffsets,
     required this.viewAnnotationIndices,
@@ -133,6 +164,8 @@ final class AnnotationStore {
   final AnnotationTextTable text;
   final AnnotationDimensionTable dimensions;
   final AnnotationTagTable tags;
+  final AnnotationDetailLineTable detailLines;
+  final AnnotationSymbolTable symbols;
 
   /// CSR view index: annotation rendering never scans unrelated views/floors.
   final Int64List viewKeys;
@@ -197,6 +230,15 @@ final class AnnotationStoreBuilder {
   final List<int> _tagAnnotationIndices = <int>[];
   final List<int> _tagTargets = <int>[];
   final List<int> _tagLabelIds = <int>[];
+
+  final List<int> _detailLineAnnotationIndices = <int>[];
+  final List<double> _detailLineStartPoints = <double>[];
+  final List<double> _detailLineEndPoints = <double>[];
+
+  final List<int> _symbolAnnotationIndices = <int>[];
+  final List<int> _symbolAssetStringIds = <int>[];
+  final List<double> _symbolRotations = <double>[];
+  final List<double> _symbolScales = <double>[];
 
   int _nextId = 1;
 
@@ -310,6 +352,67 @@ final class AnnotationStoreBuilder {
     return _ids[index];
   }
 
+  int addDetailLine({
+    int? annotationId,
+    required int viewId,
+    required int levelId,
+    required double startX,
+    required double startY,
+    required double startZ,
+    required double endX,
+    required double endY,
+    required double endZ,
+    AnnotationStyle style = const AnnotationStyle(name: 'Default Detail Line'),
+    int flags = 0,
+  }) {
+    final index = _addCommon(
+      annotationId: annotationId,
+      viewId: viewId,
+      levelId: levelId,
+      kind: AnnotationKind.detailLine,
+      style: style,
+      x: (startX + endX) * 0.5,
+      y: (startY + endY) * 0.5,
+      z: (startZ + endZ) * 0.5,
+      flags: flags,
+    );
+    _detailLineAnnotationIndices.add(index);
+    _detailLineStartPoints.addAll(<double>[startX, startY, startZ]);
+    _detailLineEndPoints.addAll(<double>[endX, endY, endZ]);
+    return _ids[index];
+  }
+
+  int addSymbol({
+    int? annotationId,
+    required int viewId,
+    required int levelId,
+    required double x,
+    required double y,
+    required double z,
+    required String assetKey,
+    double rotationRadians = 0,
+    double scale = 1,
+    AnnotationStyle style = const AnnotationStyle(name: 'Default Symbol'),
+    int flags = 0,
+  }) {
+    final index = _addCommon(
+      annotationId: annotationId,
+      viewId: viewId,
+      levelId: levelId,
+      kind: AnnotationKind.symbol,
+      style: style,
+      x: x,
+      y: y,
+      z: z,
+      flags: flags,
+    );
+    _symbolAnnotationIndices.add(index);
+    _symbolAssetStringIds.add(internString(assetKey));
+    _symbolRotations.add(rotationRadians);
+    _symbolScales.add(scale.isFinite && scale > 0 ? scale : 1);
+    return _ids[index];
+  }
+
   int _addCommon({
     required int? annotationId,
     required int viewId,
@@ -382,6 +485,17 @@ final class AnnotationStoreBuilder {
         annotationIndices: Uint32List.fromList(_tagAnnotationIndices),
         targetElementIds: Int64List.fromList(_tagTargets),
         labelStringIds: Uint32List.fromList(_tagLabelIds),
+      ),
+      detailLines: AnnotationDetailLineTable(
+        annotationIndices: Uint32List.fromList(_detailLineAnnotationIndices),
+        startPoints: Float64List.fromList(_detailLineStartPoints),
+        endPoints: Float64List.fromList(_detailLineEndPoints),
+      ),
+      symbols: AnnotationSymbolTable(
+        annotationIndices: Uint32List.fromList(_symbolAnnotationIndices),
+        assetStringIds: Uint32List.fromList(_symbolAssetStringIds),
+        rotations: Float32List.fromList(_symbolRotations),
+        scales: Float32List.fromList(_symbolScales),
       ),
       viewKeys: Int64List.fromList(viewKeys),
       viewOffsets: viewOffsets,
