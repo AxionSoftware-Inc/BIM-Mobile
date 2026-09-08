@@ -18,6 +18,21 @@ target_include_directories(tbe_api_tests PRIVATE
 
 add_test(NAME tbe_api_tests COMMAND tbe_api_tests)
 
+add_executable(tbe_runtime_cache_chunking_tests
+    runtime_cache_chunking_tests.cpp
+)
+
+target_link_libraries(tbe_runtime_cache_chunking_tests PRIVATE tbe_api)
+target_include_directories(tbe_runtime_cache_chunking_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/core/include
+    ${CMAKE_SOURCE_DIR}/src/api/src
+)
+
+add_test(
+    NAME tbe_runtime_cache_chunking_tests
+    COMMAND tbe_runtime_cache_chunking_tests
+)
+
 add_executable(tbe_ifc_fixture_tests
     ifc_fixture_tests.cpp
 )
