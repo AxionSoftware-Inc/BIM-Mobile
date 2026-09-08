@@ -96,4 +96,44 @@ void main() {
     expect(store.dimensions.referenceBIds.single, 202);
     expect(store.queryView(7), hasLength(1));
   });
+
+  test('detail lines use packed endpoint columns', () {
+    final store = (AnnotationStoreBuilder()
+          ..addDetailLine(
+            viewId: 3,
+            levelId: 2,
+            startX: 1,
+            startY: 2,
+            startZ: 0,
+            endX: 8,
+            endY: 4,
+            endZ: 0,
+          ))
+        .build();
+
+    expect(store.detailLines.annotationIndices, hasLength(1));
+    expect(store.detailLines.startPoints, <double>[1, 2, 0]);
+    expect(store.detailLines.endPoints, <double>[8, 4, 0]);
+    expect(store.kindAt(0), AnnotationKind.detailLine);
+  });
+
+  test('symbols intern shared asset keys instead of copying payloads', () {
+    final builder = AnnotationStoreBuilder();
+    for (var index = 0; index < 1000; index++) {
+      builder.addSymbol(
+        viewId: 5,
+        levelId: 1,
+        x: index.toDouble(),
+        y: 0,
+        z: 0,
+        assetKey: 'symbol:north-arrow:v1',
+      );
+    }
+    final store = builder.build();
+
+    expect(store.symbols.annotationIndices, hasLength(1000));
+    expect(store.strings.length, 1);
+    expect(store.symbols.assetStringIds.toSet(), <int>{0});
+    expect(store.queryView(5), hasLength(1000));
+  });
 }
