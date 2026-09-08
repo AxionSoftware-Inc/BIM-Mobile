@@ -4,6 +4,10 @@ import 'app_brand.dart';
 import 'render_scene_viewport_planar.dart';
 import 'render_scene_viewport_types.dart';
 
+export 'annotations/annotation_view_key.dart';
+export 'annotations/annotation_viewport_overlay.dart';
+export 'annotations/annotation_workspace_runtime.dart';
+
 /// Compact project chrome for the professional Arvela BIM workspace.
 class WorkspaceAppBar extends StatelessWidget implements PreferredSizeWidget {
   const WorkspaceAppBar({
@@ -379,13 +383,14 @@ enum WorkspaceToolTab { model, annotate }
 
 enum AnnotationWorkspaceTool { text, dimension, tag, detailLine, symbol }
 
+/// Small selection bridge shared by chrome and viewport command routing.
+/// Persistent annotation data lives in AnnotationWorkspaceRuntime, not here.
+abstract final class WorkspaceToolSelection {
+  static WorkspaceToolTab tab = WorkspaceToolTab.model;
+  static AnnotationWorkspaceTool annotationTool = AnnotationWorkspaceTool.text;
+}
+
 /// Touch-first authoring palette with a real Model / Annotate discipline tab.
-///
-/// Annotation selection is intentionally local in this first integration.
-/// NEXT: connect [AnnotationWorkspaceTool] to an AnnotationCommandController
-/// that writes the data-oriented AnnotationStore for the active view. Until
-/// then switching to Annotate forces Select mode so a previously active wall
-/// or door tool cannot mutate the model behind the annotation UI.
 class AuthoringToolPalette extends StatefulWidget {
   const AuthoringToolPalette({
     super.key,
@@ -403,16 +408,24 @@ class AuthoringToolPalette extends StatefulWidget {
 }
 
 class _AuthoringToolPaletteState extends State<AuthoringToolPalette> {
-  WorkspaceToolTab _tab = WorkspaceToolTab.model;
-  AnnotationWorkspaceTool _annotationTool = AnnotationWorkspaceTool.text;
+  WorkspaceToolTab _tab = WorkspaceToolSelection.tab;
+  AnnotationWorkspaceTool _annotationTool =
+      WorkspaceToolSelection.annotationTool;
 
   void _setTab(WorkspaceToolTab value) {
     if (_tab == value) return;
+    WorkspaceToolSelection.tab = value;
     setState(() => _tab = value);
     if (value == WorkspaceToolTab.annotate &&
         widget.mode != RenderSceneInteractionMode.select) {
       widget.onModeChanged(RenderSceneInteractionMode.select);
     }
+  }
+
+  void _setAnnotationTool(AnnotationWorkspaceTool value) {
+    if (_annotationTool == value) return;
+    WorkspaceToolSelection.annotationTool = value;
+    setState(() => _annotationTool = value);
   }
 
   @override
@@ -477,9 +490,7 @@ class _AuthoringToolPaletteState extends State<AuthoringToolPalette> {
                           tool: tool,
                           selected: _annotationTool == tool.tool,
                           enabled: widget.enabled,
-                          onPressed: () => setState(
-                            () => _annotationTool = tool.tool,
-                          ),
+                          onPressed: () => _setAnnotationTool(tool.tool),
                         ),
                       Padding(
                         padding: const EdgeInsets.fromLTRB(8, 8, 8, 6),
