@@ -60,6 +60,7 @@ internal class NativeSpatialStreamingPolicy(
 
     val forward = normalize(camera.forward)
     val ranked = ArrayList<RankedChunk>(minOf(chunks.size, config.maxResidentChunks * 4))
+    var nearest: RankedChunk? = null
     for (chunk in chunks) {
       val center = center(chunk.bounds)
       val dx = center.x - camera.position.x
@@ -68,6 +69,13 @@ internal class NativeSpatialStreamingPolicy(
       val distanceSquared = dx * dx + dy * dy + dz * dz
       val distance = sqrt(distanceSquared).coerceAtLeast(1e-9)
       val viewDot = (dx * forward.x + dy * forward.y + dz * forward.z) / distance
+      val candidate = RankedChunk(
+        chunk = chunk,
+        distance = distance,
+        viewDot = viewDot,
+      )
+      if (nearest == null || candidate.distance < nearest!!.distance) nearest = candidate
+
       val wasResident = currentResident.contains(chunk.index)
       val distanceLimit = config.streamDistanceMeters *
         if (wasResident) config.residentHysteresisMultiplier else 1.0
@@ -75,14 +83,14 @@ internal class NativeSpatialStreamingPolicy(
       if (!near && (distance > distanceLimit || viewDot < config.rearHemisphereDotThreshold)) {
         continue
       }
-      ranked.add(
-        RankedChunk(
-          chunk = chunk,
-          distance = distance,
-          viewDot = viewDot,
-        ),
-      )
+      ranked.add(candidate)
     }
+
+    // A bad/temporary camera vector must never blank the viewport completely.
+    // Keep the nearest chunk as a deterministic emergency LOD0 fallback when
+    // no chunk passes the normal distance/frustum relevance test.
+    if (ranked.isEmpty()) nearest?.let(ranked::add)
+
     ranked.sortWith(
       compareByDescending<RankedChunk> { it.distance <= config.alwaysResidentDistanceMeters }
         .thenByDescending { it.viewDot }
