@@ -110,6 +110,7 @@ dependencies {
     implementation("com.google.android.filament:filament-android:1.71.6")
     implementation("com.google.android.filament:filament-utils-android:1.71.6")
     implementation("com.google.android.filament:filamat-android:1.71.6")
+    testImplementation("junit:junit:4.13.2")
 }
 
 flutter {
