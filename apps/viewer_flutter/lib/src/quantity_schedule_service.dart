@@ -1,5 +1,7 @@
 import 'dart:isolate';
 
+import 'bim_compact_estimator.dart';
+import 'bim_compact_instance_store.dart';
 import 'render_scene_editor.dart';
 import 'render_scene_estimator.dart';
 import 'render_scene_models.dart';
@@ -38,7 +40,8 @@ final class QuantityScheduleService {
 
     final future = Isolate.run<QuantityScheduleResult>(() {
       final detected = RenderSceneEditor.detectRooms(scene);
-      final summary = RenderSceneEstimator.summarize(detected);
+      final compact = BimCompactInstanceStore.fromScene(detected);
+      final summary = BimCompactEstimator.summarize(compact);
       return QuantityScheduleResult(
         detectedScene: detected,
         summary: summary,
