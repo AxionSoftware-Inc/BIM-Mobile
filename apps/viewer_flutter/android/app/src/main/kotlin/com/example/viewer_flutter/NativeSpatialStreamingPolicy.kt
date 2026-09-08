@@ -9,6 +9,10 @@ import kotlin.math.sqrt
  * camera-relevant working set should be resident on the GPU. This policy is
  * deliberately independent from Filament resources so it can be tested and
  * later shared by Android/desktop render backends.
+ *
+ * IMPORTANT: policy evaluation must be metadata-only. Reading a chunk's
+ * positions/indices here would materialize cold native geometry merely to
+ * decide whether that geometry should be loaded, defeating CPU lazy loading.
  */
 internal class NativeSpatialStreamingPolicy(
   private val config: Config = Config(),
@@ -55,7 +59,8 @@ internal class NativeSpatialStreamingPolicy(
     }
 
     val forward = normalize(camera.forward)
-    val ranked = chunks.map { chunk ->
+    val ranked = ArrayList<RankedChunk>(minOf(chunks.size, config.maxResidentChunks * 4))
+    for (chunk in chunks) {
       val center = center(chunk.bounds)
       val dx = center.x - camera.position.x
       val dy = center.y - camera.position.y
@@ -67,42 +72,41 @@ internal class NativeSpatialStreamingPolicy(
       val distanceLimit = config.streamDistanceMeters *
         if (wasResident) config.residentHysteresisMultiplier else 1.0
       val near = distance <= config.alwaysResidentDistanceMeters
-      val cameraRelevant = near ||
-        (distance <= distanceLimit && viewDot >= config.rearHemisphereDotThreshold)
-
-      RankedChunk(
-        chunk = chunk,
-        distance = distance,
-        viewDot = viewDot,
-        cameraRelevant = cameraRelevant,
-        wasResident = wasResident,
+      if (!near && (distance > distanceLimit || viewDot < config.rearHemisphereDotThreshold)) {
+        continue
+      }
+      ranked.add(
+        RankedChunk(
+          chunk = chunk,
+          distance = distance,
+          viewDot = viewDot,
+        ),
       )
-    }.filter { it.cameraRelevant }
-      .sortedWith(
-        compareByDescending<RankedChunk> { it.distance <= config.alwaysResidentDistanceMeters }
-          .thenByDescending { it.viewDot }
-          .thenBy { it.distance }
-          .thenBy { it.chunk.index },
-      )
+    }
+    ranked.sortWith(
+      compareByDescending<RankedChunk> { it.distance <= config.alwaysResidentDistanceMeters }
+        .thenByDescending { it.viewDot }
+        .thenBy { it.distance }
+        .thenBy { it.chunk.index },
+    )
 
-    val target = linkedSetOf<Int>()
+    val target = LinkedHashSet<Int>(minOf(config.maxResidentChunks, ranked.size))
     var targetBytes = 0L
     for (rankedChunk in ranked) {
       if (target.size >= config.maxResidentChunks) break
       val bytes = rankedChunk.chunk.estimatedGpuBytes.coerceAtLeast(0L)
-      if (target.isNotEmpty() && targetBytes + bytes > config.maxResidentBytes) {
-        continue
-      }
+      if (target.isNotEmpty() && targetBytes + bytes > config.maxResidentBytes) continue
       target.add(rankedChunk.chunk.index)
       targetBytes += bytes
     }
 
-    val loadOrder = ranked.asSequence()
-      .map { it.chunk.index }
-      .filter { target.contains(it) && !currentResident.contains(it) }
-      .toList()
-    val keep = currentResident.intersect(target)
-    val evict = currentResident - target
+    val loadOrder = ArrayList<Int>(target.size)
+    for (rankedChunk in ranked) {
+      val index = rankedChunk.chunk.index
+      if (target.contains(index) && !currentResident.contains(index)) loadOrder.add(index)
+    }
+    val keep = currentResident.filterTo(linkedSetOf()) { target.contains(it) }
+    val evict = currentResident.filterTo(linkedSetOf()) { !target.contains(it) }
 
     return Decision(
       loadOrder = loadOrder,
@@ -114,15 +118,11 @@ internal class NativeSpatialStreamingPolicy(
 
   fun chunksFromCache(chunks: List<NativeBimCacheChunk>): List<Chunk> =
     chunks.mapIndexed { index, chunk ->
-      // Vertex payload is xyz float32; indices are uint32. A small fixed
-      // allowance covers Filament object/material bookkeeping without trying
-      // to pretend this is an exact driver allocation counter.
-      val vertexBytes = chunk.positions.capacity().toLong()
-      val indexBytes = chunk.indices.capacity().toLong() * Int.SIZE_BYTES
       Chunk(
         index = index,
         bounds = chunk.sourceBounds,
-        estimatedGpuBytes = vertexBytes + indexBytes + 4096L,
+        // Metadata-only estimate: do not touch chunk.positions/indices here.
+        estimatedGpuBytes = chunk.estimatedGpuBytes,
       )
     }
 
@@ -130,8 +130,6 @@ internal class NativeSpatialStreamingPolicy(
     val chunk: Chunk,
     val distance: Double,
     val viewDot: Double,
-    val cameraRelevant: Boolean,
-    val wasResident: Boolean,
   )
 
   private fun center(bounds: SceneBounds): ScenePoint = ScenePoint(
