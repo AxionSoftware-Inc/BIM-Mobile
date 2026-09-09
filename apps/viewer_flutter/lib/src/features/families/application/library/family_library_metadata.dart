@@ -54,17 +54,21 @@ final class FamilyLibraryMetadata {
         case FamilyFeatureKind.nestedFamily:
           nestedFamilyCount += 1;
           parametricFeatureCount += 1;
+          break;
         case FamilyFeatureKind.freeformMesh:
           freeformMeshCount += 1;
+          break;
         case FamilyFeatureKind.booleanUnion:
         case FamilyFeatureKind.booleanSubtract:
           booleanCount += 1;
           parametricFeatureCount += 1;
+          break;
         case FamilyFeatureKind.box:
         case FamilyFeatureKind.extrude:
         case FamilyFeatureKind.revolve:
         case FamilyFeatureKind.transform:
           parametricFeatureCount += 1;
+          break;
         case FamilyFeatureKind.profile:
           break;
       }
