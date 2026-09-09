@@ -89,8 +89,12 @@ internal object NativeRendererBenchmarkHarness {
 
   /**
    * Runs without a PlatformView so a real device can validate cache format,
-   * source fingerprint and object mapping before Flutter has mounted a scene.
-   * Renderer FPS measurements still use the regular [cache] benchmark mode.
+   * source fingerprint and chunk envelope before Flutter has mounted a scene.
+   *
+   * Probe mode intentionally uses [NativeBimCacheBridge.describeManifest]
+   * rather than the compatibility semantic envelope. A diagnostic should not
+   * allocate every primitive Map/metadata/feature-edge row merely to report
+   * project counts and levels.
    */
   private fun runCacheProbe(request: Request) {
     Thread {
@@ -111,20 +115,25 @@ internal object NativeRendererBenchmarkHarness {
             return@Thread
           }
         }
-        val scene = NativeBimCacheBridge.describe(cache.absolutePath, source.absolutePath)
-        if (scene == null) {
+        val manifest = NativeBimCacheBridge.describeManifest(
+          cache.absolutePath,
+          source.absolutePath,
+        )
+        if (manifest == null) {
           Log.e(tag, "CACHE_PROBE_ERROR cache_open ${NativeBimCacheBridge.lastError()}")
           return@Thread
         }
-        val objectCount = scene["object_count"] ?: 0
-        val vertexCount = scene["vertex_count"] ?: 0
-        val indexCount = scene["index_count"] ?: 0
-        val levels = (scene["levels"] as? List<*>)?.size ?: 0
+        val objectCount = manifest["object_count"] ?: 0
+        val chunkCount = manifest["chunk_count"] ?: 0
+        val estimatedIndexCount = manifest["native_cache_estimated_index_count"] ?: 0
+        val estimatedGpuBytes = manifest["native_cache_estimated_gpu_bytes"] ?: 0
+        val levels = (manifest["levels"] as? List<*>)?.size ?: 0
         Log.i(
           tag,
           "CACHE_PROBE valid=true compiled=${compileStats != null} " +
             "compileMs=${compileStats?.elapsedMs ?: -1L} bytes=${cache.length()} " +
-            "objects=$objectCount vertices=$vertexCount indices=$indexCount levels=$levels",
+            "objects=$objectCount chunks=$chunkCount estimatedIndices=$estimatedIndexCount " +
+            "estimatedGpuBytes=$estimatedGpuBytes levels=$levels",
         )
       } catch (error: Throwable) {
         Log.e(tag, "CACHE_PROBE_ERROR ${error.message ?: error::class.java.simpleName}", error)
