@@ -109,6 +109,81 @@ void main() {
       );
     });
 
+    test('migrated modules cannot depend back on compatibility facades', () {
+      final sourceRoot = _sourceRoot();
+      final violations = <String>[];
+      const canonicalByFacade = <String, String?>{
+        'project_unit_settings.dart':
+            'core/domain/units/project_unit_settings.dart',
+        'async_serial_queue.dart':
+            'core/application/concurrency/async_serial_queue.dart',
+        'atomic_file_writer.dart':
+            'core/infrastructure/io/atomic_file_writer.dart',
+        'telemetry_service.dart':
+            'core/infrastructure/telemetry/telemetry_service.dart',
+        'app_project_storage.dart':
+            'core/infrastructure/storage/app_project_storage.dart',
+        'app_brand.dart': 'core/presentation/design_system/app_brand.dart',
+        // app_settings.dart is a multi-export facade. Migrated code must import
+        // the specific model/store/presentation owner instead.
+        'app_settings.dart': null,
+        'project_recovery_store.dart':
+            'features/project/infrastructure/project_recovery_store.dart',
+        'project_lifecycle_service.dart':
+            'features/project/application/project_lifecycle_service.dart',
+        'project_persistence_service.dart':
+            'features/project/application/project_persistence_service.dart',
+        'project_session_controller.dart':
+            'features/project/application/project_session_controller.dart',
+        'viewer_app_dependencies.dart':
+            'app/composition/viewer_app_dependencies.dart',
+        'native_viewer_session_factory.dart':
+            'platform/native_engine/native_viewer_session_factory.dart',
+        'viewer_engine_contracts.dart':
+            'core/application/engine/viewer_engine_contracts.dart',
+        'viewer_project_gateway.dart':
+            'core/application/engine/viewer_project_gateway.dart',
+        'viewer_scene_gateway.dart':
+            'core/application/engine/viewer_scene_gateway.dart',
+        'viewer_spatial_gateway.dart':
+            'core/application/engine/viewer_spatial_gateway.dart',
+        'viewer_element_creation_gateway.dart':
+            'core/application/engine/viewer_element_creation_gateway.dart',
+        'viewer_authoring_gateway.dart':
+            'core/application/engine/viewer_authoring_gateway.dart',
+        'viewer_project_session.dart':
+            'core/application/engine/viewer_project_session.dart',
+      };
+      final directivePattern =
+          RegExp(r"(?:import|export)\s+['\"]([^'\"]+)['\"]");
+
+      for (final file in _dartFiles(sourceRoot)) {
+        final relativeFile = _relativeTo(sourceRoot, file).replaceAll('\\', '/');
+        final migrated = relativeFile.startsWith('app/') ||
+            relativeFile.startsWith('core/') ||
+            relativeFile.startsWith('features/') ||
+            relativeFile.startsWith('platform/');
+        if (!migrated) continue;
+
+        final text = file.readAsStringSync();
+        for (final match in directivePattern.allMatches(text)) {
+          final target = match.group(1)!.replaceAll('\\', '/');
+          final basename = target.split('/').last;
+          if (!canonicalByFacade.containsKey(basename)) continue;
+          final canonical = canonicalByFacade[basename];
+          if (canonical != null && target.contains(canonical)) continue;
+          violations.add('$relativeFile -> $target');
+        }
+      }
+
+      expect(
+        violations,
+        isEmpty,
+        reason: 'Migrated modules must depend on canonical owners, never back '
+            'through root compatibility facades.',
+      );
+    });
+
     test('temporary compatibility facades carry an explicit removal condition',
         () {
       final sourceRoot = _sourceRoot();
