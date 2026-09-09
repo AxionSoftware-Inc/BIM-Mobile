@@ -7,6 +7,8 @@ import 'package:flutter/services.dart';
 
 import 'annotations/annotation_history_controls.dart';
 import 'annotations/annotation_hit_test.dart';
+import 'annotations/annotation_selection_controls.dart';
+import 'annotations/annotation_store.dart';
 import 'family_runtime/family_2d_viewport_overlay.dart';
 import 'render_scene_editor.dart';
 import 'render_scene_level_overlay.dart';
@@ -84,6 +86,8 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
     AnnotationWorkspaceRuntime.document.addListener(_handleAnnotationChanged);
     AnnotationWorkspaceRuntime.selectedAnnotationId
         .addListener(_handleAnnotationChanged);
+    AnnotationWorkspaceRuntime.moveSelectedArmed
+        .addListener(_handleAnnotationChanged);
     WorkspaceToolSelection.changes.addListener(_handleWorkspaceToolChanged);
   }
 
@@ -101,6 +105,8 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
     widget.controller.removeListener(_handleControllerChanged);
     AnnotationWorkspaceRuntime.document.removeListener(_handleAnnotationChanged);
     AnnotationWorkspaceRuntime.selectedAnnotationId
+        .removeListener(_handleAnnotationChanged);
+    AnnotationWorkspaceRuntime.moveSelectedArmed
         .removeListener(_handleAnnotationChanged);
     WorkspaceToolSelection.changes.removeListener(_handleWorkspaceToolChanged);
     super.dispose();
@@ -132,15 +138,24 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
   Widget build(BuildContext context) {
     final viewport = _buildViewport(context);
     final annotationTool = WorkspaceToolSelection.annotationTool;
+    final selectedIndex = _selectedAnnotationIndex();
+    final selectedKind = selectedIndex == null
+        ? null
+        : AnnotationWorkspaceRuntime.document.store.kindAt(selectedIndex);
+    final canEditSelectedLabel =
+        selectedKind == AnnotationKind.text || selectedKind == AnnotationKind.tag;
+    final moveArmed = AnnotationWorkspaceRuntime.moveSelectedArmed.value;
     return Semantics(
       container: true,
       label: widget.controller.projectionMode.is3D
           ? '3D model viewport'
           : '2D drawing viewport',
       hint: _annotationModeActive
-          ? annotationTool == AnnotationWorkspaceTool.select
-              ? 'Tap a view annotation to select it.'
-              : 'Tap to place the selected view annotation.'
+          ? moveArmed
+              ? 'Tap the new location for the selected annotation.'
+              : annotationTool == AnnotationWorkspaceTool.select
+                  ? 'Tap a view annotation to select it.'
+                  : 'Tap to place the selected view annotation.'
           : 'One finger selects or draws. Two fingers pan and zoom.',
       child: Stack(
         fit: StackFit.expand,
@@ -160,6 +175,18 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
               units: widget.units,
             ),
           AnnotationHistoryControls(visible: _annotationModeActive),
+          AnnotationSelectionControls(
+            visible: _annotationModeActive &&
+                annotationTool == AnnotationWorkspaceTool.select &&
+                selectedIndex != null,
+            kind: selectedKind,
+            moveArmed: moveArmed,
+            onEditLabel:
+                canEditSelectedLabel ? () => unawaited(_editSelectedLabel()) : null,
+            onMove: _toggleSelectedMove,
+            onDelete: _deleteSelectedAnnotation,
+            onClear: AnnotationWorkspaceRuntime.clearSelection,
+          ),
         ],
       ),
     );
@@ -248,6 +275,33 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
 
     if (tool == AnnotationWorkspaceTool.select) {
       AnnotationWorkspaceRuntime.cancelDraft();
+      if (AnnotationWorkspaceRuntime.moveSelectedArmed.value) {
+        final selectedId = AnnotationWorkspaceRuntime.selectedAnnotationId.value;
+        final selectedIndex = _selectedAnnotationIndex();
+        final point = details.modelPoint;
+        if (selectedId == null || selectedIndex == null) {
+          AnnotationWorkspaceRuntime.clearSelection();
+          return;
+        }
+        if (point == null) {
+          _showAnnotationMessage('Tap inside the active model view to move it.');
+          return;
+        }
+        final store = AnnotationWorkspaceRuntime.document.store;
+        final anchor = selectedIndex * 3;
+        final moved = AnnotationWorkspaceRuntime.document.moveAnnotation(
+          selectedId,
+          dx: point.x - store.anchors[anchor],
+          dy: point.y - store.anchors[anchor + 1],
+          dz: point.z - store.anchors[anchor + 2],
+        );
+        AnnotationWorkspaceRuntime.cancelSelectedMove();
+        _showAnnotationMessage(
+          moved ? 'Annotation moved.' : 'Annotation position unchanged.',
+        );
+        return;
+      }
+
       final size = context.size;
       if (size == null || size.isEmpty) return;
       final hit = AnnotationHitTester.hitTest(
@@ -403,10 +457,86 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
     }
   }
 
+  int? _selectedAnnotationIndex() {
+    final selectedId = AnnotationWorkspaceRuntime.selectedAnnotationId.value;
+    final viewId = AnnotationWorkspaceRuntime.activeViewId;
+    if (selectedId == null || viewId == 0) return null;
+    final store = AnnotationWorkspaceRuntime.document.store;
+    for (final annotationIndex in store.queryView(viewId)) {
+      if (store.annotationIds[annotationIndex] == selectedId) {
+        return annotationIndex;
+      }
+    }
+    return null;
+  }
+
+  int? _rowForAnnotation(List<int> annotationIndices, int annotationIndex) {
+    for (var row = 0; row < annotationIndices.length; row++) {
+      if (annotationIndices[row] == annotationIndex) return row;
+    }
+    return null;
+  }
+
+  String? _selectedAnnotationLabel(int annotationIndex) {
+    final store = AnnotationWorkspaceRuntime.document.store;
+    switch (store.kindAt(annotationIndex)) {
+      case AnnotationKind.text:
+        final row = _rowForAnnotation(store.text.annotationIndices, annotationIndex);
+        return row == null ? null : store.strings[store.text.stringIds[row]];
+      case AnnotationKind.tag:
+        final row = _rowForAnnotation(store.tags.annotationIndices, annotationIndex);
+        return row == null ? null : store.strings[store.tags.labelStringIds[row]];
+      case AnnotationKind.linearDimension:
+      case AnnotationKind.detailLine:
+      case AnnotationKind.symbol:
+        return null;
+    }
+  }
+
+  Future<void> _editSelectedLabel() async {
+    final selectedId = AnnotationWorkspaceRuntime.selectedAnnotationId.value;
+    final annotationIndex = _selectedAnnotationIndex();
+    if (selectedId == null || annotationIndex == null) return;
+    final current = _selectedAnnotationLabel(annotationIndex);
+    if (current == null) return;
+    final value = await _promptText(
+      title: 'Edit annotation',
+      hint: 'Annotation text',
+      initialValue: current,
+      actionLabel: 'Save',
+    );
+    if (!mounted || value == null || value.isEmpty) return;
+    final changed = AnnotationWorkspaceRuntime.document
+        .replaceAnnotationLabel(selectedId, value);
+    if (changed) _showAnnotationMessage('Annotation updated.');
+  }
+
+  void _toggleSelectedMove() {
+    if (AnnotationWorkspaceRuntime.moveSelectedArmed.value) {
+      AnnotationWorkspaceRuntime.cancelSelectedMove();
+      _showAnnotationMessage('Annotation move cancelled.');
+      return;
+    }
+    if (_selectedAnnotationIndex() == null) return;
+    AnnotationWorkspaceRuntime.armSelectedMove();
+    _showAnnotationMessage('Tap the new annotation location.');
+  }
+
+  void _deleteSelectedAnnotation() {
+    final selectedId = AnnotationWorkspaceRuntime.selectedAnnotationId.value;
+    if (selectedId == null) return;
+    final deleted =
+        AnnotationWorkspaceRuntime.document.deleteAnnotation(selectedId);
+    if (!deleted) return;
+    AnnotationWorkspaceRuntime.clearSelection();
+    _showAnnotationMessage('Annotation deleted. Undo is available.');
+  }
+
   Future<String?> _promptText({
     required String title,
     required String hint,
     String initialValue = '',
+    String actionLabel = 'Place',
   }) async {
     final textController = TextEditingController(text: initialValue);
     try {
@@ -431,7 +561,7 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
             FilledButton(
               onPressed: () =>
                   Navigator.of(dialogContext).pop(textController.text.trim()),
-              child: const Text('Place'),
+              child: Text(actionLabel),
             ),
           ],
         ),
