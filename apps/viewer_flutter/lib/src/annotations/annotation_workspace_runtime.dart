@@ -22,6 +22,11 @@ abstract final class AnnotationWorkspaceRuntime {
   static final ValueNotifier<AnnotationDraftPoint?> draft =
       ValueNotifier<AnnotationDraftPoint?>(null);
 
+  /// Selection is also transient/view-local. Persisting it in the annotation
+  /// file would create meaningless document churn on every tap.
+  static final ValueNotifier<int?> selectedAnnotationId =
+      ValueNotifier<int?>(null);
+
   static AnnotationDraftPoint? get draftStart => draft.value;
   static set draftStart(AnnotationDraftPoint? value) => draft.value = value;
 
@@ -38,12 +43,23 @@ abstract final class AnnotationWorkspaceRuntime {
     final nextViewId = workspaceViewId.isEmpty
         ? 0
         : AnnotationViewKey.fromWorkspaceId(workspaceViewId);
-    if (activeViewId != nextViewId) cancelDraft();
+    if (activeViewId != nextViewId) {
+      cancelDraft();
+      clearSelection();
+    }
     activeWorkspaceViewId = workspaceViewId;
     activeViewId = nextViewId;
     activeLevelId = levelId;
     activeViewAcceptsAnnotations = acceptsAnnotations && nextViewId != 0;
   }
+
+  static void selectAnnotation(int? annotationId) {
+    if (selectedAnnotationId.value != annotationId) {
+      selectedAnnotationId.value = annotationId;
+    }
+  }
+
+  static void clearSelection() => selectAnnotation(null);
 
   static void cancelDraft() {
     if (draft.value != null) draft.value = null;
@@ -51,6 +67,7 @@ abstract final class AnnotationWorkspaceRuntime {
 
   static void resetProject() {
     cancelDraft();
+    clearSelection();
     activeViewId = 0;
     activeLevelId = 0;
     activeWorkspaceViewId = '';
