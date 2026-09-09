@@ -586,10 +586,7 @@ internal object NativeBimCacheBridge {
       synchronized(this) {
         if (!closed) {
           loadedPrimitives = null
-          chunks.forEach {
-            it.releaseGeometryView()
-            it.releaseSemanticView()
-          }
+          chunks.forEach(NativeBimCacheChunk::releaseTransientViews)
           nativeClose(handle)
           closed = true
         }
@@ -649,16 +646,28 @@ internal class NativeBimCacheChunk(
   val indices: IntBuffer
     get() = geometry()?.indices ?: EMPTY_INT_BUFFER.duplicate()
 
-  /** Drops Kotlin direct-buffer views after Filament destroys this chunk. */
+  /**
+   * Drops every chunk-local Kotlin view after Filament destroys this chunk.
+   *
+   * Existing renderer eviction sites call this historical method name. Range
+   * metadata must leave with geometry too; otherwise a chunk that was visible
+   * once remains semantically resident forever even after GPU eviction.
+   */
   fun releaseGeometryView() {
-    synchronized(this) {
-      loadedGeometry = null
-    }
+    releaseTransientViews()
   }
 
   /** Drops per-range metadata/objects while retaining the mmap manifest. */
   fun releaseSemanticView() {
     synchronized(this) {
+      loadedPrimitiveRanges = null
+    }
+  }
+
+  /** Drops both direct geometry and range-semantic mirrors atomically. */
+  fun releaseTransientViews() {
+    synchronized(this) {
+      loadedGeometry = null
       loadedPrimitiveRanges = null
     }
   }
