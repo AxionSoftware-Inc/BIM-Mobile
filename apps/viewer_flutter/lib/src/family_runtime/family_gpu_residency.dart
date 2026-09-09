@@ -47,6 +47,7 @@ final class FamilyGpuResidencyDecision {
     required this.loadOrder,
     required this.keepResident,
     required this.evict,
+    required this.fallbackResident,
     required this.activeBytes,
     required this.targetResidentBytes,
     required this.activeOverBudget,
@@ -55,6 +56,12 @@ final class FamilyGpuResidencyDecision {
   final List<FamilyGpuResidencyKey> loadOrder;
   final Set<FamilyGpuResidencyKey> keepResident;
   final Set<FamilyGpuResidencyKey> evict;
+
+  /// Requested LOD -> already resident same-variant LOD that can remain visible
+  /// while the requested mesh is being uploaded. Entries are present only when
+  /// the fallback itself fits the residency budget and is kept alive.
+  final Map<FamilyGpuResidencyKey, FamilyGpuResidencyKey> fallbackResident;
+
   final int activeBytes;
   final int targetResidentBytes;
 
@@ -125,8 +132,43 @@ final class FamilyGpuResidencyController {
     final keep = LinkedHashSet<FamilyGpuResidencyKey>()..addAll(activeKeys);
     var targetBytes = activeBytes;
 
+    // When zoom crosses a LOD threshold, prefer the already resident geometry
+    // of the same variant as a transition fallback. The native renderer can
+    // keep drawing it until [loadOrder] finishes, eliminating a one-frame hole.
+    final requestedFallback = <FamilyGpuResidencyKey, FamilyGpuResidencyKey>{};
+    final fallbackCandidates = <FamilyGpuResidencyKey>[];
+    for (final requested in activeKeys) {
+      if (currentResident.contains(requested)) continue;
+      final alternatives = currentResident
+          .where((resident) =>
+              resident.geometryVariantId == requested.geometryVariantId &&
+              resident != requested)
+          .toList()
+        ..sort((left, right) {
+          final leftDelta = (left.lod.index - requested.lod.index).abs();
+          final rightDelta = (right.lod.index - requested.lod.index).abs();
+          if (leftDelta != rightDelta) return leftDelta.compareTo(rightDelta);
+          return right.lod.index.compareTo(left.lod.index);
+        });
+      if (alternatives.isEmpty) continue;
+      final fallback = alternatives.first;
+      requestedFallback[requested] = fallback;
+      if (!fallbackCandidates.contains(fallback)) fallbackCandidates.add(fallback);
+    }
+
+    final keptFallbacks = <FamilyGpuResidencyKey>{};
+    for (final key in fallbackCandidates) {
+      if (keep.length >= maxResidentVariants) break;
+      final bytes = _estimatedBytes[key] ?? 4096;
+      if (targetBytes + bytes > maxResidentGeometryBytes) continue;
+      keep.add(key);
+      keptFallbacks.add(key);
+      targetBytes += bytes;
+    }
+
     final warmCandidates = currentResident
         .where((key) => !activeKeys.contains(key))
+        .where((key) => !keptFallbacks.contains(key))
         .where((key) {
           final lastSeen = _lastRequestedEpoch[key];
           return lastSeen != null && _epoch - lastSeen <= warmGraceEpochs;
@@ -146,6 +188,11 @@ final class FamilyGpuResidencyController {
       if (targetBytes + bytes > maxResidentGeometryBytes) continue;
       keep.add(key);
       targetBytes += bytes;
+    }
+
+    final fallbackResident = <FamilyGpuResidencyKey, FamilyGpuResidencyKey>{};
+    for (final entry in requestedFallback.entries) {
+      if (keep.contains(entry.value)) fallbackResident[entry.key] = entry.value;
     }
 
     final evict = currentResident.difference(keep);
@@ -172,6 +219,10 @@ final class FamilyGpuResidencyController {
       ),
       keepResident: Set<FamilyGpuResidencyKey>.unmodifiable(keep),
       evict: Set<FamilyGpuResidencyKey>.unmodifiable(evict),
+      fallbackResident:
+          Map<FamilyGpuResidencyKey, FamilyGpuResidencyKey>.unmodifiable(
+        fallbackResident,
+      ),
       activeBytes: activeBytes,
       targetResidentBytes: targetBytes,
       activeOverBudget: activeOverBudget,
