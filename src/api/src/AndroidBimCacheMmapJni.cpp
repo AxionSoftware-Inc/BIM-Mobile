@@ -35,15 +35,10 @@ constexpr std::array<char, 8> kMagic{'T', 'B', 'E', 'B', 'I', 'M', 'C', '2'};
 constexpr std::uint32_t kEndianMarker = 0x01020304u;
 constexpr std::uint64_t kMaxStringBytes = 16ull * 1024ull * 1024ull;
 constexpr std::uint64_t kMaxCollectionEntries = 32ull * 1024ull * 1024ull;
+constexpr std::size_t kSerializedFeatureEdgeBytes = sizeof(double) * 6 + sizeof(std::uint8_t);
 constexpr std::array<const char*, 8> kWallMetadataKeys{
     "start_x", "start_y", "end_x", "end_y", "thickness_meters",
     "height_meters", "profile_corners", "layer_profile",
-};
-
-struct MappedFeatureEdge {
-    Vec3 start{};
-    Vec3 end{};
-    RenderSceneFeatureEdgeRole role{RenderSceneFeatureEdgeRole::Silhouette};
 };
 
 struct MappedPrimitive {
@@ -53,8 +48,14 @@ struct MappedPrimitive {
     std::uint32_t first_index{};
     std::uint32_t index_count{};
     AABB3D bounds{};
-    std::vector<MappedFeatureEdge> feature_edges{};
-    std::array<std::string, kWallMetadataKeys.size()> wall_metadata{};
+    // Keep semantic payloads in the mmap. A campus cache can contain hundreds
+    // of thousands of primitives; retaining std::vector + 8 std::string
+    // objects per primitive duplicated a large part of that metadata on the
+    // native heap even when the UI never requested it.
+    std::size_t feature_edges_offset{};
+    std::size_t feature_edge_count{};
+    std::size_t metadata_offset{};
+    std::size_t metadata_count{};
 };
 
 struct MappedChunk {
@@ -224,28 +225,67 @@ MappedPrimitive read_primitive(Cursor& cursor) {
         throw std::runtime_error("BIM cache primitive has invalid bounds");
     }
 
-    const auto edge_count = cursor.read_count("primitive feature edge");
-    primitive.feature_edges.reserve(edge_count);
-    for (std::size_t index = 0; index < edge_count; ++index) {
-        primitive.feature_edges.push_back(MappedFeatureEdge{
-            .start = read_vec3(cursor),
-            .end = read_vec3(cursor),
-            .role = static_cast<RenderSceneFeatureEdgeRole>(cursor.read<std::uint8_t>()),
-        });
-    }
+    primitive.feature_edge_count = cursor.read_count("primitive feature edge");
+    primitive.feature_edges_offset = cursor.skip_array(
+        primitive.feature_edge_count,
+        kSerializedFeatureEdgeBytes,
+        "primitive feature edge"
+    );
 
-    const auto metadata_count = cursor.read_count("primitive metadata");
-    for (std::size_t index = 0; index < metadata_count; ++index) {
+    primitive.metadata_count = cursor.read_count("primitive metadata");
+    primitive.metadata_offset = cursor.offset();
+    // Metadata entries have variable-width strings, so the initial validation
+    // pass still walks them. Values are deliberately discarded: later JNI
+    // calls decode only the requested chunk/primitive directly from the mmap.
+    for (std::size_t index = 0; index < primitive.metadata_count; ++index) {
+        (void)cursor.read_string();
+        (void)cursor.read_string();
+    }
+    return primitive;
+}
+
+Cursor mapped_cursor(const NativeBimCacheHandle& cache, std::size_t offset) {
+    if (offset > cache.mapping_size) {
+        throw std::runtime_error("BIM cache semantic offset is out of range");
+    }
+    return Cursor(cache.mapping + offset, cache.mapping_size - offset);
+}
+
+std::array<std::string, kWallMetadataKeys.size()> mapped_wall_metadata(
+    const NativeBimCacheHandle& cache,
+    const MappedPrimitive& primitive
+) {
+    std::array<std::string, kWallMetadataKeys.size()> result{};
+    auto cursor = mapped_cursor(cache, primitive.metadata_offset);
+    for (std::size_t index = 0; index < primitive.metadata_count; ++index) {
         const auto key = cursor.read_string();
         auto value = cursor.read_string();
         for (std::size_t key_index = 0; key_index < kWallMetadataKeys.size(); ++key_index) {
             if (key == kWallMetadataKeys[key_index]) {
-                primitive.wall_metadata[key_index] = std::move(value);
+                result[key_index] = std::move(value);
                 break;
             }
         }
     }
-    return primitive;
+    return result;
+}
+
+void append_mapped_feature_edges(
+    const NativeBimCacheHandle& cache,
+    const MappedPrimitive& primitive,
+    std::vector<double>& values
+) {
+    auto cursor = mapped_cursor(cache, primitive.feature_edges_offset);
+    for (std::size_t index = 0; index < primitive.feature_edge_count; ++index) {
+        const auto start = read_vec3(cursor);
+        const auto end = read_vec3(cursor);
+        const auto role = static_cast<RenderSceneFeatureEdgeRole>(cursor.read<std::uint8_t>());
+        values.insert(values.end(), {
+            static_cast<double>(role),
+            start.x, start.y, start.z,
+            end.x, end.y, end.z,
+        });
+    }
 }
 
 std::unique_ptr<NativeBimCacheHandle> open_mapped_cache(
@@ -765,8 +805,9 @@ Java_com_example_viewer_1flutter_NativeBimCacheBridge_nativeChunkPrimitiveMetada
     auto* result = environment->NewObjectArray(static_cast<jsize>(item_count), string_class, nullptr);
     if (result == nullptr) return nullptr;
     for (std::size_t primitive_index = 0; primitive_index < primitives.size(); ++primitive_index) {
+        const auto metadata = mapped_wall_metadata(*cache, primitives[primitive_index]);
         for (std::size_t key_index = 0; key_index < kWallMetadataKeys.size(); ++key_index) {
-            auto* value = environment->NewStringUTF(primitives[primitive_index].wall_metadata[key_index].c_str());
+            auto* value = environment->NewStringUTF(metadata[key_index].c_str());
             if (value == nullptr) return nullptr;
             environment->SetObjectArrayElement(
                 result,
@@ -864,7 +905,7 @@ Java_com_example_viewer_1flutter_NativeBimCacheBridge_nativePrimitiveFeatureEdge
     std::vector<std::int64_t> values;
     for (const auto& chunk : cache->chunks) {
         for (const auto& primitive : chunk.primitives) {
-            values.push_back(static_cast<std::int64_t>(primitive.feature_edges.size()));
+            values.push_back(static_cast<std::int64_t>(primitive.feature_edge_count));
         }
     }
     return make_long_array(environment, values);
@@ -876,16 +917,20 @@ Java_com_example_viewer_1flutter_NativeBimCacheBridge_nativePrimitiveFeatureEdge
 ) {
     const auto* cache = to_handle(handle);
     if (cache == nullptr) return nullptr;
-    std::vector<double> values;
+    std::size_t edge_count = 0;
     for (const auto& chunk : cache->chunks) {
         for (const auto& primitive : chunk.primitives) {
-            for (const auto& edge : primitive.feature_edges) {
-                values.insert(values.end(), {
-                    static_cast<double>(edge.role),
-                    edge.start.x, edge.start.y, edge.start.z,
-                    edge.end.x, edge.end.y, edge.end.z,
-                });
-            }
+            if (primitive.feature_edge_count >
+                (std::numeric_limits<std::size_t>::max() - edge_count)) return nullptr;
+            edge_count += primitive.feature_edge_count;
+        }
+    }
+    if (edge_count > std::numeric_limits<std::size_t>::max() / 7) return nullptr;
+    std::vector<double> values;
+    values.reserve(edge_count * 7);
+    for (const auto& chunk : cache->chunks) {
+        for (const auto& primitive : chunk.primitives) {
+            append_mapped_feature_edges(*cache, primitive, values);
         }
     }
     return make_double_array(environment, values);
