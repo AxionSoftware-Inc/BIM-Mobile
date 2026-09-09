@@ -18,6 +18,11 @@ import 'window_element_module.dart';
 /// The default registry is deliberately immutable. Tests and future product
 /// editions can construct a registry with an additional module without
 /// changing viewport code or adding another global switch statement.
+///
+/// ARCHITECTURE: canonical kind/alias lookup is indexed lazily and validated
+/// for collisions. A new module cannot silently steal another module's key.
+/// The const constructor is kept during the 0.3.2 migration so existing
+/// composition/tests remain source-compatible.
 final class BimElementRegistry {
   const BimElementRegistry(this.modules);
 
@@ -40,18 +45,24 @@ final class BimElementRegistry {
   static const BimElementRegistry standard =
       BimElementRegistry(standardModules);
 
+  /// Per-registry immutable lookup index. Expando avoids turning this registry
+  /// into a process-wide service locator and does not keep short-lived custom
+  /// registries alive solely because they were queried once.
+  static final Expando<Map<String, BimElementModule>> _indices =
+      Expando<Map<String, BimElementModule>>('bim-element-registry-index');
+
   final List<BimElementModule> modules;
 
-  BimElementModule? forKind(String value) {
-    final canonical = _canonical(value);
-    for (final module in modules) {
-      if (_canonical(module.kindKey) == canonical ||
-          module.aliases.any((alias) => _canonical(alias) == canonical)) {
-        return module;
-      }
-    }
-    return null;
+  /// Validates all canonical kind and alias keys, then returns this registry.
+  ///
+  /// Call this at composition/test boundaries when fail-fast validation is
+  /// preferred. Normal lookup also validates on first use.
+  BimElementRegistry validate() {
+    _index;
+    return this;
   }
+
+  BimElementModule? forKind(String value) => _index[_canonical(value)];
 
   String normalizeKind(String value) =>
       forKind(value)?.kindKey ??
@@ -130,6 +141,40 @@ final class BimElementRegistry {
 
   bool isLevelLockedByDefault(String value) =>
       forKind(value)?.levelLockedByDefault ?? false;
+
+  Map<String, BimElementModule> get _index {
+    final cached = _indices[this];
+    if (cached != null) return cached;
+    final built = _buildIndex(modules);
+    _indices[this] = built;
+    return built;
+  }
+
+  static Map<String, BimElementModule> _buildIndex(
+    List<BimElementModule> modules,
+  ) {
+    final result = <String, BimElementModule>{};
+    for (final module in modules) {
+      final keys = <String>{module.kindKey, ...module.aliases};
+      for (final rawKey in keys) {
+        final key = _canonical(rawKey);
+        if (key.isEmpty) {
+          throw StateError(
+            'BIM element module ${module.runtimeType} registered an empty key.',
+          );
+        }
+        final previous = result[key];
+        if (previous != null && !identical(previous, module)) {
+          throw StateError(
+            'Duplicate BIM element registry key "$rawKey" (canonical "$key") '
+            'claimed by ${previous.runtimeType} and ${module.runtimeType}.',
+          );
+        }
+        result[key] = module;
+      }
+    }
+    return Map<String, BimElementModule>.unmodifiable(result);
+  }
 
   static String _canonical(String value) =>
       value.trim().toLowerCase().replaceAll('_', '').replaceAll('-', '');
