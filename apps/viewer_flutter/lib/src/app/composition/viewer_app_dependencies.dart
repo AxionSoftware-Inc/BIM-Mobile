@@ -6,7 +6,9 @@ import '../../features/project/application/project_companion_document.dart';
 import '../../features/project/application/project_lifecycle_service.dart';
 import '../../features/project/application/project_persistence_service.dart';
 import '../../features/project/application/project_session_controller.dart';
+import '../../features/viewer/application/scene_view_service.dart';
 import '../../platform/native_engine/native_viewer_session_factory.dart';
+import 'project_session_scene_gateway_resolver.dart';
 
 /// Dependencies owned by one workspace instance.
 ///
@@ -59,6 +61,13 @@ final class ViewerAppDependencies {
   final ProjectSessionController<ViewerEngineSession> projectSession;
   final BimElementRegistry elements;
   final BimElementInspectorRegistry inspectors;
+
+  /// Builds the viewer scene use-case against the same project session owned by
+  /// this composition root. Presentation code should use this instead of
+  /// recreating repository/engine-availability callbacks.
+  SceneViewService createSceneViewService() => SceneViewService.resolved(
+        ProjectSessionSceneGatewayResolver(projectSession),
+      );
 
   void dispose() {
     projectSession.dispose();
