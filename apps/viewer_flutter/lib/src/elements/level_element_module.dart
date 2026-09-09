@@ -1,13 +1,3 @@
-import 'bim_element_module.dart';
-
-final class LevelElementModule extends BimElementModule {
-  const LevelElementModule()
-      : super(
-          kindKey: 'level',
-          displayName: 'Level',
-          typeFamily: BimElementTypeFamily.none,
-          isArchitectural: false,
-          defaultVisibleIn3d: false,
-          aliases: const <String>{'level'},
-        );
-}
+// COMPATIBILITY: legacy element-module import path during 0.3.2 migration.
+// REMOVE WHEN: all callers import features/elements/domain/modules directly.
+export '../features/elements/domain/modules/level_element_module.dart';
