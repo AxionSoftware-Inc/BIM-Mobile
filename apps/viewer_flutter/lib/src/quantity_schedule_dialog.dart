@@ -261,18 +261,51 @@ class QuantityScheduleDialog extends StatelessWidget {
   }
 }
 
-class _RoomScheduleTable extends StatelessWidget {
+class _RoomScheduleTable extends StatefulWidget {
   const _RoomScheduleTable({required this.scene});
 
   final RenderScene scene;
 
   @override
-  Widget build(BuildContext context) {
-    final rooms = scene.objects
+  State<_RoomScheduleTable> createState() => _RoomScheduleTableState();
+}
+
+class _RoomScheduleTableState extends State<_RoomScheduleTable> {
+  late List<RenderSceneObject> _rooms;
+  late _RoomScheduleDataSource _source;
+
+  @override
+  void initState() {
+    super.initState();
+    _rebuildSource();
+  }
+
+  @override
+  void didUpdateWidget(covariant _RoomScheduleTable oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.scene, widget.scene)) {
+      _source.dispose();
+      _rebuildSource();
+    }
+  }
+
+  void _rebuildSource() {
+    _rooms = widget.scene.objects
         .where((object) => object.kindKey == 'room')
         .toList()
       ..sort((a, b) => (a.levelId ?? 0).compareTo(b.levelId ?? 0));
-    if (rooms.isEmpty) {
+    _source = _RoomScheduleDataSource(widget.scene, _rooms);
+  }
+
+  @override
+  void dispose() {
+    _source.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_rooms.isEmpty) {
       return const Center(
         child: Text(
             'No closed room boundaries found. Use the Room tool after closing the walls.'),
@@ -282,14 +315,18 @@ class _RoomScheduleTable extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
         Text(
-            '${rooms.length} room(s) · calculated only while this schedule is requested',
-            style: Theme.of(context).textTheme.bodySmall),
+          '${_rooms.length} room(s) · rows are built page-by-page',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
         const SizedBox(height: 10),
         Expanded(
           child: SingleChildScrollView(
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
-              child: DataTable(
+              child: PaginatedDataTable(
+                showFirstLastButtons: true,
+                showEmptyRows: false,
+                rowsPerPage: 25,
                 columns: const <DataColumn>[
                   DataColumn(label: Text('#')),
                   DataColumn(label: Text('Level')),
@@ -297,10 +334,7 @@ class _RoomScheduleTable extends StatelessWidget {
                   DataColumn(label: Text('Perimeter (m)')),
                   DataColumn(label: Text('Boundary walls')),
                 ],
-                rows: <DataRow>[
-                  for (var index = 0; index < rooms.length; index += 1)
-                    _roomRow(index + 1, rooms[index]),
-                ],
+                source: _source,
               ),
             ),
           ),
@@ -308,23 +342,46 @@ class _RoomScheduleTable extends StatelessWidget {
       ],
     );
   }
+}
 
-  DataRow _roomRow(int number, RenderSceneObject room) {
+class _RoomScheduleDataSource extends DataTableSource {
+  _RoomScheduleDataSource(this.scene, this.rooms);
+
+  final RenderScene scene;
+  final List<RenderSceneObject> rooms;
+
+  @override
+  DataRow? getRow(int index) {
+    if (index < 0 || index >= rooms.length) return null;
+    final room = rooms[index];
     final parameters = RoomElementParameters.fromObject(room);
     final area =
         parameters.areaSquareMeters ?? room.bounds.width * room.bounds.depth;
     final perimeter = parameters.perimeterMeters ??
         (room.bounds.width + room.bounds.depth) * 2.0;
     final level = scene.levelById(room.levelId)?.name ?? 'Unassigned';
-    return DataRow(cells: <DataCell>[
-      DataCell(Text(number.toString())),
-      DataCell(Text(level)),
-      DataCell(Text(area.toStringAsFixed(2))),
-      DataCell(Text(perimeter.toStringAsFixed(2))),
-      DataCell(
-          Text(RenderSceneEditor.roomBoundaryWallIds(room).length.toString())),
-    ]);
+    return DataRow.byIndex(
+      index: index,
+      cells: <DataCell>[
+        DataCell(Text('${index + 1}')),
+        DataCell(Text(level)),
+        DataCell(Text(area.toStringAsFixed(2))),
+        DataCell(Text(perimeter.toStringAsFixed(2))),
+        DataCell(Text(
+          RenderSceneEditor.roomBoundaryWallIds(room).length.toString(),
+        )),
+      ],
+    );
   }
+
+  @override
+  bool get isRowCountApproximate => false;
+
+  @override
+  int get rowCount => rooms.length;
+
+  @override
+  int get selectedRowCount => 0;
 }
 
 class _QuantityScheduleTable extends StatelessWidget {
