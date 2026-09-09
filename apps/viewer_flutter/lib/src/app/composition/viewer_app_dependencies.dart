@@ -1,7 +1,7 @@
 import '../../core/application/engine/viewer_project_session.dart';
-import '../../elements/bim_element_registry.dart';
 import '../../elements/inspector_registry.dart';
 import '../../features/annotations/infrastructure/annotation_project_companion.dart';
+import '../../features/elements/application/bim_element_registry.dart';
 import '../../features/project/application/project_companion_document.dart';
 import '../../features/project/application/project_lifecycle_service.dart';
 import '../../features/project/application/project_persistence_service.dart';
