@@ -1,15 +1,3 @@
-import 'bim_element_module.dart';
-
-final class ColumnElementModule extends BimElementModule {
-  const ColumnElementModule()
-      : super(
-          kindKey: 'column',
-          displayName: 'Column',
-          typeFamily: BimElementTypeFamily.column,
-          inspectorAdapterKey: BimElementInspectorKeys.linear,
-          aliases: const <String>{'column'},
-          isLevelHosted: true,
-          isPlanCore: true,
-          levelLockedByDefault: true,
-        );
-}
+// COMPATIBILITY: legacy element-module import path during 0.3.2 migration.
+// REMOVE WHEN: all callers import features/elements/domain/modules directly.
+export '../features/elements/domain/modules/column_element_module.dart';
