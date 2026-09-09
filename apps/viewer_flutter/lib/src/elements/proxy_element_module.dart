@@ -1,29 +1,3 @@
-import 'bim_element_module.dart';
-
-final class ProxyElementModule extends BimElementModule {
-  const ProxyElementModule()
-      : super(
-          kindKey: 'proxy',
-          displayName: 'Imported element',
-          typeFamily: BimElementTypeFamily.none,
-          inspectorAdapterKey: BimElementInspectorKeys.family,
-          aliases: const <String>{
-            'proxy',
-            'fbx',
-            'fbxmesh',
-            'fbxmodel',
-            'fbximport',
-            'fbx_import',
-            'mesh',
-            'meshmodel',
-            'imported',
-            'importedmesh',
-            'importedmodel',
-            'model3d',
-            'external',
-            'externalmesh',
-            'foreignmesh',
-          },
-          isArchitectural: false,
-        );
-}
+// COMPATIBILITY: legacy element-module import path during 0.3.2 migration.
+// REMOVE WHEN: all callers import features/elements/domain/modules directly.
+export '../features/elements/domain/modules/proxy_element_module.dart';
