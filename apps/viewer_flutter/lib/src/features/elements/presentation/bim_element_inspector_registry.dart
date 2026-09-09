@@ -1,5 +1,6 @@
 export 'bim_element_inspector_adapter.dart';
 export 'bim_inspector_primitives.dart';
+export 'ceiling_element_inspector_adapter.dart';
 export 'generic_element_inspector_adapter.dart';
 
 import '../application/bim_element_registry.dart';
