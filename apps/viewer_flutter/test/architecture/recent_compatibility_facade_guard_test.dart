@@ -33,6 +33,8 @@ void main() {
           'features/families/application/dependencies/family_dependency_resolver.dart',
       'family_render_scene_adapter.dart':
           'features/families/application/integration/family_render_scene_adapter.dart',
+      'family_parameter_authoring.dart':
+          'features/families/application/authoring/family_parameter_authoring.dart',
       'family_constraint_models.dart':
           'features/families/domain/constraints/family_constraint_models.dart',
       'family_document.dart':
@@ -53,6 +55,14 @@ void main() {
           'features/families/infrastructure/catalog/built_in_family_catalog.dart',
       'family_file_store.dart':
           'features/families/infrastructure/library/family_file_store.dart',
+      'family_parameters_panel.dart':
+          'features/families/presentation/panels/family_parameters_panel.dart',
+      'family_type_matrix_panel.dart':
+          'features/families/presentation/panels/family_type_matrix_panel.dart',
+      'family_constraints_geometry_panel.dart':
+          'features/families/presentation/panels/family_constraints_geometry_panel.dart',
+      'family_constraints_panel.dart':
+          'features/families/presentation/panels/family_constraints_panel.dart',
     };
     final directivePattern =
         RegExp(r'''(?:import|export)\s+['"]([^'"]+)['"]''');
