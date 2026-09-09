@@ -1,17 +1,17 @@
-import '../../../elements/beam_element_module.dart';
-import '../../../elements/ceiling_element_module.dart';
-import '../../../elements/column_element_module.dart';
-import '../../../elements/door_element_module.dart';
-import '../../../elements/floor_element_module.dart';
-import '../../../elements/level_element_module.dart';
-import '../../../elements/proxy_element_module.dart';
-import '../../../elements/roof_element_module.dart';
-import '../../../elements/room_element_module.dart';
-import '../../../elements/slab_element_module.dart';
-import '../../../elements/stair_element_module.dart';
-import '../../../elements/wall_element_module.dart';
-import '../../../elements/window_element_module.dart';
 import '../domain/bim_element_module.dart';
+import '../domain/modules/beam_element_module.dart';
+import '../domain/modules/ceiling_element_module.dart';
+import '../domain/modules/column_element_module.dart';
+import '../domain/modules/door_element_module.dart';
+import '../domain/modules/floor_element_module.dart';
+import '../domain/modules/level_element_module.dart';
+import '../domain/modules/proxy_element_module.dart';
+import '../domain/modules/roof_element_module.dart';
+import '../domain/modules/room_element_module.dart';
+import '../domain/modules/slab_element_module.dart';
+import '../domain/modules/stair_element_module.dart';
+import '../domain/modules/wall_element_module.dart';
+import '../domain/modules/window_element_module.dart';
 
 /// Registry of element modules used by the Flutter application boundary.
 ///
