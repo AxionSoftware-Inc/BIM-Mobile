@@ -9,13 +9,15 @@ import java.nio.IntBuffer
  *
  * MEMORY/STREAMING CONTRACT:
  * - Dart never receives vertex/index payloads.
- * - Opening a cache builds only a compact chunk/semantic manifest.
+ * - Opening a cache builds only a compact chunk manifest.
+ * - Per-element semantics and feature edges stay inside the mmap until a
+ *   consumer explicitly asks for them.
  * - A chunk's direct native geometry view is requested lazily when the
  *   renderer actually chooses that chunk for residency.
  *
- * This matters for campus-size projects: progressive GPU upload is not enough
- * if Kotlin eagerly creates direct-buffer views for every floor/building at
- * startup. Lazy geometry lets the CPU and GPU working sets follow the camera.
+ * Progressive GPU upload alone is not enough for campus-size projects if the
+ * Android bridge eagerly mirrors every primitive into Java/Kotlin objects.
+ * This bridge therefore keeps both geometry and semantics demand-driven.
  */
 internal object NativeBimCacheBridge {
   private const val virtualIfcPartTag = 0x4000000000000000L
@@ -61,43 +63,28 @@ internal object NativeBimCacheBridge {
     val handle = nativeOpen(cachePath, sourceIfcPath)
     if (handle == 0L) return null
     return try {
-      val primitiveData = nativePrimitiveData(handle) ?: LongArray(0)
-      val primitiveBounds = nativePrimitiveBounds(handle) ?: DoubleArray(0)
-      val primitiveFeatureEdgeCounts = nativePrimitiveFeatureEdgeCounts(handle) ?: LongArray(0)
-      val primitiveFeatureEdgeData = nativePrimitiveFeatureEdgeData(handle) ?: DoubleArray(0)
-      val primitiveFeatureEdges = decodePrimitiveFeatureEdges(
-        primitiveFeatureEdgeCounts,
-        primitiveFeatureEdgeData,
-      )
-      var primitiveOffset = 0
+      var primitiveCount = 0
       val chunks = buildList {
         repeat(nativeChunkCount(handle)) { index ->
           val bounds = nativeChunkBounds(handle, index) ?: return@repeat
           if (bounds.size != 6) return@repeat
-          val primitiveRanges = nativeChunkPrimitiveRanges(handle, index)
-          val primitiveMetadata = nativeChunkPrimitiveMetadata(handle, index)
-            ?.toList()
-            ?.chunked(8)
-            ?.map { values -> wallMetadata(values) }
-            ?: emptyList()
-          val ranges = primitiveRanges
-            ?.asList()
-            ?.chunked(3)
-            ?.mapIndexedNotNull { primitiveIndex, values ->
-              if (values.size != 3) return@mapIndexedNotNull null
-              NativeBimCachePrimitiveRange(
-                firstIndex = values[0].toInt(),
-                indexCount = values[1].toInt(),
-                kind = kindFromNativeValue(values[2]),
-                metadata = primitiveMetadata.getOrNull(primitiveIndex) ?: emptyMap(),
-                featureEdges = primitiveFeatureEdges.getOrNull(primitiveOffset + primitiveIndex)
-                  ?: emptyList(),
-              )
-            }
-            ?: emptyList()
-          primitiveOffset += ranges.size
+
+          // Read only the compact range triplets needed for retained counts and
+          // streaming byte estimates. The array is discarded before the next
+          // chunk; metadata/feature edges remain untouched in the mmap.
+          val rangeValues = nativeChunkPrimitiveRanges(handle, index) ?: LongArray(0)
+          val rangeCount = rangeValues.size / 3
+          primitiveCount += rangeCount
+          var estimatedIndexCountLong = 0L
+          var rangeOffset = 0
+          repeat(rangeCount) {
+            estimatedIndexCountLong += rangeValues[rangeOffset + 1].coerceAtLeast(0L)
+            rangeOffset += 3
+          }
+          val estimatedIndexCount = estimatedIndexCountLong
+            .coerceAtMost(Int.MAX_VALUE.toLong())
+            .toInt()
           val kindMask = nativeChunkKindMask(handle, index)
-          val estimatedIndexCount = ranges.sumOf { range -> range.indexCount.coerceAtLeast(0) }
 
           add(
             NativeBimCacheChunk(
@@ -107,7 +94,12 @@ internal object NativeBimCacheBridge {
               kind = primaryKindFromMask(kindMask),
               sourceBounds = sceneBounds(bounds),
               estimatedIndexCount = estimatedIndexCount,
-              primitiveRanges = ranges,
+              primitiveRanges = emptyList(),
+              primitiveRangeLoader = {
+                // Only consumers that need semantic linework/plan metadata pay
+                // for these Kotlin objects. Native 3D triangle picking does not.
+                decodeChunkPrimitiveRanges(handle, index)
+              },
               geometryLoader = loader@{
                 // The cache handle stays open for the lifetime of the viewport.
                 // These direct views are therefore safe while the chunk is
@@ -133,16 +125,14 @@ internal object NativeBimCacheBridge {
           )
         }
       }
-      val primitiveMetadata = cachePrimitiveMetadata(chunks)
+
       NativeBimCache(
         handle = handle,
         chunks = chunks,
-        primitives = buildPrimitives(
-          primitiveData,
-          primitiveBounds,
-          primitiveMetadata,
-          primitiveFeatureEdges,
-        ),
+        primitiveCount = primitiveCount,
+        semanticLoader = {
+          loadPrimitiveSemantics(handle, chunks)
+        },
       )
     } catch (_: Throwable) {
       nativeClose(handle)
@@ -265,10 +255,9 @@ internal object NativeBimCacheBridge {
    * Produces the semantic envelope Flutter needs for project chrome,
    * selection and 2D metadata. Meshes never cross this boundary.
    *
-   * Do not touch [NativeBimCacheChunk.positions]/indices here. Doing so would
-   * defeat lazy CPU streaming during project startup. Geometry counts in this
-   * semantic envelope are intentionally zero because the Dart scene contains
-   * no mesh; native estimated counts are reported separately for diagnostics.
+   * This is intentionally the explicit heavyweight API. [open] no longer pays
+   * this cost; callers that need the complete 2D/Inspector semantic envelope
+   * opt in here, then the temporary cache is closed immediately.
    */
   fun describe(cachePath: String, sourceIfcPath: String): Map<String, Any?>? {
     val cache = open(cachePath, sourceIfcPath) ?: return null
@@ -288,6 +277,7 @@ internal object NativeBimCacheBridge {
             "default_wall_height_meters" to 3.2,
           )
         }
+      val primitives = cache.semanticPrimitives()
       val margin = maxOf(
         2.0,
         (bounds.max.x - bounds.min.x).coerceAtLeast(bounds.max.y - bounds.min.y) * 0.08,
@@ -296,7 +286,7 @@ internal object NativeBimCacheBridge {
         "scene_version" to 1,
         "units" to "meters",
         "coordinate_system" to "X/Y plan, Z up",
-        "object_count" to cache.primitives.size,
+        "object_count" to cache.primitiveCount,
         "vertex_count" to 0,
         "index_count" to 0,
         "native_cache_estimated_index_count" to cache.chunks.sumOf { it.estimatedIndexCount },
@@ -308,7 +298,7 @@ internal object NativeBimCacheBridge {
           sectionMap("Section A", bounds.min.x - margin, centerY(bounds), bounds.max.x + margin, centerY(bounds)),
           sectionMap("Section B", centerX(bounds), bounds.min.y - margin, centerX(bounds), bounds.max.y + margin),
         ),
-        "objects" to cache.primitives.map { primitive ->
+        "objects" to primitives.map { primitive ->
           val sourceElementId = virtualIfcPartSourceId(primitive.elementId)
           val metadata = linkedMapOf<String, Any?>("native_cache" to true)
           metadata.putAll(primitive.metadata)
@@ -348,6 +338,44 @@ internal object NativeBimCacheBridge {
     } finally {
       cache.close()
     }
+  }
+
+  private fun decodeChunkPrimitiveRanges(handle: Long, chunkIndex: Int): List<NativeBimCachePrimitiveRange> {
+    val primitiveRanges = nativeChunkPrimitiveRanges(handle, chunkIndex) ?: return emptyList()
+    val primitiveMetadata = nativeChunkPrimitiveMetadata(handle, chunkIndex)
+      ?.toList()
+      ?.chunked(8)
+      ?.map { values -> wallMetadata(values) }
+      ?: emptyList()
+    return primitiveRanges
+      .asList()
+      .chunked(3)
+      .mapIndexedNotNull { primitiveIndex, values ->
+        if (values.size != 3) return@mapIndexedNotNull null
+        NativeBimCachePrimitiveRange(
+          firstIndex = values[0].toInt(),
+          indexCount = values[1].toInt(),
+          kind = kindFromNativeValue(values[2]),
+          metadata = primitiveMetadata.getOrNull(primitiveIndex) ?: emptyMap(),
+          // Native cache 3D linework can derive stable topology from the
+          // resident triangle range. Keeping global feature-edge arrays out of
+          // the chunk working set is a much larger memory win on campus files.
+          featureEdges = emptyList(),
+        )
+      }
+  }
+
+  private fun loadPrimitiveSemantics(
+    handle: Long,
+    chunks: List<NativeBimCacheChunk>,
+  ): List<NativeBimCachePrimitive> {
+    val data = nativePrimitiveData(handle) ?: LongArray(0)
+    val bounds = nativePrimitiveBounds(handle) ?: DoubleArray(0)
+    val edgeCounts = nativePrimitiveFeatureEdgeCounts(handle) ?: LongArray(0)
+    val edgeData = nativePrimitiveFeatureEdgeData(handle) ?: DoubleArray(0)
+    val featureEdges = decodePrimitiveFeatureEdges(edgeCounts, edgeData)
+    val metadata = cachePrimitiveMetadata(chunks)
+    return buildPrimitives(data, bounds, metadata, featureEdges)
   }
 
   private fun buildPrimitives(
@@ -506,9 +534,38 @@ internal object NativeBimCacheBridge {
   class NativeBimCache internal constructor(
     private val handle: Long,
     val chunks: List<NativeBimCacheChunk>,
-    val primitives: List<NativeBimCachePrimitive>,
+    val primitiveCount: Int,
+    private val semanticLoader: () -> List<NativeBimCachePrimitive>,
   ) : AutoCloseable {
+    @Volatile
+    private var loadedPrimitives: List<NativeBimCachePrimitive>? = null
     private var closed = false
+
+    /**
+     * Compatibility accessor for existing 2D/Inspector code. It is now lazy;
+     * 3D streaming/picking code should prefer [primitiveCount] and [pick].
+     */
+    val primitives: List<NativeBimCachePrimitive>
+      get() = semanticPrimitives()
+
+    fun semanticPrimitives(): List<NativeBimCachePrimitive> {
+      if (closed) return emptyList()
+      loadedPrimitives?.let { return it }
+      return synchronized(this) {
+        loadedPrimitives ?: semanticLoader().also { loadedPrimitives = it }
+      }
+    }
+
+    /**
+     * Releases the optional Kotlin semantic mirror without touching the mmap.
+     * A later plan/Inspector request may recreate it from the native cache.
+     */
+    fun releaseSemanticPrimitives() {
+      synchronized(this) {
+        loadedPrimitives = null
+        chunks.forEach(NativeBimCacheChunk::releaseSemanticView)
+      }
+    }
 
     fun pick(origin: ScenePoint, direction: ScenePoint, visibleKinds: Set<String>): Long? {
       if (closed) return null
@@ -526,9 +583,16 @@ internal object NativeBimCacheBridge {
     }
 
     override fun close() {
-      if (!closed) {
-        nativeClose(handle)
-        closed = true
+      synchronized(this) {
+        if (!closed) {
+          loadedPrimitives = null
+          chunks.forEach {
+            it.releaseGeometryView()
+            it.releaseSemanticView()
+          }
+          nativeClose(handle)
+          closed = true
+        }
       }
     }
   }
@@ -540,12 +604,8 @@ internal data class NativeBimCacheGeometry(
 )
 
 /**
- * Lightweight chunk manifest. Geometry is a lazy direct-native view.
- *
- * [estimatedGpuBytes] intentionally uses an index-derived upper-bound style
- * estimate. Exact driver allocation accounting is not available here and, more
- * importantly, querying exact vertex buffers would eagerly materialize the
- * very geometry this class is designed to keep cold.
+ * Lightweight chunk manifest. Geometry and semantic range metadata are lazy
+ * native-backed views whose Kotlin mirrors can be discarded independently.
  */
 internal class NativeBimCacheChunk(
   val levelId: Long,
@@ -554,14 +614,27 @@ internal class NativeBimCacheChunk(
   val kind: String,
   val sourceBounds: SceneBounds,
   val estimatedIndexCount: Int,
-  val primitiveRanges: List<NativeBimCachePrimitiveRange> = emptyList(),
+  primitiveRanges: List<NativeBimCachePrimitiveRange> = emptyList(),
+  private val primitiveRangeLoader: (() -> List<NativeBimCachePrimitiveRange>)? = null,
   private val geometryLoader: () -> NativeBimCacheGeometry?,
 ) {
   @Volatile
   private var loadedGeometry: NativeBimCacheGeometry? = null
+  @Volatile
+  private var loadedPrimitiveRanges: List<NativeBimCachePrimitiveRange>? =
+    primitiveRanges.takeIf { it.isNotEmpty() }
 
   val estimatedGpuBytes: Long
     get() = estimatedIndexCount.toLong().coerceAtLeast(0L) * 16L + 4096L
+
+  val primitiveRanges: List<NativeBimCachePrimitiveRange>
+    get() {
+      loadedPrimitiveRanges?.let { return it }
+      val loader = primitiveRangeLoader ?: return emptyList()
+      return synchronized(this) {
+        loadedPrimitiveRanges ?: loader().also { loadedPrimitiveRanges = it }
+      }
+    }
 
   fun geometry(): NativeBimCacheGeometry? {
     loadedGeometry?.let { return it }
@@ -576,14 +649,17 @@ internal class NativeBimCacheChunk(
   val indices: IntBuffer
     get() = geometry()?.indices ?: EMPTY_INT_BUFFER.duplicate()
 
-  /**
-   * Drops Kotlin's direct-buffer views after the renderer has destroyed the
-   * corresponding Filament resources. The native cache remains authoritative,
-   * so a later camera revisit can materialize fresh views without reparsing IFC.
-   */
+  /** Drops Kotlin direct-buffer views after Filament destroys this chunk. */
   fun releaseGeometryView() {
     synchronized(this) {
       loadedGeometry = null
+    }
+  }
+
+  /** Drops per-range metadata/objects while retaining the mmap manifest. */
+  fun releaseSemanticView() {
+    synchronized(this) {
+      loadedPrimitiveRanges = null
     }
   }
 
