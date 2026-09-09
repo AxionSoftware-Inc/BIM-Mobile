@@ -6,7 +6,7 @@ import 'package:viewer_flutter/src/render_scene_models.dart';
 import 'package:viewer_flutter/src/tools/wall_authoring_geometry.dart';
 
 void main() {
-  test('local wall mutation returns a verified created element', () async {
+  test('wall mutation rejects a non-authoritative local fallback', () async {
     final scene = _emptyScene();
     const service = SceneMutationService();
 
@@ -22,17 +22,18 @@ void main() {
       ),
     );
 
-    expect(outcome.success, isTrue);
-    expect(outcome.scene, isNotNull);
-    expect(outcome.createdElementId, isNotNull);
+    expect(outcome.success, isFalse);
+    expect(outcome.scene, same(scene));
+    expect(outcome.createdElementId, isNull);
+    expect(outcome.scene!.objects, isEmpty);
+    expect(outcome.error, contains('Authoritative engine'));
     expect(
-      outcome.scene!.objectById(outcome.createdElementId!)?.kindKey,
-      'wall',
+      outcome.trace.any((entry) => entry.contains('mutation rejected')),
+      isTrue,
     );
-    expect(outcome.trace, isNotEmpty);
   });
 
-  test('local curved wall mutation returns a verified created element',
+  test('curved wall mutation rejects a non-authoritative local fallback',
       () async {
     final scene = _emptyScene();
     const service = SceneMutationService();
@@ -54,14 +55,15 @@ void main() {
       ),
     );
 
-    expect(outcome.success, isTrue);
-    expect(outcome.scene, isNotNull);
-    expect(outcome.createdElementId, isNotNull);
+    expect(outcome.success, isFalse);
+    expect(outcome.scene, same(scene));
+    expect(outcome.createdElementId, isNull);
+    expect(outcome.scene!.objects, isEmpty);
+    expect(outcome.error, contains('Authoritative engine'));
     expect(
-      outcome.scene!.objectById(outcome.createdElementId!)?.kindKey,
-      'wall',
+      outcome.trace.any((entry) => entry.contains('mutation rejected')),
+      isTrue,
     );
-    expect(outcome.trace.any((entry) => entry.contains('curved wall')), isTrue);
   });
 }
 

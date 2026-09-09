@@ -65,9 +65,9 @@ class CreateCurvedWallRequest {
 /// The transactional application entry point for wall creation.
 ///
 /// It makes engine create -> level constraints -> snapshot verification one
-/// use-case boundary. The local editor is used solely when no engine was
-/// loaded, preserving desktop/development fallback without leaking that policy
-/// into widgets.
+/// use-case boundary. Permanent mutations require an authoritative engine;
+/// local geometry helpers remain available only for transient preview/math and
+/// must never manufacture a second semantic source of truth.
 class SceneMutationService {
   const SceneMutationService({this.engineRepository});
 
@@ -80,38 +80,13 @@ class SceneMutationService {
     ];
     final engine = engineRepository;
     if (engine == null) {
-      final scene = RenderSceneEditor.addWall(
-        scene: request.scene,
-        start: request.start,
-        end: request.end,
-        heightMeters: request.heightMeters,
-        thicknessMeters: request.thicknessMeters,
-        levelId: request.baseLevelId,
-        topLevelId: request.topLevelId,
-      );
-      final previousWallIds = request.scene.objects
-          .where((object) => object.kindKey == 'wall')
-          .map((object) => object.elementId)
-          .whereType<int>()
-          .toSet();
-      final created = scene.objects
-          .where((object) =>
-              object.kindKey == 'wall' &&
-              object.elementId != null &&
-              !previousWallIds.contains(object.elementId))
-          .map((object) => object.elementId)
-          .whereType<int>()
-          .cast<int?>()
-          .lastOrNull;
-      final success = created != null;
-      trace.add(
-          'fallback snapshot walls=${scene.kindCounts['wall'] ?? 0} id=$created');
+      trace.add('engine unavailable: permanent wall mutation rejected');
       return SceneMutationOutcome(
-        scene: scene,
-        createdElementId: created,
-        success: success,
+        scene: request.scene,
+        createdElementId: null,
+        success: false,
         trace: trace,
-        error: success ? null : 'Fallback wall could not be created.',
+        error: 'Authoritative engine is required to create walls.',
       );
     }
 
@@ -204,44 +179,13 @@ class SceneMutationService {
     ];
     final engine = engineRepository;
     if (engine == null) {
-      final scene = RenderSceneEditor.addCurvedWall(
-        scene: request.scene,
-        start: request.geometry.start,
-        end: request.geometry.end,
-        center: request.geometry.center,
-        radiusMeters: request.geometry.radiusMeters,
-        startAngleRadians: math.atan2(
-          request.geometry.start.y - request.geometry.center.y,
-          request.geometry.start.x - request.geometry.center.x,
-        ),
-        sweepRadians: request.geometry.sweepRadians,
-        heightMeters: request.heightMeters,
-        thicknessMeters: request.thicknessMeters,
-        levelId: request.baseLevelId,
-        topLevelId: request.topLevelId,
-      );
-      final previousWallIds = request.scene.objects
-          .where((object) => object.kindKey == 'wall')
-          .map((object) => object.elementId)
-          .whereType<int>()
-          .toSet();
-      final created = scene.objects
-          .where((object) =>
-              object.kindKey == 'wall' &&
-              object.elementId != null &&
-              !previousWallIds.contains(object.elementId))
-          .map((object) => object.elementId)
-          .whereType<int>()
-          .cast<int?>()
-          .lastOrNull;
-      final success = created != null;
-      trace.add('fallback curved wall id=$created');
+      trace.add('engine unavailable: permanent curved wall mutation rejected');
       return SceneMutationOutcome(
-        scene: scene,
-        createdElementId: created,
-        success: success,
+        scene: request.scene,
+        createdElementId: null,
+        success: false,
         trace: trace,
-        error: success ? null : 'Fallback curved wall could not be created.',
+        error: 'Authoritative engine is required to create curved walls.',
       );
     }
     try {
