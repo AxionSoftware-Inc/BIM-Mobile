@@ -43,6 +43,10 @@ void main() {
           'features/families/application/library/family_library_metadata.dart',
       'family_bundled_catalog.dart':
           'features/families/infrastructure/catalog/family_bundled_catalog.dart',
+      'built_in_family_catalog.dart':
+          'features/families/infrastructure/catalog/built_in_family_catalog.dart',
+      'family_file_store.dart':
+          'features/families/infrastructure/library/family_file_store.dart',
     };
     final directivePattern =
         RegExp(r'''(?:import|export)\s+['"]([^'"]+)['"]''');
