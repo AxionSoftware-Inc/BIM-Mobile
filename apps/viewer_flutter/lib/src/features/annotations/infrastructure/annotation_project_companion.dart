@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import '../../../annotations/annotation_workspace_runtime.dart';
+import '../application/annotation_workspace_runtime.dart';
 import '../../project/application/project_companion_document.dart';
 import 'annotation_sidecar_store.dart';
 
