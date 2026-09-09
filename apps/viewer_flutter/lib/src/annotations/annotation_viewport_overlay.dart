@@ -19,12 +19,14 @@ class AnnotationViewportOverlay extends StatelessWidget {
     required this.controller,
     required this.store,
     required this.viewId,
+    this.selectedAnnotationId,
     this.units = const ProjectUnitSettings.defaults(),
   });
 
   final RenderSceneViewportController controller;
   final AnnotationStore store;
   final int viewId;
+  final int? selectedAnnotationId;
   final ProjectUnitSettings units;
 
   @override
@@ -50,10 +52,12 @@ class AnnotationViewportOverlay extends StatelessWidget {
                 controller: controller,
                 store: store,
                 plan: AnnotationRenderPlanner.forView(store, viewId),
+                selectedAnnotationId: selectedAnnotationId,
                 units: units,
                 lineColor: colors.primary,
                 textColor: colors.onSurface,
                 tagBackground: colors.surface.withValues(alpha: 0.92),
+                selectionColor: colors.tertiary,
               ),
             );
           },
@@ -68,19 +72,23 @@ final class _AnnotationPainter extends CustomPainter {
     required this.controller,
     required this.store,
     required this.plan,
+    required this.selectedAnnotationId,
     required this.units,
     required this.lineColor,
     required this.textColor,
     required this.tagBackground,
+    required this.selectionColor,
   });
 
   final RenderSceneViewportController controller;
   final AnnotationStore store;
   final AnnotationRenderPlan plan;
+  final int? selectedAnnotationId;
   final ProjectUnitSettings units;
   final Color lineColor;
   final Color textColor;
   final Color tagBackground;
+  final Color selectionColor;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -154,6 +162,8 @@ final class _AnnotationPainter extends CustomPainter {
           }
       }
     }
+
+    _paintSelection(canvas, projection);
   }
 
   Int32List _rowLookup(int length, Uint32List annotationIndices) {
@@ -172,6 +182,34 @@ final class _AnnotationPainter extends CustomPainter {
       y: store.anchors[offset + 1],
       z: store.anchors[offset + 2],
     );
+  }
+
+  void _paintSelection(
+    Canvas canvas,
+    RenderSceneProjection projection,
+  ) {
+    final selectedId = selectedAnnotationId;
+    if (selectedId == null) return;
+    final visible = store.queryView(plan.viewId);
+    var selectedIndex = -1;
+    for (final annotationIndex in visible) {
+      if (annotationIndex < store.length &&
+          store.annotationIds[annotationIndex] == selectedId) {
+        selectedIndex = annotationIndex;
+        break;
+      }
+    }
+    if (selectedIndex < 0) return;
+    final point = projection.project(_anchor(selectedIndex)).screen;
+    final paint = Paint()
+      ..color = selectionColor
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2;
+    canvas.drawCircle(point, 11, paint);
+    canvas.drawLine(point + const Offset(-14, 0), point + const Offset(-8, 0), paint);
+    canvas.drawLine(point + const Offset(8, 0), point + const Offset(14, 0), paint);
+    canvas.drawLine(point + const Offset(0, -14), point + const Offset(0, -8), paint);
+    canvas.drawLine(point + const Offset(0, 8), point + const Offset(0, 14), paint);
   }
 
   void _paintDimension(
@@ -324,7 +362,9 @@ final class _AnnotationPainter extends CustomPainter {
   bool shouldRepaint(covariant _AnnotationPainter oldDelegate) =>
       oldDelegate.store != store ||
       oldDelegate.plan.viewId != plan.viewId ||
+      oldDelegate.selectedAnnotationId != selectedAnnotationId ||
       oldDelegate.lineColor != lineColor ||
       oldDelegate.textColor != textColor ||
-      oldDelegate.tagBackground != tagBackground;
+      oldDelegate.tagBackground != tagBackground ||
+      oldDelegate.selectionColor != selectionColor;
 }
