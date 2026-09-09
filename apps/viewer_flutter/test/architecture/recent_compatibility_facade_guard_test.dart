@@ -27,6 +27,8 @@ void main() {
           'features/authoring/application/authoring_command_service.dart',
       'scene_mutation_service.dart':
           'features/authoring/application/scene_mutation_service.dart',
+      'family_instance_adapter.dart':
+          'features/families/application/family_instance_adapter.dart',
     };
     final directivePattern =
         RegExp(r"(?:import|export)\s+['\"]([^'\"]+)['\"]");
