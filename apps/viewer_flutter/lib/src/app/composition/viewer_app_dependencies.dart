@@ -4,8 +4,8 @@ import '../../features/annotations/infrastructure/annotation_project_companion.d
 import '../../features/project/application/project_companion_document.dart';
 import '../../features/project/application/project_lifecycle_service.dart';
 import '../../features/project/application/project_persistence_service.dart';
+import '../../features/project/application/project_session_controller.dart';
 import '../../native_viewer_session_factory.dart';
-import '../../project_session_controller.dart';
 import '../../viewer_project_session.dart';
 
 /// Dependencies owned by one workspace instance.
