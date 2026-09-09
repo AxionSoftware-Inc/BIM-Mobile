@@ -39,6 +39,7 @@ class _ObjectInspectorRouter extends StatelessWidget {
   static final BimElementInspectorAdapterRegistry _standaloneAdapters =
       BimElementInspectorAdapterRegistry(
     const <BimElementInspectorAdapter>[
+      CeilingElementInspectorAdapter(),
       GenericElementInspectorAdapter(),
     ],
   );
@@ -79,7 +80,6 @@ class _ObjectInspectorRouter extends StatelessWidget {
           onApplied: context.onApplied,
         ),
     BimElementInspectorKeys.stair: _buildStairInspector,
-    BimElementInspectorKeys.ceiling: _buildCeilingInspector,
     BimElementInspectorKeys.linear: _buildLinearInspector,
     BimElementInspectorKeys.family: _buildFamilyInspector,
   };
