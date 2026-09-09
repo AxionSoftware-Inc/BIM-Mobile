@@ -198,6 +198,8 @@ void main() {
             'core/application/engine/viewer_authoring_gateway.dart',
         'viewer_project_session.dart':
             'core/application/engine/viewer_project_session.dart',
+        'viewer_bim_cache_gateway.dart':
+            'core/application/engine/viewer_bim_runtime_cache_gateway.dart',
         'bim_element_module.dart':
             'features/elements/domain/bim_element_module.dart',
         'bim_element_registry.dart':
@@ -230,6 +232,20 @@ void main() {
             'features/elements/domain/modules/level_element_module.dart',
         'proxy_element_module.dart':
             'features/elements/domain/modules/proxy_element_module.dart',
+        'assembly_type_catalog.dart':
+            'features/elements/domain/types/assembly_type_catalog.dart',
+        'wall_type_catalog.dart':
+            'features/elements/domain/types/wall_type_catalog.dart',
+        'floor_type_catalog.dart':
+            'features/elements/domain/types/floor_type_catalog.dart',
+        'opening_type_catalog.dart':
+            'features/elements/domain/types/opening_type_catalog.dart',
+        'element_parameter_values.dart':
+            'features/elements/application/element_parameter_values.dart',
+        'wall_parameters.dart':
+            'features/elements/application/wall_element_parameters.dart',
+        'opening_parameters.dart':
+            'features/elements/application/opening_element_parameters.dart',
         'annotation_store.dart':
             'features/annotations/domain/annotation_store.dart',
         'annotation_view_key.dart':
