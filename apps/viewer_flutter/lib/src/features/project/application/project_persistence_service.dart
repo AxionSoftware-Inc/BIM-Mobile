@@ -1,7 +1,7 @@
 import 'dart:io';
 
-import '../../../viewer_engine_contracts.dart';
-import '../../../viewer_project_gateway.dart';
+import '../../../core/application/engine/viewer_engine_contracts.dart';
+import '../../../core/application/engine/viewer_project_gateway.dart';
 import 'project_companion_document.dart';
 
 /// Application use-cases for durable project checkpoints and replacement.
@@ -26,8 +26,6 @@ final class ProjectPersistenceService {
   Future<File> saveToDefaultLocation() async {
     final projectFile =
         await _requireRepository().saveProjectToDefaultLocation();
-    // Supplemental documents are persisted after the authoritative project is
-    // durable. They do not participate in native geometry/cache ownership.
     await _companions.saveForProjectPath(projectFile.path);
     return projectFile;
   }
