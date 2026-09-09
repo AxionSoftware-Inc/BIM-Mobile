@@ -65,20 +65,49 @@ void main() {
     expect(document.store.text.annotationIndices.length, 1);
   });
 
-  testWidgets('cancel clears two-point annotation draft without editing store',
+  testWidgets('draft notifier enables cancel without document mutation',
       (tester) async {
+    await pumpControls(tester);
+
+    IconButton cancelButton() => tester.widget<IconButton>(
+          find.ancestor(
+            of: find.byTooltip('Cancel annotation draft'),
+            matching: find.byType(IconButton),
+          ),
+        );
+
+    expect(cancelButton().onPressed, isNull);
+    final beforeRevision = AnnotationWorkspaceRuntime.document.revision;
+
     AnnotationWorkspaceRuntime.draftStart = const AnnotationDraftPoint(
+      kind: AnnotationDraftKind.dimension,
       point: RenderScenePoint(x: 3, y: 4, z: 0),
       referenceElementId: 55,
     );
-    final beforeRevision = AnnotationWorkspaceRuntime.document.revision;
+    await tester.pump();
 
-    await pumpControls(tester);
+    expect(cancelButton().onPressed, isNotNull);
+    expect(AnnotationWorkspaceRuntime.document.revision, beforeRevision);
+
     await tester.tap(find.byTooltip('Cancel annotation draft'));
     await tester.pump();
 
     expect(AnnotationWorkspaceRuntime.draftStart, isNull);
+    expect(cancelButton().onPressed, isNull);
     expect(AnnotationWorkspaceRuntime.document.store.length, 0);
     expect(AnnotationWorkspaceRuntime.document.revision, beforeRevision);
+  });
+
+  test('dimension and detail-line drafts retain explicit command identity', () {
+    const dimension = AnnotationDraftPoint(
+      kind: AnnotationDraftKind.dimension,
+      point: RenderScenePoint(x: 1, y: 2, z: 0),
+    );
+    const detail = AnnotationDraftPoint(
+      kind: AnnotationDraftKind.detailLine,
+      point: RenderScenePoint(x: 1, y: 2, z: 0),
+    );
+
+    expect(dimension.kind, isNot(detail.kind));
   });
 }
