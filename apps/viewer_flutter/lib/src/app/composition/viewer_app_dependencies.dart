@@ -16,18 +16,18 @@ import '../../platform/native_engine/native_viewer_session_factory.dart';
 /// ARCHITECTURE: every production registry and cross-feature adapter is
 /// assembled here. Feature code receives typed contracts; it must not discover
 /// another feature through globals or construct a parallel registry.
+///
+/// All services are explicit. Do not add optional constructor defaults that
+/// secretly construct a second persistence/lifecycle stack for tests or custom
+/// shells; tests should compose the same contracts with test adapters.
 final class ViewerAppDependencies {
-  ViewerAppDependencies({
+  const ViewerAppDependencies({
     required this.projectLifecycle,
+    required this.projectPersistence,
     required this.projectSession,
     required this.elements,
     required this.inspectors,
-    ProjectPersistenceService? projectPersistence,
-  }) : projectPersistence = projectPersistence ??
-            ProjectPersistenceService(
-              repository: () => projectSession.session,
-              engineEnabled: () => projectSession.isEngineBacked,
-            );
+  });
 
   factory ViewerAppDependencies.production() {
     final elements = BimElementRegistry.standard.validate();
