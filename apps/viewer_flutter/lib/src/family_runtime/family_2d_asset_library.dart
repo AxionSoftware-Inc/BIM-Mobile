@@ -81,11 +81,11 @@ final class Family2dAssetLibraryBuilder {
 /// heavyweight SVG package into every BIM viewport.
 abstract final class Family2dSvgCompiler {
   static final RegExp _pathPattern = RegExp(
-    r'''<path\b[^>]*\bd\s*=\s*(?:"([^"]+)"|'([^']+)')'''.replaceAll(r'\\', r'\'),
+    r'''<path\b[^>]*\bd\s*=\s*(?:"([^"]+)"|'([^']+)')''',
     caseSensitive: false,
   );
   static final RegExp _tokenPattern = RegExp(
-    r'[A-Za-z]|[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?'.replaceAll(r'\\', r'\'),
+    r'[A-Za-z]|[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?',
   );
 
   static List<Family2dCompiledPath> compile(String svg) {
