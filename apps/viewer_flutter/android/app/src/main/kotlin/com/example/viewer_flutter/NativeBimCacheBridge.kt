@@ -542,11 +542,42 @@ internal object NativeBimCacheBridge {
     private var closed = false
 
     /**
-     * Compatibility accessor for existing 2D/Inspector code. It is now lazy;
-     * 3D streaming/picking code should prefer [primitiveCount] and [pick].
+     * Compatibility List for the existing viewport host.
+     *
+     * Reading [size] is manifest-only and never materializes per-element
+     * semantics. Iteration materializes one semantic snapshot only for the
+     * duration of that iteration, then releases the bridge mirror and all
+     * chunk range metadata as soon as the final item is consumed. This keeps
+     * `cache.primitives.size` safe in metrics/status paths while preserving the
+     * old `cache.primitives.map { ... }` behavior used by the selection overlay.
+     * Explicit 2D/Inspector consumers should keep using [semanticPrimitives].
      */
-    val primitives: List<NativeBimCachePrimitive>
-      get() = semanticPrimitives()
+    val primitives: List<NativeBimCachePrimitive> = object : AbstractList<NativeBimCachePrimitive>() {
+      override val size: Int
+        get() = primitiveCount
+
+      override fun get(index: Int): NativeBimCachePrimitive =
+        this@NativeBimCache.semanticPrimitives()[index]
+
+      override fun iterator(): Iterator<NativeBimCachePrimitive> {
+        if (closed || primitiveCount == 0) return emptyList<NativeBimCachePrimitive>().iterator()
+        val snapshot = this@NativeBimCache.semanticPrimitives()
+        val source = snapshot.iterator()
+        return object : Iterator<NativeBimCachePrimitive> {
+          override fun hasNext(): Boolean {
+            val hasNext = source.hasNext()
+            if (!hasNext) this@NativeBimCache.releaseSemanticPrimitives()
+            return hasNext
+          }
+
+          override fun next(): NativeBimCachePrimitive {
+            val value = source.next()
+            if (!source.hasNext()) this@NativeBimCache.releaseSemanticPrimitives()
+            return value
+          }
+        }
+      }
+    }
 
     fun semanticPrimitives(): List<NativeBimCachePrimitive> {
       if (closed) return emptyList()
