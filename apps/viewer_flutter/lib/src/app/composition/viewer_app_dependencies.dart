@@ -1,3 +1,4 @@
+import '../../core/application/engine/viewer_project_session.dart';
 import '../../elements/bim_element_registry.dart';
 import '../../elements/inspector_registry.dart';
 import '../../features/annotations/infrastructure/annotation_project_companion.dart';
@@ -6,7 +7,6 @@ import '../../features/project/application/project_lifecycle_service.dart';
 import '../../features/project/application/project_persistence_service.dart';
 import '../../features/project/application/project_session_controller.dart';
 import '../../platform/native_engine/native_viewer_session_factory.dart';
-import '../../viewer_project_session.dart';
 
 /// Dependencies owned by one workspace instance.
 ///
