@@ -25,10 +25,10 @@ final class FamilyStreamingCamera {
 
 /// Compact spatial lookup for placed family instances.
 ///
-/// Build-time uses a Map/List for clarity, but the retained runtime structure
-/// is CSR-style typed arrays: sorted cell keys + offsets + instance indices.
-/// The renderer queries only nearby cells instead of scanning every furniture
-/// placement in a campus-size project.
+/// The retained structure is CSR-style typed arrays: sorted cell keys +
+/// offsets + packed instance indices. Build uses two count/fill passes rather
+/// than a `Map<int, List<int>>`, avoiding one growable List object per occupied
+/// cell in family-heavy campuses.
 final class FamilySpatialIndex {
   FamilySpatialIndex._({
     required this.store,
@@ -50,17 +50,16 @@ final class FamilySpatialIndex {
     if (cellSizeX <= 0 || cellSizeY <= 0 || cellSizeZ <= 0) {
       throw ArgumentError('Family spatial cell sizes must be positive.');
     }
-    final cells = <int, List<int>>{};
-    for (var index = 0; index < store.length; index++) {
-      final p = store.positionAt(index);
-      final e = store.halfExtentAt(index);
+
+    void visitInstanceCells(int instanceIndex, void Function(int key) visit) {
+      final p = store.positionAt(instanceIndex);
+      final e = store.halfExtentAt(instanceIndex);
       final minX = ((p.x - e.x) / cellSizeX).floor();
       final maxX = ((p.x + e.x) / cellSizeX).floor();
       final minY = ((p.y - e.y) / cellSizeY).floor();
       final maxY = ((p.y + e.y) / cellSizeY).floor();
       final minZ = ((p.z - e.z) / cellSizeZ).floor();
       final maxZ = ((p.z + e.z) / cellSizeZ).floor();
-
       final span = (maxX - minX + 1) *
           (maxY - minY + 1) *
           (maxZ - minZ + 1);
@@ -68,38 +67,65 @@ final class FamilySpatialIndex {
         // A pathological/very large proxy must not explode the grid. Its
         // center cell keeps it discoverable; future building-HLOD can own
         // coarse coverage for truly huge assets.
-        final key = _packCell(
-          (p.x / cellSizeX).floor(),
-          (p.y / cellSizeY).floor(),
-          (p.z / cellSizeZ).floor(),
+        visit(
+          _packCell(
+            (p.x / cellSizeX).floor(),
+            (p.y / cellSizeY).floor(),
+            (p.z / cellSizeZ).floor(),
+          ),
         );
-        (cells[key] ??= <int>[]).add(index);
-        continue;
+        return;
       }
       for (var z = minZ; z <= maxZ; z++) {
         for (var y = minY; y <= maxY; y++) {
           for (var x = minX; x <= maxX; x++) {
-            (cells[_packCell(x, y, z)] ??= <int>[]).add(index);
+            visit(_packCell(x, y, z));
           }
         }
       }
     }
 
-    final keys = cells.keys.toList()..sort();
+    // Pass 1: count references per occupied cell. Integers are much cheaper
+    // than retaining thousands of growable per-cell lists during compilation.
+    final counts = <int, int>{};
+    for (var instanceIndex = 0;
+        instanceIndex < store.length;
+        instanceIndex++) {
+      visitInstanceCells(instanceIndex, (key) {
+        counts[key] = (counts[key] ?? 0) + 1;
+      });
+    }
+
+    final keys = counts.keys.toList()..sort();
     final offsets = Uint32List(keys.length + 1);
+    final keyToCell = <int, int>{};
     var total = 0;
-    for (var index = 0; index < keys.length; index++) {
-      offsets[index] = total;
-      total += cells[keys[index]]!.length;
+    for (var cell = 0; cell < keys.length; cell++) {
+      final key = keys[cell];
+      keyToCell[key] = cell;
+      offsets[cell] = total;
+      total += counts[key]!;
     }
     offsets[keys.length] = total;
+
+    // Pass 2: fill the final CSR array directly.
     final indices = Uint32List(total);
-    var cursor = 0;
-    for (final key in keys) {
-      for (final instanceIndex in cells[key]!) {
-        indices[cursor++] = instanceIndex;
-      }
+    final cursors = Uint32List(keys.length);
+    for (var cell = 0; cell < keys.length; cell++) {
+      cursors[cell] = offsets[cell];
     }
+    for (var instanceIndex = 0;
+        instanceIndex < store.length;
+        instanceIndex++) {
+      visitInstanceCells(instanceIndex, (key) {
+        final cell = keyToCell[key];
+        if (cell == null) return;
+        final cursor = cursors[cell];
+        indices[cursor] = instanceIndex;
+        cursors[cell] = cursor + 1;
+      });
+    }
+
     return FamilySpatialIndex._(
       store: store,
       cellSizeX: cellSizeX,
@@ -110,6 +136,8 @@ final class FamilySpatialIndex {
       instanceIndices: indices,
     );
   }
+
+  static final Uint32List _empty = Uint32List(0);
 
   final FamilyInstanceStore store;
   final double cellSizeX;
@@ -126,6 +154,10 @@ final class FamilySpatialIndex {
   /// Returns only camera-neighbourhood instances, optionally restricted to a
   /// level (floor plan). This is the family equivalent of native BIM chunk
   /// streaming: knowing one million placements does not make them renderable.
+  ///
+  /// The returned typed-list is a zero-copy view over reusable query scratch.
+  /// Consume it immediately (render planning does); do not retain it across a
+  /// later query on this same index.
   Uint32List queryCamera(
     FamilyStreamingCamera camera, {
     double radiusMeters = 180,
@@ -134,7 +166,7 @@ final class FamilySpatialIndex {
     int maxResults = 50000,
   }) {
     if (store.isEmpty || maxResults <= 0 || radiusMeters <= 0) {
-      return Uint32List(0);
+      return _empty;
     }
     _nextGeneration();
     final radius2 = radiusMeters * radiusMeters;
@@ -153,16 +185,19 @@ final class FamilySpatialIndex {
     final maxCellY = ((camera.y + radiusMeters) / cellSizeY).floor();
     final minCellZ = ((camera.z - radiusMeters) / cellSizeZ).floor();
     final maxCellZ = ((camera.z + radiusMeters) / cellSizeZ).floor();
+    final resultLimit = math.min(maxResults, store.length);
 
     var count = 0;
-    for (var z = minCellZ; z <= maxCellZ && count < maxResults; z++) {
-      for (var y = minCellY; y <= maxCellY && count < maxResults; y++) {
-        for (var x = minCellX; x <= maxCellX && count < maxResults; x++) {
+    for (var z = minCellZ; z <= maxCellZ && count < resultLimit; z++) {
+      for (var y = minCellY; y <= maxCellY && count < resultLimit; y++) {
+        for (var x = minCellX; x <= maxCellX && count < resultLimit; x++) {
           final cell = _findCell(_packCell(x, y, z));
           if (cell < 0) continue;
           final start = cellOffsets[cell];
           final end = cellOffsets[cell + 1];
-          for (var offset = start; offset < end && count < maxResults; offset++) {
+          for (var offset = start;
+              offset < end && count < resultLimit;
+              offset++) {
             final instanceIndex = instanceIndices[offset];
             if (_seenStamp[instanceIndex] == _generation) continue;
             _seenStamp[instanceIndex] = _generation;
@@ -185,7 +220,14 @@ final class FamilySpatialIndex {
         }
       }
     }
-    return Uint32List.fromList(_scratch.sublist(0, count));
+
+    // View allocation is tiny; importantly, it does not copy `count` integers
+    // on every camera update as Uint32List.fromList(sublist(...)) did.
+    return Uint32List.view(
+      _scratch.buffer,
+      _scratch.offsetInBytes,
+      count,
+    );
   }
 
   void _nextGeneration() {
