@@ -74,7 +74,9 @@ class _FamilyTypeMatrixPanelState extends State<FamilyTypeMatrixPanel> {
                 ),
                 FilterChip(
                   selected: _showAllParameters,
-                  label: Text(_showAllParameters ? 'All parameters' : 'Core dimensions'),
+                  label: Text(_showAllParameters
+                      ? 'All parameters'
+                      : 'Core dimensions'),
                   onSelected: (selected) {
                     setState(() => _showAllParameters = selected);
                   },
@@ -108,13 +110,16 @@ class _FamilyTypeMatrixPanelState extends State<FamilyTypeMatrixPanel> {
                             Row(
                               mainAxisSize: MainAxisSize.min,
                               children: <Widget>[
-                                if (type.id == widget.currentTypeId) ...<Widget>[
-                                  const Icon(Icons.visibility_outlined, size: 16),
+                                if (type.id ==
+                                    widget.currentTypeId) ...<Widget>[
+                                  const Icon(Icons.visibility_outlined,
+                                      size: 16),
                                   const SizedBox(width: 5),
                                 ],
                                 Text(
                                   type.name,
-                                  style: const TextStyle(fontWeight: FontWeight.w600),
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w600),
                                 ),
                               ],
                             ),
@@ -139,13 +144,16 @@ class _FamilyTypeMatrixPanelState extends State<FamilyTypeMatrixPanel> {
                                   tooltip: 'Duplicate ${type.name}',
                                   visualDensity: VisualDensity.compact,
                                   onPressed: () => _duplicateType(type),
-                                  icon: const Icon(Icons.content_copy_outlined, size: 18),
+                                  icon: const Icon(Icons.content_copy_outlined,
+                                      size: 18),
                                 ),
                                 IconButton(
                                   tooltip: 'Rename ${type.name}',
                                   visualDensity: VisualDensity.compact,
                                   onPressed: () => _renameType(type),
-                                  icon: const Icon(Icons.drive_file_rename_outline, size: 18),
+                                  icon: const Icon(
+                                      Icons.drive_file_rename_outline,
+                                      size: 18),
                                 ),
                                 IconButton(
                                   tooltip: 'Delete ${type.name}',
@@ -153,7 +161,8 @@ class _FamilyTypeMatrixPanelState extends State<FamilyTypeMatrixPanel> {
                                   onPressed: widget.document.types.length <= 1
                                       ? null
                                       : () => _deleteType(type),
-                                  icon: const Icon(Icons.delete_outline, size: 18),
+                                  icon: const Icon(Icons.delete_outline,
+                                      size: 18),
                                 ),
                               ],
                             ),
@@ -176,40 +185,19 @@ class _FamilyTypeMatrixPanelState extends State<FamilyTypeMatrixPanel> {
     final current = type.values.containsKey(parameter.id)
         ? type.values[parameter.id]
         : parameter.defaultValue;
-    final controller = TextEditingController(text: _rawValue(current));
     try {
       final raw = await showDialog<String>(
         context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: Text('${type.name} · ${parameter.label}'),
-          content: SizedBox(
-            width: 420,
-            child: TextField(
-              controller: controller,
-              autofocus: true,
-              keyboardType: _numericKind(parameter.kind)
-                  ? const TextInputType.numberWithOptions(
-                      decimal: true,
-                      signed: true,
-                    )
-                  : TextInputType.text,
-              decoration: InputDecoration(
-                helperText: _helper(parameter.kind),
-                border: const OutlineInputBorder(),
-              ),
-              onSubmitted: (value) => Navigator.of(dialogContext).pop(value),
-            ),
-          ),
-          actions: <Widget>[
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(dialogContext).pop(controller.text),
-              child: const Text('Apply'),
-            ),
-          ],
+        builder: (_) => _FamilyTextInputDialog(
+          title: '${type.name} · ${parameter.label}',
+          initialValue: _rawValue(current),
+          helperText: _helper(parameter.kind),
+          keyboardType: _numericKind(parameter.kind)
+              ? const TextInputType.numberWithOptions(
+                  decimal: true,
+                  signed: true,
+                )
+              : TextInputType.text,
         ),
       );
       if (!mounted || raw == null) return;
@@ -225,8 +213,6 @@ class _FamilyTypeMatrixPanelState extends State<FamilyTypeMatrixPanel> {
       );
     } catch (error) {
       widget.onStatus(_errorText(error));
-    } finally {
-      controller.dispose();
     }
   }
 
@@ -296,39 +282,14 @@ class _FamilyTypeMatrixPanelState extends State<FamilyTypeMatrixPanel> {
     required String initialValue,
     required String helper,
   }) async {
-    final controller = TextEditingController(text: initialValue);
-    try {
-      return await showDialog<String>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: Text(title),
-          content: SizedBox(
-            width: 420,
-            child: TextField(
-              controller: controller,
-              autofocus: true,
-              decoration: InputDecoration(
-                helperText: helper,
-                border: const OutlineInputBorder(),
-              ),
-              onSubmitted: (value) => Navigator.of(dialogContext).pop(value),
-            ),
-          ),
-          actions: <Widget>[
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(dialogContext).pop(controller.text),
-              child: const Text('Apply'),
-            ),
-          ],
-        ),
-      );
-    } finally {
-      controller.dispose();
-    }
+    return showDialog<String>(
+      context: context,
+      builder: (_) => _FamilyTextInputDialog(
+        title: title,
+        initialValue: initialValue,
+        helperText: helper,
+      ),
+    );
   }
 
   void _run(FamilyDocument Function() command, String success) {
@@ -371,7 +332,10 @@ class _FamilyTypeMatrixPanelState extends State<FamilyTypeMatrixPanel> {
 
   static String _rawValue(Object? value) {
     if (value is double) {
-      return value.toStringAsFixed(6).replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '');
+      return value
+          .toStringAsFixed(6)
+          .replaceFirst(RegExp(r'0+$'), '')
+          .replaceFirst(RegExp(r'\.$'), '');
     }
     return '$value';
   }
@@ -396,4 +360,68 @@ class _FamilyTypeMatrixPanelState extends State<FamilyTypeMatrixPanel> {
 
   static String _errorText(Object error) =>
       error is FormatException ? error.message : '$error';
+}
+
+/// Owns the editing controller for the lifetime of the dialog route.
+final class _FamilyTextInputDialog extends StatefulWidget {
+  const _FamilyTextInputDialog({
+    required this.title,
+    required this.initialValue,
+    this.helperText,
+    this.keyboardType = TextInputType.text,
+  });
+
+  final String title;
+  final String initialValue;
+  final String? helperText;
+  final TextInputType keyboardType;
+
+  @override
+  State<_FamilyTextInputDialog> createState() => _FamilyTextInputDialogState();
+}
+
+final class _FamilyTextInputDialogState extends State<_FamilyTextInputDialog> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialValue);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.title),
+      content: SizedBox(
+        width: 420,
+        child: TextField(
+          controller: _controller,
+          autofocus: true,
+          keyboardType: widget.keyboardType,
+          decoration: InputDecoration(
+            helperText: widget.helperText,
+            border: const OutlineInputBorder(),
+          ),
+          onSubmitted: (value) => Navigator.of(context).pop(value),
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(_controller.text),
+          child: const Text('Apply'),
+        ),
+      ],
+    );
+  }
 }

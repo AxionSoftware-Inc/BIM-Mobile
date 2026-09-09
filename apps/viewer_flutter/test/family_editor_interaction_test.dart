@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -28,7 +27,8 @@ void main() {
     expect(scene.indexCount, greaterThanOrEqualTo(36));
   });
 
-  test('authoring candidate scene exposes solids as independently pickable objects',
+  test(
+      'authoring candidate scene exposes solids as independently pickable objects',
       () async {
     final starter = FamilyDocument.starter(name: 'Pickable Family');
     final base = starter.features.single;
@@ -70,14 +70,6 @@ void main() {
   });
 
   group('Family Editor V5 direct manipulation workflow', () {
-    setUp(() {
-      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
-    });
-
-    tearDown(() {
-      debugDefaultTargetPlatformOverride = null;
-    });
-
     Future<void> pumpEditor(WidgetTester tester) async {
       await tester.binding.setSurfaceSize(const Size(1400, 900));
       addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -87,7 +79,8 @@ void main() {
       await tester.pumpAndSettle();
     }
 
-    testWidgets('legacy route opens one V5 workspace with project viewport tools',
+    testWidgets(
+        'legacy route opens one V5 workspace with project viewport tools',
         (tester) async {
       await pumpEditor(tester);
 
@@ -126,7 +119,8 @@ void main() {
       expect(find.byType(FamilySketchCanvas), findsOneWidget);
       expect(find.text('Rectangle'), findsOneWidget);
       expect(
-        find.textContaining('Project plan viewport'),
+        find.text(
+            'Project plan viewport · tap to draw · drag points · pinch to zoom'),
         findsOneWidget,
       );
 

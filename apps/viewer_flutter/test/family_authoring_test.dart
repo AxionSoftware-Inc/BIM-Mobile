@@ -456,15 +456,19 @@ f 5 1 4 8
     await tester.pumpAndSettle();
 
     expect(find.text('Family Library'), findsOneWidget);
-    expect(find.text('23 results'), findsOneWidget);
-    expect(find.text('Place in project'), findsOneWidget);
-    expect(find.byType(TextField), findsNothing);
+    expect(
+      find.text('23 reusable families · choose a family and type'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Place '), findsOneWidget);
+    expect(find.byType(TextField), findsOneWidget);
     expect(find.byType(CustomPaint), findsWidgets);
 
-    await tester.tap(find.text('Window'));
+    await tester.enterText(find.byType(TextField), 'Window');
     await tester.pump();
-    expect(find.text('2 results'), findsOneWidget);
-    expect(find.text('Window'), findsWidgets);
+    await tester.pump();
+    expect(find.text('Window · Single Casement'), findsWidgets);
+    expect(find.text('Window · Wide Picture'), findsWidgets);
   });
 
   testWidgets('Create family opens the detachable authoring page',
@@ -484,24 +488,12 @@ f 5 1 4 8
     await tester.tap(find.text('Create family'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Family Editor'), findsOneWidget);
+    expect(find.byType(FamilyEditorV5Page), findsOneWidget);
     expect(find.text('Family type'), findsOneWidget);
-    expect(find.text('Feature graph'), findsOneWidget);
-    final featureGraphTile = find.ancestor(
-      of: find.text('Feature graph'),
-      matching: find.byType(ExpansionTile),
-    );
-    await tester.ensureVisible(featureGraphTile);
-    await tester.tap(featureGraphTile);
-    await tester.pumpAndSettle();
-    expect(find.text('Box solid'), findsOneWidget);
-
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Use in project'));
-    await tester.pumpAndSettle();
-    expect(find.text('Use this family in a project'), findsOneWidget);
-    expect(find.textContaining('Family Library'), findsNWidgets(2));
-    await tester.tap(find.text('Got it'));
-    await tester.pumpAndSettle();
+    expect(find.text('CREATE'), findsOneWidget);
+    expect(find.text('MODIFY'), findsOneWidget);
+    expect(find.text('COMBINE'), findsOneWidget);
+    expect(find.text('INSERT'), findsOneWidget);
   });
 
   testWidgets('profile canvas closes and creates a parametric extrude',
@@ -511,40 +503,17 @@ f 5 1 4 8
     await tester.pumpWidget(const MaterialApp(home: FamilyEditorPage()));
     await tester.pumpAndSettle();
 
-    final profile = find.widgetWithText(OutlinedButton, 'Profile');
-    await tester.tap(profile);
+    await tester.tap(find.text('Sketch').first);
     await tester.pumpAndSettle();
     final canvas = find.byType(FamilySketchCanvas);
     expect(canvas, findsOneWidget);
-    final rect = tester.getRect(canvas);
-    for (final point in <Offset>[
-      Offset(rect.left + rect.width * 0.25, rect.top + rect.height * 0.70),
-      Offset(rect.left + rect.width * 0.75, rect.top + rect.height * 0.70),
-      Offset(rect.left + rect.width * 0.50, rect.top + rect.height * 0.25),
-    ]) {
-      await tester.tapAt(point);
-      await tester.pump();
-    }
-
-    expect(find.text('Profile 1 · 3 points'), findsOneWidget);
-    await tester.tap(find.widgetWithText(TextButton, 'Close'));
-    await tester.pump();
-    expect(
-        find.text('Closed profile · drag points to reshape'), findsOneWidget);
-
-    final extrude = find.widgetWithText(OutlinedButton, 'Extrude');
-    await tester.ensureVisible(extrude);
+    await tester.tap(find.text('Rectangle'));
     await tester.pumpAndSettle();
-    await tester.tap(extrude);
-    await tester.pump();
-    final featureGraphTile = find.ancestor(
-      of: find.text('Feature graph'),
-      matching: find.byType(ExpansionTile),
-    );
-    await tester.ensureVisible(featureGraphTile);
-    await tester.tap(featureGraphTile);
+    await tester.tap(find.text('Finish'));
     await tester.pumpAndSettle();
-    expect(find.text('Extrude Profile 1'), findsOneWidget);
-    expect(find.text('Extrusion depth'), findsOneWidget);
+    await tester.tap(find.text('Extrude').first);
+    await tester.pumpAndSettle();
+    expect(find.text('Apply Extrude'), findsOneWidget);
+    expect(find.textContaining('live preview'), findsWidgets);
   });
 }

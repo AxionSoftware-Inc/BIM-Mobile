@@ -30,6 +30,10 @@ export 'family_sketch_viewport.dart';
 export 'family_type_matrix_panel.dart';
 export 'family_validation.dart';
 
+/// Backwards-compatible name used by older integrations and widget tests.
+/// The production entry point is [FamilyEditorV5Page].
+typedef FamilyEditorPage = FamilyEditorV5Page;
+
 /// Single registration point for the detachable Family Authoring feature.
 ///
 /// New navigation enters V5 directly. V2/V3/V4 classes remain tiny compatibility

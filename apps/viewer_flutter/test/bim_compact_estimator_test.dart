@@ -13,7 +13,8 @@ void main() {
 
     expect(compact.walls.length, 2);
     expect(
-      compact.prototypes.where((prototype) => prototype.kind == BimCompactKind.wall),
+      compact.prototypes
+          .where((prototype) => prototype.kind == BimCompactKind.wall),
       hasLength(1),
     );
     expect(compact.instances.bounds.length, compact.instanceCount * 6);
@@ -32,18 +33,25 @@ void main() {
     expect(compact.windowCount, legacy.windowCount);
     expect(compact.floorCount, legacy.floorCount);
     expect(compact.ceilingCount, legacy.ceilingCount);
-    expect(compact.totalRoomArea, closeTo(legacy.totalRoomArea, 1e-9));
-    expect(compact.wallGrossVolume, closeTo(legacy.wallGrossVolume, 1e-9));
-    expect(compact.wallNetVolume, closeTo(legacy.wallNetVolume, 1e-9));
-    expect(compact.wallNetArea, closeTo(legacy.wallNetArea, 1e-9));
-    expect(compact.floorArea, closeTo(legacy.floorArea, 1e-9));
+    // Compact semantic columns intentionally use Float32 for bounded local BIM
+    // dimensions. Allow the documented conversion error when comparing them
+    // with the legacy double-backed object graph.
+    const compactTolerance = 1e-6;
+    expect(
+        compact.totalRoomArea, closeTo(legacy.totalRoomArea, compactTolerance));
+    expect(compact.wallGrossVolume,
+        closeTo(legacy.wallGrossVolume, compactTolerance));
+    expect(
+        compact.wallNetVolume, closeTo(legacy.wallNetVolume, compactTolerance));
+    expect(compact.wallNetArea, closeTo(legacy.wallNetArea, compactTolerance));
+    expect(compact.floorArea, closeTo(legacy.floorArea, compactTolerance));
     expect(
       compact.floorConcreteVolume,
-      closeTo(legacy.floorConcreteVolume, 1e-9),
+      closeTo(legacy.floorConcreteVolume, compactTolerance),
     );
-    expect(compact.ceilingArea, closeTo(legacy.ceilingArea, 1e-9));
-    expect(compact.openingArea, closeTo(legacy.openingArea, 1e-9));
-    expect(compact.totalCost, closeTo(legacy.totalCost, 1e-9));
+    expect(compact.ceilingArea, closeTo(legacy.ceilingArea, compactTolerance));
+    expect(compact.openingArea, closeTo(legacy.openingArea, compactTolerance));
+    expect(compact.totalCost, closeTo(legacy.totalCost, compactTolerance));
   });
 }
 

@@ -3,7 +3,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:viewer_flutter/src/family_authoring/family_authoring_module.dart';
 
 void main() {
-  test('schema v3 remains readable and authoring edit upgrades to v5', () {
+  test(
+      'schema v3 remains readable and authoring edit upgrades to current schema',
+      () {
     final legacyJson = FamilyDocument.starter().toJson()
       ..['schema_version'] = 3;
     final legacy = FamilyDocument.fromJson(legacyJson);
@@ -12,11 +14,11 @@ void main() {
     expect(loadedLegacy.schemaVersion, 3);
 
     final edited = loadedLegacy.copyWith(name: 'Schema 5 family');
-    expect(edited.schemaVersion, 5);
     expect(edited.schemaVersion, FamilyDocument.currentSchemaVersion);
   });
 
-  test('reference planes and equality constraints solve a parametric rectangle', () {
+  test('reference planes and equality constraints solve a parametric rectangle',
+      () {
     final document = _rectangleFamily();
     final type = document.types.single;
     final solution = FamilyConstraintSolver.solveSketch(
@@ -41,7 +43,8 @@ void main() {
     expect(points[3].y, closeTo(3.0, 1e-9));
   });
 
-  test('geometry evaluator consumes the solved profile instead of raw points', () {
+  test('geometry evaluator consumes the solved profile instead of raw points',
+      () {
     final document = _rectangleFamily();
     final shape = FamilyGeometryEvaluator.evaluate(
       document,

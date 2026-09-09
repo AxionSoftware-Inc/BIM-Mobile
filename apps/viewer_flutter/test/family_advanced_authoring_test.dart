@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -6,14 +5,6 @@ import 'package:viewer_flutter/src/family_authoring/family_authoring_module.dart
 
 void main() {
   group('Family V5 advanced authoring', () {
-    setUp(() {
-      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
-    });
-
-    tearDown(() {
-      debugDefaultTargetPlatformOverride = null;
-    });
-
     Future<void> pumpEditor(WidgetTester tester) async {
       await tester.binding.setSurfaceSize(const Size(1400, 900));
       addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -66,7 +57,8 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Seat Height'), findsOneWidget);
-      expect(find.textContaining('Parameter Seat Height added.'), findsOneWidget);
+      expect(
+          find.textContaining('Parameter Seat Height added.'), findsOneWidget);
       expect(find.textContaining('4 parameters'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
@@ -91,11 +83,12 @@ void main() {
       );
       expect(field, findsOneWidget);
       await tester.enterText(field, 'Large');
-      await tester.tap(find.descendant(of: dialog, matching: find.text('Apply')));
+      await tester
+          .tap(find.descendant(of: dialog, matching: find.text('Apply')));
       await tester.pumpAndSettle();
 
       expect(find.textContaining('Family Type Large created.'), findsOneWidget);
-      expect(find.textContaining('2 types'), findsOneWidget);
+      expect(find.text('2 types · tap a value to edit'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
   });

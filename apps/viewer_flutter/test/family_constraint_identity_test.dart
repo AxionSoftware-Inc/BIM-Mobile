@@ -40,7 +40,7 @@ void main() {
     expect(document.constraints.single.pointBId, 'profile:point-1');
 
     final edited = document.copyWith(name: 'Migrated');
-    expect(edited.schemaVersion, 5);
+    expect(edited.schemaVersion, FamilyDocument.currentSchemaVersion);
   });
 
   test('stable ids keep a constraint attached after point reorder', () {

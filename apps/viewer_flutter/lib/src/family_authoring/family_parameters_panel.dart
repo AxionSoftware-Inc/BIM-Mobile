@@ -317,7 +317,8 @@ class FamilyParametersPanel extends StatelessWidget {
       context,
       title: 'Rename Family Type',
       initialValue: type.name,
-      helper: 'Type id stays stable; nested-family references are not rewritten.',
+      helper:
+          'Type id stays stable; nested-family references are not rewritten.',
     );
     if (name == null || name.trim().isEmpty) return;
     _run(
@@ -372,39 +373,14 @@ class FamilyParametersPanel extends StatelessWidget {
     required String initialValue,
     required String helper,
   }) async {
-    final controller = TextEditingController(text: initialValue);
-    try {
-      return await showDialog<String>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: Text(title),
-          content: SizedBox(
-            width: 420,
-            child: TextField(
-              controller: controller,
-              autofocus: true,
-              decoration: InputDecoration(
-                helperText: helper,
-                border: const OutlineInputBorder(),
-              ),
-              onSubmitted: (value) => Navigator.of(dialogContext).pop(value),
-            ),
-          ),
-          actions: <Widget>[
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(dialogContext).pop(controller.text),
-              child: const Text('Apply'),
-            ),
-          ],
-        ),
-      );
-    } finally {
-      controller.dispose();
-    }
+    return showDialog<String>(
+      context: context,
+      builder: (_) => _FamilyParameterValueDialog(
+        title: title,
+        initialValue: initialValue,
+        helper: helper,
+      ),
+    );
   }
 
   static Object _parseValue(FamilyParameterKind kind, String raw) {
@@ -478,6 +454,70 @@ class FamilyParametersPanel extends StatelessWidget {
       error is FormatException ? error.message : '$error';
 }
 
+/// Keeps the text controller owned by the dialog route until its reverse
+/// transition has finished.
+final class _FamilyParameterValueDialog extends StatefulWidget {
+  const _FamilyParameterValueDialog({
+    required this.title,
+    required this.initialValue,
+    required this.helper,
+  });
+
+  final String title;
+  final String initialValue;
+  final String helper;
+
+  @override
+  State<_FamilyParameterValueDialog> createState() =>
+      _FamilyParameterValueDialogState();
+}
+
+final class _FamilyParameterValueDialogState
+    extends State<_FamilyParameterValueDialog> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialValue);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.title),
+      content: SizedBox(
+        width: 420,
+        child: TextField(
+          controller: _controller,
+          autofocus: true,
+          decoration: InputDecoration(
+            helperText: widget.helper,
+            border: const OutlineInputBorder(),
+          ),
+          onSubmitted: (value) => Navigator.of(context).pop(value),
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(_controller.text),
+          child: const Text('Apply'),
+        ),
+      ],
+    );
+  }
+}
+
 final class _ParameterDraft {
   const _ParameterDraft({
     required this.label,
@@ -515,7 +555,8 @@ class _ParameterDialogState extends State<_ParameterDialog> {
   String? _error;
 
   bool get _editing => widget.parameter != null;
-  bool get _numeric => _kind == FamilyParameterKind.length ||
+  bool get _numeric =>
+      _kind == FamilyParameterKind.length ||
       _kind == FamilyParameterKind.number ||
       _kind == FamilyParameterKind.angle;
 
@@ -531,8 +572,10 @@ class _ParameterDialogState extends State<_ParameterDialog> {
           : FamilyParametersPanel._displayValue(parameter.defaultValue),
     );
     _formula = TextEditingController(text: parameter?.formula ?? '');
-    _minimum = TextEditingController(text: parameter?.minimum?.toString() ?? '');
-    _maximum = TextEditingController(text: parameter?.maximum?.toString() ?? '');
+    _minimum =
+        TextEditingController(text: parameter?.minimum?.toString() ?? '');
+    _maximum =
+        TextEditingController(text: parameter?.maximum?.toString() ?? '');
   }
 
   @override
@@ -655,7 +698,8 @@ class _ParameterDialogState extends State<_ParameterDialog> {
                   alignment: Alignment.centerLeft,
                   child: Text(
                     _error!,
-                    style: TextStyle(color: Theme.of(context).colorScheme.error),
+                    style:
+                        TextStyle(color: Theme.of(context).colorScheme.error),
                   ),
                 ),
               ],

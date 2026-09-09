@@ -159,7 +159,8 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
       if (!_document.types.any((type) => type.id == _selectedTypeId)) {
         _selectedTypeId = _document.types.first.id;
       }
-      if (!_document.features.any((feature) => feature.id == _selectedFeatureId)) {
+      if (!_document.features
+          .any((feature) => feature.id == _selectedFeatureId)) {
         _selectedFeatureId = _lastSolid(_document)?.id;
       }
     });
@@ -339,7 +340,8 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
       _extrudeDepth = '${selected.parameters['depth'] ?? 1.0}';
       return;
     }
-    _draftFeatureId = 'feature-extrude-${DateTime.now().microsecondsSinceEpoch}';
+    _draftFeatureId =
+        'feature-extrude-${DateTime.now().microsecondsSinceEpoch}';
     _profileId = _lastClosedSketchId();
     _extrudeDepth = '1.0';
   }
@@ -352,7 +354,8 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
       _revolveAngle = '${selected.parameters['angle'] ?? 360}';
       return;
     }
-    _draftFeatureId = 'feature-revolve-${DateTime.now().microsecondsSinceEpoch}';
+    _draftFeatureId =
+        'feature-revolve-${DateTime.now().microsecondsSinceEpoch}';
     _profileId = _lastClosedSketchId();
     _revolveAngle = '360';
   }
@@ -361,7 +364,8 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
     final selected = _selectedFeature;
     if (selected?.kind == FamilyFeatureKind.transform) {
       _draftFeatureId = selected!.id;
-      _transformSourceId = selected.inputs.isEmpty ? null : selected.inputs.first;
+      _transformSourceId =
+          selected.inputs.isEmpty ? null : selected.inputs.first;
       _tx = '${selected.parameters['translationX'] ?? 0}';
       _ty = '${selected.parameters['translationY'] ?? 0}';
       _tz = '${selected.parameters['translationZ'] ?? 0}';
@@ -369,10 +373,10 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
       _scale = '${selected.parameters['scale'] ?? 1}';
       return;
     }
-    _draftFeatureId = 'feature-transform-${DateTime.now().microsecondsSinceEpoch}';
-    _transformSourceId = selected != null && _isSolid(selected.kind)
-        ? selected.id
-        : null;
+    _draftFeatureId =
+        'feature-transform-${DateTime.now().microsecondsSinceEpoch}';
+    _transformSourceId =
+        selected != null && _isSolid(selected.kind) ? selected.id : null;
     _tx = '0';
     _ty = '0';
     _tz = '0';
@@ -394,10 +398,10 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
       _booleanToolId = selected.inputs.length > 1 ? selected.inputs[1] : null;
       return;
     }
-    _draftFeatureId = 'feature-boolean-${DateTime.now().microsecondsSinceEpoch}';
-    _booleanBaseId = selected != null && _isSolid(selected.kind)
-        ? selected.id
-        : null;
+    _draftFeatureId =
+        'feature-boolean-${DateTime.now().microsecondsSinceEpoch}';
+    _booleanBaseId =
+        selected != null && _isSolid(selected.kind) ? selected.id : null;
     _booleanToolId = null;
     _status = _booleanBaseId == null
         ? '1/2 · Tap the Base solid.'
@@ -491,7 +495,8 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
   }
 
   FamilyDocument _withDraftFeature(FamilyFeature feature) {
-    final index = _document.features.indexWhere((item) => item.id == feature.id);
+    final index =
+        _document.features.indexWhere((item) => item.id == feature.id);
     if (index < 0) {
       return _document.copyWith(
         features: <FamilyFeature>[..._document.features, feature],
@@ -577,9 +582,12 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
       };
 
   bool get _showGizmo => switch (_tool) {
-        _Tool.extrude || _Tool.revolve =>
+        _Tool.extrude ||
+        _Tool.revolve =>
           _profileId != null && _draftFeatureId != null,
-        _Tool.move || _Tool.rotate || _Tool.scale =>
+        _Tool.move ||
+        _Tool.rotate ||
+        _Tool.scale =>
           _transformSourceId != null && _draftFeatureId != null,
         _ => false,
       };
@@ -624,7 +632,8 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
       return;
     }
     if (_tool == _Tool.revolve) {
-      _scalarGizmoStart = _parse(_revolveAngle, 360).clamp(1.0, 360.0).toDouble();
+      _scalarGizmoStart =
+          _parse(_revolveAngle, 360).clamp(1.0, 360.0).toDouble();
       return;
     }
     _gizmoStart = _TransformSnapshot(
@@ -712,7 +721,9 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
       if (stayInTool) {
         _operationBaseDocument = _document;
         _operationBaseDirty = true;
-        if (_tool == _Tool.move || _tool == _Tool.rotate || _tool == _Tool.scale) {
+        if (_tool == _Tool.move ||
+            _tool == _Tool.rotate ||
+            _tool == _Tool.scale) {
           _prepareTransform(_tool);
         }
       } else {
@@ -879,7 +890,8 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
 
   String? _lastClosedSketchId() {
     for (var index = _document.sketches.length - 1; index >= 0; index--) {
-      if (_document.sketches[index].isValid) return _document.sketches[index].id;
+      if (_document.sketches[index].isValid)
+        return _document.sketches[index].id;
     }
     return null;
   }
@@ -912,7 +924,8 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
         _selectedFeatureId = imported.document.features.last.id;
         _nameController.text = imported.document.name;
         _dirty = true;
-        _status = 'Imported ${imported.vertexCount} vertices · ${imported.faceCount} faces.';
+        _status =
+            'Imported ${imported.vertexCount} vertices · ${imported.faceCount} faces.';
         _invalidatePreview();
       });
     } catch (error) {
@@ -922,7 +935,8 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
 
   Future<void> _addNestedFamily() async {
     if (_tool != _Tool.select) _cancelTool();
-    final feature = await FamilyNestedFeatureDialog.show(context, parent: _document);
+    final feature =
+        await FamilyNestedFeatureDialog.show(context, parent: _document);
     if (!mounted || feature == null) return;
     final candidate = _document.copyWith(
       features: <FamilyFeature>[..._document.features, feature],
@@ -945,14 +959,16 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
           candidate.id != feature.id && candidate.inputs.contains(feature.id),
     );
     if (used) {
-      setState(() => _status = 'This feature is used by a later operation. Edit that operation first.');
+      setState(() => _status =
+          'This feature is used by a later operation. Edit that operation first.');
       return;
     }
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: Text('Delete ${_featureName(feature)}?'),
-        content: const Text('This removes the selected operation from the family history.'),
+        content: const Text(
+            'This removes the selected operation from the family history.'),
         actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(false),
@@ -1022,7 +1038,8 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
     );
     _selectedTypeId = next.id;
     _commitDocument(
-      _document.copyWith(types: <FamilyTypeDefinition>[..._document.types, next]),
+      _document
+          .copyWith(types: <FamilyTypeDefinition>[..._document.types, next]),
       status: 'Family type duplicated.',
     );
   }
@@ -1051,7 +1068,8 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
   Future<bool> _save() async {
     FocusManager.instance.primaryFocus?.unfocus();
     if (_tool != _Tool.select) {
-      setState(() => _status = 'Finish or cancel the active tool before saving.');
+      setState(
+          () => _status = 'Finish or cancel the active tool before saving.');
       return false;
     }
     final name = _nameController.text.trim();
@@ -1066,7 +1084,8 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
       await _preflightDependencies(candidate);
       final path = _assetPath == null
           ? await FamilyFileStore.save(candidate)
-          : await FamilyFileStore.saveAsset(candidate, existingPath: _assetPath!);
+          : await FamilyFileStore.saveAsset(candidate,
+              existingPath: _assetPath!);
       if (!mounted || path == null) return false;
       setState(() {
         _document = candidate;
@@ -1101,7 +1120,8 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
             child: const Text('Keep editing'),
           ),
           TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(_CloseAction.discard),
+            onPressed: () =>
+                Navigator.of(dialogContext).pop(_CloseAction.discard),
             child: const Text('Discard'),
           ),
           FilledButton(
@@ -1191,12 +1211,14 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
       actions: <Widget>[
         IconButton(
           tooltip: 'Undo',
-          onPressed: _undo.isEmpty || _tool != _Tool.select ? null : _undoChange,
+          onPressed:
+              _undo.isEmpty || _tool != _Tool.select ? null : _undoChange,
           icon: const Icon(Icons.undo),
         ),
         IconButton(
           tooltip: 'Redo',
-          onPressed: _redo.isEmpty || _tool != _Tool.select ? null : _redoChange,
+          onPressed:
+              _redo.isEmpty || _tool != _Tool.select ? null : _redoChange,
           icon: const Icon(Icons.redo),
         ),
         IconButton(
@@ -1392,7 +1414,8 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
               runSpacing: 6,
               crossAxisAlignment: WrapCrossAlignment.center,
               children: <Widget>[
-                const Text('SKETCH', style: TextStyle(fontWeight: FontWeight.w800)),
+                const Text('SKETCH',
+                    style: TextStyle(fontWeight: FontWeight.w800)),
                 FilledButton.tonalIcon(
                   onPressed: _rectangleSketch,
                   icon: const Icon(Icons.crop_square),
@@ -1422,7 +1445,8 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
                   onPressed: () => setState(
                     () => _showAdvancedSketch = !_showAdvancedSketch,
                   ),
-                  child: Text(_showAdvancedSketch ? 'Hide constraints' : 'Constraints'),
+                  child: Text(
+                      _showAdvancedSketch ? 'Hide constraints' : 'Constraints'),
                 ),
                 FilledButton.icon(
                   onPressed: sketch.isValid ? _finishSketch : null,
@@ -1458,7 +1482,8 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
                         type: _selectedType,
                         selectedSketchId: sketch.id,
                         onChanged: (next) => _setWorkingDocument(next),
-                        onStatus: (message) => setState(() => _status = message),
+                        onStatus: (message) =>
+                            setState(() => _status = message),
                       ),
                     ),
                   ),
@@ -1480,7 +1505,8 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
           scrollDirection: Axis.horizontal,
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
           itemCount: _document.features.length,
-          separatorBuilder: (_, __) => const Icon(Icons.chevron_right, size: 17),
+          separatorBuilder: (_, __) =>
+              const Icon(Icons.chevron_right, size: 17),
           itemBuilder: (context, index) {
             final feature = _document.features[index];
             return ChoiceChip(
@@ -1513,11 +1539,15 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
               _Tool.sketch => _commandCard(
                   title: 'Sketch',
                   subtitle: 'Project plan viewport',
-                  body: const Text('Use Rectangle/Circle or tap points manually. Pinch/pan works like the project plan, then Finish.'),
+                  body: const Text(
+                      'Use Rectangle/Circle or tap points manually. Pinch/pan works like the project plan, then Finish.'),
                 ),
               _Tool.extrude => _buildExtrudeInspector(),
               _Tool.revolve => _buildRevolveInspector(),
-              _Tool.move || _Tool.rotate || _Tool.scale => _buildTransformInspector(),
+              _Tool.move ||
+              _Tool.rotate ||
+              _Tool.scale =>
+                _buildTransformInspector(),
               _Tool.union || _Tool.subtract => _buildBooleanInspector(),
             },
           ],
@@ -1538,6 +1568,7 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
                 child: DropdownButtonFormField<String>(
                   key: ValueKey<String>(_selectedType.id),
                   initialValue: _selectedType.id,
+                  isExpanded: true,
                   decoration: const InputDecoration(
                     labelText: 'Type',
                     border: OutlineInputBorder(),
@@ -1545,7 +1576,13 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
                   ),
                   items: <DropdownMenuItem<String>>[
                     for (final type in _document.types)
-                      DropdownMenuItem<String>(value: type.id, child: Text(type.name)),
+                      DropdownMenuItem<String>(
+                        value: type.id,
+                        child: Text(
+                          type.name,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
                   ],
                   onChanged: _tool == _Tool.select ? _selectType : null,
                 ),
@@ -1602,7 +1639,8 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
           ? 'Tap the model or choose a tool'
           : selected.kind.name,
       body: selected == null
-          ? const Text('Create a sketch, or tap the model to edit the latest solid.')
+          ? const Text(
+              'Create a sketch, or tap the model to edit the latest solid.')
           : Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: <Widget>[
@@ -1645,7 +1683,8 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
   }
 
   Widget _buildExtrudeInspector() {
-    final sketches = _document.sketches.where((sketch) => sketch.isValid).toList();
+    final sketches =
+        _document.sketches.where((sketch) => sketch.isValid).toList();
     return _commandCard(
       title: 'Extrude',
       subtitle: 'Drag blue D handle or enter exact Depth',
@@ -1712,7 +1751,8 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
   }
 
   Widget _buildRevolveInspector() {
-    final sketches = _document.sketches.where((sketch) => sketch.isValid).toList();
+    final sketches =
+        _document.sketches.where((sketch) => sketch.isValid).toList();
     return _commandCard(
       title: 'Revolve',
       subtitle: 'Drag orange ring or enter exact Angle',
@@ -1788,7 +1828,8 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
           if (source == null)
-            const Text('The viewport is in pick mode. Tap the solid you want to modify.')
+            const Text(
+                'The viewport is in pick mode. Tap the solid you want to modify.')
           else ...<Widget>[
             Row(
               children: <Widget>[
@@ -1824,9 +1865,11 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
             if (_tool == _Tool.scale)
               _numericDraftField('Scale', _scale, (v) => _scale = v),
             const SizedBox(height: 8),
-            const Text('Drag the coloured handles in the viewport. Releasing a gizmo commits one undo step.'),
+            const Text(
+                'Drag the coloured handles in the viewport. Releasing a gizmo commits one undo step.'),
             const SizedBox(height: 8),
-            TextButton(onPressed: _cancelTool, child: const Text('Done / leave tool')),
+            TextButton(
+                onPressed: _cancelTool, child: const Text('Done / leave tool')),
           ],
         ],
       ),
@@ -1841,7 +1884,8 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
     return TextFormField(
       key: ValueKey<String>('$label:$value'),
       initialValue: value,
-      keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
+      keyboardType:
+          const TextInputType.numberWithOptions(decimal: true, signed: true),
       decoration: InputDecoration(
         labelText: label,
         border: const OutlineInputBorder(),
@@ -1916,7 +1960,9 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              feature == null ? '$label · tap in viewport' : '$label · ${_featureName(feature)}',
+              feature == null
+                  ? '$label · tap in viewport'
+                  : '$label · ${_featureName(feature)}',
               style: const TextStyle(fontWeight: FontWeight.w600),
             ),
           ),
@@ -1961,7 +2007,11 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
-            Text(title, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+            Text(title,
+                style: Theme.of(context)
+                    .textTheme
+                    .titleMedium
+                    ?.copyWith(fontWeight: FontWeight.w700)),
             const SizedBox(height: 2),
             Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
             const SizedBox(height: 10),
@@ -1983,7 +2033,9 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
 
   static String _format(double value) {
     final fixed = value.toStringAsFixed(4);
-    return fixed.replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '');
+    return fixed
+        .replaceFirst(RegExp(r'0+$'), '')
+        .replaceFirst(RegExp(r'\.$'), '');
   }
 
   static bool _isSolid(FamilyFeatureKind kind) =>
@@ -1998,13 +2050,16 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
 
   static FamilyFeature? _lastSolid(FamilyDocument document) {
     for (var index = document.features.length - 1; index >= 0; index--) {
-      if (_isSolid(document.features[index].kind)) return document.features[index];
+      if (_isSolid(document.features[index].kind))
+        return document.features[index];
     }
     return null;
   }
 
   static String _featureName(FamilyFeature feature) =>
-      feature.label.trim().isEmpty ? _kindLabel(feature.kind) : feature.label.trim();
+      feature.label.trim().isEmpty
+          ? _kindLabel(feature.kind)
+          : feature.label.trim();
 
   static String _kindLabel(FamilyFeatureKind kind) => switch (kind) {
         FamilyFeatureKind.box => 'Box',
@@ -2030,13 +2085,15 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
         FamilyFeatureKind.nestedFamily => Icons.account_tree_outlined,
       };
 
-  static String _featureDescription(FamilyFeature feature) => switch (feature.kind) {
+  static String _featureDescription(FamilyFeature feature) =>
+      switch (feature.kind) {
         FamilyFeatureKind.box => 'Base parametric solid.',
         FamilyFeatureKind.profile => '2D sketch used by solid features.',
         FamilyFeatureKind.extrude => 'Closed profile extruded into a solid.',
         FamilyFeatureKind.revolve => 'Closed profile revolved around its axis.',
         FamilyFeatureKind.booleanUnion => 'Two solids joined into one result.',
-        FamilyFeatureKind.booleanSubtract => 'Tool solid cut from the Base solid.',
+        FamilyFeatureKind.booleanSubtract =>
+          'Tool solid cut from the Base solid.',
         FamilyFeatureKind.transform => 'Moved, rotated or scaled result.',
         FamilyFeatureKind.freeformMesh => 'Imported render-ready mesh.',
         FamilyFeatureKind.nestedFamily => 'Reusable child family instance.',
@@ -2086,7 +2143,8 @@ class _RibbonGroup extends StatelessWidget {
       ),
       child: Column(
         children: <Widget>[
-          Expanded(child: Row(mainAxisSize: MainAxisSize.min, children: children)),
+          Expanded(
+              child: Row(mainAxisSize: MainAxisSize.min, children: children)),
           Text(label, style: Theme.of(context).textTheme.labelSmall),
         ],
       ),
@@ -2116,7 +2174,7 @@ class _ToolAction extends StatelessWidget {
         onTap: onTap,
         child: Container(
           width: 67,
-          padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 3),
+          padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
           decoration: BoxDecoration(
             color: selected
                 ? Theme.of(context).colorScheme.primaryContainer
@@ -2125,10 +2183,17 @@ class _ToolAction extends StatelessWidget {
           ),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
             children: <Widget>[
-              Icon(icon, size: 23),
-              const SizedBox(height: 2),
-              Text(label, style: Theme.of(context).textTheme.labelSmall),
+              Icon(icon, size: 20),
+              const SizedBox(height: 1),
+              Text(
+                label,
+                maxLines: 1,
+                softWrap: false,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.labelSmall,
+              ),
             ],
           ),
         ),

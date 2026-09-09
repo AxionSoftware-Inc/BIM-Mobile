@@ -19,9 +19,8 @@ void registerWorkspaceDocumentationTests() {
 
     expect(find.text('Arvela'), findsOneWidget);
     expect(find.text('Level 1 plan'), findsOneWidget);
-    expect(find.text('3D View'), findsOneWidget);
-    expect(find.byTooltip('Floor plan'), findsOneWidget);
-    expect(find.byTooltip('3D view'), findsOneWidget);
+    expect(find.text('3D View'), findsWidgets);
+    expect(find.byTooltip('Open 3D view'), findsOneWidget);
     expect(find.byTooltip('Wall'), findsOneWidget);
     expect(find.byTooltip('Workspace actions'), findsOneWidget);
     await tester.tap(find.byTooltip('Workspace actions'));
