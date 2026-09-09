@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 import '../render_scene_models.dart';
 import 'annotation_document_controller.dart';
 import 'annotation_view_key.dart';
@@ -11,7 +13,18 @@ abstract final class AnnotationWorkspaceRuntime {
   static final AnnotationDocumentController document =
       AnnotationDocumentController();
 
-  static AnnotationDraftPoint? draftStart;
+  /// Transient multi-tap command state is observable but never persisted.
+  ///
+  /// The first Dimension/Detail-Line point must update viewport controls
+  /// immediately (especially Cancel) without forcing a document mutation or a
+  /// BIM scene rebuild. A ValueNotifier is deliberately tiny and keeps draft
+  /// lifetime separate from the packed annotation document.
+  static final ValueNotifier<AnnotationDraftPoint?> draft =
+      ValueNotifier<AnnotationDraftPoint?>(null);
+
+  static AnnotationDraftPoint? get draftStart => draft.value;
+  static set draftStart(AnnotationDraftPoint? value) => draft.value = value;
+
   static int activeViewId = 0;
   static int activeLevelId = 0;
   static String activeWorkspaceViewId = '';
@@ -33,7 +46,7 @@ abstract final class AnnotationWorkspaceRuntime {
   }
 
   static void cancelDraft() {
-    draftStart = null;
+    if (draft.value != null) draft.value = null;
   }
 
   static void resetProject() {
