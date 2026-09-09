@@ -67,6 +67,7 @@ abstract final class AnnotationStoreEditor {
     AnnotationStyle? replacementStyle,
   }) {
     var targetFound = false;
+    var targetMutated = false;
     final builder = AnnotationStoreBuilder();
 
     final textRows = _rowMap(store.text.annotationIndices);
@@ -81,15 +82,26 @@ abstract final class AnnotationStoreEditor {
       final id = store.annotationIds[annotationIndex];
       final target = id == annotationId;
       if (target) targetFound = true;
-      if (target && deleteTarget) continue;
+      if (target && deleteTarget) {
+        targetMutated = true;
+        continue;
+      }
 
       final anchor = annotationIndex * 3;
       final translateX = target ? dx : 0.0;
       final translateY = target ? dy : 0.0;
       final translateZ = target ? dz : 0.0;
+      if (target && (dx != 0 || dy != 0 || dz != 0)) targetMutated = true;
+
+      final currentStyle = store.styles[store.styleIds[annotationIndex]];
       final style = target && replacementStyle != null
           ? replacementStyle
-          : store.styles[store.styleIds[annotationIndex]];
+          : currentStyle;
+      if (target &&
+          replacementStyle != null &&
+          replacementStyle.signature != currentStyle.signature) {
+        targetMutated = true;
+      }
       final common = (
         id: id,
         viewId: store.viewIds[annotationIndex],
@@ -104,6 +116,13 @@ abstract final class AnnotationStoreEditor {
         case AnnotationKind.text:
           final row = textRows[annotationIndex];
           if (row == null) continue;
+          final oldValue = store.strings[store.text.stringIds[row]];
+          final value = target && replacementLabel != null
+              ? replacementLabel
+              : oldValue;
+          if (target && replacementLabel != null && value != oldValue) {
+            targetMutated = true;
+          }
           builder.addText(
             annotationId: common.id,
             viewId: common.viewId,
@@ -111,9 +130,7 @@ abstract final class AnnotationStoreEditor {
             x: common.x,
             y: common.y,
             z: common.z,
-            value: target && replacementLabel != null
-                ? replacementLabel
-                : store.strings[store.text.stringIds[row]],
+            value: value,
             style: style,
             rotationRadians: store.text.rotations[row],
             flags: common.flags,
@@ -146,6 +163,13 @@ abstract final class AnnotationStoreEditor {
         case AnnotationKind.tag:
           final row = tagRows[annotationIndex];
           if (row == null) continue;
+          final oldValue = store.strings[store.tags.labelStringIds[row]];
+          final value = target && replacementLabel != null
+              ? replacementLabel
+              : oldValue;
+          if (target && replacementLabel != null && value != oldValue) {
+            targetMutated = true;
+          }
           builder.addTag(
             annotationId: common.id,
             viewId: common.viewId,
@@ -154,9 +178,7 @@ abstract final class AnnotationStoreEditor {
             y: common.y,
             z: common.z,
             targetElementId: store.tags.targetElementIds[row],
-            label: target && replacementLabel != null
-                ? replacementLabel
-                : store.strings[store.tags.labelStringIds[row]],
+            label: value,
             style: style,
             flags: common.flags,
           );
@@ -196,7 +218,7 @@ abstract final class AnnotationStoreEditor {
       }
     }
 
-    return targetFound ? builder.build() : store;
+    return targetFound && targetMutated ? builder.build() : store;
   }
 
   static Map<int, int> _rowMap(List<int> annotationIndices) {
