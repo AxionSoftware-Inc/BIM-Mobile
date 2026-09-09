@@ -1,4 +1,5 @@
 import '../render_scene_models.dart';
+import 'family_2d_asset_library.dart';
 import 'family_gpu_residency.dart';
 import 'family_instance_store.dart';
 import 'family_scene_runtime_compiler.dart';
@@ -8,16 +9,18 @@ import 'family_spatial_streaming.dart';
 ///
 /// RenderScene snapshots are immutable in the viewer workflow, so identity is
 /// a safe migration key: a new authoritative snapshot gets a new compact store
-/// while repeated camera frames reuse the same typed arrays, spatial index and
-/// family GPU residency history.
+/// while repeated camera frames reuse the same typed arrays, compiled 2D
+/// symbols, spatial index and family GPU residency history.
 final class FamilyRuntimeSceneState {
   FamilyRuntimeSceneState({
     required this.store,
+    required this.twoDimensionalAssets,
     required this.spatialIndex,
     required this.gpuResidency,
   });
 
   final FamilyInstanceStore store;
+  final Family2dAssetLibrary twoDimensionalAssets;
   final FamilySpatialIndex spatialIndex;
 
   /// Shared residency controller for a future/native 3D family bridge.
@@ -35,10 +38,11 @@ abstract final class FamilyRuntimeSceneCache {
   static FamilyRuntimeSceneState forScene(RenderScene scene) {
     final cached = _cache[scene];
     if (cached != null) return cached;
-    final store = FamilySceneRuntimeCompiler.compile(scene);
+    final compilation = FamilySceneRuntimeCompiler.compileRuntime(scene);
     final state = FamilyRuntimeSceneState(
-      store: store,
-      spatialIndex: FamilySpatialIndex.build(store),
+      store: compilation.store,
+      twoDimensionalAssets: compilation.twoDimensionalAssets,
+      spatialIndex: FamilySpatialIndex.build(compilation.store),
       gpuResidency: FamilyGpuResidencyController(),
     );
     _cache[scene] = state;
