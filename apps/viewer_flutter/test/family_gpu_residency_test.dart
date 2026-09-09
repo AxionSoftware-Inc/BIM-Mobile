@@ -137,7 +137,7 @@ void main() {
         ]),
         currentResident: <FamilyGpuResidencyKey>{},
         estimateBytes: (value) =>
-            value.lod == FamilyGeometryLod.low ? 1_000_000 : 2_000_000,
+            value.lod == FamilyGeometryLod.low ? 1000000 : 2000000,
       );
 
       expect(decision.keepResident.length, 2);

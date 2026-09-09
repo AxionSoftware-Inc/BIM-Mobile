@@ -61,6 +61,8 @@ endif()
 target_include_directories(tbe_capi_shared
     PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/../core/include"
 )
 
 target_compile_features(tbe_capi_shared PUBLIC cxx_std_20)

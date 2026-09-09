@@ -110,7 +110,7 @@ void main() {
           geometryKey: 'chair-a:w=450',
           representations: representations,
           levelId: 1,
-          x: 1000 + i,
+          x: (1000 + i).toDouble(),
           y: 1000,
           z: 0,
         ),

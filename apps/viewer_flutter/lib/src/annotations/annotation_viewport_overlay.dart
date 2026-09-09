@@ -41,10 +41,10 @@ class AnnotationViewportOverlay extends StatelessWidget {
         builder: (context, _) => LayoutBuilder(
           builder: (context, constraints) {
             final width = constraints.maxWidth.isFinite
-                ? math.max(constraints.maxWidth, 1)
+                ? math.max(constraints.maxWidth, 1.0).toDouble()
                 : 1.0;
             final height = constraints.maxHeight.isFinite
-                ? math.max(constraints.maxHeight, 1)
+                ? math.max(constraints.maxHeight, 1.0).toDouble()
                 : 1.0;
             return CustomPaint(
               size: Size(width, height),
