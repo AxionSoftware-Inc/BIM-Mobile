@@ -29,6 +29,20 @@ void main() {
           'features/authoring/application/scene_mutation_service.dart',
       'family_instance_adapter.dart':
           'features/families/application/family_instance_adapter.dart',
+      'family_constraint_models.dart':
+          'features/families/domain/constraints/family_constraint_models.dart',
+      'family_document.dart':
+          'features/families/domain/document/family_document.dart',
+      'family_parameter_resolver.dart':
+          'features/families/domain/parameters/family_parameter_resolver.dart',
+      'family_constraint_solver.dart':
+          'features/families/domain/constraints/family_constraint_solver.dart',
+      'family_validation.dart':
+          'features/families/domain/validation/family_validation.dart',
+      'family_library_metadata.dart':
+          'features/families/application/library/family_library_metadata.dart',
+      'family_bundled_catalog.dart':
+          'features/families/infrastructure/catalog/family_bundled_catalog.dart',
     };
     final directivePattern =
         RegExp(r'''(?:import|export)\s+['"]([^'"]+)['"]''');
