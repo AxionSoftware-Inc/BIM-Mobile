@@ -46,12 +46,22 @@ abstract final class AnnotationWorkspaceRuntime {
   }
 }
 
+/// Identity of a multi-tap annotation command that owns a transient draft.
+///
+/// Keep this independent from WorkspaceToolSelection: the annotation runtime
+/// must remain usable by tests/headless document tooling without importing UI
+/// chrome. More importantly, Dimension and Detail Line must never consume one
+/// another's first point after the user switches tools mid-command.
+enum AnnotationDraftKind { dimension, detailLine }
+
 final class AnnotationDraftPoint {
   const AnnotationDraftPoint({
+    required this.kind,
     required this.point,
     this.referenceElementId,
   });
 
+  final AnnotationDraftKind kind;
   final RenderScenePoint point;
   final int? referenceElementId;
 }
