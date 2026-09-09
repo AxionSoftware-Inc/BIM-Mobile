@@ -986,11 +986,11 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
     });
   }
 
-  Future<void> _writeRecoveryAutosave() async {
+  Future<void> _writeRecoveryAutosave({bool ignoreBusy = false}) async {
     if (!_projectHasChanges || !_engineBackedMode || _recoveryWriteInFlight) {
       return;
     }
-    if (_isBusy) {
+    if (_isBusy && !ignoreBusy) {
       _scheduleRecoveryAutosave();
       return;
     }

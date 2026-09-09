@@ -552,8 +552,30 @@ class _ViewerHomePageState extends State<ViewerHomePage>
         _statusMessage = 'Reading $projectName...';
       });
 
-      // Parsing/cache validation happens in a fresh session. The open project
-      // is untouched until this returns a valid semantic scene.
+      // A tablet may already have a large interactive scene resident when an
+      // IFC is imported from the workspace. Keeping that scene and its native
+      // session alive while a second large IFC is parsed defeats the bounded
+      // working-set guarantee and lets Android's low-memory killer terminate
+      // the app before the transactional candidate can be committed.
+      final sourceStat = await File(path).stat();
+      final releaseActiveWorkspace =
+          sourceStat.type == FileSystemEntityType.file &&
+              sourceStat.size >= _nativeFirstIfcThresholdBytes &&
+              (_scene != null || _engineRepository != null);
+      if (releaseActiveWorkspace) {
+        await _writeRecoveryAutosave(ignoreBusy: true);
+        _updateViewportState(() {
+          _statusMessage = 'Freeing tablet memory for $projectName...';
+          _scene = null;
+        });
+        await _viewportController.clearScene();
+        _projectSession.dispose();
+        _viewWorkspace.clearSheetCache();
+      }
+
+      // Parsing/cache validation happens in a fresh session. Small imports
+      // keep the open project untouched; large tablet imports release the
+      // active scene above after writing a recovery checkpoint.
       candidate = await importService.prepare(
         path: path,
         displayName: projectName,

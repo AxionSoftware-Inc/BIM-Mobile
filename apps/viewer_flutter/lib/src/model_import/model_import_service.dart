@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import '../project_lifecycle_service.dart';
@@ -107,8 +108,7 @@ class ModelImportService<T extends ViewerEngineSession> {
     // private temporary file with a generic `.bin` suffix. The user-visible
     // display name still retains the authoritative IFC extension, so use it
     // as a safe format hint when the materialized path has no known suffix.
-    final format =
-        registry.resolvePath(path) ?? registry.resolvePath(displayName);
+    final format = await _resolveFormat(path, displayName);
     if (format == null) {
       throw UnsupportedError('Unsupported model format: $displayName');
     }
@@ -123,6 +123,47 @@ class ModelImportService<T extends ViewerEngineSession> {
       byteSize: stat.size,
       modifiedMilliseconds: stat.modified.millisecondsSinceEpoch,
     );
+  }
+
+  Future<ModelImportFormatDescriptor?> _resolveFormat(
+    String path,
+    String displayName,
+  ) async {
+    final byPath =
+        registry.resolvePath(path) ?? registry.resolvePath(displayName);
+    if (byPath != null) return byPath;
+
+    final looksLikeProviderTempFile = path.toLowerCase().endsWith('.bin') ||
+        displayName.toLowerCase().endsWith('.bin');
+    if (looksLikeProviderTempFile && registry.formats.length == 1) {
+      return registry.formats.single;
+    }
+
+    // Android's document provider may expose an IFC URI as a private
+    // temporary `.bin` file and may also return that temporary basename as
+    // the display name. The STEP header is tiny and authoritative, so sniff
+    // only the first few KiB instead of copying the model into memory.
+    try {
+      final headerBytes = await File(path)
+          .openRead(0, 8192)
+          .fold<List<int>>(<int>[], (buffer, chunk) {
+        buffer.addAll(chunk);
+        return buffer;
+      });
+      final header =
+          utf8.decode(headerBytes, allowMalformed: true).toUpperCase();
+      if (header.contains('ISO-10303-21') ||
+          header.contains('FILE_DESCRIPTION(')) {
+        return registry.formats.firstWhere(
+          (format) => format.id == 'ifc',
+          orElse: () => throw StateError('IFC format is not registered.'),
+        );
+      }
+    } catch (_) {
+      // The normal extension path and source validation below report the
+      // actionable error if the temporary document cannot be sampled.
+    }
+    return null;
   }
 
   Future<ModelImportCandidate<T>> prepare({
