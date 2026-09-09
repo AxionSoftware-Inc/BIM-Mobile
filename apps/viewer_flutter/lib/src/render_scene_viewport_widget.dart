@@ -240,8 +240,17 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
                 ? scene.levels.first.levelId
                 : 0);
     final pickedId = details.pickedObject?.elementId;
+    final tool = WorkspaceToolSelection.annotationTool;
 
-    switch (WorkspaceToolSelection.annotationTool) {
+    // Single-tap tools do not own a two-point draft. Clear any unfinished
+    // Dimension/Detail Line command before placing one of these annotations.
+    if (tool != AnnotationWorkspaceTool.dimension &&
+        tool != AnnotationWorkspaceTool.detailLine &&
+        AnnotationWorkspaceRuntime.draftStart != null) {
+      AnnotationWorkspaceRuntime.cancelDraft();
+    }
+
+    switch (tool) {
       case AnnotationWorkspaceTool.text:
         final value = await _promptText(
           title: 'Text note',
@@ -259,8 +268,9 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
         _showAnnotationMessage('Text note placed.');
       case AnnotationWorkspaceTool.dimension:
         final start = AnnotationWorkspaceRuntime.draftStart;
-        if (start == null) {
+        if (start == null || start.kind != AnnotationDraftKind.dimension) {
           AnnotationWorkspaceRuntime.draftStart = AnnotationDraftPoint(
+            kind: AnnotationDraftKind.dimension,
             point: point,
             referenceElementId: pickedId,
           );
@@ -315,8 +325,9 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
         _showAnnotationMessage('Tag placed.');
       case AnnotationWorkspaceTool.detailLine:
         final start = AnnotationWorkspaceRuntime.draftStart;
-        if (start == null) {
+        if (start == null || start.kind != AnnotationDraftKind.detailLine) {
           AnnotationWorkspaceRuntime.draftStart = AnnotationDraftPoint(
+            kind: AnnotationDraftKind.detailLine,
             point: point,
             referenceElementId: pickedId,
           );
