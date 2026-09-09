@@ -1,18 +1,3 @@
-import 'bim_element_registry.dart';
-import 'bim_element_module.dart';
-
-/// Stable route from an element module to its Inspector adapter.
-///
-/// Element modules own the route key. This registry owns only resolution; it
-/// contains no widget, metadata key, or authoring command knowledge.
-final class BimElementInspectorRegistry {
-  const BimElementInspectorRegistry(this.elements);
-
-  static const BimElementInspectorRegistry standard =
-      BimElementInspectorRegistry(BimElementRegistry.standard);
-
-  final BimElementRegistry elements;
-
-  String keyForKind(String kind) =>
-      elements.forKind(kind)?.inspectorKey ?? BimElementInspectorKeys.generic;
-}
+// COMPATIBILITY: legacy inspector-registry import path during the 0.3.2 migration.
+// REMOVE WHEN: all inspector callers import features/elements/presentation directly.
+export '../features/elements/presentation/bim_element_inspector_registry.dart';
