@@ -172,6 +172,96 @@ internal object NativeBimCacheBridge {
   }
 
   /**
+   * Reads only the project/chunk envelope required to decide whether a cache is
+   * usable and how large it is. Unlike [describe], this deliberately avoids
+   * primitive metadata, per-element bounds, feature edges and Java object Maps.
+   *
+   * The largest temporary allocation is one chunk's primitive-range LongArray;
+   * it is discarded before the next chunk. This keeps startup inspection close
+   * to O(levels + chunks) retained memory instead of O(elements).
+   */
+  fun describeManifest(cachePath: String, sourceIfcPath: String): Map<String, Any?>? {
+    val handle = nativeOpen(cachePath, sourceIfcPath)
+    if (handle == 0L) return null
+    return try {
+      val chunkCount = nativeChunkCount(handle).coerceAtLeast(0)
+      var mergedBounds: SceneBounds? = null
+      val levelElevations = sortedMapOf<Long, Double>()
+      val primaryKindChunkCounts = linkedMapOf<String, Int>()
+      var primitiveCount = 0L
+      var estimatedIndexCount = 0L
+      var estimatedGpuBytes = 0L
+
+      repeat(chunkCount) { index ->
+        val rawBounds = nativeChunkBounds(handle, index)
+        if (rawBounds != null && rawBounds.size == 6) {
+          val bounds = sceneBounds(rawBounds)
+          mergedBounds = mergedBounds?.let { unionSceneBounds(it, bounds) } ?: bounds
+          val levelId = nativeChunkLevelId(handle, index)
+          val previousElevation = levelElevations[levelId]
+          if (previousElevation == null || bounds.min.z < previousElevation) {
+            levelElevations[levelId] = bounds.min.z
+          }
+        }
+
+        val kind = primaryKindFromMask(nativeChunkKindMask(handle, index))
+        primaryKindChunkCounts[kind] = (primaryKindChunkCounts[kind] ?: 0) + 1
+
+        val ranges = nativeChunkPrimitiveRanges(handle, index)
+        val rangeCount = (ranges?.size ?: 0) / 3
+        primitiveCount += rangeCount.toLong()
+        var chunkIndexCount = 0L
+        if (ranges != null) {
+          var offset = 0
+          repeat(rangeCount) {
+            chunkIndexCount += ranges[offset + 1].coerceAtLeast(0L)
+            offset += 3
+          }
+        }
+        estimatedIndexCount += chunkIndexCount
+        estimatedGpuBytes += chunkIndexCount * 16L + 4096L
+      }
+
+      val bounds = mergedBounds
+        ?: SceneBounds(ScenePoint(0.0, 0.0, 0.0), ScenePoint(0.0, 0.0, 0.0))
+      val levels = levelElevations.map { (levelId, elevation) ->
+        linkedMapOf<String, Any?>(
+          "level_id" to levelId,
+          "name" to "Level $levelId",
+          "elevation_meters" to elevation,
+          "default_wall_height_meters" to 3.2,
+        )
+      }
+      val margin = maxOf(
+        2.0,
+        (bounds.max.x - bounds.min.x).coerceAtLeast(bounds.max.y - bounds.min.y) * 0.08,
+      )
+
+      linkedMapOf<String, Any?>(
+        "manifest_version" to 1,
+        "scene_version" to 1,
+        "units" to "meters",
+        "coordinate_system" to "X/Y plan, Z up",
+        "object_count" to primitiveCount,
+        "chunk_count" to chunkCount,
+        "native_cache_estimated_index_count" to estimatedIndexCount,
+        "native_cache_estimated_gpu_bytes" to estimatedGpuBytes,
+        "primary_kind_chunk_counts" to primaryKindChunkCounts,
+        "bounds" to bounds.toMap(),
+        "levels" to levels,
+        "sections" to listOf(
+          sectionMap("Section A", bounds.min.x - margin, centerY(bounds), bounds.max.x + margin, centerY(bounds)),
+          sectionMap("Section B", centerX(bounds), bounds.min.y - margin, centerX(bounds), bounds.max.y + margin),
+        ),
+      )
+    } catch (_: Throwable) {
+      null
+    } finally {
+      nativeClose(handle)
+    }
+  }
+
+  /**
    * Produces the semantic envelope Flutter needs for project chrome,
    * selection and 2D metadata. Meshes never cross this boundary.
    *
