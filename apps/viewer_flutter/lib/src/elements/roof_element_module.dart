@@ -1,13 +1,3 @@
-import 'bim_element_module.dart';
-
-final class RoofElementModule extends BimElementModule {
-  const RoofElementModule()
-      : super(
-          kindKey: 'roof',
-          displayName: 'Roof',
-          typeFamily: BimElementTypeFamily.roof,
-          aliases: const <String>{'roof'},
-          isLevelHosted: true,
-          levelLockedByDefault: true,
-        );
-}
+// COMPATIBILITY: legacy element-module import path during 0.3.2 migration.
+// REMOVE WHEN: all callers import features/elements/domain/modules directly.
+export '../features/elements/domain/modules/roof_element_module.dart';
