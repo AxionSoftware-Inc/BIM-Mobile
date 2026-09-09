@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../app_brand.dart';
+import '../../core/presentation/design_system/arvela_brand.dart';
 import '../../render_scene_viewport_types.dart';
 import 'app_settings_model.dart';
 

@@ -16,7 +16,7 @@ void main() {
       'quantity_schedule_service.dart':
           'features/schedules/application/quantity_schedule_service.dart',
       'quantity_schedule_dialog.dart':
-          'features/schedules/presentation/quantity_schedule_workspace.dart',
+          'features/schedules/presentation/quantity_schedule_dialog.dart',
       'scene_view_service.dart':
           'features/viewer/application/scene_view_service.dart',
       'selection_controller.dart':
@@ -31,7 +31,7 @@ void main() {
           'features/families/application/family_instance_adapter.dart',
     };
     final directivePattern =
-        RegExp(r"(?:import|export)\s+['\"]([^'\"]+)['\"]");
+        RegExp(r'''(?:import|export)\s+['"]([^'"]+)['"]''');
     final violations = <String>[];
 
     for (final file in _dartFiles(sourceRoot)) {
@@ -44,7 +44,10 @@ void main() {
 
       final text = file.readAsStringSync();
       for (final match in directivePattern.allMatches(text)) {
-        final target = match.group(1)!.replaceAll('\\', '/');
+        final target = _resolveImportTarget(
+          relativeFile,
+          match.group(1)!.replaceAll('\\', '/'),
+        );
         final basename = target.split('/').last;
         final canonical = canonicalByFacade[basename];
         if (canonical == null || target.contains(canonical)) continue;
@@ -84,4 +87,26 @@ String _relativeTo(Directory root, File file) {
     return normalizedFile.substring(normalizedRoot.length + 1);
   }
   return normalizedFile;
+}
+
+String _resolveImportTarget(String importingFile, String target) {
+  const packagePrefix = 'package:viewer_flutter/src/';
+  if (target.startsWith(packagePrefix)) {
+    return target.substring(packagePrefix.length);
+  }
+  if (target.startsWith('dart:') || target.startsWith('package:')) {
+    return target;
+  }
+
+  final parts = <String>[];
+  final importingDirectory = importingFile.split('/')..removeLast();
+  for (final part in <String>[...importingDirectory, ...target.split('/')]) {
+    if (part.isEmpty || part == '.') continue;
+    if (part == '..') {
+      if (parts.isNotEmpty) parts.removeLast();
+      continue;
+    }
+    parts.add(part);
+  }
+  return parts.join('/');
 }

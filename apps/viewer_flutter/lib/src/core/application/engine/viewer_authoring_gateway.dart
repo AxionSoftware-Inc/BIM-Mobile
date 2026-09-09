@@ -1,4 +1,4 @@
-import '../../../elements/wall_type_catalog.dart';
+import '../../../features/elements/domain/types/wall_type_catalog.dart';
 import '../../../render_scene_models.dart';
 import '../../../tools/wall_authoring_geometry.dart';
 

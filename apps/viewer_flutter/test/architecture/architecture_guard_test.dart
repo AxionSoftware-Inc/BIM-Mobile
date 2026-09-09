@@ -170,7 +170,7 @@ void main() {
             'core/infrastructure/telemetry/telemetry_service.dart',
         'app_project_storage.dart':
             'core/infrastructure/storage/app_project_storage.dart',
-        'app_brand.dart': 'core/presentation/design_system/app_brand.dart',
+        'app_brand.dart': 'core/presentation/design_system/arvela_brand.dart',
         'app_settings.dart': null,
         'project_recovery_store.dart':
             'features/project/infrastructure/project_recovery_store.dart',
@@ -199,7 +199,7 @@ void main() {
         'viewer_project_session.dart':
             'core/application/engine/viewer_project_session.dart',
         'viewer_bim_cache_gateway.dart':
-            'core/application/engine/viewer_bim_runtime_cache_gateway.dart',
+            'core/application/engine/viewer_bim_cache_gateway.dart',
         'bim_element_module.dart':
             'features/elements/domain/bim_element_module.dart',
         'bim_element_registry.dart':
@@ -272,7 +272,7 @@ void main() {
             'features/annotations/application/annotation_workspace_runtime.dart',
       };
       final directivePattern =
-          RegExp(r"(?:import|export)\s+['\"]([^'\"]+)['\"]");
+          RegExp(r'''(?:import|export)\s+['"]([^'"]+)['"]''');
 
       for (final file in _dartFiles(sourceRoot)) {
         final relativeFile = _relativeTo(sourceRoot, file).replaceAll('\\', '/');
@@ -284,7 +284,10 @@ void main() {
 
         final text = file.readAsStringSync();
         for (final match in directivePattern.allMatches(text)) {
-          final target = match.group(1)!.replaceAll('\\', '/');
+          final target = _resolveImportTarget(
+            relativeFile,
+            match.group(1)!.replaceAll('\\', '/'),
+          );
           final basename = target.split('/').last;
           if (!canonicalByFacade.containsKey(basename)) continue;
           final canonical = canonicalByFacade[basename];
@@ -354,6 +357,28 @@ Iterable<File> _dartFiles(Directory root) sync* {
 }
 
 String _basename(String path) => path.replaceAll('\\', '/').split('/').last;
+
+String _resolveImportTarget(String importingFile, String target) {
+  const packagePrefix = 'package:viewer_flutter/src/';
+  if (target.startsWith(packagePrefix)) {
+    return target.substring(packagePrefix.length);
+  }
+  if (target.startsWith('dart:') || target.startsWith('package:')) {
+    return target;
+  }
+
+  final parts = <String>[];
+  final importingDirectory = importingFile.split('/')..removeLast();
+  for (final part in <String>[...importingDirectory, ...target.split('/')]) {
+    if (part.isEmpty || part == '.') continue;
+    if (part == '..') {
+      if (parts.isNotEmpty) parts.removeLast();
+      continue;
+    }
+    parts.add(part);
+  }
+  return parts.join('/');
+}
 
 String _relativeTo(Directory root, File file) {
   final normalizedRoot = root.path.replaceAll('\\', '/');
