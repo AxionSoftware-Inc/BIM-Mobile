@@ -244,7 +244,7 @@ final class BimSpatialGridIndex {
   }
 
   static void _visitInstanceCells(
-    BimInstanceColumns instances,
+    BimSpatialInstanceTable instances,
     int index,
     double cellSizeX,
     double cellSizeY,
