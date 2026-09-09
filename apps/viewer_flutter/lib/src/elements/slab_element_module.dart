@@ -1,14 +1,3 @@
-import 'bim_element_module.dart';
-
-final class SlabElementModule extends BimElementModule {
-  const SlabElementModule()
-      : super(
-          kindKey: 'slab',
-          displayName: 'Slab',
-          typeFamily: BimElementTypeFamily.slab,
-          inspectorAdapterKey: BimElementInspectorKeys.surface,
-          aliases: const <String>{'slab'},
-          isLevelHosted: true,
-          levelLockedByDefault: true,
-        );
-}
+// COMPATIBILITY: legacy element-module import path during 0.3.2 migration.
+// REMOVE WHEN: all callers import features/elements/domain/modules directly.
+export '../features/elements/domain/modules/slab_element_module.dart';
