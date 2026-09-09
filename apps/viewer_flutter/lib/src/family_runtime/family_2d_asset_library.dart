@@ -168,16 +168,19 @@ abstract final class Family2dSvgCompiler {
             subpathY = y;
             firstMovePairForCommand = false;
           }
+          continue;
         case 'H':
           final rawX = nextNumber();
           if (rawX == null) return null;
           currentX = relative ? currentX + rawX : rawX;
           emit(Family2dPathOpcode.lineTo, currentX, currentY);
+          continue;
         case 'V':
           final rawY = nextNumber();
           if (rawY == null) return null;
           currentY = relative ? currentY + rawY : rawY;
           emit(Family2dPathOpcode.lineTo, currentX, currentY);
+          continue;
       }
     }
 
