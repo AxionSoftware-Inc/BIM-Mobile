@@ -8,6 +8,7 @@ import '../render_scene_viewport_controller.dart';
 import '../render_scene_viewport_projection.dart';
 import '../render_scene_viewport_types.dart';
 import '../workspace_view_runtime_context.dart';
+import 'family_2d_asset_library.dart';
 import 'family_instance_store.dart';
 import 'family_render_batches.dart';
 import 'family_representation.dart';
@@ -21,8 +22,9 @@ import 'family_spatial_streaming.dart';
 /// - view radius follows the actual planar camera, not total project bounds;
 /// - Android top-down is already painted by NativeSelectionOverlay, so Flutter
 ///   must not draw the same family symbol a second time;
-/// - SVG is an optional source encoding only. Generated/compact-vector/bounds
-///   representations use the same batched placement path.
+/// - SVG is an optional source encoding only. It is compiled once per scene to
+///   compact vector commands; camera frames never parse SVG or load 3D family
+///   geometry just to paint a plan symbol.
 class Family2dViewportOverlay extends StatelessWidget {
   const Family2dViewportOverlay({
     super.key,
@@ -106,6 +108,7 @@ class Family2dViewportOverlay extends StatelessWidget {
               painter: _Family2dPainter(
                 controller: controller,
                 store: runtime.store,
+                assets: runtime.twoDimensionalAssets,
                 plan: plan,
                 color: Theme.of(context).colorScheme.onSurface,
               ),
@@ -131,12 +134,14 @@ final class _Family2dPainter extends CustomPainter {
   _Family2dPainter({
     required this.controller,
     required this.store,
+    required this.assets,
     required this.plan,
     required this.color,
   });
 
   final RenderSceneViewportController controller;
   final FamilyInstanceStore store;
+  final Family2dAssetLibrary assets;
   final FamilyRenderPlan plan;
   final Color color;
 
@@ -160,7 +165,14 @@ final class _Family2dPainter extends CustomPainter {
     for (final batch in plan.twoDimensionalBatches) {
       for (final instanceIndex in batch.instanceIndices) {
         if (instanceIndex >= store.length) continue;
-        _paintInstance(canvas, projection, instanceIndex, batch.encoding, paint);
+        _paintInstance(
+          canvas,
+          projection,
+          instanceIndex,
+          batch.encoding,
+          batch.assetKey,
+          paint,
+        );
       }
     }
   }
@@ -170,6 +182,7 @@ final class _Family2dPainter extends CustomPainter {
     RenderSceneProjection projection,
     int instanceIndex,
     Family2dEncoding encoding,
+    String assetKey,
     Paint paint,
   ) {
     final position = store.positionAt(instanceIndex);
@@ -189,27 +202,110 @@ final class _Family2dPainter extends CustomPainter {
     final rect = Rect.fromPoints(a, b);
     if (!rect.overlaps(Offset.zero & projection.canvasSize)) return;
 
-    // Runtime asset decoding is deliberately separate from placement rows.
-    // Until compact-vector/SVG cache payloads are attached, every encoding has
-    // a cheap semantic fallback rather than loading the 3D family mesh.
-    switch (encoding) {
-      case Family2dEncoding.generated:
-      case Family2dEncoding.compactVector:
-      case Family2dEncoding.svg:
-      case Family2dEncoding.boundsProxy:
-        canvas.drawRect(rect, paint);
-        final center = rect.center;
-        canvas.drawLine(
-          Offset(rect.left, center.dy),
-          Offset(rect.right, center.dy),
+    if ((encoding == Family2dEncoding.svg ||
+            encoding == Family2dEncoding.compactVector) &&
+        _paintCompiledAsset(
+          canvas,
+          projection,
+          instanceIndex,
+          assetKey,
           paint,
-        );
+        )) {
+      return;
     }
+
+    // Generated/bounds representations remain deliberately cheap. They do not
+    // materialize a 3D family mesh merely because a 2D authored symbol is not
+    // available or used an unsupported SVG curve command.
+    canvas.drawRect(rect, paint);
+    final center = rect.center;
+    canvas.drawLine(
+      Offset(rect.left, center.dy),
+      Offset(rect.right, center.dy),
+      paint,
+    );
+  }
+
+  bool _paintCompiledAsset(
+    Canvas canvas,
+    RenderSceneProjection projection,
+    int instanceIndex,
+    String assetKey,
+    Paint paint,
+  ) {
+    final asset = assets[assetKey];
+    if (asset == null || asset.paths.isEmpty) return false;
+
+    final position = store.positionAt(instanceIndex);
+    final rotationOffset = instanceIndex * 4;
+    final scaleOffset = instanceIndex * 3;
+    final qz = store.rotations[rotationOffset + 2];
+    final qw = store.rotations[rotationOffset + 3];
+    final angle = 2.0 * math.atan2(qz, qw);
+    final cosAngle = math.cos(angle);
+    final sinAngle = math.sin(angle);
+    final scaleX = store.scales[scaleOffset];
+    final scaleY = store.scales[scaleOffset + 1];
+
+    Offset projectLocal(double localX, double localY) {
+      final sx = localX * scaleX;
+      final sy = localY * scaleY;
+      final worldX = position.x + sx * cosAngle - sy * sinAngle;
+      final worldY = position.y + sx * sinAngle + sy * cosAngle;
+      return projection
+          .project(
+            RenderScenePoint(
+              x: worldX,
+              y: worldY,
+              z: position.z,
+            ),
+          )
+          .screen;
+    }
+
+    var drewAny = false;
+    for (final compiledPath in asset.paths) {
+      final path = Path();
+      var hasPoint = false;
+      for (var commandIndex = 0;
+          commandIndex < compiledPath.length;
+          commandIndex++) {
+        final opcode = compiledPath.opcodes[commandIndex];
+        final coordinateOffset = commandIndex * 2;
+        switch (opcode) {
+          case Family2dPathOpcode.moveTo:
+            final point = projectLocal(
+              compiledPath.coordinates[coordinateOffset],
+              compiledPath.coordinates[coordinateOffset + 1],
+            );
+            path.moveTo(point.dx, point.dy);
+            hasPoint = true;
+          case Family2dPathOpcode.lineTo:
+            final point = projectLocal(
+              compiledPath.coordinates[coordinateOffset],
+              compiledPath.coordinates[coordinateOffset + 1],
+            );
+            if (hasPoint) {
+              path.lineTo(point.dx, point.dy);
+            } else {
+              path.moveTo(point.dx, point.dy);
+              hasPoint = true;
+            }
+          case Family2dPathOpcode.close:
+            if (hasPoint) path.close();
+        }
+      }
+      if (!hasPoint) continue;
+      canvas.drawPath(path, paint);
+      drewAny = true;
+    }
+    return drewAny;
   }
 
   @override
   bool shouldRepaint(covariant _Family2dPainter oldDelegate) =>
       oldDelegate.store != store ||
+      oldDelegate.assets != assets ||
       oldDelegate.controller.sceneRevision != controller.sceneRevision ||
       oldDelegate.controller.fitRevision != controller.fitRevision ||
       oldDelegate.controller.planCamera != controller.planCamera ||
