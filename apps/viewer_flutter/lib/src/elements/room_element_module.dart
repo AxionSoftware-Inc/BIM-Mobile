@@ -1,12 +1,3 @@
-import 'bim_element_module.dart';
-
-final class RoomElementModule extends BimElementModule {
-  const RoomElementModule()
-      : super(
-          kindKey: 'room',
-          displayName: 'Room',
-          typeFamily: BimElementTypeFamily.none,
-          aliases: const <String>{'room'},
-          isPlanCore: true,
-        );
-}
+// COMPATIBILITY: legacy element-module import path during 0.3.2 migration.
+// REMOVE WHEN: all callers import features/elements/domain/modules directly.
+export '../features/elements/domain/modules/room_element_module.dart';
