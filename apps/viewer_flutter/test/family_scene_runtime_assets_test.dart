@@ -34,6 +34,43 @@ void main() {
     ]);
   });
 
+  test('plan elevation and section keep independent lightweight assets', () {
+    const planSvg = '<svg><path d="M0 0 H1 V1 Z"/></svg>';
+    const elevationSvg = '<svg><path d="M0 0 V2 H1 Z"/></svg>';
+    const sectionSvg = '<svg><path d="M0 0 H2 V0.5 Z"/></svg>';
+    final scene = _scene(<Map<String, Object?>>[
+      _familyObject(
+        id: 151,
+        x: 4,
+        svg: planSvg,
+        elevationSvg: elevationSvg,
+        sectionSvg: sectionSvg,
+      ),
+    ]);
+
+    final runtime = FamilySceneRuntimeCompiler.compileRuntime(scene);
+    final representations = runtime.store.geometryVariants.single.representations;
+
+    expect(runtime.twoDimensionalAssets.length, 3);
+    expect(runtime.twoDimensionalAssets[representations.plan!.assetKey], isNotNull);
+    expect(
+      runtime.twoDimensionalAssets[representations.elevation!.assetKey],
+      isNotNull,
+    );
+    expect(
+      runtime.twoDimensionalAssets[representations.section!.assetKey],
+      isNotNull,
+    );
+    expect(
+      <String>{
+        representations.plan!.assetKey,
+        representations.elevation!.assetKey,
+        representations.section!.assetKey,
+      },
+      hasLength(3),
+    );
+  });
+
   test('unsupported SVG stays out of compiled library without losing instance', () {
     const svg = '<svg><path d="M0 0 C1 0 1 1 2 1"/></svg>';
     final scene = _scene(<Map<String, Object?>>[
@@ -83,6 +120,8 @@ Map<String, Object?> _familyObject({
   required int id,
   required double x,
   required String svg,
+  String? elevationSvg,
+  String? sectionSvg,
 }) =>
     <String, Object?>{
       'element_id': id,
@@ -103,6 +142,8 @@ Map<String, Object?> _familyObject({
         'family_category': 'furniture',
         'family_parameter_values_json': '{"width":0.6,"depth":0.6}',
         'family_plan_svg': svg,
+        if (elevationSvg != null) 'family_elevation_svg': elevationSvg,
+        if (sectionSvg != null) 'family_section_svg': sectionSvg,
       },
     };
 
