@@ -1,8 +1,8 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:viewer_flutter/src/elements/bim_element_module.dart';
-import 'package:viewer_flutter/src/elements/bim_element_registry.dart';
+import 'package:viewer_flutter/src/features/elements/application/bim_element_registry.dart';
+import 'package:viewer_flutter/src/features/elements/domain/bim_element_module.dart';
 import 'package:viewer_flutter/src/features/project/application/project_companion_document.dart';
 
 void main() {
@@ -124,8 +124,6 @@ void main() {
         'app_project_storage.dart':
             'core/infrastructure/storage/app_project_storage.dart',
         'app_brand.dart': 'core/presentation/design_system/app_brand.dart',
-        // app_settings.dart is a multi-export facade. Migrated code must import
-        // the specific model/store/presentation owner instead.
         'app_settings.dart': null,
         'project_recovery_store.dart':
             'features/project/infrastructure/project_recovery_store.dart',
@@ -153,6 +151,26 @@ void main() {
             'core/application/engine/viewer_authoring_gateway.dart',
         'viewer_project_session.dart':
             'core/application/engine/viewer_project_session.dart',
+        'bim_element_module.dart':
+            'features/elements/domain/bim_element_module.dart',
+        'bim_element_registry.dart':
+            'features/elements/application/bim_element_registry.dart',
+        'inspector_registry.dart':
+            'features/elements/presentation/bim_element_inspector_registry.dart',
+        'annotation_store.dart':
+            'features/annotations/domain/annotation_store.dart',
+        'annotation_view_key.dart':
+            'features/annotations/domain/annotation_view_key.dart',
+        'annotation_store_codec.dart':
+            'features/annotations/infrastructure/annotation_store_codec.dart',
+        'annotation_sidecar_store.dart':
+            'features/annotations/infrastructure/annotation_sidecar_store.dart',
+        'annotation_store_editor.dart':
+            'features/annotations/application/annotation_store_editor.dart',
+        'annotation_document_controller.dart':
+            'features/annotations/application/annotation_document_controller.dart',
+        'annotation_workspace_runtime.dart':
+            'features/annotations/application/annotation_workspace_runtime.dart',
       };
       final directivePattern =
           RegExp(r"(?:import|export)\s+['\"]([^'\"]+)['\"]");
