@@ -23,9 +23,16 @@ class AnnotationHistoryControls extends StatelessWidget {
       child: SafeArea(
         minimum: const EdgeInsets.all(12),
         child: AnimatedBuilder(
-          animation: AnnotationWorkspaceRuntime.document,
+          // Draft state is intentionally not a document mutation. Listen to
+          // both sources so Cancel enables immediately after the first point
+          // of a Dimension/Detail Line without publishing a fake undo entry.
+          animation: Listenable.merge(<Listenable>[
+            AnnotationWorkspaceRuntime.document,
+            AnnotationWorkspaceRuntime.draft,
+          ]),
           builder: (context, _) {
             final document = AnnotationWorkspaceRuntime.document;
+            final hasDraft = AnnotationWorkspaceRuntime.draftStart != null;
             return Material(
               elevation: 2,
               color: Theme.of(context)
@@ -54,7 +61,8 @@ class AnnotationHistoryControls extends StatelessWidget {
                     IconButton(
                       tooltip: 'Cancel annotation draft',
                       visualDensity: VisualDensity.compact,
-                      onPressed: AnnotationWorkspaceRuntime.cancelDraft,
+                      onPressed:
+                          hasDraft ? AnnotationWorkspaceRuntime.cancelDraft : null,
                       icon: const Icon(Icons.close, size: 19),
                     ),
                   ],
