@@ -379,6 +379,17 @@ internal class RenderScenePlatformView(
         }
       }
 
+      "inspectNativeBimCacheManifest" -> {
+        val payload = call.arguments as? Map<*, *>
+        val cachePath = payload?.get("cachePath") as? String
+        val sourceIfcPath = payload?.get("sourceIfcPath") as? String
+        if (cachePath.isNullOrBlank() || sourceIfcPath.isNullOrBlank()) {
+          result.error("invalid_cache_request", "cachePath and sourceIfcPath are required", null)
+        } else {
+          inspectNativeBimCacheManifest(cachePath, sourceIfcPath, result)
+        }
+      }
+
       "prepareNativeBimCache" -> {
         val payload = call.arguments as? Map<*, *>
         val cachePath = payload?.get("cachePath") as? String
@@ -493,6 +504,39 @@ internal class RenderScenePlatformView(
       "getDiagnostics" -> result.success(view.diagnostics())
 
       else -> result.notImplemented()
+    }
+  }
+
+  /** Lightweight cache inspection used by the staged semantic-streaming path. */
+  private fun inspectNativeBimCacheManifest(
+    cachePath: String,
+    sourceIfcPath: String,
+    result: MethodChannel.Result,
+  ) {
+    Thread {
+      val manifest = NativeBimCacheBridge.describeManifest(cachePath, sourceIfcPath)
+      val posted = view.post {
+        if (manifest == null) {
+          result.error(
+            "native_cache_unavailable",
+            NativeBimCacheBridge.lastError().ifBlank { "Could not inspect native BIM cache." },
+            null,
+          )
+        } else {
+          result.success(manifest)
+        }
+      }
+      if (!posted) {
+        result.error(
+          "render_view_unavailable",
+          "Native BIM cache manifest could not return to the viewport.",
+          null,
+        )
+      }
+    }.apply {
+      name = "tbe-native-bim-cache-manifest"
+      isDaemon = true
+      start()
     }
   }
 
