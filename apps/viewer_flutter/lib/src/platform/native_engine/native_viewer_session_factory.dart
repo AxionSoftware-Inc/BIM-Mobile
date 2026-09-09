@@ -1,5 +1,5 @@
+import '../../core/application/engine/viewer_project_session.dart';
 import '../../tbe_ffi.dart';
-import '../../viewer_project_session.dart';
 
 /// FFI composition adapter.
 ///
