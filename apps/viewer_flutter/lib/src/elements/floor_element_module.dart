@@ -1,15 +1,3 @@
-import 'bim_element_module.dart';
-
-final class FloorElementModule extends BimElementModule {
-  const FloorElementModule()
-      : super(
-          kindKey: 'floor',
-          displayName: 'Floor',
-          typeFamily: BimElementTypeFamily.floor,
-          inspectorAdapterKey: BimElementInspectorKeys.surface,
-          aliases: const <String>{'floor', 'floorsystem'},
-          isLevelHosted: true,
-          isPlanCore: true,
-          levelLockedByDefault: true,
-        );
-}
+// COMPATIBILITY: legacy element-module import path during 0.3.2 migration.
+// REMOVE WHEN: all callers import features/elements/domain/modules directly.
+export '../features/elements/domain/modules/floor_element_module.dart';
