@@ -31,6 +31,8 @@ void main() {
           'features/families/application/family_instance_adapter.dart',
       'family_dependency_resolver.dart':
           'features/families/application/dependencies/family_dependency_resolver.dart',
+      'family_render_scene_adapter.dart':
+          'features/families/application/integration/family_render_scene_adapter.dart',
       'family_constraint_models.dart':
           'features/families/domain/constraints/family_constraint_models.dart',
       'family_document.dart':
