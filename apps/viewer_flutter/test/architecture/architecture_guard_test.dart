@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:viewer_flutter/src/elements/bim_element_module.dart';
 import 'package:viewer_flutter/src/elements/bim_element_registry.dart';
+import 'package:viewer_flutter/src/features/project/application/project_companion_document.dart';
 
 void main() {
   group('architecture guardrails', () {
@@ -27,6 +28,16 @@ void main() {
       ]);
 
       expect(() => registry.validate(), throwsA(isA<StateError>()));
+    });
+
+    test('project companion registry rejects duplicate canonical keys', () {
+      expect(
+        () => ProjectCompanionDocuments(const <ProjectCompanionDocument>[
+          _FakeCompanion('annotations'),
+          _FakeCompanion('  ANNOTATIONS  '),
+        ]),
+        throwsA(isA<StateError>()),
+      );
     });
 
     test('viewer_app legacy part surface cannot grow', () {
@@ -72,9 +83,9 @@ void main() {
 
       for (final file in _dartFiles(sourceRoot)) {
         final normalized = file.path.replaceAll('\\', '/');
-        final isMigratedDomain = normalized.contains('/features/') &&
-                normalized.contains('/domain/') ||
-            normalized.contains('/core/domain/');
+        final isMigratedDomain =
+            (normalized.contains('/features/') && normalized.contains('/domain/')) ||
+                normalized.contains('/core/domain/');
         if (!isMigratedDomain) continue;
 
         final text = file.readAsStringSync();
@@ -118,6 +129,22 @@ void main() {
   });
 }
 
+final class _FakeCompanion implements ProjectCompanionDocument {
+  const _FakeCompanion(this.key);
+
+  @override
+  final String key;
+
+  @override
+  Future<void> resetForNewProject() async {}
+
+  @override
+  Future<void> restoreForProjectPath(String? projectPath) async {}
+
+  @override
+  Future<void> saveForProjectPath(String projectPath) async {}
+}
+
 Directory _sourceRoot() {
   final packageLocal = Directory('lib/src');
   if (packageLocal.existsSync()) return packageLocal.absolute;
@@ -134,8 +161,7 @@ Iterable<File> _dartFiles(Directory root) sync* {
   }
 }
 
-String _basename(String path) =>
-    path.replaceAll('\\', '/').split('/').last;
+String _basename(String path) => path.replaceAll('\\', '/').split('/').last;
 
 String _relativeTo(Directory root, File file) {
   final normalizedRoot = root.path.replaceAll('\\', '/');
