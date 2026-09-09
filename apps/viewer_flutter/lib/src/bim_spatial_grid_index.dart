@@ -5,10 +5,10 @@ import 'bim_compact_instance_store.dart';
 
 /// Compact CSR-style 3D grid over BIM instance bounds.
 ///
-/// The persistent representation is dense typed data. Build-time buckets are
-/// temporary, but camera queries intentionally do *not* allocate a `Set<int>`
-/// or one object per candidate. A reusable generation-stamp table de-duplicates
-/// instance indices, which keeps orbit/pan queries predictable under GC.
+/// Both the retained index and its hot camera-query scratch state are typed
+/// data. Construction is two-pass: the first pass counts memberships per cell,
+/// the second writes directly into the final CSR buffer. This avoids retaining
+/// a `List<int>` for every occupied cell while a large project is opening.
 final class BimSpatialGridIndex {
   BimSpatialGridIndex._({
     required this.cellSizeX,
@@ -28,66 +28,60 @@ final class BimSpatialGridIndex {
     double cellSizeZ = 12.0,
   }) {
     assert(cellSizeX > 0 && cellSizeY > 0 && cellSizeZ > 0);
-    final buckets = <int, List<int>>{};
     final instances = store.instances;
 
+    // Pass 1 retains only one integer count per occupied cell. The old builder
+    // kept Map<int, List<int>>, which boxed every membership and could briefly
+    // use more memory than the final typed CSR index on campus-size scenes.
+    final membershipCounts = <int, int>{};
     for (var index = 0; index < instances.length; index += 1) {
-      final minCellX = _cell(instances.minX(index), cellSizeX);
-      final minCellY = _cell(instances.minY(index), cellSizeY);
-      final minCellZ = _cell(instances.minZ(index), cellSizeZ);
-      final maxCellX = _cell(instances.maxX(index), cellSizeX);
-      final maxCellY = _cell(instances.maxY(index), cellSizeY);
-      final maxCellZ = _cell(instances.maxZ(index), cellSizeZ);
-
-      // Large imported proxies are indexed by their center. Expanding one
-      // campus shell through every occupied cell can otherwise make the index
-      // itself larger than the geometry it is meant to accelerate.
-      final cellCount = (maxCellX - minCellX + 1) *
-          (maxCellY - minCellY + 1) *
-          (maxCellZ - minCellZ + 1);
-      if (cellCount > 256) {
-        final cx = _cell(
-          (instances.minX(index) + instances.maxX(index)) * 0.5,
-          cellSizeX,
-        );
-        final cy = _cell(
-          (instances.minY(index) + instances.maxY(index)) * 0.5,
-          cellSizeY,
-        );
-        final cz = _cell(
-          (instances.minZ(index) + instances.maxZ(index)) * 0.5,
-          cellSizeZ,
-        );
-        buckets.putIfAbsent(_pack(cx, cy, cz), () => <int>[]).add(index);
-        continue;
-      }
-
-      for (var x = minCellX; x <= maxCellX; x += 1) {
-        for (var y = minCellY; y <= maxCellY; y += 1) {
-          for (var z = minCellZ; z <= maxCellZ; z += 1) {
-            buckets.putIfAbsent(_pack(x, y, z), () => <int>[]).add(index);
-          }
-        }
-      }
+      _visitInstanceCells(
+        instances,
+        index,
+        cellSizeX,
+        cellSizeY,
+        cellSizeZ,
+        (key) => membershipCounts[key] = (membershipCounts[key] ?? 0) + 1,
+      );
     }
 
-    final keys = buckets.keys.toList()..sort();
+    final keys = membershipCounts.keys.toList()..sort();
     final offsets = Uint32List(keys.length + 1);
     var membershipCount = 0;
-    for (final key in keys) {
-      membershipCount += buckets[key]!.length;
-    }
-    final flattened = Uint32List(membershipCount);
-    var writeOffset = 0;
     for (var cellIndex = 0; cellIndex < keys.length; cellIndex += 1) {
-      offsets[cellIndex] = writeOffset;
-      final bucket = buckets[keys[cellIndex]]!;
-      for (final instanceIndex in bucket) {
-        flattened[writeOffset] = instanceIndex;
-        writeOffset += 1;
-      }
+      offsets[cellIndex] = membershipCount;
+      membershipCount += membershipCounts[keys[cellIndex]]!;
     }
-    offsets[keys.length] = writeOffset;
+    offsets[keys.length] = membershipCount;
+
+    final flattened = Uint32List(membershipCount);
+    final writeOffsets = Uint32List(keys.length);
+    for (var cellIndex = 0; cellIndex < keys.length; cellIndex += 1) {
+      writeOffsets[cellIndex] = offsets[cellIndex];
+    }
+    final cellIndexByKey = <int, int>{
+      for (var index = 0; index < keys.length; index += 1) keys[index]: index,
+    };
+
+    // Pass 2 writes each membership directly into its final typed slice.
+    for (var instanceIndex = 0;
+        instanceIndex < instances.length;
+        instanceIndex += 1) {
+      _visitInstanceCells(
+        instances,
+        instanceIndex,
+        cellSizeX,
+        cellSizeY,
+        cellSizeZ,
+        (key) {
+          final cellIndex = cellIndexByKey[key];
+          if (cellIndex == null) return;
+          final writeOffset = writeOffsets[cellIndex];
+          flattened[writeOffset] = instanceIndex;
+          writeOffsets[cellIndex] = writeOffset + 1;
+        },
+      );
+    }
 
     return BimSpatialGridIndex._(
       cellSizeX: cellSizeX,
@@ -247,6 +241,53 @@ final class BimSpatialGridIndex {
       _queryGeneration = 1;
     }
     return _queryGeneration;
+  }
+
+  static void _visitInstanceCells(
+    BimInstanceColumns instances,
+    int index,
+    double cellSizeX,
+    double cellSizeY,
+    double cellSizeZ,
+    void Function(int key) visitor,
+  ) {
+    final minCellX = _cell(instances.minX(index), cellSizeX);
+    final minCellY = _cell(instances.minY(index), cellSizeY);
+    final minCellZ = _cell(instances.minZ(index), cellSizeZ);
+    final maxCellX = _cell(instances.maxX(index), cellSizeX);
+    final maxCellY = _cell(instances.maxY(index), cellSizeY);
+    final maxCellZ = _cell(instances.maxZ(index), cellSizeZ);
+
+    // Large imported proxies are indexed by their center. Expanding one
+    // campus shell through every occupied cell can otherwise make the index
+    // itself larger than the geometry it is meant to accelerate.
+    final cellCount = (maxCellX - minCellX + 1) *
+        (maxCellY - minCellY + 1) *
+        (maxCellZ - minCellZ + 1);
+    if (cellCount > 256) {
+      final cx = _cell(
+        (instances.minX(index) + instances.maxX(index)) * 0.5,
+        cellSizeX,
+      );
+      final cy = _cell(
+        (instances.minY(index) + instances.maxY(index)) * 0.5,
+        cellSizeY,
+      );
+      final cz = _cell(
+        (instances.minZ(index) + instances.maxZ(index)) * 0.5,
+        cellSizeZ,
+      );
+      visitor(_pack(cx, cy, cz));
+      return;
+    }
+
+    for (var x = minCellX; x <= maxCellX; x += 1) {
+      for (var y = minCellY; y <= maxCellY; y += 1) {
+        for (var z = minCellZ; z <= maxCellZ; z += 1) {
+          visitor(_pack(x, y, z));
+        }
+      }
+    }
   }
 
   static int _cell(double coordinate, double cellSize) =>
