@@ -385,14 +385,8 @@ class _ViewerHomePageState extends State<ViewerHomePage>
     _dependencies = widget.dependencies ?? ViewerAppDependencies.production();
     _projectSession = _dependencies.projectSession;
     _projectLifecycle = _dependencies.projectLifecycle;
-    _projectPersistence = ProjectPersistenceService(
-      repository: () => _engineRepository,
-      engineEnabled: () => _engineBackedMode,
-    );
-    _sceneViews = SceneViewService(
-      repository: () => _engineRepository,
-      engineEnabled: () => _engineBackedMode,
-    );
+    _projectPersistence = _dependencies.projectPersistence;
+    _sceneViews = _dependencies.createSceneViewService();
     _sheetWorkspace = SheetWorkspaceController();
     _sheetWorkspace.addListener(_onSheetWorkspaceChanged);
     _viewportController.addListener(_onViewportChanged);
