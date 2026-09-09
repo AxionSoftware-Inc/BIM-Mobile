@@ -41,13 +41,13 @@ class AnnotationHistoryControls extends StatelessWidget {
                     IconButton(
                       tooltip: 'Undo annotation',
                       visualDensity: VisualDensity.compact,
-                      onPressed: document.canUndo ? document.undo : null,
+                      onPressed: document.canUndo ? () => document.undo() : null,
                       icon: const Icon(Icons.undo, size: 19),
                     ),
                     IconButton(
                       tooltip: 'Redo annotation',
                       visualDensity: VisualDensity.compact,
-                      onPressed: document.canRedo ? document.redo : null,
+                      onPressed: document.canRedo ? () => document.redo() : null,
                       icon: const Icon(Icons.redo, size: 19),
                     ),
                     const SizedBox(height: 22, child: VerticalDivider(width: 8)),
