@@ -1,6 +1,6 @@
+import '../../../core/application/engine/viewer_engine_contracts.dart';
+import '../../../core/application/engine/viewer_project_session.dart';
 import '../../../render_scene_models.dart';
-import '../../../viewer_engine_contracts.dart';
-import '../../../viewer_project_session.dart';
 import 'project_companion_document.dart';
 
 /// Result of a lifecycle operation that may have created a replacement session.
