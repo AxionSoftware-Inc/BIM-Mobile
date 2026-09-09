@@ -27,6 +27,13 @@ abstract final class AnnotationWorkspaceRuntime {
   static final ValueNotifier<int?> selectedAnnotationId =
       ValueNotifier<int?>(null);
 
+  /// Touch-safe move command state. Arming Move never rewrites the packed
+  /// document; the next valid model tap commits exactly one translation.
+  /// A future live drag preview can reuse this command boundary and still
+  /// publish only once on pointer-up.
+  static final ValueNotifier<bool> moveSelectedArmed =
+      ValueNotifier<bool>(false);
+
   static AnnotationDraftPoint? get draftStart => draft.value;
   static set draftStart(AnnotationDraftPoint? value) => draft.value = value;
 
@@ -55,11 +62,25 @@ abstract final class AnnotationWorkspaceRuntime {
 
   static void selectAnnotation(int? annotationId) {
     if (selectedAnnotationId.value != annotationId) {
+      cancelSelectedMove();
       selectedAnnotationId.value = annotationId;
     }
   }
 
-  static void clearSelection() => selectAnnotation(null);
+  static void clearSelection() {
+    cancelSelectedMove();
+    selectAnnotation(null);
+  }
+
+  static void armSelectedMove() {
+    if (selectedAnnotationId.value == null) return;
+    cancelDraft();
+    if (!moveSelectedArmed.value) moveSelectedArmed.value = true;
+  }
+
+  static void cancelSelectedMove() {
+    if (moveSelectedArmed.value) moveSelectedArmed.value = false;
+  }
 
   static void cancelDraft() {
     if (draft.value != null) draft.value = null;
