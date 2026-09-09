@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'annotations/annotation_workspace_runtime.dart';
 import 'app_brand.dart';
 import 'render_scene_viewport_planar.dart';
 import 'render_scene_viewport_types.dart';
@@ -381,13 +382,28 @@ enum _WorkspaceMoreAction {
 /// unnecessarily participate in geometry rebuilds and large-scene streaming.
 enum WorkspaceToolTab { model, annotate }
 
-enum AnnotationWorkspaceTool { text, dimension, tag, detailLine, symbol }
+enum AnnotationWorkspaceTool { select, text, dimension, tag, detailLine, symbol }
 
-/// Small selection bridge shared by chrome and viewport command routing.
+/// Small observable selection bridge shared by chrome and viewport routing.
 /// Persistent annotation data lives in AnnotationWorkspaceRuntime, not here.
 abstract final class WorkspaceToolSelection {
-  static WorkspaceToolTab tab = WorkspaceToolTab.model;
-  static AnnotationWorkspaceTool annotationTool = AnnotationWorkspaceTool.text;
+  static WorkspaceToolTab _tab = WorkspaceToolTab.model;
+  static AnnotationWorkspaceTool _annotationTool = AnnotationWorkspaceTool.select;
+  static final ValueNotifier<int> changes = ValueNotifier<int>(0);
+
+  static WorkspaceToolTab get tab => _tab;
+  static set tab(WorkspaceToolTab value) {
+    if (_tab == value) return;
+    _tab = value;
+    changes.value++;
+  }
+
+  static AnnotationWorkspaceTool get annotationTool => _annotationTool;
+  static set annotationTool(AnnotationWorkspaceTool value) {
+    if (_annotationTool == value) return;
+    _annotationTool = value;
+    changes.value++;
+  }
 }
 
 /// Touch-first authoring palette with a real Model / Annotate discipline tab.
@@ -416,14 +432,24 @@ class _AuthoringToolPaletteState extends State<AuthoringToolPalette> {
     if (_tab == value) return;
     WorkspaceToolSelection.tab = value;
     setState(() => _tab = value);
-    if (value == WorkspaceToolTab.annotate &&
-        widget.mode != RenderSceneInteractionMode.select) {
+    AnnotationWorkspaceRuntime.cancelDraft();
+    if (value != WorkspaceToolTab.annotate) {
+      AnnotationWorkspaceRuntime.clearSelection();
+    }
+    if (value == WorkspaceToolTab.annotate) {
+      // Always route model interaction back to Select when entering Annotate.
+      // Even if already Select, the parent gets a deterministic discipline
+      // transition while WorkspaceToolSelection notifies viewport listeners.
       widget.onModeChanged(RenderSceneInteractionMode.select);
     }
   }
 
   void _setAnnotationTool(AnnotationWorkspaceTool value) {
     if (_annotationTool == value) return;
+    AnnotationWorkspaceRuntime.cancelDraft();
+    if (value != AnnotationWorkspaceTool.select) {
+      AnnotationWorkspaceRuntime.clearSelection();
+    }
     WorkspaceToolSelection.annotationTool = value;
     setState(() => _annotationTool = value);
   }
@@ -937,6 +963,12 @@ const List<_AuthoringTool> _secondaryTools = <_AuthoringTool>[
 ];
 
 const List<_AnnotationTool> _annotationTools = <_AnnotationTool>[
+  _AnnotationTool(
+    AnnotationWorkspaceTool.select,
+    Icons.ads_click_outlined,
+    'Select',
+    'Select and edit a persistent annotation in this view',
+  ),
   _AnnotationTool(
     AnnotationWorkspaceTool.text,
     Icons.text_fields,
