@@ -1,16 +1,3 @@
-import 'bim_element_module.dart';
-
-final class DoorElementModule extends BimElementModule {
-  const DoorElementModule()
-      : super(
-          kindKey: 'door',
-          displayName: 'Door',
-          typeFamily: BimElementTypeFamily.door,
-          inspectorAdapterKey: BimElementInspectorKeys.opening,
-          aliases: const <String>{'door', 'opening'},
-          isLevelHosted: true,
-          isPlanCore: true,
-          isOpening: true,
-          levelLockedByDefault: true,
-        );
-}
+// COMPATIBILITY: legacy element-module import path during 0.3.2 migration.
+// REMOVE WHEN: all callers import features/elements/domain/modules directly.
+export '../features/elements/domain/modules/door_element_module.dart';
