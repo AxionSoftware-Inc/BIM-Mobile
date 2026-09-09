@@ -1,14 +1,3 @@
-import 'bim_element_module.dart';
-
-final class WallElementModule extends BimElementModule {
-  const WallElementModule()
-      : super(
-          kindKey: 'wall',
-          displayName: 'Wall',
-          typeFamily: BimElementTypeFamily.wall,
-          aliases: const <String>{'wall'},
-          isLevelHosted: true,
-          isPlanCore: true,
-          levelLockedByDefault: true,
-        );
-}
+// COMPATIBILITY: legacy element-module import path during 0.3.2 migration.
+// REMOVE WHEN: all callers import features/elements/domain/modules directly.
+export '../features/elements/domain/modules/wall_element_module.dart';
