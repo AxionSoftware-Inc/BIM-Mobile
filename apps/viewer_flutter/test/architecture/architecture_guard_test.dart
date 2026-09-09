@@ -109,6 +109,53 @@ void main() {
       );
     });
 
+    test('new application modules stay platform-neutral by default', () {
+      final sourceRoot = _sourceRoot();
+      final violations = <String>[];
+      const allowedDebt = <String, Set<String>>{
+        'core/application/engine/viewer_project_gateway.dart': <String>{
+          "import 'dart:io'",
+        },
+        'features/project/application/project_persistence_service.dart':
+            <String>{"import 'dart:io'"},
+        'features/annotations/application/annotation_document_controller.dart':
+            <String>{"package:flutter/foundation.dart"},
+        'features/annotations/application/annotation_workspace_runtime.dart':
+            <String>{"package:flutter/foundation.dart"},
+      };
+      const forbidden = <String>[
+        "import 'dart:io'",
+        "import 'dart:ffi'",
+        'package:flutter/',
+        'package:file_selector/',
+      ];
+
+      for (final file in _dartFiles(sourceRoot)) {
+        final relative = _relativeTo(sourceRoot, file).replaceAll('\\', '/');
+        final isApplication = relative.startsWith('core/application/') ||
+            (relative.startsWith('features/') &&
+                relative.contains('/application/'));
+        if (!isApplication) continue;
+
+        final text = file.readAsStringSync();
+        for (final token in forbidden) {
+          if (!text.contains(token)) continue;
+          final allowed = allowedDebt[relative] ?? const <String>{};
+          if (allowed.any((entry) => token.contains(entry) || entry.contains(token))) {
+            continue;
+          }
+          violations.add('$relative -> $token');
+        }
+      }
+
+      expect(
+        violations,
+        isEmpty,
+        reason: 'Application code coordinates use-cases. New Flutter, FFI and '
+            'platform-I/O dependencies belong behind adapters/ports.',
+      );
+    });
+
     test('migrated modules cannot depend back on compatibility facades', () {
       final sourceRoot = _sourceRoot();
       final violations = <String>[];
@@ -157,6 +204,32 @@ void main() {
             'features/elements/application/bim_element_registry.dart',
         'inspector_registry.dart':
             'features/elements/presentation/bim_element_inspector_registry.dart',
+        'wall_element_module.dart':
+            'features/elements/domain/modules/wall_element_module.dart',
+        'door_element_module.dart':
+            'features/elements/domain/modules/door_element_module.dart',
+        'window_element_module.dart':
+            'features/elements/domain/modules/window_element_module.dart',
+        'room_element_module.dart':
+            'features/elements/domain/modules/room_element_module.dart',
+        'floor_element_module.dart':
+            'features/elements/domain/modules/floor_element_module.dart',
+        'ceiling_element_module.dart':
+            'features/elements/domain/modules/ceiling_element_module.dart',
+        'roof_element_module.dart':
+            'features/elements/domain/modules/roof_element_module.dart',
+        'slab_element_module.dart':
+            'features/elements/domain/modules/slab_element_module.dart',
+        'column_element_module.dart':
+            'features/elements/domain/modules/column_element_module.dart',
+        'beam_element_module.dart':
+            'features/elements/domain/modules/beam_element_module.dart',
+        'stair_element_module.dart':
+            'features/elements/domain/modules/stair_element_module.dart',
+        'level_element_module.dart':
+            'features/elements/domain/modules/level_element_module.dart',
+        'proxy_element_module.dart':
+            'features/elements/domain/modules/proxy_element_module.dart',
         'annotation_store.dart':
             'features/annotations/domain/annotation_store.dart',
         'annotation_view_key.dart':
