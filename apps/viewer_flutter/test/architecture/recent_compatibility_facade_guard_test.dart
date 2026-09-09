@@ -29,6 +29,8 @@ void main() {
           'features/authoring/application/scene_mutation_service.dart',
       'family_instance_adapter.dart':
           'features/families/application/family_instance_adapter.dart',
+      'family_dependency_resolver.dart':
+          'features/families/application/dependencies/family_dependency_resolver.dart',
       'family_constraint_models.dart':
           'features/families/domain/constraints/family_constraint_models.dart',
       'family_document.dart':
