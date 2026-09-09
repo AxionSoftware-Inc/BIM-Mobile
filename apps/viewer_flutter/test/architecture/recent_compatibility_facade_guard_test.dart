@@ -39,6 +39,8 @@ void main() {
           'features/families/domain/constraints/family_constraint_solver.dart',
       'family_validation.dart':
           'features/families/domain/validation/family_validation.dart',
+      'family_geometry.dart':
+          'features/families/domain/geometry/family_geometry.dart',
       'family_library_metadata.dart':
           'features/families/application/library/family_library_metadata.dart',
       'family_bundled_catalog.dart':
