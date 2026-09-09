@@ -2,8 +2,19 @@ import 'dart:convert';
 import 'dart:math' as math;
 
 import '../render_scene_models.dart';
+import 'family_2d_asset_library.dart';
 import 'family_instance_store.dart';
 import 'family_representation.dart';
+
+final class FamilySceneRuntimeCompilation {
+  const FamilySceneRuntimeCompilation({
+    required this.store,
+    required this.twoDimensionalAssets,
+  });
+
+  final FamilyInstanceStore store;
+  final Family2dAssetLibrary twoDimensionalAssets;
+}
 
 /// Compiles the authoritative project snapshot into the compact family runtime.
 ///
@@ -14,6 +25,38 @@ import 'family_representation.dart';
 abstract final class FamilySceneRuntimeCompiler {
   static FamilyInstanceStore compile(RenderScene scene) =>
       FamilyInstanceStore.fromSeeds(seeds(scene));
+
+  /// Compiles both packed instance rows and the tiny shared 2D asset table.
+  /// SVG parsing happens once here, never during camera pan/zoom frames.
+  static FamilySceneRuntimeCompilation compileRuntime(RenderScene scene) {
+    final assetBuilder = Family2dAssetLibraryBuilder();
+    for (final object in scene.objects) {
+      final metadata = object.metadata;
+      final familyAssetId = _string(metadata, const <String>[
+        'family_asset_id',
+        'familyAssetId',
+        'family_id',
+        'familyId',
+      ]);
+      if (familyAssetId == null || familyAssetId.isEmpty) continue;
+      final planSvg = _string(metadata, const <String>[
+            'family_plan_svg',
+            'familyPlanSvg',
+            'plan_svg',
+            'planSvg',
+          ]) ??
+          '';
+      if (planSvg.isEmpty) continue;
+      assetBuilder.addSvg(
+        assetKey: 'svg:${_fnv1a64(planSvg)}',
+        svg: planSvg,
+      );
+    }
+    return FamilySceneRuntimeCompilation(
+      store: compile(scene),
+      twoDimensionalAssets: assetBuilder.build(),
+    );
+  }
 
   static Iterable<FamilyRuntimeInstanceSeed> seeds(RenderScene scene) sync* {
     for (final object in scene.objects) {
