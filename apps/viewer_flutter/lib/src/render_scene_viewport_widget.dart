@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'annotations/annotation_history_controls.dart';
+import 'annotations/annotation_hit_test.dart';
 import 'family_runtime/family_2d_viewport_overlay.dart';
 import 'render_scene_editor.dart';
 import 'render_scene_level_overlay.dart';
@@ -81,6 +82,9 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
     super.initState();
     widget.controller.addListener(_handleControllerChanged);
     AnnotationWorkspaceRuntime.document.addListener(_handleAnnotationChanged);
+    AnnotationWorkspaceRuntime.selectedAnnotationId
+        .addListener(_handleAnnotationChanged);
+    WorkspaceToolSelection.changes.addListener(_handleWorkspaceToolChanged);
   }
 
   @override
@@ -96,6 +100,9 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
   void dispose() {
     widget.controller.removeListener(_handleControllerChanged);
     AnnotationWorkspaceRuntime.document.removeListener(_handleAnnotationChanged);
+    AnnotationWorkspaceRuntime.selectedAnnotationId
+        .removeListener(_handleAnnotationChanged);
+    WorkspaceToolSelection.changes.removeListener(_handleWorkspaceToolChanged);
     super.dispose();
   }
 
@@ -104,6 +111,10 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
   }
 
   void _handleAnnotationChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _handleWorkspaceToolChanged() {
     if (mounted) setState(() {});
   }
 
@@ -120,13 +131,16 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
   @override
   Widget build(BuildContext context) {
     final viewport = _buildViewport(context);
+    final annotationTool = WorkspaceToolSelection.annotationTool;
     return Semantics(
       container: true,
       label: widget.controller.projectionMode.is3D
           ? '3D model viewport'
           : '2D drawing viewport',
       hint: _annotationModeActive
-          ? 'Tap to place the selected view annotation.'
+          ? annotationTool == AnnotationWorkspaceTool.select
+              ? 'Tap a view annotation to select it.'
+              : 'Tap to place the selected view annotation.'
           : 'One finger selects or draws. Two fingers pan and zoom.',
       child: Stack(
         fit: StackFit.expand,
@@ -141,6 +155,8 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
               controller: widget.controller,
               store: AnnotationWorkspaceRuntime.document.store,
               viewId: AnnotationWorkspaceRuntime.activeViewId,
+              selectedAnnotationId:
+                  AnnotationWorkspaceRuntime.selectedAnnotationId.value,
               units: widget.units,
             ),
           AnnotationHistoryControls(visible: _annotationModeActive),
@@ -226,9 +242,28 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
   }
 
   Future<void> _handleAnnotationTap(RenderSceneTapDetails details) async {
-    final point = details.modelPoint;
     final viewId = AnnotationWorkspaceRuntime.activeViewId;
-    if (point == null || viewId == 0) {
+    if (viewId == 0) return;
+    final tool = WorkspaceToolSelection.annotationTool;
+
+    if (tool == AnnotationWorkspaceTool.select) {
+      AnnotationWorkspaceRuntime.cancelDraft();
+      final size = context.size;
+      if (size == null || size.isEmpty) return;
+      final hit = AnnotationHitTester.hitTest(
+        store: AnnotationWorkspaceRuntime.document.store,
+        viewId: viewId,
+        controller: widget.controller,
+        canvasSize: size,
+        screenPoint: details.screenPosition,
+        tolerancePixels: 16,
+      );
+      AnnotationWorkspaceRuntime.selectAnnotation(hit?.annotationId);
+      return;
+    }
+
+    final point = details.modelPoint;
+    if (point == null) {
       _showAnnotationMessage('Tap inside the active model view.');
       return;
     }
@@ -240,7 +275,6 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
                 ? scene.levels.first.levelId
                 : 0);
     final pickedId = details.pickedObject?.elementId;
-    final tool = WorkspaceToolSelection.annotationTool;
 
     // Single-tap tools do not own a two-point draft. Clear any unfinished
     // Dimension/Detail Line command before placing one of these annotations.
@@ -251,6 +285,10 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
     }
 
     switch (tool) {
+      case AnnotationWorkspaceTool.select:
+        // Handled before model-point validation so selecting screen-space text
+        // does not depend on a BIM surface existing behind the annotation.
+        return;
       case AnnotationWorkspaceTool.text:
         final value = await _promptText(
           title: 'Text note',
