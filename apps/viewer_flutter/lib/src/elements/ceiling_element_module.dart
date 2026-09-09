@@ -1,15 +1,3 @@
-import 'bim_element_module.dart';
-
-final class CeilingElementModule extends BimElementModule {
-  const CeilingElementModule()
-      : super(
-          kindKey: 'ceiling',
-          displayName: 'Ceiling',
-          typeFamily: BimElementTypeFamily.ceiling,
-          inspectorAdapterKey: BimElementInspectorKeys.ceiling,
-          aliases: const <String>{'ceiling', 'ceilingsystem'},
-          isLevelHosted: true,
-          isPlanCore: true,
-          levelLockedByDefault: true,
-        );
-}
+// COMPATIBILITY: legacy element-module import path during 0.3.2 migration.
+// REMOVE WHEN: all callers import features/elements/domain/modules directly.
+export '../features/elements/domain/modules/ceiling_element_module.dart';
