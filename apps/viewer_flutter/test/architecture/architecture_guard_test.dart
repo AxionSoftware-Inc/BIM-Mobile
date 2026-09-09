@@ -246,6 +246,16 @@ void main() {
             'features/elements/application/wall_element_parameters.dart',
         'opening_parameters.dart':
             'features/elements/application/opening_element_parameters.dart',
+        'linear_parameters.dart':
+            'features/elements/application/parameters/linear_element_parameters.dart',
+        'roof_parameters.dart':
+            'features/elements/application/parameters/roof_element_parameters.dart',
+        'room_parameters.dart':
+            'features/elements/application/parameters/room_element_parameters.dart',
+        'stair_parameters.dart':
+            'features/elements/application/parameters/stair_element_parameters.dart',
+        'surface_parameters.dart':
+            'features/elements/application/parameters/surface_element_parameters.dart',
         'annotation_store.dart':
             'features/annotations/domain/annotation_store.dart',
         'annotation_view_key.dart':
