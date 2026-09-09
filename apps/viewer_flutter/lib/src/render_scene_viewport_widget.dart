@@ -5,6 +5,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'annotations/annotation_history_controls.dart';
 import 'family_runtime/family_2d_viewport_overlay.dart';
 import 'render_scene_editor.dart';
 import 'render_scene_level_overlay.dart';
@@ -142,6 +143,7 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
               viewId: AnnotationWorkspaceRuntime.activeViewId,
               units: widget.units,
             ),
+          AnnotationHistoryControls(visible: _annotationModeActive),
         ],
       ),
     );
