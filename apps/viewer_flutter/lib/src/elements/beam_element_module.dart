@@ -1,15 +1,3 @@
-import 'bim_element_module.dart';
-
-final class BeamElementModule extends BimElementModule {
-  const BeamElementModule()
-      : super(
-          kindKey: 'beam',
-          displayName: 'Beam',
-          typeFamily: BimElementTypeFamily.beam,
-          inspectorAdapterKey: BimElementInspectorKeys.linear,
-          aliases: const <String>{'beam'},
-          isLevelHosted: true,
-          isPlanCore: true,
-          levelLockedByDefault: true,
-        );
-}
+// COMPATIBILITY: legacy element-module import path during 0.3.2 migration.
+// REMOVE WHEN: all callers import features/elements/domain/modules directly.
+export '../features/elements/domain/modules/beam_element_module.dart';
