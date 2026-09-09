@@ -1,0 +1,56 @@
+name: Codex viewport wall material patch
+
+on:
+  push:
+    branches:
+      - codex/data-oriented-spatial-streaming-2026-09-08
+    paths:
+      - .github/workflows/codex-apply-viewport-wall-materials.yml
+      - .github/scripts/codex_apply_viewport_wall_materials.py
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: codex/data-oriented-spatial-streaming-2026-09-08
+          fetch-depth: 0
+
+      - name: Apply guarded wall material patch
+        run: python3 .github/scripts/codex_apply_viewport_wall_materials.py
+
+      - name: Validate wall material shape
+        shell: bash
+        run: |
+          set -euo pipefail
+          HOST=apps/viewer_flutter/android/app/src/main/kotlin/com/example/viewer_flutter/RenderSceneFilamentHostView.kt
+          grep -q "One shared procedural wall-surface family is used by every wall batch" "$HOST"
+          if grep -q "float directionalShade" "$HOST"; then
+            echo "Legacy fake directional wall shading remains" >&2
+            exit 1
+          fi
+          if grep -q "43758.5453" "$HOST"; then
+            echo "Legacy high-frequency concrete hash remains" >&2
+            exit 1
+          fi
+          git diff --check
+          git diff --stat
+
+      - name: Commit patched host
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "No host changes required."
+            exit 0
+          fi
+          git config user.name "AxionSoftware-Inc"
+          git config user.email "137527004+AxionSoftware-Inc@users.noreply.github.com"
+          git add apps/viewer_flutter/android/app/src/main/kotlin/com/example/viewer_flutter/RenderSceneFilamentHostView.kt
+          git commit -m "Stabilize batched wall shading"
+          git push origin HEAD:codex/data-oriented-spatial-streaming-2026-09-08
