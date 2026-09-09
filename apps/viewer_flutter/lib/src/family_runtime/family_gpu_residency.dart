@@ -106,7 +106,8 @@ final class FamilyGpuResidencyController {
       _lastRequestedEpoch[key] = _epoch;
       // Unknown/zero estimates must not create an unbounded warm cache. A
       // 4 KiB floor is intentionally tiny but still gives every asset weight.
-      _estimatedBytes[key] = estimateBytes(batch).clamp(4096, 1 << 62);
+      _estimatedBytes[key] =
+          estimateBytes(batch).clamp(4096, 1 << 62).toInt();
     }
 
     final activeKeys = activeBatches.keys.toSet();
