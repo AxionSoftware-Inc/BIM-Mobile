@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import 'annotation_store.dart';
+import 'annotation_store_editor.dart';
 
 /// Mutable command boundary over the immutable packed annotation store.
 ///
@@ -10,7 +11,7 @@ import 'annotation_store.dart';
 /// - annotation undo/redo is independent from BIM geometry history, so a text
 ///   edit cannot rebuild walls or invalidate the native BIM cache;
 /// - history retains immutable snapshots and rebuilds the write-side builder
-///   only when undo/redo actually happens.
+///   only when undo/redo or a committed packed rewrite actually happens.
 final class AnnotationDocumentController extends ChangeNotifier {
   AnnotationStoreBuilder _builder = AnnotationStoreBuilder();
   AnnotationStore _store = AnnotationStore.empty();
@@ -211,6 +212,48 @@ final class AnnotationDocumentController extends ChangeNotifier {
     return id;
   }
 
+  /// Deletes one persistent annotation without touching BIM geometry history.
+  bool deleteAnnotation(int annotationId) => _commitPackedRewrite(
+        AnnotationStoreEditor.deleteById(_store, annotationId),
+      );
+
+  /// Commits a translation after a drag preview finishes. Pointer-move frames
+  /// must stay transient; rebuilding the immutable packed store on every pixel
+  /// would turn a large annotation sheet into an O(N) drag loop.
+  bool moveAnnotation(
+    int annotationId, {
+    required double dx,
+    required double dy,
+    required double dz,
+  }) =>
+      _commitPackedRewrite(
+        AnnotationStoreEditor.moveById(
+          _store,
+          annotationId,
+          dx: dx,
+          dy: dy,
+          dz: dz,
+        ),
+      );
+
+  bool replaceAnnotationLabel(int annotationId, String value) =>
+      _commitPackedRewrite(
+        AnnotationStoreEditor.replaceLabelById(
+          _store,
+          annotationId,
+          value,
+        ),
+      );
+
+  bool replaceAnnotationStyle(int annotationId, AnnotationStyle style) =>
+      _commitPackedRewrite(
+        AnnotationStoreEditor.replaceStyleById(
+          _store,
+          annotationId,
+          style,
+        ),
+      );
+
   void _beginMutation() {
     _undo.add(_store);
     if (_undo.length > maxHistoryEntries) {
@@ -223,6 +266,16 @@ final class AnnotationDocumentController extends ChangeNotifier {
     _store = _builder.build();
     _revision++;
     notifyListeners();
+  }
+
+  bool _commitPackedRewrite(AnnotationStore next) {
+    if (identical(next, _store)) return false;
+    _beginMutation();
+    _store = next;
+    _builder = _builderFromStore(next);
+    _revision++;
+    notifyListeners();
+    return true;
   }
 
   static AnnotationStoreBuilder _builderFromStore(AnnotationStore store) {
