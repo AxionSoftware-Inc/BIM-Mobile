@@ -1,13 +1,3 @@
-import 'tbe_ffi.dart';
-import 'viewer_project_session.dart';
-
-/// FFI composition adapter. It is the only Flutter-side factory that knows
-/// how to prepare and bind the packaged native BIM library.
-class NativeViewerSessionFactory
-    implements ViewerSessionFactory<ViewerEngineSession> {
-  @override
-  Future<ViewerEngineSession> create() async {
-    await TbeViewerApi.prepareForCurrentPlatform();
-    return ViewerRepository(TbeViewerApi.load());
-  }
-}
+// COMPATIBILITY: temporary import facade for the pre-0.3.2 native session path.
+// REMOVE WHEN: composition/bootstrap callers import platform/native_engine directly.
+export 'platform/native_engine/native_viewer_session_factory.dart';
