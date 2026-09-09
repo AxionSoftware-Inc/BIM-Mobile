@@ -39,18 +39,18 @@ abstract final class FamilySceneRuntimeCompiler {
         'familyId',
       ]);
       if (familyAssetId == null || familyAssetId.isEmpty) continue;
-      final planSvg = _string(metadata, const <String>[
-            'family_plan_svg',
-            'familyPlanSvg',
-            'plan_svg',
-            'planSvg',
-          ]) ??
-          '';
-      if (planSvg.isEmpty) continue;
-      assetBuilder.addSvg(
-        assetKey: 'svg:${_fnv1a64(planSvg)}',
-        svg: planSvg,
-      );
+
+      // Keep Plan/Elevation/Section independent. A family may have one authored
+      // symbol but use generated fallbacks in the other views; importing one
+      // representation must never force a detailed 3D mesh into a 2D viewport.
+      for (final svg in <String>[
+        _svg(metadata, _planSvgKeys),
+        _svg(metadata, _elevationSvgKeys),
+        _svg(metadata, _sectionSvgKeys),
+      ]) {
+        if (svg.isEmpty) continue;
+        assetBuilder.addSvg(assetKey: _svgAssetKey(svg), svg: svg);
+      }
     }
     return FamilySceneRuntimeCompilation(
       store: compile(scene),
@@ -94,24 +94,9 @@ abstract final class FamilySceneRuntimeCompiler {
       final geometryKey =
           'family3d:$familyAssetId:$familyTypeId:${_fnv1a64(parameterSignature)}';
 
-      final planSvg = _string(metadata, const <String>[
-            'family_plan_svg',
-            'familyPlanSvg',
-            'plan_svg',
-            'planSvg',
-          ]) ??
-          '';
-      final plan = planSvg.isEmpty
-          ? Family2dRepresentationDescriptor(
-              encoding: Family2dEncoding.generated,
-              assetKey: 'generated:plan:$familyAssetId:$familyTypeId',
-            )
-          : Family2dRepresentationDescriptor(
-              encoding: Family2dEncoding.svg,
-              // The payload itself stays in the family/project asset cache.
-              // Runtime rows keep only an internable stable key.
-              assetKey: 'svg:${_fnv1a64(planSvg)}',
-            );
+      final planSvg = _svg(metadata, _planSvgKeys);
+      final elevationSvg = _svg(metadata, _elevationSvgKeys);
+      final sectionSvg = _svg(metadata, _sectionSvgKeys);
 
       final bounds = object.bounds;
       final centerX = (bounds.min.x + bounds.max.x) * 0.5;
@@ -149,14 +134,17 @@ abstract final class FamilySceneRuntimeCompiler {
         parameterSignature: parameterSignature,
         geometryKey: geometryKey,
         representations: FamilyRepresentationSet(
-          plan: plan,
-          elevation: Family2dRepresentationDescriptor(
-            encoding: Family2dEncoding.generated,
-            assetKey: 'generated:elevation:$familyAssetId:$familyTypeId',
+          plan: _descriptorOrGenerated(
+            svg: planSvg,
+            generatedKey: 'generated:plan:$familyAssetId:$familyTypeId',
           ),
-          section: Family2dRepresentationDescriptor(
-            encoding: Family2dEncoding.generated,
-            assetKey: 'generated:section:$familyAssetId:$familyTypeId',
+          elevation: _descriptorOrGenerated(
+            svg: elevationSvg,
+            generatedKey: 'generated:elevation:$familyAssetId:$familyTypeId',
+          ),
+          section: _descriptorOrGenerated(
+            svg: sectionSvg,
+            generatedKey: 'generated:section:$familyAssetId:$familyTypeId',
           ),
           model3d: Family3dRepresentationDescriptor(
             // FamilyInstanceStore replaces this placeholder with the interned
@@ -180,6 +168,50 @@ abstract final class FamilySceneRuntimeCompiler {
         hostId: hostId,
       );
     }
+  }
+
+  static const List<String> _planSvgKeys = <String>[
+    'family_plan_svg',
+    'familyPlanSvg',
+    'plan_svg',
+    'planSvg',
+  ];
+
+  static const List<String> _elevationSvgKeys = <String>[
+    'family_elevation_svg',
+    'familyElevationSvg',
+    'elevation_svg',
+    'elevationSvg',
+  ];
+
+  static const List<String> _sectionSvgKeys = <String>[
+    'family_section_svg',
+    'familySectionSvg',
+    'section_svg',
+    'sectionSvg',
+  ];
+
+  static String _svg(Map metadata, List<String> keys) =>
+      _string(metadata, keys) ?? '';
+
+  static String _svgAssetKey(String svg) => 'svg:${_fnv1a64(svg)}';
+
+  static Family2dRepresentationDescriptor _descriptorOrGenerated({
+    required String svg,
+    required String generatedKey,
+  }) {
+    if (svg.isEmpty) {
+      return Family2dRepresentationDescriptor(
+        encoding: Family2dEncoding.generated,
+        assetKey: generatedKey,
+      );
+    }
+    return Family2dRepresentationDescriptor(
+      encoding: Family2dEncoding.svg,
+      // Runtime rows retain only a stable interned key. The compiled payload
+      // is owned once by Family2dAssetLibrary for the whole scene.
+      assetKey: _svgAssetKey(svg),
+    );
   }
 
   static String _canonicalParameterSignature(String payload) {
