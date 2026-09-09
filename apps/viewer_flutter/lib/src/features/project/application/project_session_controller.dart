@@ -1,4 +1,4 @@
-import '../../../viewer_project_session.dart';
+import '../../../core/application/engine/viewer_project_session.dart';
 
 /// Owns the currently active project session for one workspace instance.
 ///
