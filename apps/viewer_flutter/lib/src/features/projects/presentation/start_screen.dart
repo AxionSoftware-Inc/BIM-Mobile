@@ -4,10 +4,9 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../../../core/presentation/design_system/arvela_brand.dart';
-import '../../project/infrastructure/project_recovery_store.dart';
+import '../application/start_screen/start_screen_models.dart';
 import '../application/templates/start_screen_template_preferences.dart';
 import '../application/templates/start_screen_template_preferences_repository.dart';
-import '../../../workspace_chrome.dart';
 
 /// Revit-style launch page shown before a project is opened.
 class StartScreen extends StatefulWidget {
@@ -29,10 +28,10 @@ class StartScreen extends StatefulWidget {
   final VoidCallback onOpen;
   final VoidCallback onCreate;
   final VoidCallback onCreateFamily;
-  final ValueChanged<WorkspaceTemplate> onSelectTemplate;
+  final ValueChanged<ProjectTemplate> onSelectTemplate;
   final VoidCallback onSettings;
   final StartScreenTemplatePreferencesRepository templatePreferencesRepository;
-  final ProjectRecoveryEntry? recoveryEntry;
+  final ProjectRecoverySummary? recoveryEntry;
   final VoidCallback? onRecover;
   final VoidCallback? onDismissRecovery;
   final bool busy;
@@ -321,49 +320,49 @@ enum _TemplateCardAction { open, rename, restoreName, remove }
 class _TemplateDefinition {
   const _TemplateDefinition(this.template, this.title, this.icon);
 
-  final WorkspaceTemplate template;
+  final ProjectTemplate template;
   final String title;
   final IconData icon;
 }
 
 const _allTemplateDefinitions = <_TemplateDefinition>[
   _TemplateDefinition(
-    WorkspaceTemplate.default3,
+    ProjectTemplate.default3,
     'Default building',
     Icons.apartment_outlined,
   ),
   _TemplateDefinition(
-    WorkspaceTemplate.tower9,
+    ProjectTemplate.tower9,
     'Residential tower',
     Icons.location_city_outlined,
   ),
   _TemplateDefinition(
-    WorkspaceTemplate.campus6x9,
+    ProjectTemplate.campus6x9,
     'Residential campus',
     Icons.grid_view_rounded,
   ),
   _TemplateDefinition(
-    WorkspaceTemplate.town9,
+    ProjectTemplate.town9,
     'Meadow town',
     Icons.location_city_rounded,
   ),
   _TemplateDefinition(
-    WorkspaceTemplate.modern3,
+    ProjectTemplate.modern3,
     'Modern glass house',
     Icons.house_siding_outlined,
   ),
   _TemplateDefinition(
-    WorkspaceTemplate.glassTower9,
+    ProjectTemplate.glassTower9,
     'Glass residential tower',
     Icons.business_outlined,
   ),
   _TemplateDefinition(
-    WorkspaceTemplate.glassCampus6x9,
+    ProjectTemplate.glassCampus6x9,
     'Glass courtyard campus',
     Icons.account_balance_outlined,
   ),
   _TemplateDefinition(
-    WorkspaceTemplate.professionalHouse,
+    ProjectTemplate.professionalHouse,
     'Professional courtyard villa',
     Icons.home_work_outlined,
   ),
@@ -535,7 +534,7 @@ class _RecoveryBanner extends StatelessWidget {
     required this.onDismiss,
   });
 
-  final ProjectRecoveryEntry entry;
+  final ProjectRecoverySummary entry;
   final bool busy;
   final VoidCallback? onRecover;
   final VoidCallback? onDismiss;
@@ -686,7 +685,7 @@ class _TemplateCard extends StatelessWidget {
     this.onLongPress,
   });
 
-  final WorkspaceTemplate template;
+  final ProjectTemplate template;
   final String title;
   final IconData icon;
   final VoidCallback? onPressed;
@@ -718,7 +717,7 @@ class _TemplatePreview extends StatelessWidget {
     required this.surface,
   });
 
-  final WorkspaceTemplate template;
+  final ProjectTemplate template;
   final Color primary;
   final Color secondary;
   final Color surface;
@@ -745,7 +744,7 @@ class _TemplatePreviewPainter extends CustomPainter {
     required this.surface,
   });
 
-  final WorkspaceTemplate template;
+  final ProjectTemplate template;
   final Color primary;
   final Color secondary;
   final Color surface;
@@ -756,11 +755,11 @@ class _TemplatePreviewPainter extends CustomPainter {
     canvas.drawRect(Offset.zero & size, background);
 
     switch (template) {
-      case WorkspaceTemplate.default3:
+      case ProjectTemplate.default3:
         _drawBuilding(canvas, size, floors: 3, scale: 0.90, offsetX: 0.0);
-      case WorkspaceTemplate.tower9:
+      case ProjectTemplate.tower9:
         _drawBuilding(canvas, size, floors: 9, scale: 0.78, offsetX: 0.0);
-      case WorkspaceTemplate.campus6x9:
+      case ProjectTemplate.campus6x9:
         _drawCampusGround(canvas, size);
         for (final offset in <Offset>[
           const Offset(-0.28, -0.10),
@@ -779,17 +778,17 @@ class _TemplatePreviewPainter extends CustomPainter {
             offsetY: offset.dy,
           );
         }
-      case WorkspaceTemplate.town9:
+      case ProjectTemplate.town9:
         _drawTownPreview(canvas, size);
-      case WorkspaceTemplate.modern3:
+      case ProjectTemplate.modern3:
         _drawModernGround(canvas, size);
         _drawBuilding(canvas, size,
             floors: 3, scale: 0.90, offsetX: 0.0, modern: true);
-      case WorkspaceTemplate.glassTower9:
+      case ProjectTemplate.glassTower9:
         _drawModernGround(canvas, size);
         _drawBuilding(canvas, size,
             floors: 9, scale: 0.78, offsetX: 0.0, modern: true);
-      case WorkspaceTemplate.glassCampus6x9:
+      case ProjectTemplate.glassCampus6x9:
         _drawCampusGround(canvas, size);
         for (final offset in <Offset>[
           const Offset(-0.28, -0.10),
@@ -806,7 +805,7 @@ class _TemplatePreviewPainter extends CustomPainter {
               offsetY: offset.dy,
               modern: true);
         }
-      case WorkspaceTemplate.professionalHouse:
+      case ProjectTemplate.professionalHouse:
         _drawModernGround(canvas, size);
         _drawBuilding(canvas, size,
             floors: 2, scale: 0.92, offsetX: 0.0, modern: true);
