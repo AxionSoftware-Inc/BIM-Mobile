@@ -19,16 +19,11 @@ extension _ViewerViewState on _ViewerHomePageState {
         scene: scene,
       );
 
-  int? _resolveInitialLevelId(RenderScene scene, {int? preferred}) {
-    final levels = scene.levels;
-    if (levels.isEmpty) {
-      return preferred;
-    }
-    if (preferred != null && scene.levelById(preferred) != null) {
-      return preferred;
-    }
-    return levels.first.levelId;
-  }
+  int? _resolveInitialLevelId(RenderScene scene, {int? preferred}) =>
+      _viewportScenePolicy.resolveInitialLevelId(
+        scene,
+        preferred: preferred,
+      );
 
   RenderScene _sceneForViewport(RenderScene scene) =>
       _viewportScenePolicy.sceneForViewport(scene);
@@ -42,59 +37,31 @@ extension _ViewerViewState on _ViewerHomePageState {
   RenderSceneDisplayStyle _defaultDisplayStyleForProjection() =>
       _viewportScenePolicy.defaultDisplayStyle;
 
-  RenderSceneLevel? _activeLevel(RenderScene? scene) {
-    if (scene == null) {
-      return null;
-    }
-    return scene.levelById(_activeLevelId) ??
-        (scene.levels.isNotEmpty ? scene.levels.first : null);
-  }
+  RenderSceneLevel? _activeLevel(RenderScene? scene) =>
+      _viewportScenePolicy.activeLevel(scene);
 
-  double _activeLevelElevation(RenderScene? scene) {
-    return _activeLevel(scene)?.elevationMeters ?? 0.0;
-  }
+  double _activeLevelElevation(RenderScene? scene) =>
+      _viewportScenePolicy.activeLevelElevation(scene);
 
-  double _activeLevelDefaultWallHeight(RenderScene? scene) {
-    return _activeLevel(scene)?.defaultWallHeightMeters ??
-        _ViewerHomePageState._defaultWallHeightMeters;
-  }
+  double _activeLevelDefaultWallHeight(RenderScene? scene) =>
+      _viewportScenePolicy.activeLevelDefaultWallHeight(
+        scene,
+        fallbackMeters: _ViewerHomePageState._defaultWallHeightMeters,
+      );
 
   RenderSceneLevel? _pickLevelAtElevation(
     RenderScene scene,
     RenderScenePoint? modelPoint, {
     double toleranceMeters = 1.4,
-  }) {
-    if (modelPoint == null ||
-        !(_projectionMode.isElevation ||
-            _projectionMode.supportsPlanFootprintEditing)) {
-      return null;
-    }
-    RenderSceneLevel? bestLevel;
-    var bestDistance = toleranceMeters;
-    for (final level in scene.levels) {
-      final distance = (modelPoint.z - level.elevationMeters).abs();
-      if (distance <= bestDistance) {
-        bestDistance = distance;
-        bestLevel = level;
-      }
-    }
-    return bestLevel;
-  }
+  }) =>
+      _viewportScenePolicy.pickLevelAtElevation(
+        scene,
+        modelPoint,
+        toleranceMeters: toleranceMeters,
+      );
 
-  RenderSceneLevel? _nextHigherLevel(RenderScene scene, int baseLevelId) {
-    final base = scene.levelById(baseLevelId);
-    if (base == null) {
-      return null;
-    }
-    final sorted = [...scene.levels]
-      ..sort((a, b) => a.elevationMeters.compareTo(b.elevationMeters));
-    for (final level in sorted) {
-      if (level.elevationMeters > base.elevationMeters + 1e-6) {
-        return level;
-      }
-    }
-    return null;
-  }
+  RenderSceneLevel? _nextHigherLevel(RenderScene scene, int baseLevelId) =>
+      _viewportScenePolicy.nextHigherLevel(scene, baseLevelId);
 
   Future<void> _attachWallToActiveLevel(
     RenderSceneObject object, {
