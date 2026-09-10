@@ -34,7 +34,7 @@ enum RenderSceneOrbitProjectionStyle {
 extension RenderSceneProjectionEditingModeX on RenderSceneProjectionMode {
   bool get supportsPlanFootprintEditing => this == kDefaultPlanProjectionMode;
 
-  bool get isElevation => switch (this) {
+  bool get isElevationProjection => switch (this) {
         RenderSceneProjectionMode.northElevation ||
         RenderSceneProjectionMode.southElevation ||
         RenderSceneProjectionMode.eastElevation ||
@@ -42,5 +42,5 @@ extension RenderSceneProjectionEditingModeX on RenderSceneProjectionMode {
         _ => false,
       };
 
-  bool get is3D => this == RenderSceneProjectionMode.isometric;
+  bool get isThreeDimensional => this == RenderSceneProjectionMode.isometric;
 }

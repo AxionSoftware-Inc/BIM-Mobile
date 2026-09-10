@@ -26,7 +26,8 @@ final class ViewNavigationPolicy {
     required int objectCount,
     required bool generatedSection,
   }) {
-    final refreshSceneScope = mode.isElevation || mode.is3D;
+    final refreshSceneScope =
+        mode.isElevationProjection || mode.isThreeDimensional;
     if (!refreshSceneScope) {
       return const ViewNavigationScope(
         refreshSceneScope: false,
@@ -40,12 +41,15 @@ final class ViewNavigationPolicy {
     // the geometry snapshot silently contains only the active neighbourhood.
     // Large IFC models use the native cache path for memory safety, so scope
     // streaming is not allowed to change the meaning of the 3D view.
-    final useFullScene = mode.isElevation || (mode.is3D && !generatedSection);
+    final useFullScene = mode.isElevationProjection ||
+        (mode.isThreeDimensional && !generatedSection);
     return ViewNavigationScope(
       refreshSceneScope: true,
       useFullScene: useFullScene,
       sourceLabel: useFullScene
-          ? (mode.isElevation ? 'Full building elevation' : 'Full tower 3D')
+          ? (mode.isElevationProjection
+              ? 'Full building elevation'
+              : 'Full tower 3D')
           : 'Nearby levels',
     );
   }
