@@ -18,7 +18,10 @@ final class NativeBimCacheService {
   final ViewerBimRuntimeCacheGateway gateway;
   final IfcImportCacheStore cacheStore;
 
-  Future<String?> ensure(String ifcPath) async {
+  Future<String?> ensure(
+    String ifcPath, {
+    void Function()? onCompile,
+  }) async {
     try {
       final source = File(ifcPath);
       final stat = await source.stat();
@@ -39,6 +42,7 @@ final class NativeBimCacheService {
         return paths.cachePath;
       }
 
+      onCompile?.call();
       final result = await gateway.compileBimRuntimeCache(
         sourceIfcPath: ifcPath,
         cachePath: paths.cachePath,
