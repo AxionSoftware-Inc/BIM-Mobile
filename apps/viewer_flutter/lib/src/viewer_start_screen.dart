@@ -254,8 +254,6 @@ class _StartScreenGateState extends State<_StartScreenGate> {
       _projectPath = null;
       _busy = true;
     });
-    // Keep the loading state visible for the transition, then let the
-    // workspace perform the authoritative native template creation.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) setState(() => _busy = false);
     });
@@ -286,6 +284,8 @@ class _StartScreenGateState extends State<_StartScreenGate> {
       onCreateFamily: () => unawaited(_createFamily()),
       onSelectTemplate: _selectTemplate,
       onSettings: () => _showSettings(context),
+      templatePreferencesRepository:
+          const FileStartScreenTemplatePreferencesRepository(),
       recoveryEntry: _recoveryEntry,
       onRecover: _recoverProject,
       onDismissRecovery: () => unawaited(_dismissRecovery()),
