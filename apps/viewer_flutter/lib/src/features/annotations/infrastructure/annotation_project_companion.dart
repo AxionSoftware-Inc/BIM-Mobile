@@ -1,7 +1,7 @@
 import 'dart:io';
 
+import '../../projects/application/project_companion_document.dart';
 import '../application/annotation_workspace_runtime.dart';
-import '../../project/application/project_companion_document.dart';
 import 'annotation_sidecar_store.dart';
 
 /// Annotation feature adapter for the project companion-document lifecycle.
