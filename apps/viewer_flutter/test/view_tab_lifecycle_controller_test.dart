@@ -2,14 +2,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:viewer_flutter/src/features/viewer/application/workspace/opened_view_tab.dart';
 import 'package:viewer_flutter/src/features/viewer/application/workspace/view_tab_lifecycle_controller.dart';
 import 'package:viewer_flutter/src/features/viewer/application/workspace/view_workspace_store.dart';
-import 'package:viewer_flutter/src/render_scene_viewport_types.dart';
 
 void main() {
   OpenedViewTab tab(String id) => OpenedViewTab(
         id: id,
         label: id,
         kind: OpenedViewKind.threeD,
-        projectionMode: RenderSceneProjectionMode.isometric,
       );
 
   test('open commits a new tab only after activation succeeds', () async {
