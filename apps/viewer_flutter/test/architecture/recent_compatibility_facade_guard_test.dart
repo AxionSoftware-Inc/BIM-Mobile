@@ -23,6 +23,8 @@ void main() {
           'features/viewer/presentation/selection_controller.dart',
       'inspector_controller.dart':
           'features/elements/presentation/inspector_controller.dart',
+      'material_layer_editor.dart':
+          'features/elements/presentation/material_layer_editor.dart',
       'authoring_command_service.dart':
           'features/authoring/application/authoring_command_service.dart',
       'scene_mutation_service.dart':
