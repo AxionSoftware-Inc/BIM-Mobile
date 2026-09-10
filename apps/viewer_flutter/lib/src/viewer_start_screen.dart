@@ -240,15 +240,16 @@ class _StartScreenGateState extends State<_StartScreenGate> {
     await FamilyAuthoringModule.createFamily(context);
   }
 
-  void _selectTemplate(WorkspaceTemplate template) {
+  void _selectTemplate(ProjectTemplate template) {
     if (_busy) return;
+    final workspaceTemplate = WorkspaceTemplate.values.byName(template.name);
     AppTelemetry.track(
       'template_selected',
       properties: <String, Object?>{'template': template.name},
     );
     setState(() {
       _errorMessage = null;
-      _selectedTemplate = template;
+      _selectedTemplate = workspaceTemplate;
       _projectJson = null;
       _projectName = null;
       _projectPath = null;
@@ -278,6 +279,7 @@ class _StartScreenGateState extends State<_StartScreenGate> {
         onReturnToStart: _returnToStart,
       );
     }
+    final recoveryEntry = _recoveryEntry;
     return StartScreen(
       onOpen: _openProject,
       onCreate: _createProject,
@@ -286,7 +288,9 @@ class _StartScreenGateState extends State<_StartScreenGate> {
       onSettings: () => _showSettings(context),
       templatePreferencesRepository:
           const FileStartScreenTemplatePreferencesRepository(),
-      recoveryEntry: _recoveryEntry,
+      recoveryEntry: recoveryEntry == null
+          ? null
+          : ProjectRecoverySummary(projectName: recoveryEntry.projectName),
       onRecover: _recoverProject,
       onDismissRecovery: () => unawaited(_dismissRecovery()),
       busy: _busy,
