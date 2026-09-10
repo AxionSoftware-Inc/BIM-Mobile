@@ -7,6 +7,8 @@ import 'features/viewer/application/workspace/view_workspace_store.dart'
     as canonical;
 import 'workspace_view_runtime_context.dart';
 
+export 'features/viewer/application/workspace/view_tab_lifecycle_controller.dart';
+
 class ViewWorkspaceStore extends canonical.ViewWorkspaceStore {
   ViewWorkspaceStore.standard()
       : super.standard(onActiveViewChanged: _syncLegacyRuntime);
