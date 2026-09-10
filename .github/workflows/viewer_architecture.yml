@@ -1,0 +1,54 @@
+name: Viewer architecture checks
+
+on:
+  push:
+    branches:
+      - refactor/architecture-cleanup-0.3.2
+    paths:
+      - 'apps/viewer_flutter/**'
+      - '.github/workflows/viewer_architecture.yml'
+  pull_request:
+    paths:
+      - 'apps/viewer_flutter/**'
+      - '.github/workflows/viewer_architecture.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: viewer-architecture-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  architecture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/viewer_flutter
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Resolve dependencies
+        run: flutter pub get
+
+      - name: Analyze viewer package
+        run: flutter analyze
+
+      - name: Run architecture guardrails
+        run: flutter test test/architecture
+
+      - name: Run extracted-policy regression tests
+        run: >-
+          flutter test
+          test/view_tab_lifecycle_controller_test.dart
+          test/viewer_viewport_scene_policy_level_test.dart
