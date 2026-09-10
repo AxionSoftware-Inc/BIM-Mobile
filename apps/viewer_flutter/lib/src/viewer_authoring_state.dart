@@ -197,57 +197,20 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
     if (scene == null || baseLevelId == null) {
       return;
     }
-    final baseLevel = scene.levelById(baseLevelId);
-    final candidates = scene.objects
-        .where((object) => object.kindKey == 'wall')
-        .where(
-          (object) =>
-              (WallElementParameters.fromObject(object).baseLevelId ??
-                  object.levelId) ==
-              baseLevelId,
-        )
-        .where((object) => object.elementId != null)
-        .toList(growable: false);
-    final topLevelIds = <int>{
-      for (final wall in candidates)
-        if ((WallElementParameters.fromObject(wall).topLevelId ?? 0) > 0)
-          WallElementParameters.fromObject(wall).topLevelId!,
-    };
-    final roofLevelId = topLevelIds.isNotEmpty
-        ? (topLevelIds.toList()
-              ..sort(
-                (left, right) => (scene.levelById(left)?.elevationMeters ?? 0)
-                    .compareTo(scene.levelById(right)?.elevationMeters ?? 0),
-              ))
-            .last
-        : (scene.levels
-                .where(
-                  (level) =>
-                      baseLevel != null &&
-                      level.elevationMeters > baseLevel.elevationMeters + 1e-6,
-                )
-                .toList()
-              ..sort(
-                (left, right) =>
-                    left.elevationMeters.compareTo(right.elevationMeters),
-              ))
-            .firstOrNull
-            ?.levelId;
-    if (roofLevelId == null) {
+
+    final plan = AutomaticFlatRoofPlanner.plan(
+      scene: scene,
+      baseLevelId: baseLevelId,
+    );
+    if (plan == null) {
       _updateViewportState(() {
         _editStatusMessage =
             'Automatic roof requires a wall top level or a higher level.';
       });
       return;
     }
-    final boundWalls = candidates
-        .where(
-          (wall) =>
-              (WallElementParameters.fromObject(wall).topLevelId ?? 0) ==
-              roofLevelId,
-        )
-        .toList(growable: false);
-    final polygon = RenderSceneEditor.surfacePolygonForWalls(boundWalls);
+
+    final polygon = RenderSceneEditor.surfacePolygonForWalls(plan.boundWalls);
     if (polygon == null || polygon.length < 3) {
       _updateViewportState(() {
         _editStatusMessage =
@@ -255,10 +218,7 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
       });
       return;
     }
-    final existingRoof = scene.objects.any(
-      (object) => object.kindKey == 'roof' && object.levelId == roofLevelId,
-    );
-    if (existingRoof) {
+    if (plan.existingRoof) {
       _updateViewportState(() {
         _editStatusMessage =
             'This level already has a roof. No duplicate was created; edit the existing roof instead.';
@@ -268,13 +228,13 @@ extension _ViewerAuthoringState on _ViewerHomePageState {
     _surfaceTool
       ..drawMode = RenderSceneSurfaceDrawMode.pickWalls
       ..replaceWallIds(
-        boundWalls.map((wall) => wall.elementId!).toList(growable: false),
+        plan.boundWalls.map((wall) => wall.elementId!).toList(growable: false),
       )
       ..replacePoints(polygon);
     _updateViewportState(() {
-      _activeLevelId = roofLevelId;
+      _activeLevelId = plan.roofLevelId;
       _editStatusMessage =
-          'Automatic roof footprint ready: ${boundWalls.length} walls on ${scene.levelById(roofLevelId)?.name ?? 'Level'}. Tap Confirm.';
+          'Automatic roof footprint ready: ${plan.boundWalls.length} walls on ${scene.levelById(plan.roofLevelId)?.name ?? 'Level'}. Tap Confirm.';
     });
     _viewportController.setSurfaceDraft(
       RenderSceneSurfaceDraft(kind: 'roof', points: polygon, closed: true),
