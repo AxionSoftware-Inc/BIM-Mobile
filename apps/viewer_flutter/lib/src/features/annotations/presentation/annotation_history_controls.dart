@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../application/annotation_workspace_runtime.dart';
+import 'annotation_presentation_signals.dart';
 
 /// Compact annotation-only history controls.
 ///
@@ -24,11 +25,11 @@ class AnnotationHistoryControls extends StatelessWidget {
         minimum: const EdgeInsets.all(12),
         child: AnimatedBuilder(
           // Draft state is intentionally not a document mutation. Listen to
-          // both sources so Cancel enables immediately after the first point
-          // of a Dimension/Detail Line without publishing a fake undo entry.
+          // both presentation adapters so Cancel enables immediately after the
+          // first point without coupling application state to Flutter.
           animation: Listenable.merge(<Listenable>[
-            AnnotationWorkspaceRuntime.document,
-            AnnotationWorkspaceRuntime.draft,
+            AnnotationPresentationSignals.document,
+            AnnotationPresentationSignals.draft,
           ]),
           builder: (context, _) {
             final document = AnnotationWorkspaceRuntime.document;
