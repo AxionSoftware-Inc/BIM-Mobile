@@ -1,36 +1,11 @@
 import 'package:flutter/material.dart';
 
+import 'features/viewer/domain/view/view_configuration.dart';
 import 'render_scene_models.dart';
 
+export 'features/viewer/domain/view/view_configuration.dart';
+
 const List<String> kDefaultVisibleSceneKinds = <String>[];
-
-enum RenderSceneProjectionMode {
-  topDown,
-  northElevation,
-  southElevation,
-  eastElevation,
-  westElevation,
-  isometric,
-}
-
-const RenderSceneProjectionMode kDefaultPlanProjectionMode =
-    RenderSceneProjectionMode.topDown;
-const RenderSceneProjectionMode kDefaultElevationProjectionMode =
-    RenderSceneProjectionMode.northElevation;
-const List<RenderSceneProjectionMode> kOrthographicProjectionModes =
-    <RenderSceneProjectionMode>[
-  RenderSceneProjectionMode.topDown,
-  RenderSceneProjectionMode.northElevation,
-  RenderSceneProjectionMode.southElevation,
-  RenderSceneProjectionMode.eastElevation,
-  RenderSceneProjectionMode.westElevation,
-];
-
-enum RenderSceneDisplayStyle {
-  shaded,
-  solid,
-  wireframe,
-}
 
 /// Transient transform used while moving a non-hosted object. It is never
 /// written to the document until the pointer is released.
@@ -43,11 +18,6 @@ class RenderSceneObjectMoveDraft {
 
   final RenderSceneObject object;
   final RenderScenePoint delta;
-}
-
-enum RenderSceneOrbitProjectionStyle {
-  perspective,
-  orthographic,
 }
 
 enum RenderSceneViewportBackend {
@@ -131,9 +101,6 @@ extension RenderSceneInteractionModeX on RenderSceneInteractionMode {
         RenderSceneInteractionMode.moveWall => true,
         RenderSceneInteractionMode.trimExtend => true,
         RenderSceneInteractionMode.addRoom => true,
-        // Inspector property editing must not force a 3D selection into plan.
-        // The numeric commit is view-independent; direct placement remains a
-        // separate gesture path.
         RenderSceneInteractionMode.moveOpening => false,
         RenderSceneInteractionMode.addFloor => true,
         RenderSceneInteractionMode.addCeiling => true,
@@ -149,10 +116,6 @@ extension RenderSceneInteractionModeX on RenderSceneInteractionMode {
         RenderSceneInteractionMode.moveLevel => true,
         _ => false,
       };
-}
-
-extension RenderSceneProjectionEditingModeX on RenderSceneProjectionMode {
-  bool get supportsPlanFootprintEditing => this == kDefaultPlanProjectionMode;
 }
 
 /// Camera-only contract shared by fallback canvas, native overlays, sheets,
@@ -194,11 +157,6 @@ class RenderSceneTapDetails {
   final RenderScenePoint? modelPoint;
   final RenderSceneObject? pickedObject;
   final RenderSceneLevel? pickedLevel;
-
-  /// Number of active pointers at the time this detail was emitted.
-  ///
-  /// Authoring handlers use this as a final guard so a second finger cannot
-  /// accidentally turn a camera gesture into a committed model point.
   final int pointerCount;
 }
 
@@ -226,7 +184,6 @@ class RenderSceneWallArcDraft {
   final RenderScenePoint? start;
   final RenderScenePoint? end;
   final RenderScenePoint? control;
-  // Derived circle center used only for optional authoring guidance.
   final RenderScenePoint? center;
   final List<RenderScenePoint> points;
 }
@@ -267,14 +224,7 @@ class RenderSceneSurfaceDraft {
   final String kind;
   final List<RenderScenePoint> points;
   final bool closed;
-
-  /// True while the Revit-style Boundary tool is being edited. Boundary
-  /// drafts use the pink sketch treatment instead of the final material
-  /// colour, and may contain one extra live cursor point.
   final bool boundarySketch;
-
-  /// Number of points confirmed by a tap. When the live cursor is present,
-  /// it is drawn as a separate preview segment/handle.
   final int? committedPointCount;
 }
 
