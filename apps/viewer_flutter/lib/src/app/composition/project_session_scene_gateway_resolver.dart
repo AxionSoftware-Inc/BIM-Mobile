@@ -2,7 +2,7 @@ import '../../core/application/engine/viewer_engine_contracts.dart';
 import '../../core/application/engine/viewer_project_session.dart';
 import '../../core/application/engine/viewer_scene_gateway.dart';
 import '../../core/application/engine/viewer_scene_gateway_resolver.dart';
-import '../../features/project/application/project_session_controller.dart';
+import '../../features/projects/application/project_session_controller.dart';
 
 /// Composition adapter that resolves the scene capability from the active
 /// project session.
