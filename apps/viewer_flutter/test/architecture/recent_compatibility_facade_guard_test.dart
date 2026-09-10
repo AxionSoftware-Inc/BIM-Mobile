@@ -92,6 +92,8 @@ void main() {
           'features/annotations/presentation/annotation_selection_controls.dart',
       'annotation_viewport_overlay.dart':
           'features/annotations/presentation/annotation_viewport_overlay.dart',
+      'annotation_hit_test.dart':
+          'features/annotations/presentation/annotation_hit_test.dart',
       'view_navigation_coordinator.dart':
           'features/viewer/application/navigation/view_navigation_coordinator.dart',
     };
