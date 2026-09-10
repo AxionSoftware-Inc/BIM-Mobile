@@ -3,12 +3,12 @@ import 'dart:math' as math;
 
 import '../../../core/application/engine/viewer_authoring_gateway.dart';
 import '../../../core/application/engine/viewer_element_creation_gateway.dart';
-import '../../../family_authoring/family_dependency_resolver.dart';
-import '../../../family_authoring/family_document.dart';
-import '../../../family_authoring/family_geometry.dart';
-import '../../../family_authoring/family_parameter_resolver.dart';
-import '../../../family_authoring/family_plan_symbol.dart';
-import '../../../family_authoring/family_validation.dart';
+import 'dependencies/family_dependency_resolver.dart';
+import '../domain/document/family_document.dart';
+import '../domain/geometry/family_geometry.dart';
+import '../domain/parameters/family_parameter_resolver.dart';
+import 'representation/family_plan_symbol.dart';
+import '../domain/validation/family_validation.dart';
 import '../../../render_scene_editor.dart';
 import '../../../render_scene_models.dart';
 
