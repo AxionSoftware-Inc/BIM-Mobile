@@ -1,14 +1,7 @@
-import 'package:flutter/foundation.dart';
-
+import '../../../core/application/signals/application_notifier.dart';
 import '../domain/annotation_store.dart';
 import 'annotation_store_editor.dart';
 
-/// MIGRATION: this controller currently extends Flutter ChangeNotifier because
-/// existing viewport widgets subscribe directly to it. During the 0.3.2
-/// cleanup, mutation/history ownership is canonical here; the notifier adapter
-/// will move to presentation once legacy annotation widgets stop importing the
-/// controller directly.
-///
 /// Mutable command boundary over the immutable packed annotation store.
 ///
 /// RUNTIME CONTRACT:
@@ -18,7 +11,7 @@ import 'annotation_store_editor.dart';
 ///   edit cannot rebuild walls or invalidate the native BIM cache;
 /// - history retains immutable snapshots and rebuilds the write-side builder
 ///   only when undo/redo or a committed packed rewrite actually happens.
-final class AnnotationDocumentController extends ChangeNotifier {
+final class AnnotationDocumentController extends ApplicationChangeNotifier {
   AnnotationStoreBuilder _builder = AnnotationStoreBuilder();
   AnnotationStore _store = AnnotationStore.empty();
   final List<AnnotationStore> _undo = <AnnotationStore>[];
