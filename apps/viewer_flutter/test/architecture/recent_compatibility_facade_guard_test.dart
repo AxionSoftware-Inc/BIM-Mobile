@@ -73,6 +73,8 @@ void main() {
           'features/families/presentation/viewport/family_authoring_viewport.dart',
       'family_import_units_dialog.dart':
           'features/families/presentation/dialogs/family_import_units_dialog.dart',
+      'start_screen_template_store.dart':
+          'features/projects/infrastructure/templates/start_screen_template_store.dart',
     };
     final directivePattern =
         RegExp(r'''(?:import|export)\s+['"]([^'"]+)['"]''');
