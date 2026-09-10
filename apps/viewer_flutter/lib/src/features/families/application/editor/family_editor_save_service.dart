@@ -45,9 +45,7 @@ final class FamilyEditorSaveService {
       );
     }
     if (path == null || path.trim().isEmpty) {
-      throw const FileSystemException(
-        'Family save did not return a persistent asset path.',
-      );
+      throw StateError('Family save did not return a persistent asset path.');
     }
     return FamilyEditorSaveResult(document: document, path: path);
   }
