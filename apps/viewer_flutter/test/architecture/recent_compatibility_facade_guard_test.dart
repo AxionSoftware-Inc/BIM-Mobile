@@ -75,6 +75,10 @@ void main() {
           'features/families/presentation/dialogs/family_import_units_dialog.dart',
       'start_screen_template_store.dart':
           'features/projects/infrastructure/templates/start_screen_template_store.dart',
+      'project_browser_views.dart':
+          'features/projects/presentation/browser/project_browser_views.dart',
+      'project_browser_panel.dart':
+          'features/projects/presentation/browser/project_browser_panel.dart',
     };
     final directivePattern =
         RegExp(r'''(?:import|export)\s+['"]([^'"]+)['"]''');
