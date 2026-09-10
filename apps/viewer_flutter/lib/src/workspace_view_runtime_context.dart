@@ -1,9 +1,7 @@
-/// Lightweight active-view context shared by documentation and family runtime.
-///
-/// This contains no scene or geometry references. It is only the semantic view
-/// identity/level needed to choose lightweight 2D representations and to scope
-/// view annotations. Keeping it separate prevents family/annotation systems
-/// from depending on the workspace widget tree.
+// COMPATIBILITY: legacy mutable runtime mirror used by pre-migration callers.
+// REMOVE WHEN: remaining family/documentation consumers receive active-view
+// state through application composition instead of a process-global static.
+
 enum WorkspaceRuntimeViewKind {
   model3d,
   floorPlan,
