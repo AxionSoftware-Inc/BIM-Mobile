@@ -1,16 +1,21 @@
 import 'dart:convert';
 import 'dart:io';
 
-import '../../../../app_project_storage.dart';
-import '../../../../atomic_file_writer.dart';
+import '../../../../core/infrastructure/io/atomic_file_writer.dart';
+import '../../../../core/infrastructure/storage/app_project_storage.dart';
 import '../../application/templates/start_screen_template_preferences.dart';
+import '../../application/templates/start_screen_template_preferences_repository.dart';
 
 /// Local persistence adapter for start-screen template preferences.
-abstract final class StartScreenTemplateStore {
+final class FileStartScreenTemplatePreferencesRepository
+    implements StartScreenTemplatePreferencesRepository {
+  const FileStartScreenTemplatePreferencesRepository();
+
   static const _fileName = 'start_screen_templates.json';
   static final SerializedFileWriter _writer = SerializedFileWriter();
 
-  static Future<StartScreenTemplatePreferences> load() async {
+  @override
+  Future<StartScreenTemplatePreferences> load() async {
     try {
       final directory = await AppProjectStorage.projectDirectory();
       final file = File(
@@ -27,7 +32,8 @@ abstract final class StartScreenTemplateStore {
     }
   }
 
-  static Future<void> save(StartScreenTemplatePreferences preferences) async {
+  @override
+  Future<void> save(StartScreenTemplatePreferences preferences) async {
     try {
       final directory = await AppProjectStorage.projectDirectory();
       final file = File(
@@ -39,4 +45,17 @@ abstract final class StartScreenTemplateStore {
       // must never make project creation or browsing unusable.
     }
   }
+}
+
+/// COMPATIBILITY: static entrypoint for the legacy root StartScreen widget.
+/// REMOVE WHEN: StartScreen receives StartScreenTemplatePreferencesRepository
+/// from app composition instead of reaching infrastructure directly.
+abstract final class StartScreenTemplateStore {
+  static const StartScreenTemplatePreferencesRepository _repository =
+      FileStartScreenTemplatePreferencesRepository();
+
+  static Future<StartScreenTemplatePreferences> load() => _repository.load();
+
+  static Future<void> save(StartScreenTemplatePreferences preferences) =>
+      _repository.save(preferences);
 }
