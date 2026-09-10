@@ -1,36 +1,30 @@
-import 'package:flutter/foundation.dart';
-
+import '../../../core/application/signals/application_notifier.dart';
 import '../../../render_scene_models.dart';
 import '../domain/annotation_view_key.dart';
 import 'annotation_document_controller.dart';
 
-/// MIGRATION: persistent document ownership is canonical in the annotation
-/// feature now, but transient selection/draft signals still use Flutter
-/// ValueNotifier because legacy viewport widgets subscribe directly. Move those
-/// notifier adapters to presentation once the old annotation widget imports are
-/// migrated.
-///
 /// Workspace-level annotation session.
 ///
 /// BIM geometry stays in RenderScene/native cache, while annotations are
 /// view-scoped and can be loaded/saved independently without forcing a geometry
-/// rebuild.
+/// rebuild. Observable application state is framework-neutral; Flutter adapts
+/// these signals in the presentation layer.
 abstract final class AnnotationWorkspaceRuntime {
   static final AnnotationDocumentController document =
       AnnotationDocumentController();
 
   /// Transient multi-tap command state is observable but never persisted.
-  static final ValueNotifier<AnnotationDraftPoint?> draft =
-      ValueNotifier<AnnotationDraftPoint?>(null);
+  static final ApplicationValueNotifier<AnnotationDraftPoint?> draft =
+      ApplicationValueNotifier<AnnotationDraftPoint?>(null);
 
   /// Selection is transient/view-local and never persisted.
-  static final ValueNotifier<int?> selectedAnnotationId =
-      ValueNotifier<int?>(null);
+  static final ApplicationValueNotifier<int?> selectedAnnotationId =
+      ApplicationValueNotifier<int?>(null);
 
   /// Touch-safe move command state. Arming Move never rewrites the packed
   /// document; the next valid model tap commits exactly one translation.
-  static final ValueNotifier<bool> moveSelectedArmed =
-      ValueNotifier<bool>(false);
+  static final ApplicationValueNotifier<bool> moveSelectedArmed =
+      ApplicationValueNotifier<bool>(false);
 
   static AnnotationDraftPoint? get draftStart => draft.value;
   static set draftStart(AnnotationDraftPoint? value) => draft.value = value;
