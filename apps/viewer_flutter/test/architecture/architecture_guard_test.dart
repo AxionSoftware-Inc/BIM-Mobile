@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:viewer_flutter/src/features/elements/application/bim_element_registry.dart';
 import 'package:viewer_flutter/src/features/elements/domain/bim_element_module.dart';
-import 'package:viewer_flutter/src/features/project/application/project_companion_document.dart';
+import 'package:viewer_flutter/src/features/projects/application/project_companion_document.dart';
 
 void main() {
   group('architecture guardrails', () {
@@ -92,8 +92,8 @@ void main() {
         const forbidden = <String>[
           "import 'dart:io'",
           "import 'dart:ffi'",
-          "package:flutter/",
-          "package:file_selector/",
+          'package:flutter/',
+          'package:file_selector/',
         ];
         for (final token in forbidden) {
           if (text.contains(token)) {
@@ -116,12 +116,12 @@ void main() {
         'core/application/engine/viewer_project_gateway.dart': <String>{
           "import 'dart:io'",
         },
-        'features/project/application/project_persistence_service.dart':
+        'features/projects/application/project_persistence_service.dart':
             <String>{"import 'dart:io'"},
         'features/annotations/application/annotation_document_controller.dart':
-            <String>{"package:flutter/foundation.dart"},
+            <String>{'package:flutter/foundation.dart'},
         'features/annotations/application/annotation_workspace_runtime.dart':
-            <String>{"package:flutter/foundation.dart"},
+            <String>{'package:flutter/foundation.dart'},
       };
       const forbidden = <String>[
         "import 'dart:io'",
@@ -141,7 +141,9 @@ void main() {
         for (final token in forbidden) {
           if (!text.contains(token)) continue;
           final allowed = allowedDebt[relative] ?? const <String>{};
-          if (allowed.any((entry) => token.contains(entry) || entry.contains(token))) {
+          if (allowed.any(
+            (entry) => token.contains(entry) || entry.contains(token),
+          )) {
             continue;
           }
           violations.add('$relative -> $token');
@@ -173,13 +175,13 @@ void main() {
         'app_brand.dart': 'core/presentation/design_system/arvela_brand.dart',
         'app_settings.dart': null,
         'project_recovery_store.dart':
-            'features/project/infrastructure/project_recovery_store.dart',
+            'features/projects/infrastructure/project_recovery_store.dart',
         'project_lifecycle_service.dart':
-            'features/project/application/project_lifecycle_service.dart',
+            'features/projects/application/project_lifecycle_service.dart',
         'project_persistence_service.dart':
-            'features/project/application/project_persistence_service.dart',
+            'features/projects/application/project_persistence_service.dart',
         'project_session_controller.dart':
-            'features/project/application/project_session_controller.dart',
+            'features/projects/application/project_session_controller.dart',
         'viewer_app_dependencies.dart':
             'app/composition/viewer_app_dependencies.dart',
         'native_viewer_session_factory.dart':
@@ -200,6 +202,9 @@ void main() {
             'core/application/engine/viewer_project_session.dart',
         'viewer_bim_cache_gateway.dart':
             'core/application/engine/viewer_bim_cache_gateway.dart',
+        'view_workspace_store.dart':
+            'features/viewer/application/workspace/view_workspace_store.dart',
+        'view_tabs.dart': null,
         'bim_element_module.dart':
             'features/elements/domain/bim_element_module.dart',
         'bim_element_registry.dart':
@@ -272,7 +277,7 @@ void main() {
             'features/annotations/application/annotation_workspace_runtime.dart',
       };
       final directivePattern =
-          RegExp(r'''(?:import|export)\s+['"]([^'"]+)['"]''');
+          RegExp(r'''(?:import|export)\s+['\"]([^'\"]+)['\"]''');
 
       for (final file in _dartFiles(sourceRoot)) {
         final relativeFile = _relativeTo(sourceRoot, file).replaceAll('\\', '/');
