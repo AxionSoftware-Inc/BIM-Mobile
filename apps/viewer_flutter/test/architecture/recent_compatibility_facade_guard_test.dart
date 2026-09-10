@@ -81,6 +81,7 @@ void main() {
           'features/projects/presentation/browser/project_browser_views.dart',
       'project_browser_panel.dart':
           'features/projects/presentation/browser/project_browser_panel.dart',
+      'onboarding_page.dart': 'app/routing/onboarding_page.dart',
     };
     final directivePattern =
         RegExp(r'''(?:import|export)\s+['"]([^'"]+)['"]''');
