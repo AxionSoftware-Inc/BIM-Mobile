@@ -8,8 +8,9 @@ import '../../../render_scene_editor.dart';
 import '../../../render_scene_estimator.dart';
 import '../../../render_scene_models.dart';
 import '../application/quantity_schedule_service.dart';
+import '../domain/project_schedule_kind.dart';
 
-enum ProjectScheduleKind { rooms, quantities }
+export '../domain/project_schedule_kind.dart';
 
 class QuantityScheduleWorkspace extends StatelessWidget {
   const QuantityScheduleWorkspace({
