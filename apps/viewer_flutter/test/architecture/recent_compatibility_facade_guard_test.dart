@@ -83,6 +83,10 @@ void main() {
           'features/projects/presentation/browser/project_browser_views.dart',
       'project_browser_panel.dart':
           'features/projects/presentation/browser/project_browser_panel.dart',
+      'document_models.dart':
+          'features/documentation/application/document_models.dart',
+      'sheet_workspace_controller.dart':
+          'features/documentation/presentation/sheet_workspace_controller.dart',
       'onboarding_page.dart': 'app/routing/onboarding_page.dart',
       'annotation_render_batches.dart':
           'features/annotations/application/annotation_render_batches.dart',
