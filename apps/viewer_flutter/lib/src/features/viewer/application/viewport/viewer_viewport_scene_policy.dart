@@ -94,6 +94,65 @@ final class ViewerViewportScenePolicy {
     return visibleKinds.intersection(scene.kindCounts.keys.toSet());
   }
 
+  int? resolveInitialLevelId(RenderScene scene, {int? preferred}) {
+    final levels = scene.levels;
+    if (levels.isEmpty) return preferred;
+    if (preferred != null && scene.levelById(preferred) != null) {
+      return preferred;
+    }
+    return levels.first.levelId;
+  }
+
+  RenderSceneLevel? activeLevel(RenderScene? scene) {
+    if (scene == null) return null;
+    return scene.levelById(activeLevelId) ??
+        (scene.levels.isNotEmpty ? scene.levels.first : null);
+  }
+
+  double activeLevelElevation(RenderScene? scene) =>
+      activeLevel(scene)?.elevationMeters ?? 0.0;
+
+  double activeLevelDefaultWallHeight(
+    RenderScene? scene, {
+    required double fallbackMeters,
+  }) =>
+      activeLevel(scene)?.defaultWallHeightMeters ?? fallbackMeters;
+
+  RenderSceneLevel? pickLevelAtElevation(
+    RenderScene scene,
+    RenderScenePoint? modelPoint, {
+    double toleranceMeters = 1.4,
+  }) {
+    if (modelPoint == null ||
+        !(projectionMode.isElevation ||
+            projectionMode.supportsPlanFootprintEditing)) {
+      return null;
+    }
+    RenderSceneLevel? bestLevel;
+    var bestDistance = toleranceMeters;
+    for (final level in scene.levels) {
+      final distance = (modelPoint.z - level.elevationMeters).abs();
+      if (distance <= bestDistance) {
+        bestDistance = distance;
+        bestLevel = level;
+      }
+    }
+    return bestLevel;
+  }
+
+  RenderSceneLevel? nextHigherLevel(RenderScene scene, int baseLevelId) {
+    final base = scene.levelById(baseLevelId);
+    if (base == null) return null;
+    final sorted = [...scene.levels]
+      ..sort((a, b) => a.elevationMeters.compareTo(b.elevationMeters));
+    for (final level in sorted) {
+      if (level.elevationMeters > base.elevationMeters + 1e-6) {
+        return level;
+      }
+    }
+    return null;
+  }
+
   RenderSceneDisplayStyle get defaultDisplayStyle =>
       RenderSceneDisplayStyle.solid;
 }
