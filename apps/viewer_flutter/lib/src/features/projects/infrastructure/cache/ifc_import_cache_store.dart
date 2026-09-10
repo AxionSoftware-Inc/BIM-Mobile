@@ -1,8 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
-import '../../../../app_project_storage.dart';
-import '../../../../atomic_file_writer.dart';
+import '../../../../core/infrastructure/io/atomic_file_writer.dart';
+import '../../../../core/infrastructure/storage/app_project_storage.dart';
 
 final class IfcImportCacheEntry {
   const IfcImportCacheEntry({
@@ -32,6 +32,7 @@ final class NativeBimCachePaths {
 final class IfcImportCacheStore {
   const IfcImportCacheStore();
 
+  static const int nativeFirstThresholdBytes = 8 * 1024 * 1024;
   static const String _directoryName = 'ifc-cache';
 
   Future<IfcImportCacheEntry?> readProjectJson(String ifcPath) async {

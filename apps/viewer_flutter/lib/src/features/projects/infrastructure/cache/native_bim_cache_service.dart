@@ -1,7 +1,7 @@
 import 'dart:io';
 
-import '../../../../atomic_file_writer.dart';
 import '../../../../core/application/engine/viewer_bim_cache_gateway.dart';
+import '../../../../core/infrastructure/io/atomic_file_writer.dart';
 import 'ifc_import_cache_store.dart';
 
 /// Coordinates the disposable engine-owned `.bimcache` artifact for one IFC.
