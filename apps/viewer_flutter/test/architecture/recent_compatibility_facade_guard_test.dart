@@ -84,6 +84,10 @@ void main() {
       'onboarding_page.dart': 'app/routing/onboarding_page.dart',
       'annotation_render_batches.dart':
           'features/annotations/application/annotation_render_batches.dart',
+      'annotation_history_controls.dart':
+          'features/annotations/presentation/annotation_history_controls.dart',
+      'annotation_selection_controls.dart':
+          'features/annotations/presentation/annotation_selection_controls.dart',
     };
     final directivePattern =
         RegExp(r'''(?:import|export)\s+['"]([^'"]+)['"]''');
