@@ -1,10 +1,18 @@
-import '../../render_scene_viewport_types.dart';
-
 /// Application-shell theme selection.
 ///
 /// Presentation labels/icons intentionally live in the presentation adapter;
 /// this enum is persisted as a stable semantic value only.
 enum AppThemeMode {
+  light,
+  standardDark,
+  amoledBlack,
+}
+
+/// Persisted viewport appearance preference.
+///
+/// The renderer-specific `RenderSceneViewportTheme` mapping belongs to the
+/// presentation boundary so this settings model stays Flutter-independent.
+enum AppViewportTheme {
   light,
   standardDark,
   amoledBlack,
@@ -26,14 +34,14 @@ final class ViewerAppSettings {
 
   const ViewerAppSettings.defaults()
       : appTheme = AppThemeMode.light,
-        viewportTheme = RenderSceneViewportTheme.light,
+        viewportTheme = AppViewportTheme.light,
         onboardingComplete = false,
         largeTouchTargets = true,
         highContrast = false,
         textScale = 1.0;
 
   final AppThemeMode appTheme;
-  final RenderSceneViewportTheme viewportTheme;
+  final AppViewportTheme viewportTheme;
   final bool onboardingComplete;
   final bool largeTouchTargets;
   final bool highContrast;
@@ -41,7 +49,7 @@ final class ViewerAppSettings {
 
   ViewerAppSettings copyWith({
     AppThemeMode? appTheme,
-    RenderSceneViewportTheme? viewportTheme,
+    AppViewportTheme? viewportTheme,
     bool? onboardingComplete,
     bool? largeTouchTargets,
     bool? highContrast,
@@ -73,11 +81,11 @@ final class ViewerAppSettings {
             .firstOrNull ??
         AppThemeMode.light;
 
-    RenderSceneViewportTheme parseViewportTheme(Object? value) =>
-        RenderSceneViewportTheme.values
+    AppViewportTheme parseViewportTheme(Object? value) =>
+        AppViewportTheme.values
             .where((candidate) => candidate.name == value?.toString())
             .firstOrNull ??
-        RenderSceneViewportTheme.light;
+        AppViewportTheme.light;
 
     return ViewerAppSettings(
       appTheme: parseAppTheme(json['appTheme']),

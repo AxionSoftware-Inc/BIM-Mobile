@@ -104,7 +104,7 @@ class _ViewerAppState extends State<ViewerApp> {
               source: widget.source!,
               preferEngineBackedBundledSample:
                   widget.preferEngineBackedBundledSample,
-              viewportTheme: _settings.viewportTheme,
+              viewportTheme: _settings.viewportTheme.renderSceneTheme,
             ),
     );
   }
@@ -127,12 +127,12 @@ class _StartScreenGate extends StatefulWidget {
 
   final bool preferEngineBackedBundledSample;
   final AppThemeMode appTheme;
-  final RenderSceneViewportTheme viewportTheme;
+  final AppViewportTheme viewportTheme;
   final bool largeTouchTargets;
   final bool highContrast;
   final double textScale;
   final ValueChanged<AppThemeMode> onAppThemeChanged;
-  final ValueChanged<RenderSceneViewportTheme> onViewportThemeChanged;
+  final ValueChanged<AppViewportTheme> onViewportThemeChanged;
   final ValueChanged<bool> onLargeTouchTargetsChanged;
   final ValueChanged<bool> onHighContrastChanged;
   final ValueChanged<double> onTextScaleChanged;
@@ -276,7 +276,7 @@ class _StartScreenGateState extends State<_StartScreenGate> {
         initialProjectJson: json,
         initialProjectName: _projectName,
         initialProjectPath: _projectPath,
-        viewportTheme: widget.viewportTheme,
+        viewportTheme: widget.viewportTheme.renderSceneTheme,
         onReturnToStart: _returnToStart,
       );
     }

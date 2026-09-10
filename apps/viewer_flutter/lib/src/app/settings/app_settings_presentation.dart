@@ -25,6 +25,35 @@ extension AppThemeModeX on AppThemeMode {
       };
 }
 
+/// Presentation labels plus the renderer adapter for the persisted viewport
+/// preference. The settings model deliberately does not import Flutter or the
+/// renderer's mixed viewport-types module.
+extension AppViewportThemePresentationX on AppViewportTheme {
+  String get label => switch (this) {
+        AppViewportTheme.light => 'Light viewport',
+        AppViewportTheme.standardDark => 'Standard dark viewport',
+        AppViewportTheme.amoledBlack => 'AMOLED black viewport',
+      };
+
+  String get description => switch (this) {
+        AppViewportTheme.light => 'White modelling canvas',
+        AppViewportTheme.standardDark => 'Revit-style dark grey canvas',
+        AppViewportTheme.amoledBlack => 'Pure black modelling canvas',
+      };
+
+  IconData get icon => switch (this) {
+        AppViewportTheme.light => Icons.wb_sunny_outlined,
+        AppViewportTheme.standardDark => Icons.view_in_ar_outlined,
+        AppViewportTheme.amoledBlack => Icons.brightness_2_outlined,
+      };
+
+  RenderSceneViewportTheme get renderSceneTheme => switch (this) {
+        AppViewportTheme.light => RenderSceneViewportTheme.light,
+        AppViewportTheme.standardDark => RenderSceneViewportTheme.standardDark,
+        AppViewportTheme.amoledBlack => RenderSceneViewportTheme.amoledBlack,
+      };
+}
+
 ThemeData viewerThemeFor(AppThemeMode mode) {
   if (mode == AppThemeMode.light) {
     return ArvelaBrand.applyTypography(ThemeData(
@@ -110,12 +139,12 @@ class ViewerSettingsDialog extends StatefulWidget {
   });
 
   final AppThemeMode appTheme;
-  final RenderSceneViewportTheme viewportTheme;
+  final AppViewportTheme viewportTheme;
   final bool largeTouchTargets;
   final bool highContrast;
   final double textScale;
   final ValueChanged<AppThemeMode> onAppThemeChanged;
-  final ValueChanged<RenderSceneViewportTheme> onViewportThemeChanged;
+  final ValueChanged<AppViewportTheme> onViewportThemeChanged;
   final ValueChanged<bool> onLargeTouchTargetsChanged;
   final ValueChanged<bool> onHighContrastChanged;
   final ValueChanged<double> onTextScaleChanged;
@@ -126,7 +155,7 @@ class ViewerSettingsDialog extends StatefulWidget {
 
 class _ViewerSettingsDialogState extends State<ViewerSettingsDialog> {
   late AppThemeMode _appTheme = widget.appTheme;
-  late RenderSceneViewportTheme _viewportTheme = widget.viewportTheme;
+  late AppViewportTheme _viewportTheme = widget.viewportTheme;
   late bool _largeTouchTargets = widget.largeTouchTargets;
   late bool _highContrast = widget.highContrast;
   late double _textScale = widget.textScale;
@@ -173,7 +202,7 @@ class _ViewerSettingsDialogState extends State<ViewerSettingsDialog> {
               const Divider(height: 28),
               Text('Viewport background', style: theme.textTheme.titleMedium),
               const SizedBox(height: 6),
-              RadioGroup<RenderSceneViewportTheme>(
+              RadioGroup<AppViewportTheme>(
                 groupValue: _viewportTheme,
                 onChanged: (value) {
                   if (value == null) return;
@@ -182,8 +211,8 @@ class _ViewerSettingsDialogState extends State<ViewerSettingsDialog> {
                 },
                 child: Column(
                   children: <Widget>[
-                    for (final mode in RenderSceneViewportTheme.values)
-                      RadioListTile<RenderSceneViewportTheme>(
+                    for (final mode in AppViewportTheme.values)
+                      RadioListTile<AppViewportTheme>(
                         value: mode,
                         secondary: Icon(mode.icon),
                         title: Text(mode.label),
