@@ -1,12 +1,47 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:viewer_flutter/src/features/projects/application/import/ifc_import_policy.dart';
 import 'package:viewer_flutter/src/features/projects/infrastructure/cache/ifc_import_cache_store.dart';
+import 'package:viewer_flutter/src/features/projects/infrastructure/ifc_import_cache_service.dart';
 
 void main() {
   group('IFC import cache policy', () {
-    test('native-first threshold remains eight MiB', () {
+    test('native-first threshold has one application policy value', () {
+      expect(
+        IfcImportPolicy.nativeFirstThresholdBytes,
+        8 * 1024 * 1024,
+      );
       expect(
         IfcImportCacheStore.nativeFirstThresholdBytes,
-        8 * 1024 * 1024,
+        IfcImportPolicy.nativeFirstThresholdBytes,
+      );
+      expect(
+        IfcImportCacheService.nativeFirstThresholdBytes,
+        IfcImportPolicy.nativeFirstThresholdBytes,
+      );
+    });
+
+    test('application policy requires both threshold and native viewport', () {
+      const threshold = IfcImportPolicy.nativeFirstThresholdBytes;
+      expect(
+        IfcImportPolicy.shouldPreferNativeFirst(
+          sourceBytes: threshold - 1,
+          nativeViewport: true,
+        ),
+        isFalse,
+      );
+      expect(
+        IfcImportPolicy.shouldPreferNativeFirst(
+          sourceBytes: threshold,
+          nativeViewport: false,
+        ),
+        isFalse,
+      );
+      expect(
+        IfcImportPolicy.shouldPreferNativeFirst(
+          sourceBytes: threshold,
+          nativeViewport: true,
+        ),
+        isTrue,
       );
     });
 
