@@ -1,6 +1,6 @@
-part of 'render_scene_models.dart';
+import 'dart:math' as math;
 
-@immutable
+/// Renderer-neutral point in the engine scene coordinate system.
 class RenderScenePoint {
   const RenderScenePoint({
     required this.x,
@@ -19,29 +19,31 @@ class RenderScenePoint {
   static RenderScenePoint zero() => const RenderScenePoint(x: 0, y: 0, z: 0);
 
   static RenderScenePoint? fromJson(Object? value) {
-    if (value is! Map) {
-      return null;
-    }
+    if (value is! Map) return null;
     final x = _toFiniteDouble(value['x']);
     final y = _toFiniteDouble(value['y']);
     final z = _toFiniteDouble(value['z']);
-    if (x == null || y == null || z == null) {
-      return null;
-    }
+    if (x == null || y == null || z == null) return null;
     return RenderScenePoint(x: x, y: y, z: z);
   }
 
-  RenderScenePoint operator +(RenderScenePoint other) {
-    return RenderScenePoint(x: x + other.x, y: y + other.y, z: z + other.z);
-  }
+  RenderScenePoint operator +(RenderScenePoint other) => RenderScenePoint(
+        x: x + other.x,
+        y: y + other.y,
+        z: z + other.z,
+      );
 
-  RenderScenePoint operator -(RenderScenePoint other) {
-    return RenderScenePoint(x: x - other.x, y: y - other.y, z: z - other.z);
-  }
+  RenderScenePoint operator -(RenderScenePoint other) => RenderScenePoint(
+        x: x - other.x,
+        y: y - other.y,
+        z: z - other.z,
+      );
 
-  RenderScenePoint scale(double factor) {
-    return RenderScenePoint(x: x * factor, y: y * factor, z: z * factor);
-  }
+  RenderScenePoint scale(double factor) => RenderScenePoint(
+        x: x * factor,
+        y: y * factor,
+        z: z * factor,
+      );
 
   double distanceTo(RenderScenePoint other) {
     final dx = x - other.x;
@@ -51,9 +53,7 @@ class RenderScenePoint {
   }
 }
 
-/// A semantic visual segment authored by the BIM engine. Viewports may project
-/// it, but must not recreate opening contours by inspecting mesh triangles.
-@immutable
+/// Semantic visual segment authored by the BIM engine.
 class RenderSceneFeatureEdge {
   const RenderSceneFeatureEdge({
     required this.start,
@@ -81,12 +81,11 @@ class RenderSceneFeatureEdge {
     return RenderSceneFeatureEdge(
       start: start,
       end: end,
-      role: toSceneString(value['role'], fallback: 'silhouette'),
+      role: _sceneString(value['role'], fallback: 'silhouette'),
     );
   }
 }
 
-@immutable
 class RenderSceneBounds {
   const RenderSceneBounds({
     required this.min,
@@ -144,14 +143,10 @@ class RenderSceneBounds {
   }
 
   static RenderSceneBounds? fromJson(Object? value) {
-    if (value is! Map) {
-      return null;
-    }
+    if (value is! Map) return null;
     final min = RenderScenePoint.fromJson(value['min']);
     final max = RenderScenePoint.fromJson(value['max']);
-    if (min == null || max == null) {
-      return null;
-    }
+    if (min == null || max == null) return null;
     return RenderSceneBounds(min: min, max: max);
   }
 
@@ -173,9 +168,7 @@ class RenderSceneBounds {
     RenderSceneBounds? fallback,
   }) {
     final iterator = bounds.iterator;
-    if (!iterator.moveNext()) {
-      return fallback ?? zero();
-    }
+    if (!iterator.moveNext()) return fallback ?? zero();
     var current = iterator.current;
     while (iterator.moveNext()) {
       current = current._union(iterator.current);
@@ -183,23 +176,20 @@ class RenderSceneBounds {
     return current;
   }
 
-  RenderSceneBounds _union(RenderSceneBounds other) {
-    return RenderSceneBounds(
-      min: RenderScenePoint(
-        x: min.x < other.min.x ? min.x : other.min.x,
-        y: min.y < other.min.y ? min.y : other.min.y,
-        z: min.z < other.min.z ? min.z : other.min.z,
-      ),
-      max: RenderScenePoint(
-        x: max.x > other.max.x ? max.x : other.max.x,
-        y: max.y > other.max.y ? max.y : other.max.y,
-        z: max.z > other.max.z ? max.z : other.max.z,
-      ),
-    );
-  }
+  RenderSceneBounds _union(RenderSceneBounds other) => RenderSceneBounds(
+        min: RenderScenePoint(
+          x: min.x < other.min.x ? min.x : other.min.x,
+          y: min.y < other.min.y ? min.y : other.min.y,
+          z: min.z < other.min.z ? min.z : other.min.z,
+        ),
+        max: RenderScenePoint(
+          x: max.x > other.max.x ? max.x : other.max.x,
+          y: max.y > other.max.y ? max.y : other.max.y,
+          z: max.z > other.max.z ? max.z : other.max.z,
+        ),
+      );
 }
 
-@immutable
 class RenderSceneMesh {
   const RenderSceneMesh({
     required this.positions,
@@ -216,7 +206,6 @@ class RenderSceneMesh {
   final int invalidIndexCount;
 
   int get triangleCount => indices.length ~/ 3;
-
   bool get hasGeometry => positions.isNotEmpty && indices.length >= 3;
 
   Map<String, Object?> toJson() => <String, Object?>{
@@ -242,14 +231,13 @@ class RenderSceneMesh {
       warnings.add('Mesh payload is missing or invalid.');
       return RenderSceneMesh.empty();
     }
+
     final positions = <RenderScenePoint>[];
     final rawPositions = value['positions'];
     if (rawPositions is List) {
       for (final entry in rawPositions) {
         final point = RenderScenePoint.fromJson(entry);
-        if (point != null) {
-          positions.add(point);
-        }
+        if (point != null) positions.add(point);
       }
     } else {
       warnings.add('Mesh positions were missing.');
@@ -277,22 +265,20 @@ class RenderSceneMesh {
       final parsedNormals = <RenderScenePoint>[];
       for (final entry in rawNormals) {
         final point = RenderScenePoint.fromJson(entry);
-        if (point != null) {
-          parsedNormals.add(point);
-        }
+        if (point != null) parsedNormals.add(point);
       }
       normals = parsedNormals.isEmpty ? null : parsedNormals;
     }
+
     final triangleMaterialIds = <int>[];
     final rawMaterialIds = value['triangle_material_ids'];
     if (rawMaterialIds is List) {
       for (final entry in rawMaterialIds) {
         final parsed = _toFiniteDouble(entry);
-        if (parsed != null) {
-          triangleMaterialIds.add(parsed.floor());
-        }
+        if (parsed != null) triangleMaterialIds.add(parsed.floor());
       }
     }
+
     return RenderSceneMesh(
       positions: positions,
       indices: indices,
@@ -301,4 +287,17 @@ class RenderSceneMesh {
       invalidIndexCount: invalidIndexCount,
     );
   }
+}
+
+String _sceneString(Object? value, {required String fallback}) {
+  if (value is String && value.isNotEmpty) return value;
+  return fallback;
+}
+
+double? _toFiniteDouble(Object? value) {
+  if (value is double && value.isFinite) return value;
+  if (value is int) return value.toDouble();
+  if (value is num && value.isFinite) return value.toDouble();
+  if (value is String) return double.tryParse(value);
+  return null;
 }
