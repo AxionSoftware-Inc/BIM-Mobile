@@ -4,56 +4,11 @@ part of 'viewer_app.dart';
 
 enum _WorkspaceExitChoice { save, discard }
 
-// Above this size, an IFC is opened through the cache's native-first path.
-// The threshold only chooses a transfer strategy: IFC source geometry remains
+// Above this size, an IFC is opened through the native-first import path.
+// The threshold only chooses a transfer strategy: source geometry remains
 // authoritative and is never simplified or rewritten.
 const int _nativeFirstIfcThresholdBytes =
-    IfcImportCacheStore.nativeFirstThresholdBytes;
-
-extension _IfcImportCache on _ViewerHomePageState {
-  static const IfcImportCacheStore _ifcImportCacheStore = IfcImportCacheStore();
-
-  Future<({String json, String path})?> _readIfcImportCache(
-    String ifcPath,
-  ) async {
-    final entry = await _ifcImportCacheStore.readProjectJson(ifcPath);
-    if (entry == null) return null;
-    return (json: entry.json, path: entry.path);
-  }
-
-  Future<void> _writeIfcImportCache(String ifcPath, String json) =>
-      _ifcImportCacheStore.writeProjectJson(ifcPath, json);
-
-  Future<({String cachePath, String signaturePath})> _nativeBimCachePaths(
-    String ifcPath,
-  ) async {
-    final paths = await _ifcImportCacheStore.nativeBimCachePaths(ifcPath);
-    return (
-      cachePath: paths.cachePath,
-      signaturePath: paths.signaturePath,
-    );
-  }
-
-  /// Cache generation stays at the optional native-renderer boundary. Mock,
-  /// cloud and fallback project sessions remain valid, while the real IFC is
-  /// always retained as source of truth if this acceleration step fails.
-  Future<String?> _ensureNativeBimCache(String ifcPath) async {
-    final session = _engineRepository;
-    if (session is! ViewerBimRuntimeCacheGateway) return null;
-    return NativeBimCacheService(
-      gateway: session,
-      cacheStore: _ifcImportCacheStore,
-    ).ensure(
-      ifcPath,
-      onCompile: () {
-        if (!mounted) return;
-        _updateViewportState(() {
-          _statusMessage = 'Preparing native 3D cache...';
-        });
-      },
-    );
-  }
-}
+    IfcImportPolicy.nativeFirstThresholdBytes;
 
 extension _ViewerProjectLifecycle on _ViewerHomePageState {
   Future<void> _createBlankProject() async {
@@ -459,204 +414,6 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
     await _saveProjectForExit();
   }
 
-  Future<void> _importIfc() async {
-    if (_isBusy || !_engineBackedMode || _engineRepository == null) return;
-    try {
-      const typeGroup = XTypeGroup(
-        label: 'IFC models',
-        extensions: <String>['ifc'],
-      );
-      final file = await openFile(
-        acceptedTypeGroups: <XTypeGroup>[typeGroup],
-      );
-      if (file == null || !mounted) return;
-      await _loadIfcPath(file.path, projectName: file.name);
-    } catch (error) {
-      if (!mounted) return;
-      _updateViewportState(() {
-        _isBusy = false;
-        _loadError = error.toString();
-        _statusMessage = 'IFC import failed.';
-      });
-    }
-  }
-
-  Future<void> _loadIfcPath(
-    String path, {
-    required String projectName,
-  }) async {
-    if (_isBusy) return;
-    final generation = ++_sceneLoadGeneration;
-    try {
-      _updateViewportState(() {
-        _isBusy = true;
-        _loadError = null;
-        _activeSectionView = null;
-        _statusMessage = 'Importing $projectName...';
-      });
-      _currentProjectName = projectName;
-      final repository = _engineRepository;
-      final sourceStat = await File(path).stat();
-      final preferNativeFirst = sourceStat.type == FileSystemEntityType.file &&
-          sourceStat.size >= _nativeFirstIfcThresholdBytes &&
-          _viewportController.backend == RenderSceneViewportBackend.native;
-      final nativeFirstReady = preferNativeFirst
-          ? await _primeNativeViewportForIfc(projectName)
-          : false;
-      // A former JSON scene cache can be hundreds of MiB.  Never read or
-      // build it for a large model when the native cache route is available.
-      final cached = nativeFirstReady ? null : await _readIfcImportCache(path);
-      if (cached != null) {
-        _updateViewportState(() {
-          _statusMessage = 'Opening cached IFC model...';
-        });
-        if (repository != null) {
-          await repository.loadFromJson(
-            projectName: projectName,
-            json: cached.json,
-            sourcePath: cached.path,
-          );
-        } else {
-          final launch = await _projectLifecycle.loadJson(
-            projectName: projectName,
-            json: cached.json,
-            sourcePath: cached.path,
-          );
-          if (!mounted) {
-            launch.session.dispose();
-            return;
-          }
-          _projectSession.activate(launch.session);
-          _engineLoadDiagnostic = null;
-        }
-      } else if (repository == null) {
-        final launch = await _projectLifecycle.loadIfc(
-          projectName: projectName,
-          ifcPath: path,
-        );
-        if (!mounted) {
-          launch.session.dispose();
-          return;
-        }
-        _projectSession.activate(launch.session);
-        _engineLoadDiagnostic = null;
-        if (!nativeFirstReady) {
-          final exactProjectJson =
-              await launch.session.snapshotImportedProjectJson();
-          await _writeIfcImportCache(path, exactProjectJson);
-        }
-      } else {
-        await repository.loadFromIfc(ifcPath: path);
-        // Keep the exact semantic/project representation for the next open.
-        // The runtime LOD is produced later by the render-scene query and is
-        // never written into this cache.
-        if (!nativeFirstReady) {
-          final exactProjectJson =
-              await repository.snapshotImportedProjectJson();
-          await _writeIfcImportCache(path, exactProjectJson);
-        }
-      }
-      if (nativeFirstReady) {
-        final nativeResult = await _prepareNativeBimCacheScene(path);
-        if (nativeResult != null) {
-          await _applyLoadResult(
-            nativeResult,
-            sourceLabel: projectName,
-            resetProjectChanges: true,
-            nativeGeometryAlreadyLoaded: true,
-          );
-          return;
-        }
-      }
-      final nativeBimCachePath = await _ensureNativeBimCache(path);
-      final result = await _sceneViews.refreshPrimary();
-      await _applyLoadResult(
-        result,
-        sourceLabel: projectName,
-        resetProjectChanges: true,
-      );
-      if (nativeBimCachePath != null && mounted) {
-        await _viewportController.loadNativeBimCache(
-          sourceIfcPath: path,
-          cachePath: nativeBimCachePath,
-        );
-      } else {
-        final activeSession = _projectSession.session;
-        if (activeSession != null) {
-          _hydrateSecondaryScene(
-            session: activeSession,
-            generation: generation,
-            sourceLabel: projectName,
-          );
-        }
-      }
-    } catch (error) {
-      if (!mounted) return;
-      _updateViewportState(() {
-        _isBusy = false;
-        _loadError = error.toString();
-        _statusMessage = 'IFC import failed.';
-      });
-    }
-  }
-
-  /// Mounts a tiny loading scene so Android can create its PlatformView and
-  /// then waits for the per-view MethodChannel.  It deliberately contains no
-  /// IFC mesh payload; the following native call replaces it with direct cache
-  /// buffers on the renderer thread.
-  Future<bool> _primeNativeViewportForIfc(String projectName) async {
-    final placeholder = parseRenderSceneJson(
-      jsonEncode(<String, Object?>{
-        'scene_version': 1,
-        'units': 'meters',
-        'coordinate_system': 'X/Y plan, Z up',
-        'objects': <Object?>[],
-        'levels': <Object?>[],
-        'materials': <Object?>[],
-        'sections': <Object?>[],
-      }),
-      source: 'native cache loading placeholder',
-    ).scene;
-    if (placeholder == null || !mounted) return false;
-    _updateViewportState(() {
-      _scene = placeholder;
-      _statusMessage = 'Preparing native viewport for $projectName...';
-    });
-    await _viewportController.loadRenderScene(placeholder);
-    return _viewportController.waitForNativeBridge();
-  }
-
-  /// Receives only compact element bounds/metadata from Android.  Vertices and
-  /// indices stay in the C++ cache and are streamed to Filament as direct
-  /// buffers, avoiding the old JSON MethodChannel allocation path.
-  Future<RenderSceneLoadResult?> _prepareNativeBimCacheScene(
-    String ifcPath,
-  ) async {
-    try {
-      final paths = await _nativeBimCachePaths(ifcPath);
-      if (mounted) {
-        _updateViewportState(() {
-          _statusMessage = 'Opening native 3D cache...';
-        });
-      }
-      final payload = await _viewportController.prepareNativeBimCache(
-        sourceIfcPath: ifcPath,
-        cachePath: paths.cachePath,
-      );
-      final rawScene = payload?['scene'];
-      if (rawScene is! Map) return null;
-      final result = parseRenderSceneJson(
-        jsonEncode(rawScene),
-        source: 'native BIM cache metadata',
-      );
-      return result.scene == null ? null : result;
-    } catch (_) {
-      // A cache failure is recoverable: the legacy JSON renderer remains the
-      // migration fallback for the same IFC source.
-      return null;
-    }
-  }
-
   Future<void> _exportIfc() async {
     if (_isBusy || !_engineBackedMode || _engineRepository == null) return;
     try {
@@ -1008,12 +765,7 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
     );
   }
 
-  OpenedViewTab? _openedViewTabById(String id) {
-    for (final tab in _openedViewTabs) {
-      if (tab.id == id) return tab;
-    }
-    return null;
-  }
+  OpenedViewTab? _openedViewTabById(String id) => _viewWorkspace.tabById(id);
 
   void _updateViewPresentation(
     String viewId, {
@@ -1022,9 +774,8 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
     RenderSceneOrbitProjectionStyle? orbitProjectionStyle,
   }) {
     if (!mounted) return;
-    final index = _openedViewTabs.indexWhere((tab) => tab.id == viewId);
-    if (index < 0) return;
-    final current = _openedViewTabs[index];
+    final current = _viewWorkspace.tabById(viewId);
+    if (current == null) return;
     final updated = current.copyWith(
       displayStyle: displayStyle,
       shadowsEnabled: shadowsEnabled,
@@ -1098,37 +849,19 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
   Future<void> _openViewTabNow(OpenedViewTab tab) async {
     _saveActiveViewPresentation();
     final requested = _tabWithSavedPresentation(tab);
-    final existing = _openedViewTabById(requested.id);
-    final previousTabId = _activeViewTabId;
-    final previousTab =
-        previousTabId == null ? null : _openedViewTabById(previousTabId);
-    if (existing == null) {
-      _viewWorkspace.addTab(requested);
-    }
-    _updateViewportState(() {
-      _activeViewTabId = requested.id;
-    });
-    final target = existing ?? requested;
+    final transition = ViewTabLifecycleController(_viewWorkspace).open(
+      requested,
+      activate: _activateViewTab,
+    );
+    if (mounted) _updateViewportState(() {});
     try {
-      await _activateViewTab(target);
+      await transition;
     } catch (error) {
       if (!mounted) return;
       _updateViewportState(() {
-        if (existing == null) {
-          _viewWorkspace.removeTab(requested.id);
-        }
-        _activeViewTabId = previousTabId;
         _loadError = error.toString();
-        _statusMessage = '${target.label} could not be opened.';
+        _statusMessage = '${requested.label} could not be opened.';
       });
-      if (previousTab != null) {
-        try {
-          await _activateViewTab(previousTab);
-        } catch (_) {
-          // Keep the failed navigation error visible if the previous view
-          // also cannot be restored.
-        }
-      }
     }
   }
 
@@ -1240,29 +973,22 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
   }
 
   Future<void> _selectOpenedViewTabNow(String tabId) async {
-    final tab = _openedViewTabById(tabId);
-    if (tab == null || _activeViewTabId == tabId) return;
-    final previousTabId = _activeViewTabId;
+    final target = _viewWorkspace.tabById(tabId);
+    if (target == null || _activeViewTabId == tabId) return;
     _saveActiveViewPresentation();
-    _updateViewportState(() => _activeViewTabId = tabId);
+    final transition = ViewTabLifecycleController(_viewWorkspace).select(
+      tabId,
+      activate: _activateViewTab,
+    );
+    if (mounted) _updateViewportState(() {});
     try {
-      await _activateViewTab(tab);
+      await transition;
     } catch (error) {
       if (!mounted) return;
       _updateViewportState(() {
-        _activeViewTabId = previousTabId;
         _loadError = error.toString();
-        _statusMessage = '${tab.label} could not be opened.';
+        _statusMessage = '${target.label} could not be opened.';
       });
-      final previousTab =
-          previousTabId == null ? null : _openedViewTabById(previousTabId);
-      if (previousTab != null) {
-        try {
-          await _activateViewTab(previousTab);
-        } catch (_) {
-          // Preserve the original navigation error in the workspace.
-        }
-      }
     }
   }
 
@@ -1274,22 +1000,17 @@ extension _ViewerProjectLifecycle on _ViewerHomePageState {
       return;
     }
     _saveActiveViewPresentation();
-    final index = _openedViewTabs.indexWhere((tab) => tab.id == tabId);
-    if (index < 0) return;
-    final closing = _openedViewTabs[index];
-    final wasActive = _activeViewTabId == tabId;
-    final nextIndex =
-        index < _openedViewTabs.length - 1 ? index + 1 : index - 1;
-    final nextTab = _openedViewTabs[nextIndex];
-    _updateViewportState(() {
-      _viewWorkspace.removeTab(tabId);
-      if (wasActive) _activeViewTabId = nextTab.id;
-    });
-    if (closing.kind == OpenedViewKind.sheet &&
-        _sheetWorkspace.activeSheetId == closing.sheetId) {
+    final result = await ViewTabLifecycleController(_viewWorkspace).close(
+      tabId,
+      activate: _activateViewTab,
+    );
+    if (result == null || !result.found) return;
+    final closing = result.closing;
+    if (closing?.kind == OpenedViewKind.sheet &&
+        _sheetWorkspace.activeSheetId == closing?.sheetId) {
       _sheetWorkspace.closeSheet();
     }
-    if (wasActive) await _activateViewTab(nextTab);
+    if (mounted) _updateViewportState(() {});
   }
 
   void _createSheet() {
