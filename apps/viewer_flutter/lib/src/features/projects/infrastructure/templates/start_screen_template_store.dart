@@ -46,16 +46,3 @@ final class FileStartScreenTemplatePreferencesRepository
     }
   }
 }
-
-/// COMPATIBILITY: static entrypoint for the legacy root StartScreen widget.
-/// REMOVE WHEN: StartScreen receives StartScreenTemplatePreferencesRepository
-/// from app composition instead of reaching infrastructure directly.
-abstract final class StartScreenTemplateStore {
-  static const StartScreenTemplatePreferencesRepository _repository =
-      FileStartScreenTemplatePreferencesRepository();
-
-  static Future<StartScreenTemplatePreferences> load() => _repository.load();
-
-  static Future<void> save(StartScreenTemplatePreferences preferences) =>
-      _repository.save(preferences);
-}
