@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import '../../../../core/application/engine/viewer_bim_cache_gateway.dart';
@@ -20,7 +21,7 @@ final class NativeBimCacheService {
 
   Future<String?> ensure(
     String ifcPath, {
-    void Function()? onCompile,
+    FutureOr<void> Function()? onCompile,
   }) async {
     try {
       final source = File(ifcPath);
@@ -42,7 +43,7 @@ final class NativeBimCacheService {
         return paths.cachePath;
       }
 
-      onCompile?.call();
+      await onCompile?.call();
       final result = await gateway.compileBimRuntimeCache(
         sourceIfcPath: ifcPath,
         cachePath: paths.cachePath,
