@@ -83,10 +83,6 @@ void main() {
           'features/projects/presentation/browser/project_browser_views.dart',
       'project_browser_panel.dart':
           'features/projects/presentation/browser/project_browser_panel.dart',
-      'document_models.dart':
-          'features/documentation/application/document_models.dart',
-      'sheet_workspace_controller.dart':
-          'features/documentation/presentation/sheet_workspace_controller.dart',
       'onboarding_page.dart': 'app/routing/onboarding_page.dart',
       'annotation_render_batches.dart':
           'features/annotations/application/annotation_render_batches.dart',
@@ -100,6 +96,16 @@ void main() {
           'features/annotations/presentation/annotation_hit_test.dart',
       'view_navigation_coordinator.dart':
           'features/viewer/application/navigation/view_navigation_coordinator.dart',
+      'document_models.dart':
+          'features/documentation/application/document_models.dart',
+      'sheet_workspace_controller.dart':
+          'features/documentation/presentation/sheet_workspace_controller.dart',
+      'sheet_canvas.dart':
+          'features/documentation/presentation/sheet_canvas.dart',
+      'documentation_workspace.dart':
+          'features/documentation/presentation/documentation_workspace.dart',
+      'document_pdf_service.dart':
+          'features/documentation/presentation/export/document_pdf_service.dart',
     };
     final directivePattern =
         RegExp(r'''(?:import|export)\s+['"]([^'"]+)['"]''');
