@@ -21,6 +21,8 @@ void main() {
           'features/viewer/application/scene_view_service.dart',
       'selection_controller.dart':
           'features/viewer/presentation/selection_controller.dart',
+      'viewport_interaction.dart':
+          'features/viewer/presentation/viewport/viewport_interaction.dart',
       'inspector_controller.dart':
           'features/elements/presentation/inspector_controller.dart',
       'material_layer_editor.dart':
