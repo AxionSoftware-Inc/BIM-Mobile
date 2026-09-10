@@ -1,8 +1,18 @@
-import 'dart:io';
-
 import '../../../core/application/engine/viewer_engine_contracts.dart';
 import '../../../core/application/engine/viewer_project_gateway.dart';
 import 'project_companion_document.dart';
+
+/// Neutral result of a durable project save.
+final class SavedProjectLocation {
+  const SavedProjectLocation(this.path);
+
+  final String path;
+}
+
+/// Infrastructure boundary that translates a native save artifact to a path.
+abstract interface class ProjectSavePathResolver {
+  Future<String> savePath(ViewerProjectGateway repository);
+}
 
 /// Application use-cases for durable project checkpoints and replacement.
 ///
@@ -12,22 +22,25 @@ final class ProjectPersistenceService {
   ProjectPersistenceService({
     required ViewerProjectGateway? Function() repository,
     required bool Function() engineEnabled,
+    required ProjectSavePathResolver savePathResolver,
     ProjectCompanionDocuments? companions,
   })  : _repository = repository,
         _engineEnabled = engineEnabled,
+        _savePathResolver = savePathResolver,
         _companions = companions ?? ProjectCompanionDocuments.empty;
 
   final ViewerProjectGateway? Function() _repository;
   final bool Function() _engineEnabled;
+  final ProjectSavePathResolver _savePathResolver;
   final ProjectCompanionDocuments _companions;
 
   Future<String> exportJson() => _requireRepository().saveProjectJson();
 
-  Future<File> saveToDefaultLocation() async {
-    final projectFile =
-        await _requireRepository().saveProjectToDefaultLocation();
-    await _companions.saveForProjectPath(projectFile.path);
-    return projectFile;
+  Future<SavedProjectLocation> saveToDefaultLocation() async {
+    final repository = _requireRepository();
+    final path = await _savePathResolver.savePath(repository);
+    await _companions.saveForProjectPath(path);
+    return SavedProjectLocation(path);
   }
 
   Future<ViewerLoadResult> replaceFromJson({

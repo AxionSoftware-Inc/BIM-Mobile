@@ -6,6 +6,7 @@ import '../../features/projects/application/project_companion_document.dart';
 import '../../features/projects/application/project_lifecycle_service.dart';
 import '../../features/projects/application/project_persistence_service.dart';
 import '../../features/projects/application/project_session_controller.dart';
+import '../../features/projects/infrastructure/persistence/native_project_save_path_resolver.dart';
 import '../../features/viewer/application/scene_view_service.dart';
 import '../../platform/native_engine/native_viewer_session_factory.dart';
 import 'project_session_scene_gateway_resolver.dart';
@@ -48,6 +49,7 @@ final class ViewerAppDependencies {
       projectPersistence: ProjectPersistenceService(
         repository: () => projectSession.session,
         engineEnabled: () => projectSession.isEngineBacked,
+        savePathResolver: const NativeProjectSavePathResolver(),
         companions: companions,
       ),
       projectSession: projectSession,

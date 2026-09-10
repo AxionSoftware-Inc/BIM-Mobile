@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import '../../../render_scene_models.dart';
 import 'viewer_engine_contracts.dart';
 
@@ -7,10 +5,6 @@ import 'viewer_engine_contracts.dart';
 ///
 /// This intentionally excludes viewport navigation and element authoring so
 /// project checkpoints can evolve without widening those feature contracts.
-///
-/// MIGRATION: `File` remains here for API compatibility in 0.3.2. Replace it
-/// with a platform-neutral checkpoint/path value once the native repository
-/// adapter and save callers are migrated together.
 abstract interface class ViewerProjectGateway {
   Future<ViewerLoadResult> loadFromJson({
     required String projectName,
@@ -42,7 +36,10 @@ abstract interface class ViewerProjectGateway {
 
   Future<String> saveProjectJson();
 
-  Future<File> saveProjectToDefaultLocation();
+  /// Legacy native adapters may still return a platform save artifact (for
+  /// example dart:io File). Application code must not inspect that artifact;
+  /// projects infrastructure translates it to a neutral saved path.
+  Future<Object> saveProjectToDefaultLocation();
 
   Future<RenderSceneLoadResult> undo();
 
