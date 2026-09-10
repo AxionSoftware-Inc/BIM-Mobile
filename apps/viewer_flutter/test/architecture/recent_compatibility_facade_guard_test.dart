@@ -90,6 +90,8 @@ void main() {
           'features/annotations/presentation/annotation_history_controls.dart',
       'annotation_selection_controls.dart':
           'features/annotations/presentation/annotation_selection_controls.dart',
+      'annotation_viewport_overlay.dart':
+          'features/annotations/presentation/annotation_viewport_overlay.dart',
       'view_navigation_coordinator.dart':
           'features/viewer/application/navigation/view_navigation_coordinator.dart',
     };
