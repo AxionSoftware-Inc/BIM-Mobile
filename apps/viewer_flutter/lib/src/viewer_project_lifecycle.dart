@@ -7,108 +7,30 @@ enum _WorkspaceExitChoice { save, discard }
 // Above this size, an IFC is opened through the cache's native-first path.
 // The threshold only chooses a transfer strategy: IFC source geometry remains
 // authoritative and is never simplified or rewritten.
-const int _nativeFirstIfcThresholdBytes = 8 * 1024 * 1024;
+const int _nativeFirstIfcThresholdBytes =
+    IfcImportCacheStore.nativeFirstThresholdBytes;
 
 extension _IfcImportCache on _ViewerHomePageState {
-  Future<Directory> _ifcCacheDirectory() async {
-    final projectDirectory = await AppProjectStorage.projectDirectory();
-    final directory = Directory(
-      '${projectDirectory.path}${Platform.pathSeparator}ifc-cache',
-    );
-    if (!await directory.exists()) await directory.create(recursive: true);
-    return directory;
-  }
-
-  String _ifcCacheKey(String path) {
-    var hash = 2166136261;
-    for (final codeUnit in path.codeUnits) {
-      hash = ((hash ^ codeUnit) * 16777619) & 0x7fffffff;
-    }
-    final baseName = path
-        .split(Platform.pathSeparator)
-        .last
-        .replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
-    return '${baseName}_$hash';
-  }
+  static const IfcImportCacheStore _ifcImportCacheStore = IfcImportCacheStore();
 
   Future<({String json, String path})?> _readIfcImportCache(
-      String ifcPath) async {
-    try {
-      final source = File(ifcPath);
-      final stat = await source.stat();
-      if (stat.type != FileSystemEntityType.file || stat.size <= 0) return null;
-      final directory = await _ifcCacheDirectory();
-      final key = _ifcCacheKey(ifcPath);
-      final cached = File(
-        '${directory.path}${Platform.pathSeparator}$key.json',
-      );
-      final signatureFile = File(
-        '${directory.path}${Platform.pathSeparator}$key.sig',
-      );
-      if (!await cached.exists() || await cached.length() <= 0) return null;
-      if (!await signatureFile.exists() ||
-          await signatureFile.readAsString() !=
-              _ifcCacheSignature(ifcPath, stat)) {
-        return null;
-      }
-      final json = await cached.readAsString();
-      // Validate the cache before handing it to the native loader. A partial
-      // file from a killed tablet session must never hide the original IFC.
-      final decoded = jsonDecode(json);
-      if (decoded is! Map<String, dynamic> ||
-          decoded['schema_version'] == null) {
-        return null;
-      }
-      return (json: json, path: cached.path);
-    } catch (_) {
-      return null;
-    }
+    String ifcPath,
+  ) async {
+    final entry = await _ifcImportCacheStore.readProjectJson(ifcPath);
+    if (entry == null) return null;
+    return (json: entry.json, path: entry.path);
   }
 
-  Future<void> _writeIfcImportCache(String ifcPath, String json) async {
-    try {
-      final source = File(ifcPath);
-      final stat = await source.stat();
-      if (stat.type != FileSystemEntityType.file ||
-          stat.size <= 0 ||
-          json.isEmpty) {
-        return;
-      }
-      final directory = await _ifcCacheDirectory();
-      final key = _ifcCacheKey(ifcPath);
-      final cached = File(
-        '${directory.path}${Platform.pathSeparator}$key.json',
-      );
-      final signatureFile = File(
-        '${directory.path}${Platform.pathSeparator}$key.sig',
-      );
-      if (await cached.exists() &&
-          await cached.length() > 0 &&
-          await signatureFile.exists() &&
-          await signatureFile.readAsString() ==
-              _ifcCacheSignature(ifcPath, stat)) {
-        return;
-      }
-      await atomicWriteString(cached, json);
-      await atomicWriteString(
-        signatureFile,
-        _ifcCacheSignature(ifcPath, stat),
-      );
-    } catch (_) {
-      // The IFC itself remains the source of truth. Cache storage is best
-      // effort because external/document-provider paths can be read-only.
-    }
-  }
+  Future<void> _writeIfcImportCache(String ifcPath, String json) =>
+      _ifcImportCacheStore.writeProjectJson(ifcPath, json);
 
   Future<({String cachePath, String signaturePath})> _nativeBimCachePaths(
     String ifcPath,
   ) async {
-    final directory = await _ifcCacheDirectory();
-    final key = _ifcCacheKey(ifcPath);
-    final basePath = '${directory.path}${Platform.pathSeparator}$key.bimcache';
+    final paths = await _ifcImportCacheStore.nativeBimCachePaths(ifcPath);
     return (
-      cachePath: basePath,
-      signaturePath: '$basePath.sig',
+      cachePath: paths.cachePath,
+      signaturePath: paths.signaturePath,
     );
   }
 
@@ -118,46 +40,19 @@ extension _IfcImportCache on _ViewerHomePageState {
   Future<String?> _ensureNativeBimCache(String ifcPath) async {
     final session = _engineRepository;
     if (session is! ViewerBimRuntimeCacheGateway) return null;
-    final cacheSession = session as ViewerBimRuntimeCacheGateway;
-    try {
-      final source = File(ifcPath);
-      final stat = await source.stat();
-      if (stat.type != FileSystemEntityType.file || stat.size <= 0) return null;
-      final paths = await _nativeBimCachePaths(ifcPath);
-      final cacheFile = File(paths.cachePath);
-      final signatureFile = File(paths.signaturePath);
-      final signature = _nativeBimCacheSignature(ifcPath, stat);
-      if (await cacheFile.exists() &&
-          await cacheFile.length() > 0 &&
-          await signatureFile.exists() &&
-          await signatureFile.readAsString() == signature) {
-        return paths.cachePath;
-      }
-
-      if (mounted) {
+    return NativeBimCacheService(
+      gateway: session,
+      cacheStore: _ifcImportCacheStore,
+    ).ensure(
+      ifcPath,
+      onCompile: () {
+        if (!mounted) return;
         _updateViewportState(() {
           _statusMessage = 'Preparing native 3D cache...';
         });
-      }
-      final result = await cacheSession.compileBimRuntimeCache(
-        sourceIfcPath: ifcPath,
-        cachePath: paths.cachePath,
-      );
-      if (!result.sourceValid || result.chunkCount == 0) return null;
-      await atomicWriteString(signatureFile, signature);
-      return paths.cachePath;
-    } catch (_) {
-      // Cache failures must not hide a valid IFC/project JSON import.
-      return null;
-    }
+      },
+    );
   }
-
-  String _ifcCacheSignature(String path, FileStat stat) =>
-      'tbe-ifc-cache-v2|$path|${stat.size}|'
-      '${stat.modified.millisecondsSinceEpoch}';
-
-  String _nativeBimCacheSignature(String path, FileStat stat) =>
-      'tbe-bimcache-v4-simple-box-window|${_ifcCacheSignature(path, stat)}';
 }
 
 extension _ViewerProjectLifecycle on _ViewerHomePageState {
