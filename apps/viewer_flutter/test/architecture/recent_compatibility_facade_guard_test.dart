@@ -71,6 +71,8 @@ void main() {
           'features/families/presentation/sketch/family_sketch_canvas.dart',
       'family_authoring_viewport.dart':
           'features/families/presentation/viewport/family_authoring_viewport.dart',
+      'family_import_units_dialog.dart':
+          'features/families/presentation/dialogs/family_import_units_dialog.dart',
     };
     final directivePattern =
         RegExp(r'''(?:import|export)\s+['"]([^'"]+)['"]''');
