@@ -2,6 +2,8 @@ import '../../core/application/engine/viewer_project_session.dart';
 import '../../features/annotations/infrastructure/annotation_project_companion.dart';
 import '../../features/elements/application/bim_element_registry.dart';
 import '../../features/elements/presentation/bim_element_inspector_registry.dart';
+import '../../features/families/application/library/family_asset_repository.dart';
+import '../../features/families/infrastructure/library/local_family_asset_repository.dart';
 import '../../features/projects/application/project_companion_document.dart';
 import '../../features/projects/application/project_lifecycle_service.dart';
 import '../../features/projects/application/project_persistence_service.dart';
@@ -28,6 +30,7 @@ final class ViewerAppDependencies {
     required this.projectLifecycle,
     required this.projectPersistence,
     required this.projectSession,
+    required this.familyAssets,
     required this.elements,
     required this.inspectors,
   });
@@ -53,6 +56,7 @@ final class ViewerAppDependencies {
         companions: companions,
       ),
       projectSession: projectSession,
+      familyAssets: const LocalFamilyAssetRepository(),
       elements: elements,
       inspectors: BimElementInspectorRegistry(elements),
     );
@@ -61,6 +65,7 @@ final class ViewerAppDependencies {
   final ProjectLifecycleService<ViewerEngineSession> projectLifecycle;
   final ProjectPersistenceService projectPersistence;
   final ProjectSessionController<ViewerEngineSession> projectSession;
+  final FamilyAssetRepository familyAssets;
   final BimElementRegistry elements;
   final BimElementInspectorRegistry inspectors;
 
