@@ -1,4 +1,4 @@
-import '../../../render_scene_models.dart';
+import '../render_scene/render_scene_models.dart';
 import 'viewer_authoring_gateway.dart';
 import 'viewer_element_creation_gateway.dart';
 import 'viewer_project_gateway.dart';
