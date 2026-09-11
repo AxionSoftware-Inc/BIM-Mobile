@@ -1,9 +1,9 @@
 import '../../../core/application/engine/viewer_authoring_gateway.dart';
 import '../../../core/application/engine/viewer_element_creation_gateway.dart';
 import '../../../core/application/engine/viewer_engine_contracts.dart';
-import '../../../render_scene_models.dart';
-import '../../../tools/wall_authoring_geometry.dart';
-import '../../elements/domain/types/wall_type_catalog.dart';
+import '../../../core/application/render_scene/render_scene_models.dart';
+import '../../../core/domain/assemblies/wall_type_catalog.dart';
+import 'geometry/wall_authoring_geometry.dart';
 
 /// Engine-first authoring commands used by Inspector and workspace features.
 ///
