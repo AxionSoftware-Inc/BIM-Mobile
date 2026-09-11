@@ -3,14 +3,14 @@ import 'dart:math' as math;
 
 import '../../../core/application/engine/viewer_authoring_gateway.dart';
 import '../../../core/application/engine/viewer_element_creation_gateway.dart';
+import '../../../core/application/render_scene/render_scene_models.dart';
+import '../../authoring/application/scene/render_scene_editor.dart';
 import 'dependencies/family_dependency_resolver.dart';
 import '../domain/document/family_document.dart';
 import '../domain/geometry/family_geometry.dart';
 import '../domain/parameters/family_parameter_resolver.dart';
 import 'representation/family_plan_symbol.dart';
 import '../domain/validation/family_validation.dart';
-import '../../../render_scene_editor.dart';
-import '../../../render_scene_models.dart';
 
 /// Result of mapping one reusable family type to a native project instance.
 /// The project stores the family/type reference; the family feature graph is
