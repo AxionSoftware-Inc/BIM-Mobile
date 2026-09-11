@@ -1,4 +1,4 @@
-import '../../../core/application/render_scene/render_scene_models.dart';
+import '../../../../core/application/render_scene/render_scene_models.dart';
 import 'ifc_source_inventory.dart';
 
 class ModelImportMissingProduct {
