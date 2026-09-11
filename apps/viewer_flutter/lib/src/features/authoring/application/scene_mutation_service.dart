@@ -1,9 +1,9 @@
 import 'dart:math' as math;
 
 import '../../../core/application/engine/viewer_authoring_gateway.dart';
-import '../../../render_scene_editor.dart';
-import '../../../render_scene_models.dart';
-import '../../../tools/wall_authoring_geometry.dart';
+import '../../../core/application/render_scene/render_scene_models.dart';
+import 'geometry/wall_authoring_geometry.dart';
+import 'scene/render_scene_editor.dart';
 
 /// A completed model mutation. UI code may render [scene] only after [success]
 /// is true; this prevents a draft preview from being mistaken for a committed
