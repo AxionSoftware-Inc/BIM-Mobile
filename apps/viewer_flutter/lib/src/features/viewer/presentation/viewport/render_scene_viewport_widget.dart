@@ -24,6 +24,7 @@ import 'render_scene_viewport_types.dart';
 import 'viewport_interaction.dart';
 import 'viewport_gesture_controller.dart';
 import '../workspace/workspace_chrome.dart';
+import '../../application/workspace/opened_view_tab.dart';
 
 part 'render_scene_viewport_support_widgets.dart';
 part 'render_scene_viewport_fallback.dart';
@@ -32,6 +33,7 @@ class RenderSceneViewport extends StatefulWidget {
   const RenderSceneViewport({
     super.key,
     required this.controller,
+    this.activeView,
     this.interactionMode = RenderSceneInteractionMode.select,
     this.onSceneTap,
     this.onSceneDragStart,
@@ -54,6 +56,7 @@ class RenderSceneViewport extends StatefulWidget {
   });
 
   final RenderSceneViewportController controller;
+  final OpenedViewTab? activeView;
   final RenderSceneInteractionMode interactionMode;
   final ValueChanged<RenderSceneTapDetails>? onSceneTap;
   final ValueChanged<RenderSceneTapDetails>? onSceneDragStart;
@@ -165,7 +168,10 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
           // Family representations are resolved independently from 3D family
           // geometry. Plan/elevation/section can therefore stay on a cheap
           // vector/generated path even when a family owns a detailed mesh.
-          Family2dViewportOverlay(controller: widget.controller),
+          Family2dViewportOverlay(
+            controller: widget.controller,
+            activeView: widget.activeView,
+          ),
           if (AnnotationWorkspaceRuntime.activeViewId != 0)
             AnnotationViewportOverlay(
               controller: widget.controller,

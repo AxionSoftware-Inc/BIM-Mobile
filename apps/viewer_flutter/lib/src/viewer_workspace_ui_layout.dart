@@ -560,6 +560,7 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
           color: Theme.of(context).colorScheme.surface,
           child: RenderSceneViewport(
             controller: _viewportController,
+            activeView: activeTab,
             interactionMode: _interactionMode,
             onSceneTap: _handleSceneTap,
             onSceneDragStart: _handleSceneDragStart,

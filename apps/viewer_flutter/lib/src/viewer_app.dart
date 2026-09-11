@@ -73,7 +73,9 @@ import 'features/viewer/application/workspace/opened_view_tab.dart';
 import 'features/viewer/presentation/workspace/opened_view_tab_bar.dart';
 import 'features/viewer/application/navigation/view_navigation_coordinator.dart';
 import 'features/viewer/application/navigation/view_navigation_policy.dart';
-import 'app/workspace/view_workspace_store_adapter.dart';
+import 'app/workspace/active_view_runtime_synchronizer.dart';
+import 'features/viewer/application/workspace/view_workspace_store.dart';
+import 'features/viewer/application/workspace/view_tab_lifecycle_controller.dart';
 import 'features/projects/application/import/model_import_models.dart';
 import 'features/projects/infrastructure/import/model_import_service.dart';
 import 'core/application/engine/viewer_project_session.dart';
@@ -160,7 +162,9 @@ class _ViewerHomePageState extends State<ViewerHomePage>
   String? _lastViewportUiSignature;
   int? _activeLevelId;
   RenderSceneSection? _activeSectionView;
-  final ViewWorkspaceStore _viewWorkspace = ViewWorkspaceStore.standard();
+  final ViewWorkspaceStore _viewWorkspace = ViewWorkspaceStore.standard(
+    onActiveViewChanged: const ActiveViewRuntimeSynchronizer().sync,
+  );
   final ViewNavigationCoordinator _viewNavigation = ViewNavigationCoordinator();
   // Every authoritative mutation uses this lane before presenting a scene in
   // the viewport. Domain mutations stay independent; presentation ordering is

@@ -3,8 +3,8 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-import '../../../../app/workspace/workspace_view_runtime_context.dart';
 import '../../../../core/application/render_scene/render_scene_models.dart';
+import '../../../viewer/application/workspace/opened_view_tab.dart';
 import '../../../viewer/presentation/viewport/render_scene_viewport_controller.dart';
 import '../../../viewer/presentation/viewport/render_scene_viewport_projection.dart';
 import '../../../viewer/presentation/viewport/render_scene_viewport_types.dart';
@@ -29,14 +29,17 @@ class Family2dViewportOverlay extends StatelessWidget {
   const Family2dViewportOverlay({
     super.key,
     required this.controller,
+    required this.activeView,
   });
 
   final RenderSceneViewportController controller;
+  final OpenedViewTab? activeView;
 
   @override
   Widget build(BuildContext context) {
     final scene = controller.scene;
-    if (scene == null || !WorkspaceViewRuntimeContext.isTwoDimensional) {
+    final view = activeView;
+    if (scene == null || view == null || !_isTwoDimensional(view.kind)) {
       return const SizedBox.shrink();
     }
 
@@ -46,7 +49,7 @@ class Family2dViewportOverlay extends StatelessWidget {
     // Flutter as the fallback renderer and as the elevation/section path.
     final nativeAndroidPlan = defaultTargetPlatform == TargetPlatform.android &&
         controller.backend == RenderSceneViewportBackend.native &&
-        WorkspaceViewRuntimeContext.kind == WorkspaceRuntimeViewKind.floorPlan;
+        view.kind == OpenedViewKind.floorPlan;
     if (nativeAndroidPlan) return const SizedBox.shrink();
 
     final runtime = FamilyRuntimeSceneCache.forScene(scene);
@@ -80,26 +83,23 @@ class Family2dViewportOverlay extends StatelessWidget {
               // too much data in a close room plan.
               radiusMeters: _queryRadius(size),
               rearDotThreshold: -1,
-              levelId: WorkspaceViewRuntimeContext.kind ==
-                          WorkspaceRuntimeViewKind.floorPlan &&
-                      WorkspaceViewRuntimeContext.levelId != 0
-                  ? WorkspaceViewRuntimeContext.levelId
+              levelId: view.kind == OpenedViewKind.floorPlan &&
+                      view.levelId != null &&
+                      view.levelId != 0
+                  ? view.levelId
                   : null,
               maxResults: 100000,
             );
-            final view = switch (WorkspaceViewRuntimeContext.kind) {
-              WorkspaceRuntimeViewKind.floorPlan =>
-                FamilyViewRepresentation.plan2d,
-              WorkspaceRuntimeViewKind.elevation =>
-                FamilyViewRepresentation.elevation2d,
-              WorkspaceRuntimeViewKind.section =>
-                FamilyViewRepresentation.section2d,
+            final representation = switch (view.kind) {
+              OpenedViewKind.floorPlan => FamilyViewRepresentation.plan2d,
+              OpenedViewKind.elevation => FamilyViewRepresentation.elevation2d,
+              OpenedViewKind.section => FamilyViewRepresentation.section2d,
               _ => FamilyViewRepresentation.plan2d,
             };
             final plan = FamilyRenderBatchPlanner.plan(
               store: runtime.store,
               visibleInstanceIndices: visible,
-              view: view,
+              view: representation,
             );
             return CustomPaint(
               size: size,
@@ -126,6 +126,11 @@ class Family2dViewportOverlay extends StatelessWidget {
     // avoiding visible pop-in without querying the whole project.
     return math.max(24.0, halfDiagonalPixels / zoom * 1.35).toDouble();
   }
+
+  bool _isTwoDimensional(OpenedViewKind kind) =>
+      kind == OpenedViewKind.floorPlan ||
+      kind == OpenedViewKind.elevation ||
+      kind == OpenedViewKind.section;
 }
 
 final class _Family2dPainter extends CustomPainter {
