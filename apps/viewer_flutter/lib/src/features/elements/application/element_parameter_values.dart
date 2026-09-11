@@ -1,4 +1,4 @@
-import '../../../render_scene_models.dart';
+import '../../../core/domain/scene/render_scene_models.dart';
 
 /// Typed metadata readers at the RenderScene compatibility boundary.
 ///
