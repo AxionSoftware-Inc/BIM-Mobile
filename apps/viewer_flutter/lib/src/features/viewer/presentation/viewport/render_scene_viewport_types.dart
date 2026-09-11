@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
+import '../../../authoring/domain/surface_draw_mode.dart';
 import '../../domain/view/view_configuration.dart';
 import '../../../../render_scene_models.dart';
 
+export '../../../authoring/domain/surface_draw_mode.dart';
 export '../../domain/view/view_configuration.dart';
 
 const List<String> kDefaultVisibleSceneKinds = <String>[];
@@ -67,13 +69,6 @@ enum RenderSceneInteractionMode {
   addCeiling,
   addRoof,
   addStair,
-}
-
-enum RenderSceneSurfaceDrawMode {
-  rectangle,
-  polyline,
-  pickWalls,
-  autoRoom,
 }
 
 extension RenderSceneInteractionModeX on RenderSceneInteractionMode {
