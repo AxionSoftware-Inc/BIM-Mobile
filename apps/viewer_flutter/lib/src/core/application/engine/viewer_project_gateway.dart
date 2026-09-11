@@ -1,4 +1,4 @@
-import '../../../render_scene_models.dart';
+import '../render_scene/render_scene_models.dart';
 import 'viewer_engine_contracts.dart';
 
 /// Persistence and project-session boundary for the authoritative BIM document.
