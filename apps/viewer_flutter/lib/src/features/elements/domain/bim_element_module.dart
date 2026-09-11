@@ -1,3 +1,7 @@
+import '../../../core/domain/elements/bim_element_kind_catalog.dart';
+
+export '../../../core/domain/elements/bim_element_kind_catalog.dart';
+
 /// Stable semantic boundary for a BIM element family.
 ///
 /// Element modules describe identity and cross-cutting capabilities only.
@@ -79,11 +83,28 @@ final class BimElementTypeCatalog {
 /// Cross-cutting behavior needed by view policies and level binding.
 class BimElementModule {
   const BimElementModule({
-    required this.kindKey,
-    required this.displayName,
+    required String kindKey,
+    required String displayName,
     required this.typeFamily,
     this.inspectorAdapterKey,
-    this.aliases = const <String>{},
+    Set<String> aliases = const <String>{},
+    this.isArchitectural = true,
+    this.isLevelHosted = false,
+    this.isPlanCore = false,
+    this.isOpening = false,
+    this.defaultVisibleIn3d = true,
+    this.levelLockedByDefault = false,
+    this.typeDefinitions = const <BimElementTypeDefinition>[],
+  }) : identity = BimElementKindDescriptor(
+          kindKey: kindKey,
+          displayName: displayName,
+          aliases: aliases,
+        );
+
+  const BimElementModule.withIdentity({
+    required this.identity,
+    required this.typeFamily,
+    this.inspectorAdapterKey,
     this.isArchitectural = true,
     this.isLevelHosted = false,
     this.isPlanCore = false,
@@ -93,15 +114,16 @@ class BimElementModule {
     this.typeDefinitions = const <BimElementTypeDefinition>[],
   });
 
-  final String kindKey;
-  final String displayName;
+  final BimElementKindDescriptor identity;
+  String get kindKey => identity.kindKey;
+  String get displayName => identity.displayName;
+  Set<String> get aliases => identity.aliases;
   final BimElementTypeFamily typeFamily;
 
   /// Presentation boundary used to connect this element to its Inspector.
   /// Element modules own this identity. The Inspector only resolves the key;
   /// it must not infer object families with a second switch statement.
   final String? inspectorAdapterKey;
-  final Set<String> aliases;
   final bool isArchitectural;
   final bool isLevelHosted;
   final bool isPlanCore;

@@ -2,11 +2,9 @@ import '../bim_element_module.dart';
 
 final class RoomElementModule extends BimElementModule {
   const RoomElementModule()
-      : super(
-          kindKey: 'room',
-          displayName: 'Room',
+      : super.withIdentity(
+          identity: BimElementKindCatalog.room,
           typeFamily: BimElementTypeFamily.none,
-          aliases: const <String>{'room'},
           isPlanCore: true,
         );
 }
