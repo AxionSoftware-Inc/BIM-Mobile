@@ -1,4 +1,4 @@
-import '../../../../core/domain/scene/render_scene_models.dart';
+import '../../../../core/application/render_scene/render_scene_models.dart';
 import '../../../schedules/domain/project_schedule_kind.dart';
 import '../../domain/view/view_configuration.dart';
 import '../../domain/view/view_presentation.dart';
