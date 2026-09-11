@@ -3,10 +3,10 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
+import '../../../core/application/render_scene/render_scene_models.dart';
 import '../../../core/domain/units/project_unit_settings.dart';
-import '../../../render_scene_models.dart';
-import '../../../render_scene_viewport_controller.dart';
-import '../../../render_scene_viewport_projection.dart';
+import '../../viewer/presentation/viewport/render_scene_viewport_controller.dart';
+import '../../viewer/presentation/viewport/render_scene_viewport_projection.dart';
 import '../application/annotation_render_batches.dart';
 import '../domain/annotation_store.dart';
 
