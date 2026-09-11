@@ -1,9 +1,9 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:viewer_flutter/src/bim_compact_instance_store.dart';
-import 'package:viewer_flutter/src/bim_spatial_grid_index.dart';
-import 'package:viewer_flutter/src/render_scene_models.dart';
+import 'package:viewer_flutter/src/features/viewer/application/runtime/bim_compact_instance_store.dart';
+import 'package:viewer_flutter/src/features/viewer/application/runtime/bim_spatial_grid_index.dart';
+import 'package:viewer_flutter/src/core/application/render_scene/render_scene_models.dart';
 
 void main() {
   test('multi-cell instances are returned once from CSR queries', () {

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'render_scene_level_overlay.dart';
-import 'render_scene_models.dart';
+import '../../../../core/application/render_scene/render_scene_models.dart';
 import 'render_scene_viewport_controller.dart';
 import 'render_scene_viewport_planar.dart';
 import 'render_scene_viewport_projection.dart';

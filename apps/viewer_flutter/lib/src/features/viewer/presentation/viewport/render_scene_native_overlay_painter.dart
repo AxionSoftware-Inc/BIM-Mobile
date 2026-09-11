@@ -3,12 +3,12 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-import 'project_unit_settings.dart';
-import 'render_scene_editor.dart';
-import 'render_scene_models.dart';
+import '../../../../core/domain/units/project_unit_settings.dart';
+import '../../../authoring/application/scene/render_scene_editor.dart';
+import '../../../../core/application/render_scene/render_scene_models.dart';
 import 'render_scene_viewport_projection.dart';
 import 'render_scene_viewport_types.dart';
-import 'tools/wall_authoring_geometry.dart';
+import '../../../authoring/application/geometry/wall_authoring_geometry.dart';
 
 class NativeDraftOverlayPainter extends CustomPainter {
   NativeDraftOverlayPainter({

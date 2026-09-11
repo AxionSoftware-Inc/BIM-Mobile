@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:viewer_flutter/src/annotations/annotation_render_batches.dart';
-import 'package:viewer_flutter/src/annotations/annotation_store.dart';
+import 'package:viewer_flutter/src/features/annotations/application/annotation_render_batches.dart';
+import 'package:viewer_flutter/src/features/annotations/domain/annotation_store.dart';
 
 void main() {
   test('repeated text is interned once and views are indexed', () {

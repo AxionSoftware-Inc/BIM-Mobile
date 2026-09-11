@@ -9,7 +9,7 @@ void main() {
       await tester.binding.setSurfaceSize(const Size(1400, 900));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await tester.pumpWidget(
-        const MaterialApp(home: FamilyEditorV2Page()),
+        const MaterialApp(home: FamilyEditorV5Page()),
       );
       await tester.pumpAndSettle();
     }

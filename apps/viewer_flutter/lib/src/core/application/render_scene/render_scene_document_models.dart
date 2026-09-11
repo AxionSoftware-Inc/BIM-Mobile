@@ -639,22 +639,6 @@ int? _toNullableInt(Object? value) {
   return null;
 }
 
-double? _toFiniteDouble(Object? value) {
-  if (value is double && value.isFinite) {
-    return value;
-  }
-  if (value is int) {
-    return value.toDouble();
-  }
-  if (value is num && value.isFinite) {
-    return value.toDouble();
-  }
-  if (value is String) {
-    return double.tryParse(value);
-  }
-  return null;
-}
-
 RenderSceneBounds _boundsFromPositions(List<RenderScenePoint> points) {
   if (points.isEmpty) {
     return RenderSceneBounds.zero();

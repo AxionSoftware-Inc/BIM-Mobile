@@ -1,8 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:viewer_flutter/src/family_authoring/built_in_family_catalog.dart';
-import 'package:viewer_flutter/src/family_authoring/family_bundled_catalog.dart';
-import 'package:viewer_flutter/src/family_authoring/family_document.dart';
-import 'package:viewer_flutter/src/family_authoring/family_validation.dart';
+import 'package:viewer_flutter/src/features/families/infrastructure/catalog/built_in_family_catalog.dart';
+import 'package:viewer_flutter/src/features/families/infrastructure/catalog/family_bundled_catalog.dart';
+import 'package:viewer_flutter/src/features/families/domain/document/family_document.dart';
+import 'package:viewer_flutter/src/features/families/domain/validation/family_validation.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

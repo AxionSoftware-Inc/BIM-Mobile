@@ -31,12 +31,16 @@ void main() {
     );
 
     final legacy = Directory('${root.path}/features/project');
-    for (final entity in legacy.listSync(recursive: true, followLinks: false)) {
-      if (entity is! File || !entity.path.endsWith('.dart')) continue;
-      final source = entity.readAsStringSync();
-      expect(source, contains('COMPATIBILITY:'), reason: entity.path);
-      expect(source, contains('REMOVE WHEN:'), reason: entity.path);
-    }
+    if (!legacy.existsSync()) return;
+    final legacyDartFiles = <File>[
+      for (final entity in legacy.listSync(recursive: true, followLinks: false))
+        if (entity is File && entity.path.endsWith('.dart')) entity,
+    ];
+    expect(
+      legacyDartFiles,
+      isEmpty,
+      reason: 'The singular features/project compatibility tree is retired.',
+    );
   });
 }
 

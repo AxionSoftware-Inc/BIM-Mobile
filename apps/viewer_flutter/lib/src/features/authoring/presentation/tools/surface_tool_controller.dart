@@ -1,7 +1,7 @@
 import 'package:flutter/foundation.dart';
 
-import '../render_scene_models.dart';
-import '../render_scene_viewport_types.dart';
+import '../../../../core/application/render_scene/render_scene_models.dart';
+import '../../../../features/viewer/presentation/viewport/render_scene_viewport_types.dart';
 
 /// Draft state for floor, ceiling and roof profile tools.
 class SurfaceToolController extends ChangeNotifier {

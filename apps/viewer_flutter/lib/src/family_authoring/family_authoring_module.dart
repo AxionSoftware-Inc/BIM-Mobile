@@ -2,33 +2,32 @@ import 'package:flutter/material.dart';
 
 import 'family_editor_v5_page.dart';
 
-export 'family_authoring_scene_builder.dart';
-export 'family_authoring_viewport.dart';
-export 'family_bundled_catalog.dart';
-export 'family_constraint_models.dart';
-export 'family_constraint_solver.dart';
-export 'family_constraints_panel.dart';
-export 'family_csg.dart';
-export 'family_dependency_resolver.dart';
-export 'family_document.dart';
-export 'family_editor_v2_page.dart';
-export 'family_editor_v3_page.dart';
-export 'family_editor_v4_page.dart';
+export '../features/families/infrastructure/library/family_library_authoring_scene_builder.dart';
+export '../features/families/presentation/viewport/family_authoring_viewport.dart';
+export '../features/families/infrastructure/catalog/family_bundled_catalog.dart';
+export '../features/families/domain/constraints/family_constraint_models.dart';
+export '../features/families/domain/constraints/family_constraint_solver.dart';
+export '../features/families/presentation/panels/family_constraints_panel.dart';
+export '../features/families/domain/geometry/family_csg.dart';
+export '../features/families/application/dependencies/family_dependency_resolver.dart';
+export '../features/families/domain/document/family_document.dart';
+export '../features/families/application/library/family_asset_file.dart';
+export '../features/families/application/library/family_library_preferences.dart';
 export 'family_editor_v5_page.dart';
-export 'family_file_store.dart';
-export 'family_geometry.dart';
+export '../features/families/infrastructure/library/family_file_store.dart';
+export '../features/families/domain/geometry/family_geometry.dart';
 export 'family_library_dialog.dart';
-export 'family_library_metadata.dart';
+export '../features/families/application/library/family_library_metadata.dart';
 export 'family_mesh_importer.dart';
-export 'family_parameter_authoring.dart';
-export 'family_parameter_resolver.dart';
-export 'family_parameters_panel.dart';
-export 'family_plan_symbol.dart';
-export 'family_render_scene_adapter.dart';
-export 'family_sketch_canvas.dart';
-export 'family_sketch_viewport.dart';
-export 'family_type_matrix_panel.dart';
-export 'family_validation.dart';
+export '../features/families/application/authoring/family_parameter_authoring.dart';
+export '../features/families/domain/parameters/family_parameter_resolver.dart';
+export '../features/families/presentation/panels/family_parameters_panel.dart';
+export '../features/families/application/representation/family_plan_symbol.dart';
+export '../features/families/application/integration/family_render_scene_adapter.dart';
+export '../features/families/presentation/sketch/family_sketch_canvas.dart';
+export '../features/families/presentation/sketch/family_sketch_viewport.dart';
+export '../features/families/presentation/panels/family_type_matrix_panel.dart';
+export '../features/families/domain/validation/family_validation.dart';
 
 /// Backwards-compatible name used by older integrations and widget tests.
 /// The production entry point is [FamilyEditorV5Page].

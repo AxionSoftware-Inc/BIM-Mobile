@@ -5,10 +5,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:viewer_flutter/src/family_authoring/family_authoring_module.dart';
-import 'package:viewer_flutter/src/family_authoring/built_in_family_catalog.dart';
-import 'package:viewer_flutter/src/render_scene_models.dart';
-import 'package:viewer_flutter/src/render_scene_viewport_types.dart';
-import 'package:viewer_flutter/src/viewer_viewport_scene_policy.dart';
+import 'package:viewer_flutter/src/features/families/infrastructure/catalog/built_in_family_catalog.dart';
+import 'package:viewer_flutter/src/core/application/render_scene/render_scene_models.dart';
+import 'package:viewer_flutter/src/features/viewer/presentation/viewport/render_scene_viewport_types.dart';
+import 'package:viewer_flutter/src/features/viewer/application/viewport/viewer_viewport_scene_policy.dart';
 
 void main() {
   test('starter family is an independent parametric document', () {
@@ -500,7 +500,7 @@ f 5 1 4 8
       (WidgetTester tester) async {
     await tester.binding.setSurfaceSize(const Size(800, 1800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
-    await tester.pumpWidget(const MaterialApp(home: FamilyEditorPage()));
+    await tester.pumpWidget(const MaterialApp(home: FamilyEditorV5Page()));
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('Sketch').first);

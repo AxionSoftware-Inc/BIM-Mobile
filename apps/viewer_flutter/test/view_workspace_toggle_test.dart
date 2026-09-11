@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import '../lib/src/render_scene_models.dart';
-import '../lib/src/render_scene_viewport_types.dart';
-import '../lib/src/view_tabs.dart';
-import '../lib/src/view_workspace_store.dart';
-import '../lib/src/workspace_chrome.dart';
+import 'package:viewer_flutter/src/core/application/render_scene/render_scene_models.dart';
+import 'package:viewer_flutter/src/features/viewer/presentation/viewport/render_scene_viewport_types.dart';
+import 'package:viewer_flutter/src/features/viewer/application/workspace/view_workspace_store.dart';
+import 'package:viewer_flutter/src/features/viewer/application/workspace/opened_view_tab.dart';
+import 'package:viewer_flutter/src/features/viewer/presentation/workspace/workspace_chrome.dart';
 
 void main() {
   test('workspace seeds plan and canonical 3D navigation tabs together', () {

@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:viewer_flutter/src/features/authoring/application/roof/automatic_flat_roof_planner.dart';
-import 'package:viewer_flutter/src/render_scene_models.dart';
+import 'package:viewer_flutter/src/core/application/render_scene/render_scene_models.dart';
 
 RenderScene _scene({bool withRoof = false, bool explicitTopLevels = true}) {
   final result = parseRenderSceneJson(

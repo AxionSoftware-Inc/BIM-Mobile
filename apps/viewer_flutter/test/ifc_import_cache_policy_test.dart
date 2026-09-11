@@ -1,7 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:viewer_flutter/src/features/projects/application/import/ifc_import_policy.dart';
 import 'package:viewer_flutter/src/features/projects/infrastructure/cache/ifc_import_cache_store.dart';
-import 'package:viewer_flutter/src/features/projects/infrastructure/ifc_import_cache_service.dart';
 
 void main() {
   group('IFC import cache policy', () {
@@ -12,10 +11,6 @@ void main() {
       );
       expect(
         IfcImportCacheStore.nativeFirstThresholdBytes,
-        IfcImportPolicy.nativeFirstThresholdBytes,
-      );
-      expect(
-        IfcImportCacheService.nativeFirstThresholdBytes,
         IfcImportPolicy.nativeFirstThresholdBytes,
       );
     });
@@ -45,7 +40,8 @@ void main() {
       );
     });
 
-    test('project JSON cache signature remains versioned and source-sensitive', () {
+    test('project JSON cache signature remains versioned and source-sensitive',
+        () {
       expect(
         IfcImportCacheStore.importSignatureFor(
           path: '/models/tower.ifc',
@@ -56,7 +52,8 @@ void main() {
       );
     });
 
-    test('native BIM cache signature wraps the authoritative IFC signature', () {
+    test('native BIM cache signature wraps the authoritative IFC signature',
+        () {
       const importSignature =
           'tbe-ifc-cache-v2|/models/tower.ifc|123456|987654321';
       expect(

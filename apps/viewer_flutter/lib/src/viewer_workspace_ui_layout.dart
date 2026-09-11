@@ -904,6 +904,7 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
                           scene: scene,
                           target: inspectorTarget,
                           commands: _authoringCommands,
+                          familyAssets: _dependencies.familyAssets,
                           units: _projectUnitSettings,
                           viewRangeMeters: _planViewRangeMeters,
                           onViewRangeChanged: _setPlanViewRangeMeters,

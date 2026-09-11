@@ -52,12 +52,11 @@ class IfcModelImportAdapter<T extends ViewerEngineSession>
 class ModelImportService<T extends ViewerEngineSession> {
   ModelImportService({
     required ProjectLifecycleService<T> lifecycle,
-    required ModelImportRegistry registry,
+    required this.registry,
     required Iterable<ModelImportAdapter<T>> adapters,
     ModelImportCacheStore? cache,
     IfcSourceInventoryReader? ifcInventoryReader,
   })  : _lifecycle = lifecycle,
-        registry = registry,
         _adapters = <String, ModelImportAdapter<T>>{
           for (final adapter in adapters) adapter.descriptor.id: adapter,
         },

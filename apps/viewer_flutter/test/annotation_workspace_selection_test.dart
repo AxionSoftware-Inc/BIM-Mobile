@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:viewer_flutter/src/annotations/annotation_workspace_runtime.dart';
+import 'package:viewer_flutter/src/features/annotations/application/annotation_workspace_runtime.dart';
 
 void main() {
   setUp(AnnotationWorkspaceRuntime.resetProject);
@@ -26,7 +26,8 @@ void main() {
     expect(AnnotationWorkspaceRuntime.moveSelectedArmed.value, isFalse);
   });
 
-  test('view change clears transient annotation selection and move command', () {
+  test('view change clears transient annotation selection and move command',
+      () {
     AnnotationWorkspaceRuntime.activateView(
       workspaceViewId: 'plan:level-1',
       levelId: 1,

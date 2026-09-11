@@ -165,6 +165,7 @@ void registerWallTypeTests() {
               scene: scene,
               target: InspectorTarget.object(wall),
               commands: commands,
+              familyAssets: const LocalFamilyAssetRepository(),
               units: const ProjectUnitSettings.defaults(),
               onApplied: (result, message) async {},
               onClearSelection: () {},

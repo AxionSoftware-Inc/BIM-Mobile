@@ -5,7 +5,7 @@ import 'dart:typed_data';
 
 import 'package:file_selector/file_selector.dart';
 
-import 'family_document.dart';
+import '../features/families/domain/document/family_document.dart';
 
 /// Result of importing a render-ready mesh into the independent Family format.
 final class FamilyMeshImportResult {

@@ -1,10 +1,10 @@
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:viewer_flutter/src/family_runtime/family_instance_store.dart';
-import 'package:viewer_flutter/src/family_runtime/family_render_batches.dart';
-import 'package:viewer_flutter/src/family_runtime/family_representation.dart';
-import 'package:viewer_flutter/src/family_runtime/family_spatial_streaming.dart';
+import 'package:viewer_flutter/src/features/families/application/runtime/family_instance_store.dart';
+import 'package:viewer_flutter/src/features/families/application/runtime/family_render_batches.dart';
+import 'package:viewer_flutter/src/features/families/application/runtime/family_representation.dart';
+import 'package:viewer_flutter/src/features/families/application/runtime/family_spatial_streaming.dart';
 
 void main() {
   const plan = Family2dRepresentationDescriptor(
@@ -51,7 +51,8 @@ void main() {
     expect(store.geometryVariantIds.toSet(), <int>{0});
   });
 
-  test('different parameter signatures create variants not per-instance meshes', () {
+  test('different parameter signatures create variants not per-instance meshes',
+      () {
     final store = FamilyInstanceStore.fromSeeds(<FamilyRuntimeInstanceSeed>[
       chair(0),
       chair(1),
@@ -76,7 +77,8 @@ void main() {
 
     expect(renderPlan.requires3dGeometry, isFalse);
     expect(renderPlan.twoDimensionalBatches, hasLength(1));
-    expect(renderPlan.twoDimensionalBatches.single.instanceIndices, hasLength(1000));
+    expect(renderPlan.twoDimensionalBatches.single.instanceIndices,
+        hasLength(1000));
     expect(renderPlan.twoDimensionalBatches.single.assetKey, 'chair-a:plan');
   });
 
@@ -94,7 +96,8 @@ void main() {
     expect(renderPlan.twoDimensionalBatches, isEmpty);
     expect(renderPlan.gpuInstanceBatches, hasLength(1));
     expect(renderPlan.gpuInstanceBatches.single.lod, FamilyGeometryLod.medium);
-    expect(renderPlan.gpuInstanceBatches.single.instanceIndices, hasLength(1000));
+    expect(
+        renderPlan.gpuInstanceBatches.single.instanceIndices, hasLength(1000));
   });
 
   test('spatial index returns only the camera neighbourhood', () {

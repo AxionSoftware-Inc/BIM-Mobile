@@ -5,8 +5,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
-import 'async_serial_queue.dart';
-import 'render_scene_models.dart';
+import '../../../../core/application/concurrency/async_serial_queue.dart';
+import '../../../../core/application/render_scene/render_scene_models.dart';
 import 'render_scene_viewport_planar.dart';
 import 'render_scene_viewport_projection.dart';
 import 'render_scene_viewport_types.dart';

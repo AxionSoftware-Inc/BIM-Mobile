@@ -1,9 +1,9 @@
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:viewer_flutter/src/family_runtime/family_gpu_residency.dart';
-import 'package:viewer_flutter/src/family_runtime/family_render_batches.dart';
-import 'package:viewer_flutter/src/family_runtime/family_representation.dart';
+import 'package:viewer_flutter/src/features/families/application/runtime/family_gpu_residency.dart';
+import 'package:viewer_flutter/src/features/families/application/runtime/family_render_batches.dart';
+import 'package:viewer_flutter/src/features/families/application/runtime/family_representation.dart';
 
 void main() {
   FamilyGpuInstanceBatch batch(
@@ -68,10 +68,12 @@ void main() {
         estimateBytes: (_) => 4 * 1024 * 1024,
       );
 
-      expect(decision.keepResident, containsAll(<FamilyGpuResidencyKey>[
-        chairKey,
-        tableKey,
-      ]));
+      expect(
+          decision.keepResident,
+          containsAll(<FamilyGpuResidencyKey>[
+            chairKey,
+            tableKey,
+          ]));
       expect(decision.evict, isEmpty);
       expect(decision.loadOrder, <FamilyGpuResidencyKey>[tableKey]);
     });
@@ -105,7 +107,8 @@ void main() {
       expect(decision.targetResidentBytes, 6 * 1024 * 1024);
     });
 
-    test('does not hide active families when visible set itself is over budget', () {
+    test('does not hide active families when visible set itself is over budget',
+        () {
       final controller = FamilyGpuResidencyController(
         maxResidentGeometryBytes: 4 * 1024 * 1024,
         maxResidentVariants: 1,
@@ -120,10 +123,12 @@ void main() {
       );
 
       expect(decision.activeOverBudget, isTrue);
-      expect(decision.keepResident, containsAll(<FamilyGpuResidencyKey>[
-        key(7, FamilyGeometryLod.full),
-        key(8, FamilyGeometryLod.full),
-      ]));
+      expect(
+          decision.keepResident,
+          containsAll(<FamilyGpuResidencyKey>[
+            key(7, FamilyGeometryLod.full),
+            key(8, FamilyGeometryLod.full),
+          ]));
       expect(decision.loadOrder.length, 2);
       expect(decision.activeBytes, 6 * 1024 * 1024);
     });

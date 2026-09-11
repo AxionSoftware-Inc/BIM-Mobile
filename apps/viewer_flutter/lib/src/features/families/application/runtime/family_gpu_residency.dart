@@ -1,5 +1,3 @@
-import 'dart:collection';
-
 import 'family_render_batches.dart';
 import 'family_representation.dart';
 
@@ -113,8 +111,7 @@ final class FamilyGpuResidencyController {
       _lastRequestedEpoch[key] = _epoch;
       // Unknown/zero estimates must not create an unbounded warm cache. A
       // 4 KiB floor is intentionally tiny but still gives every asset weight.
-      _estimatedBytes[key] =
-          estimateBytes(batch).clamp(4096, 1 << 62).toInt();
+      _estimatedBytes[key] = estimateBytes(batch).clamp(4096, 1 << 62).toInt();
     }
 
     final activeKeys = activeBatches.keys.toSet();
@@ -122,14 +119,13 @@ final class FamilyGpuResidencyController {
       0,
       (sum, key) => sum + (_estimatedBytes[key] ?? 4096),
     );
-    final activeOverBudget =
-        activeBytes > maxResidentGeometryBytes ||
-            activeKeys.length > maxResidentVariants;
+    final activeOverBudget = activeBytes > maxResidentGeometryBytes ||
+        activeKeys.length > maxResidentVariants;
 
     // Active geometry is never silently discarded. Missing visible families
     // are worse than temporary memory pressure; a higher layer can request a
     // coarser LOD after observing [activeOverBudget].
-    final keep = LinkedHashSet<FamilyGpuResidencyKey>()..addAll(activeKeys);
+    final keep = <FamilyGpuResidencyKey>{}..addAll(activeKeys);
     var targetBytes = activeBytes;
 
     // When zoom crosses a LOD threshold, prefer the already resident geometry
@@ -153,7 +149,9 @@ final class FamilyGpuResidencyController {
       if (alternatives.isEmpty) continue;
       final fallback = alternatives.first;
       requestedFallback[requested] = fallback;
-      if (!fallbackCandidates.contains(fallback)) fallbackCandidates.add(fallback);
+      if (!fallbackCandidates.contains(fallback)) {
+        fallbackCandidates.add(fallback);
+      }
     }
 
     final keptFallbacks = <FamilyGpuResidencyKey>{};
@@ -170,10 +168,9 @@ final class FamilyGpuResidencyController {
         .where((key) => !activeKeys.contains(key))
         .where((key) => !keptFallbacks.contains(key))
         .where((key) {
-          final lastSeen = _lastRequestedEpoch[key];
-          return lastSeen != null && _epoch - lastSeen <= warmGraceEpochs;
-        })
-        .toList()
+      final lastSeen = _lastRequestedEpoch[key];
+      return lastSeen != null && _epoch - lastSeen <= warmGraceEpochs;
+    }).toList()
       ..sort((left, right) {
         final recency = (_lastRequestedEpoch[right] ?? -1)
             .compareTo(_lastRequestedEpoch[left] ?? -1);

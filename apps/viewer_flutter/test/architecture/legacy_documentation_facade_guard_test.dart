@@ -6,6 +6,7 @@ void main() {
   test('legacy documentation directory stays facade-only', () {
     final sourceRoot = _sourceRoot();
     final legacyDirectory = Directory('${sourceRoot.path}/documentation');
+    if (!legacyDirectory.existsSync()) return;
     final violations = <String>[];
 
     for (final entity in legacyDirectory.listSync(followLinks: false)) {

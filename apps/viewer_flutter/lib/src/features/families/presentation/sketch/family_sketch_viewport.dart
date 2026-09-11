@@ -132,7 +132,8 @@ class _FamilySketchViewportState extends State<FamilySketchViewport> {
           top: 12,
           child: DecoratedBox(
             decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.9),
+              color:
+                  Theme.of(context).colorScheme.surface.withValues(alpha: 0.9),
               borderRadius: BorderRadius.circular(10),
               border: Border.all(
                 color: Theme.of(context).colorScheme.outlineVariant,
@@ -160,7 +161,8 @@ class _FamilySketchViewportState extends State<FamilySketchViewport> {
                   borderRadius: BorderRadius.circular(9),
                 ),
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
                   child: Text(
                     _snapHint!,
                     style: TextStyle(
@@ -345,9 +347,9 @@ class _FamilySketchViewportState extends State<FamilySketchViewport> {
     }
 
     final bounds = objects.isEmpty
-        ? RenderSceneBounds(
-            min: const RenderScenePoint(x: -1, y: -1, z: -0.1),
-            max: const RenderScenePoint(x: 1, y: 1, z: 0.1),
+        ? const RenderSceneBounds(
+            min: RenderScenePoint(x: -1, y: -1, z: -0.1),
+            max: RenderScenePoint(x: 1, y: 1, z: 0.1),
           )
         : RenderSceneBounds.union(objects.map((object) => object.bounds));
     final vertexCount = objects.fold<int>(

@@ -3,10 +3,12 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('workspace consumes composition-owned persistence and scene services', () {
+  test('workspace consumes composition-owned persistence and scene services',
+      () {
     final sourceRoot = _sourceRoot();
-    final app = File('${sourceRoot.path}${Platform.pathSeparator}viewer_app.dart')
-        .readAsStringSync();
+    final app =
+        File('${sourceRoot.path}${Platform.pathSeparator}viewer_app.dart')
+            .readAsStringSync();
 
     expect(
       app,
@@ -17,7 +19,8 @@ void main() {
     expect(
       app,
       contains('_sceneViews = _dependencies.createSceneViewService();'),
-      reason: 'Scene gateway/session resolution belongs to the composition root.',
+      reason:
+          'Scene gateway/session resolution belongs to the composition root.',
     );
     expect(
       app,
@@ -27,7 +30,8 @@ void main() {
     expect(
       app,
       isNot(contains('_sceneViews = SceneViewService(')),
-      reason: 'Presentation code must not coordinate scene repository callbacks.',
+      reason:
+          'Presentation code must not coordinate scene repository callbacks.',
     );
   });
 
@@ -38,8 +42,10 @@ void main() {
     ).readAsStringSync();
 
     expect(start, contains('final ViewerStartDependencies dependencies;'));
-    expect(start, contains('_recoveryRepository = widget.dependencies.recovery;'));
-    expect(start, contains('_projectPicker = widget.dependencies.projectPicker;'));
+    expect(
+        start, contains('_recoveryRepository = widget.dependencies.recovery;'));
+    expect(
+        start, contains('_projectPicker = widget.dependencies.projectPicker;'));
     expect(
       start,
       contains(
@@ -58,19 +64,14 @@ void main() {
     final sourceRoot = _sourceRoot();
     final facade = File(
       '${sourceRoot.path}${Platform.pathSeparator}render_scene_repository.dart',
-    ).readAsStringSync();
+    );
     final canonical = File(
       '${sourceRoot.path}${Platform.pathSeparator}features'
       '${Platform.pathSeparator}viewer${Platform.pathSeparator}infrastructure'
       '${Platform.pathSeparator}render_scene_source.dart',
     ).readAsStringSync();
 
-    expect(
-      facade,
-      contains("export 'features/viewer/infrastructure/render_scene_source.dart';"),
-    );
-    expect(facade, isNot(contains("import 'dart:io';")));
-    expect(facade, isNot(contains('rootBundle')));
+    expect(facade.existsSync(), isFalse);
     expect(canonical, contains('abstract interface class RenderSceneSource'));
     expect(canonical, contains('final class AssetRenderSceneSource'));
   });

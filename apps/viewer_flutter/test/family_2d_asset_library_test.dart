@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:viewer_flutter/src/family_runtime/family_2d_asset_library.dart';
+import 'package:viewer_flutter/src/features/families/application/runtime/family_2d_asset_library.dart';
 
 void main() {
   test('compiles repeated and relative SVG line commands once', () {

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import 'src/telemetry_service.dart';
+import 'src/core/infrastructure/telemetry/app_telemetry.dart';
 import 'src/viewer_app.dart';
 
 Future<void> main() async {

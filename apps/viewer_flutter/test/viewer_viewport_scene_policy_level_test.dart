@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:viewer_flutter/src/features/viewer/application/viewport/viewer_viewport_scene_policy.dart';
 import 'package:viewer_flutter/src/features/viewer/domain/view/view_configuration.dart';
-import 'package:viewer_flutter/src/render_scene_models.dart';
+import 'package:viewer_flutter/src/core/application/render_scene/render_scene_models.dart';
 
 RenderScene _scene() {
   final result = parseRenderSceneJson(
@@ -53,7 +53,8 @@ void main() {
     expect(policy.nextHigherLevel(scene, 999), isNull);
   });
 
-  test('plan/elevation views can resolve a nearby level by model elevation', () {
+  test('plan/elevation views can resolve a nearby level by model elevation',
+      () {
     final scene = _scene();
     const planPolicy = ViewerViewportScenePolicy(
       projectionMode: RenderSceneProjectionMode.topDown,
@@ -66,11 +67,13 @@ void main() {
     const point = RenderScenePoint(x: 0.0, y: 0.0, z: 3.35);
 
     expect(
-      planPolicy.pickLevelAtElevation(
-        scene,
-        point,
-        toleranceMeters: 0.2,
-      )?.levelId,
+      planPolicy
+          .pickLevelAtElevation(
+            scene,
+            point,
+            toleranceMeters: 0.2,
+          )
+          ?.levelId,
       20,
     );
     expect(

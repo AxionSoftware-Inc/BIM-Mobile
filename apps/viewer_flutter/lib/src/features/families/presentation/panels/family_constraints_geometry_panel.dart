@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../../domain/constraints/family_constraint_models.dart';
 import '../../domain/constraints/family_constraint_solver.dart';
 import '../../domain/document/family_document.dart';
 import '../../domain/validation/family_validation.dart';
@@ -56,11 +55,12 @@ class FamilyConstraintsPanel extends StatelessWidget {
     final sketch = _sketch;
     final theme = Theme.of(context);
     if (sketch == null) {
-      return Card(
+      return const Card(
         margin: EdgeInsets.zero,
-        child: const Padding(
+        child: Padding(
           padding: EdgeInsets.all(12),
-          child: Text('Create or select a profile to author geometric constraints.'),
+          child: Text(
+              'Create or select a profile to author geometric constraints.'),
         ),
       );
     }
@@ -525,9 +525,9 @@ class _ReferencePlaneDialogState extends State<_ReferencePlaneDialog> {
   @override
   void initState() {
     super.initState();
-    _name = TextEditingController(text: widget.plane?.name ?? 'Reference plane');
-    _expression =
-        TextEditingController(text: widget.plane?.expression ?? '0');
+    _name =
+        TextEditingController(text: widget.plane?.name ?? 'Reference plane');
+    _expression = TextEditingController(text: widget.plane?.expression ?? '0');
     _axis = widget.plane?.axis ?? FamilyReferencePlaneAxis.x;
   }
 
@@ -665,8 +665,7 @@ class _ConstraintDialogState extends State<_ConstraintDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final usesPlane =
-        _kind == FamilySketchConstraintKind.pointOnReferencePlane;
+    final usesPlane = _kind == FamilySketchConstraintKind.pointOnReferencePlane;
     final usesSecondSegment = _kind == FamilySketchConstraintKind.parallel ||
         _kind == FamilySketchConstraintKind.perpendicular ||
         _kind == FamilySketchConstraintKind.equalLength ||
@@ -698,7 +697,8 @@ class _ConstraintDialogState extends State<_ConstraintDialog> {
                     .map(
                       (kind) => DropdownMenuItem<FamilySketchConstraintKind>(
                         value: kind,
-                        child: Text(FamilyConstraintsPanel._constraintTitle(kind)),
+                        child:
+                            Text(FamilyConstraintsPanel._constraintTitle(kind)),
                       ),
                     )
                     .toList(growable: false),
@@ -807,7 +807,8 @@ class _ConstraintDialogState extends State<_ConstraintDialog> {
                   if (usesSecondSegment && _pointC == _pointD) return;
                   final expression =
                       usesExpression ? _expression.text.trim() : null;
-                  if (usesExpression && (expression == null || expression.isEmpty)) {
+                  if (usesExpression &&
+                      (expression == null || expression.isEmpty)) {
                     return;
                   }
                   Navigator.of(context).pop(

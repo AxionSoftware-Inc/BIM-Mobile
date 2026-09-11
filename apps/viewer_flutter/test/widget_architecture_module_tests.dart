@@ -197,6 +197,7 @@ void registerArchitectureModuleTests() {
                 scene: scene,
                 target: target,
                 commands: commands,
+                familyAssets: const LocalFamilyAssetRepository(),
                 units: const ProjectUnitSettings.defaults(),
                 onApplied: (result, message) async {},
                 onClearSelection: () {},

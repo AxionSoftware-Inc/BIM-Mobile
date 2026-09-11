@@ -2,7 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:viewer_flutter/src/family_authoring/family_csg.dart';
+import 'package:viewer_flutter/src/features/families/domain/geometry/family_csg.dart';
 
 void main() {
   test('CSG normalizes mixed face winding on a closed box', () {
@@ -101,11 +101,10 @@ double _volume(FamilyCsgMesh mesh) {
     for (var i = 1; i < face.indices.length - 1; i++) {
       final b = mesh.vertices[face.indices[i]];
       final c = mesh.vertices[face.indices[i + 1]];
-      volume +=
-          (a.x * (b.y * c.z - b.z * c.y) -
-                  a.y * (b.x * c.z - b.z * c.x) +
-                  a.z * (b.x * c.y - b.y * c.x)) /
-              6.0;
+      volume += (a.x * (b.y * c.z - b.z * c.y) -
+              a.y * (b.x * c.z - b.z * c.x) +
+              a.z * (b.x * c.y - b.y * c.x)) /
+          6.0;
     }
   }
   return volume.abs();

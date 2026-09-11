@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:viewer_flutter/src/annotations/annotation_document_controller.dart';
-import 'package:viewer_flutter/src/annotations/annotation_store.dart';
+import 'package:viewer_flutter/src/features/annotations/application/annotation_document_controller.dart';
+import 'package:viewer_flutter/src/features/annotations/domain/annotation_store.dart';
 
 void main() {
   test('move commits one packed translation and remains undoable', () {
@@ -121,7 +121,9 @@ void main() {
     expect(document.revision, afterText);
   });
 
-  test('style change is shared/interpreted without changing annotation identity', () {
+  test(
+      'style change is shared/interpreted without changing annotation identity',
+      () {
     final document = AnnotationDocumentController();
     final id = document.addText(
       viewId: 1,
@@ -139,7 +141,8 @@ void main() {
 
     expect(document.replaceAnnotationStyle(id, style), isTrue);
     expect(document.store.annotationIds.single, id);
-    expect(document.store.styles[document.store.styleIds.single].name, 'Large Note');
+    expect(document.store.styles[document.store.styleIds.single].name,
+        'Large Note');
     expect(document.replaceAnnotationStyle(id, style), isFalse);
   });
 }

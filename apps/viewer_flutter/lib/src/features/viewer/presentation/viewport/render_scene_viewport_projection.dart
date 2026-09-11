@@ -2,7 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
-import 'render_scene_models.dart';
+import '../../../../core/application/render_scene/render_scene_models.dart';
 import 'render_scene_viewport_planar.dart';
 import 'render_scene_viewport_types.dart';
 

@@ -1,9 +1,9 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:viewer_flutter/src/family_runtime/family_2d_asset_library.dart';
-import 'package:viewer_flutter/src/family_runtime/family_scene_runtime_compiler.dart';
-import 'package:viewer_flutter/src/render_scene_models.dart';
+import 'package:viewer_flutter/src/features/families/application/runtime/family_2d_asset_library.dart';
+import 'package:viewer_flutter/src/features/families/application/runtime/family_scene_runtime_compiler.dart';
+import 'package:viewer_flutter/src/core/application/render_scene/render_scene_models.dart';
 
 void main() {
   test('scene compiles one shared 2D asset for repeated family instances', () {
@@ -49,10 +49,12 @@ void main() {
     ]);
 
     final runtime = FamilySceneRuntimeCompiler.compileRuntime(scene);
-    final representations = runtime.store.geometryVariants.single.representations;
+    final representations =
+        runtime.store.geometryVariants.single.representations;
 
     expect(runtime.twoDimensionalAssets.length, 3);
-    expect(runtime.twoDimensionalAssets[representations.plan!.assetKey], isNotNull);
+    expect(runtime.twoDimensionalAssets[representations.plan!.assetKey],
+        isNotNull);
     expect(
       runtime.twoDimensionalAssets[representations.elevation!.assetKey],
       isNotNull,
@@ -71,7 +73,8 @@ void main() {
     );
   });
 
-  test('unsupported SVG stays out of compiled library without losing instance', () {
+  test('unsupported SVG stays out of compiled library without losing instance',
+      () {
     const svg = '<svg><path d="M0 0 C1 0 1 1 2 1"/></svg>';
     final scene = _scene(<Map<String, Object?>>[
       _familyObject(id: 201, x: 2, svg: svg),
@@ -84,7 +87,8 @@ void main() {
     // The representation descriptor remains view-scoped. The viewport sees a
     // cache miss and deliberately uses its cheap generated/bounds fallback;
     // it never loads the detailed 3D family mesh just to draw this plan.
-    expect(runtime.store.geometryVariants.single.representations.plan, isNotNull);
+    expect(
+        runtime.store.geometryVariants.single.representations.plan, isNotNull);
   });
 }
 

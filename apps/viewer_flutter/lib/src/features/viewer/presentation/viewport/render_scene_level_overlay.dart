@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-import 'project_unit_settings.dart';
-import 'render_scene_models.dart';
+import '../../../../core/domain/units/project_unit_settings.dart';
+import '../../../../core/application/render_scene/render_scene_models.dart';
 import 'render_scene_viewport_planar.dart';
 import 'render_scene_viewport_projection.dart';
 import 'render_scene_viewport_types.dart';

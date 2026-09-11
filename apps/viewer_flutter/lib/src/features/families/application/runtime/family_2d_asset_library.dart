@@ -57,7 +57,9 @@ final class Family2dAssetLibraryBuilder {
       <String, Family2dCompiledAsset>{};
 
   void addSvg({required String assetKey, required String svg}) {
-    if (assetKey.isEmpty || svg.trim().isEmpty || _assets.containsKey(assetKey)) {
+    if (assetKey.isEmpty ||
+        svg.trim().isEmpty ||
+        _assets.containsKey(assetKey)) {
       return;
     }
     final paths = Family2dSvgCompiler.compile(svg);
@@ -99,7 +101,8 @@ abstract final class Family2dSvgCompiler {
   }
 
   static Family2dCompiledPath? _compilePath(String data) {
-    final tokens = _tokenPattern.allMatches(data).map((m) => m.group(0)!).toList();
+    final tokens =
+        _tokenPattern.allMatches(data).map((m) => m.group(0)!).toList();
     if (tokens.isEmpty) return null;
 
     final opcodes = <int>[];
@@ -130,8 +133,9 @@ abstract final class Family2dSvgCompiler {
 
     while (index < tokens.length) {
       if (isCommand(tokens[index])) {
-        command = tokens[index++];
-        final upper = command!.toUpperCase();
+        final parsedCommand = tokens[index++];
+        command = parsedCommand;
+        final upper = parsedCommand.toUpperCase();
         if (upper == 'Z') {
           emit(Family2dPathOpcode.close, 0, 0);
           currentX = subpathX;
@@ -144,10 +148,11 @@ abstract final class Family2dSvgCompiler {
         }
         firstMovePairForCommand = upper == 'M';
       }
-      if (command == null) return null;
+      final activeCommand = command;
+      if (activeCommand == null) return null;
 
-      final relative = command == command!.toLowerCase();
-      switch (command!.toUpperCase()) {
+      final relative = activeCommand == activeCommand.toLowerCase();
+      switch (activeCommand.toUpperCase()) {
         case 'M':
         case 'L':
           final rawX = nextNumber();
@@ -155,7 +160,8 @@ abstract final class Family2dSvgCompiler {
           if (rawX == null || rawY == null) return null;
           final x = relative ? currentX + rawX : rawX;
           final y = relative ? currentY + rawY : rawY;
-          final move = command!.toUpperCase() == 'M' && firstMovePairForCommand;
+          final move =
+              activeCommand.toUpperCase() == 'M' && firstMovePairForCommand;
           emit(
             move ? Family2dPathOpcode.moveTo : Family2dPathOpcode.lineTo,
             x,

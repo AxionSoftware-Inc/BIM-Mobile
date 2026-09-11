@@ -2,8 +2,8 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:viewer_flutter/src/features/authoring/application/scene_mutation_service.dart';
-import 'package:viewer_flutter/src/render_scene_models.dart';
-import 'package:viewer_flutter/src/tools/wall_authoring_geometry.dart';
+import 'package:viewer_flutter/src/core/application/render_scene/render_scene_models.dart';
+import 'package:viewer_flutter/src/features/authoring/application/geometry/wall_authoring_geometry.dart';
 
 void main() {
   test('wall mutation rejects a non-authoritative local fallback', () async {

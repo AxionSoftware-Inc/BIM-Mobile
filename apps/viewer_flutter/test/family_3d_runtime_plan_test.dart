@@ -1,9 +1,9 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:viewer_flutter/src/family_runtime/family_3d_runtime_plan.dart';
-import 'package:viewer_flutter/src/family_runtime/family_gpu_residency.dart';
-import 'package:viewer_flutter/src/family_runtime/family_instance_store.dart';
-import 'package:viewer_flutter/src/family_runtime/family_representation.dart';
-import 'package:viewer_flutter/src/family_runtime/family_spatial_streaming.dart';
+import 'package:viewer_flutter/src/features/families/application/runtime/family_3d_runtime_plan.dart';
+import 'package:viewer_flutter/src/features/families/application/runtime/family_gpu_residency.dart';
+import 'package:viewer_flutter/src/features/families/application/runtime/family_instance_store.dart';
+import 'package:viewer_flutter/src/features/families/application/runtime/family_representation.dart';
+import 'package:viewer_flutter/src/features/families/application/runtime/family_spatial_streaming.dart';
 
 void main() {
   FamilyRepresentationSet representations() => const FamilyRepresentationSet(
@@ -102,6 +102,7 @@ void main() {
     );
 
     expect(frame.visibleInstanceIndices.length, 1);
-    expect(frame.renderPlan.gpuInstanceBatches.single.instanceIndices.length, 1);
+    expect(
+        frame.renderPlan.gpuInstanceBatches.single.instanceIndices.length, 1);
   });
 }

@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:viewer_flutter/src/annotations/annotation_history_controls.dart';
-import 'package:viewer_flutter/src/annotations/annotation_workspace_runtime.dart';
-import 'package:viewer_flutter/src/render_scene_models.dart';
+import 'package:viewer_flutter/src/features/annotations/presentation/annotation_history_controls.dart';
+import 'package:viewer_flutter/src/features/annotations/application/annotation_workspace_runtime.dart';
+import 'package:viewer_flutter/src/core/application/render_scene/render_scene_models.dart';
 
 void main() {
   setUp(() {

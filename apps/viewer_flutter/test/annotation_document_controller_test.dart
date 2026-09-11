@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:viewer_flutter/src/annotations/annotation_document_controller.dart';
-import 'package:viewer_flutter/src/annotations/annotation_store_codec.dart';
+import 'package:viewer_flutter/src/features/annotations/application/annotation_document_controller.dart';
+import 'package:viewer_flutter/src/features/annotations/infrastructure/annotation_store_codec.dart';
 
 void main() {
   test('annotation undo redo stays independent and lossless', () {

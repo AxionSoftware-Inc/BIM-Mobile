@@ -4,17 +4,20 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import 'family_authoring_viewport.dart';
-import 'family_constraints_panel.dart';
-import 'family_dependency_resolver.dart';
-import 'family_document.dart';
-import 'family_file_store.dart';
-import 'family_geometry.dart';
-import 'family_import_units_dialog.dart';
+import '../features/families/presentation/viewport/family_authoring_viewport.dart';
+import '../features/families/presentation/panels/family_constraints_panel.dart';
+import '../features/families/application/dependencies/family_dependency_resolver.dart';
+import '../features/families/domain/document/family_document.dart';
+import '../features/families/application/library/family_asset_file.dart';
+import '../features/families/infrastructure/library/family_file_store.dart';
+import '../features/families/domain/geometry/family_geometry.dart';
+import '../features/families/presentation/dialogs/family_import_units_dialog.dart';
 import 'family_mesh_importer.dart';
-import 'family_nested_feature_dialog.dart';
-import 'family_sketch_canvas.dart';
-import 'family_validation.dart';
+import '../features/families/presentation/dialogs/family_nested_feature_dialog.dart';
+import '../features/families/presentation/sketch/family_sketch_canvas.dart';
+import '../features/families/domain/validation/family_validation.dart';
+import '../features/families/infrastructure/library/family_library_authoring_scene_builder.dart';
+import '../features/families/infrastructure/library/family_library_dependency_resolver.dart';
 
 /// Direct-manipulation Family Editor.
 ///
@@ -520,7 +523,7 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
       if (preview.features.any(
         (feature) => feature.kind == FamilyFeatureKind.nestedFamily,
       )) {
-        evaluated = await FamilyDependencyResolver.resolveFromLibrary(
+        evaluated = await FamilyLibraryDependencyResolver.resolve(
           preview,
           _selectedType,
         );
@@ -890,8 +893,9 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
 
   String? _lastClosedSketchId() {
     for (var index = _document.sketches.length - 1; index >= 0; index--) {
-      if (_document.sketches[index].isValid)
+      if (_document.sketches[index].isValid) {
         return _document.sketches[index].id;
+      }
     }
     return null;
   }
@@ -935,8 +939,13 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
 
   Future<void> _addNestedFamily() async {
     if (_tool != _Tool.select) _cancelTool();
-    final feature =
-        await FamilyNestedFeatureDialog.show(context, parent: _document);
+    final assets = await FamilyFileStore.listStored();
+    if (!mounted) return;
+    final feature = await FamilyNestedFeatureDialog.show(
+      context,
+      parent: _document,
+      availableAssets: assets,
+    );
     if (!mounted || feature == null) return;
     final candidate = _document.copyWith(
       features: <FamilyFeature>[..._document.features, feature],
@@ -1384,6 +1393,8 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
           document: _previewDocument,
           type: _selectedType,
           mesh: mesh,
+          candidateSceneLoader:
+              FamilyLibraryAuthoringSceneBuilder.buildCandidates,
           mode: _isCandidatePickMode
               ? FamilyAuthoringViewportMode.pickFeatures
               : FamilyAuthoringViewportMode.result,
@@ -2050,8 +2061,9 @@ class _FamilyEditorV5PageState extends State<FamilyEditorV5Page> {
 
   static FamilyFeature? _lastSolid(FamilyDocument document) {
     for (var index = document.features.length - 1; index >= 0; index--) {
-      if (_isSolid(document.features[index].kind))
+      if (_isSolid(document.features[index].kind)) {
         return document.features[index];
+      }
     }
     return null;
   }

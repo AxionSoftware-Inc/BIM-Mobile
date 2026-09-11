@@ -6,24 +6,15 @@ void main() {
   test('legacy family_runtime directory remains compatibility-facade only', () {
     final root = _sourceRoot();
     final legacy = Directory('${root.path}/family_runtime');
-    expect(legacy.existsSync(), isTrue);
-
-    final violations = <String>[];
-    for (final entity in legacy.listSync(followLinks: false)) {
-      if (entity is! File || !entity.path.endsWith('.dart')) continue;
-      final text = entity.readAsStringSync();
-      final name = entity.uri.pathSegments.last;
-      if (!text.contains('COMPATIBILITY:') ||
-          !text.contains('REMOVE WHEN:') ||
-          text.length > 1024) {
-        violations.add(name);
-      }
-    }
+    if (!legacy.existsSync()) return;
 
     expect(
-      violations,
+      legacy
+          .listSync(followLinks: false)
+          .whereType<File>()
+          .where((file) => file.path.endsWith('.dart')),
       isEmpty,
-      reason: 'Legacy family_runtime may contain only small marked facades; '
+      reason: 'The legacy family_runtime compatibility directory is retired; '
           'implementations belong to features/families.',
     );
   });

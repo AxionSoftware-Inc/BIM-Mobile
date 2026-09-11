@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:viewer_flutter/src/view_navigation_coordinator.dart';
+import 'package:viewer_flutter/src/features/viewer/application/navigation/view_navigation_coordinator.dart';
 
 void main() {
   group('ViewNavigationCoordinator', () {

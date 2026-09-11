@@ -1,13 +1,12 @@
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:viewer_flutter/src/family_runtime/family_gpu_residency.dart';
-import 'package:viewer_flutter/src/family_runtime/family_render_batches.dart';
-import 'package:viewer_flutter/src/family_runtime/family_representation.dart';
+import 'package:viewer_flutter/src/features/families/application/runtime/family_gpu_residency.dart';
+import 'package:viewer_flutter/src/features/families/application/runtime/family_render_batches.dart';
+import 'package:viewer_flutter/src/features/families/application/runtime/family_representation.dart';
 
 void main() {
-  FamilyGpuInstanceBatch batch(FamilyGeometryLod lod) =>
-      FamilyGpuInstanceBatch(
+  FamilyGpuInstanceBatch batch(FamilyGeometryLod lod) => FamilyGpuInstanceBatch(
         geometryVariantId: 42,
         lod: lod,
         geometryAssetKey: 'chair:${lod.name}',
@@ -48,10 +47,12 @@ void main() {
     );
 
     expect(transition.loadOrder, <FamilyGpuResidencyKey>[medium]);
-    expect(transition.keepResident, containsAll(<FamilyGpuResidencyKey>[
-      low,
-      medium,
-    ]));
+    expect(
+        transition.keepResident,
+        containsAll(<FamilyGpuResidencyKey>[
+          low,
+          medium,
+        ]));
     expect(transition.fallbackResident[medium], low);
     expect(transition.evict, isEmpty);
   });

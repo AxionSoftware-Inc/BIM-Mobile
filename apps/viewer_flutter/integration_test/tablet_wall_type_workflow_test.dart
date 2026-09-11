@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
-import 'package:viewer_flutter/src/tbe_ffi.dart';
+import 'package:viewer_flutter/src/platform/native_engine/ffi/tbe_ffi.dart';
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();

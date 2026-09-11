@@ -1,10 +1,10 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:viewer_flutter/src/bim_compact_estimator.dart';
-import 'package:viewer_flutter/src/bim_compact_instance_store.dart';
-import 'package:viewer_flutter/src/render_scene_estimator.dart';
-import 'package:viewer_flutter/src/render_scene_models.dart';
+import 'package:viewer_flutter/src/features/schedules/application/bim_compact_estimator.dart';
+import 'package:viewer_flutter/src/features/viewer/application/runtime/bim_compact_instance_store.dart';
+import 'package:viewer_flutter/src/features/schedules/application/render_scene_estimator.dart';
+import 'package:viewer_flutter/src/core/application/render_scene/render_scene_models.dart';
 
 void main() {
   test('compact store deduplicates repeated wall prototypes', () {

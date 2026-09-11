@@ -6,6 +6,7 @@ void main() {
   test('legacy model import directory stays facade-only', () {
     final sourceRoot = _sourceRoot();
     final legacyDirectory = Directory('${sourceRoot.path}/model_import');
+    if (!legacyDirectory.existsSync()) return;
     final violations = <String>[];
 
     for (final entity in legacyDirectory.listSync(followLinks: false)) {

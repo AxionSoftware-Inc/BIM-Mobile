@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:viewer_flutter/src/app_project_storage.dart';
+import 'package:viewer_flutter/src/core/infrastructure/storage/app_project_storage.dart';
 
 void main() {
   test('macOS and iOS use sandbox/user Application Support', () {

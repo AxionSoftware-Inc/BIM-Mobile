@@ -1,8 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
-import 'package:viewer_flutter/src/authoring_command_service.dart';
-import 'package:viewer_flutter/src/render_scene_models.dart';
-import 'package:viewer_flutter/src/tbe_ffi.dart';
+import 'package:viewer_flutter/src/features/authoring/application/authoring_command_service.dart';
+import 'package:viewer_flutter/src/core/application/render_scene/render_scene_models.dart';
+import 'package:viewer_flutter/src/platform/native_engine/ffi/tbe_ffi.dart';
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();

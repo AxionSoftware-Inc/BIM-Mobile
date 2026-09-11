@@ -1,4 +1,3 @@
-import '../constraints/family_constraint_models.dart';
 import '../constraints/family_constraint_solver.dart';
 import '../document/family_document.dart';
 import '../parameters/family_parameter_resolver.dart';
@@ -331,7 +330,8 @@ abstract final class FamilyDocumentValidator {
         _checkFreeformMesh(feature, add);
       }
       if (feature.kind == FamilyFeatureKind.nestedFamily) {
-        final familyId = feature.parameters['familyId']?.toString().trim() ?? '';
+        final familyId =
+            feature.parameters['familyId']?.toString().trim() ?? '';
         final typeId = feature.parameters['typeId']?.toString().trim() ?? '';
         if (familyId.isEmpty) {
           add('Nested feature ${feature.id} requires familyId');
@@ -492,7 +492,9 @@ abstract final class FamilyDocumentValidator {
         final number = value is num
             ? value.toDouble()
             : double.tryParse(value?.toString() ?? '');
-        if (number == null || !number.isFinite) return 'must be a finite number';
+        if (number == null || !number.isFinite) {
+          return 'must be a finite number';
+        }
         if (parameter.kind == FamilyParameterKind.length && number <= 0.0) {
           return 'must be positive';
         }
@@ -572,7 +574,8 @@ abstract final class FamilyDocumentValidator {
         break;
       }
       for (final rawIndex in rawFace) {
-        final index = rawIndex is int ? rawIndex : int.tryParse(rawIndex.toString());
+        final index =
+            rawIndex is int ? rawIndex : int.tryParse(rawIndex.toString());
         if (index == null || index < 0 || index >= rawVertices.length) {
           add('Freeform mesh ${feature.id} has an out-of-range face index');
           return;

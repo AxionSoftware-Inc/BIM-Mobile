@@ -3,11 +3,13 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
-import 'family_document.dart';
-import 'family_editor_v2_page.dart';
-import 'family_file_store.dart';
-import 'family_geometry.dart';
-import 'family_parameter_resolver.dart';
+import '../features/families/domain/document/family_document.dart';
+import '../features/families/application/library/family_asset_file.dart';
+import '../features/families/application/library/family_library_preferences.dart';
+import 'family_editor_v5_page.dart';
+import '../features/families/infrastructure/library/family_file_store.dart';
+import '../features/families/domain/geometry/family_geometry.dart';
+import '../features/families/domain/parameters/family_parameter_resolver.dart';
 
 /// Result returned to the project placement flow.
 ///
@@ -16,8 +18,7 @@ import 'family_parameter_resolver.dart';
 final class FamilyLibraryResult {
   const FamilyLibraryResult._({this.asset, this.browseFile = false});
 
-  const FamilyLibraryResult.asset(FamilyAssetFile value)
-      : this._(asset: value);
+  const FamilyLibraryResult.asset(FamilyAssetFile value) : this._(asset: value);
 
   const FamilyLibraryResult.browseFile() : this._(browseFile: true);
 
@@ -194,8 +195,9 @@ class _FamilyLibraryDialogState extends State<FamilyLibraryDialog> {
     final typeId = _selectedTypeId;
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
-        builder: (_) => FamilyEditorV2Page(
-          initialAsset: asset.withPreferredType(_selectedType ?? asset.preferredType),
+        builder: (_) => FamilyEditorV5Page(
+          initialAsset:
+              asset.withPreferredType(_selectedType ?? asset.preferredType),
         ),
       ),
     );
@@ -398,7 +400,8 @@ class _FamilyLibraryDialogState extends State<FamilyLibraryDialog> {
             children: <Widget>[
               _scopeChip(_LibraryScope.all, 'All', Icons.apps_outlined),
               const SizedBox(width: 6),
-              _scopeChip(_LibraryScope.favorites, 'Favorites', Icons.star_outline),
+              _scopeChip(
+                  _LibraryScope.favorites, 'Favorites', Icons.star_outline),
               const SizedBox(width: 6),
               _scopeChip(_LibraryScope.recent, 'Recent', Icons.history),
             ],
@@ -812,8 +815,10 @@ class _FamilyLibraryPreviewPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    if (mesh.vertices.isEmpty || mesh.faces.isEmpty ||
-        size.width <= 2 || size.height <= 2) {
+    if (mesh.vertices.isEmpty ||
+        mesh.faces.isEmpty ||
+        size.width <= 2 ||
+        size.height <= 2) {
       return;
     }
     final projected = <Offset>[
@@ -856,7 +861,8 @@ class _FamilyLibraryPreviewPainter extends CustomPainter {
     for (final faceIndex in orderedFaces) {
       final face = mesh.faces[faceIndex];
       if (face.indices.length < 3 ||
-          !face.indices.every((index) => index >= 0 && index < projected.length)) {
+          !face.indices
+              .every((index) => index >= 0 && index < projected.length)) {
         continue;
       }
       final path = Path();

@@ -49,7 +49,7 @@ void main() {
       features: <FamilyFeature>[base, moved],
     );
 
-    final scene = await FamilyAuthoringSceneBuilder.buildCandidates(
+    final scene = await FamilyLibraryAuthoringSceneBuilder.buildCandidates(
       document,
       document.types.single,
       featureIds: <String>{base.id, moved.id},
@@ -74,7 +74,7 @@ void main() {
       await tester.binding.setSurfaceSize(const Size(1400, 900));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await tester.pumpWidget(
-        const MaterialApp(home: FamilyEditorV2Page()),
+        const MaterialApp(home: FamilyEditorV5Page()),
       );
       await tester.pumpAndSettle();
     }

@@ -1,9 +1,9 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:viewer_flutter/src/family_runtime/family_scene_runtime_compiler.dart';
-import 'package:viewer_flutter/src/family_runtime/family_representation.dart';
-import 'package:viewer_flutter/src/render_scene_models.dart';
+import 'package:viewer_flutter/src/features/families/application/runtime/family_scene_runtime_compiler.dart';
+import 'package:viewer_flutter/src/features/families/application/runtime/family_representation.dart';
+import 'package:viewer_flutter/src/core/application/render_scene/render_scene_models.dart';
 
 void main() {
   test('scene family metadata compiles to shared runtime variants', () {

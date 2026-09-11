@@ -5,16 +5,16 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import 'annotations/annotation_history_controls.dart';
-import 'annotations/annotation_hit_test.dart';
-import 'annotations/annotation_selection_controls.dart';
-import 'annotations/annotation_store.dart';
-import 'family_runtime/family_2d_viewport_overlay.dart';
-import 'render_scene_editor.dart';
+import '../../../annotations/presentation/annotation_history_controls.dart';
+import '../../../annotations/presentation/annotation_hit_test.dart';
+import '../../../annotations/presentation/annotation_selection_controls.dart';
+import '../../../annotations/domain/annotation_store.dart';
+import '../../../families/presentation/runtime/family_2d_viewport_overlay.dart';
+import '../../../authoring/application/scene/render_scene_editor.dart';
 import 'render_scene_level_overlay.dart';
-import 'render_scene_models.dart';
+import '../../../../core/application/render_scene/render_scene_models.dart';
 import 'render_scene_native_overlay_painter.dart';
-import 'project_unit_settings.dart';
+import '../../../../core/domain/units/project_unit_settings.dart';
 import 'render_scene_viewport_hit_test.dart';
 import 'render_scene_viewport_controller.dart';
 import 'render_scene_viewport_painter.dart';
@@ -23,7 +23,7 @@ import 'render_scene_viewport_projection.dart';
 import 'render_scene_viewport_types.dart';
 import 'viewport_interaction.dart';
 import 'viewport_gesture_controller.dart';
-import 'workspace_chrome.dart';
+import '../workspace/workspace_chrome.dart';
 
 part 'render_scene_viewport_support_widgets.dart';
 part 'render_scene_viewport_fallback.dart';
@@ -103,7 +103,8 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
   @override
   void dispose() {
     widget.controller.removeListener(_handleControllerChanged);
-    AnnotationWorkspaceRuntime.document.removeListener(_handleAnnotationChanged);
+    AnnotationWorkspaceRuntime.document
+        .removeListener(_handleAnnotationChanged);
     AnnotationWorkspaceRuntime.selectedAnnotationId
         .removeListener(_handleAnnotationChanged);
     AnnotationWorkspaceRuntime.moveSelectedArmed
@@ -142,8 +143,8 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
     final selectedKind = selectedIndex == null
         ? null
         : AnnotationWorkspaceRuntime.document.store.kindAt(selectedIndex);
-    final canEditSelectedLabel =
-        selectedKind == AnnotationKind.text || selectedKind == AnnotationKind.tag;
+    final canEditSelectedLabel = selectedKind == AnnotationKind.text ||
+        selectedKind == AnnotationKind.tag;
     final moveArmed = AnnotationWorkspaceRuntime.moveSelectedArmed.value;
     return Semantics(
       container: true,
@@ -181,8 +182,9 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
                 selectedIndex != null,
             kind: selectedKind,
             moveArmed: moveArmed,
-            onEditLabel:
-                canEditSelectedLabel ? () => unawaited(_editSelectedLabel()) : null,
+            onEditLabel: canEditSelectedLabel
+                ? () => unawaited(_editSelectedLabel())
+                : null,
             onMove: _toggleSelectedMove,
             onDelete: _deleteSelectedAnnotation,
             onClear: AnnotationWorkspaceRuntime.clearSelection,
@@ -276,7 +278,8 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
     if (tool == AnnotationWorkspaceTool.select) {
       AnnotationWorkspaceRuntime.cancelDraft();
       if (AnnotationWorkspaceRuntime.moveSelectedArmed.value) {
-        final selectedId = AnnotationWorkspaceRuntime.selectedAnnotationId.value;
+        final selectedId =
+            AnnotationWorkspaceRuntime.selectedAnnotationId.value;
         final selectedIndex = _selectedAnnotationIndex();
         final point = details.modelPoint;
         if (selectedId == null || selectedIndex == null) {
@@ -284,7 +287,8 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
           return;
         }
         if (point == null) {
-          _showAnnotationMessage('Tap inside the active model view to move it.');
+          _showAnnotationMessage(
+              'Tap inside the active model view to move it.');
           return;
         }
         final store = AnnotationWorkspaceRuntime.document.store;
@@ -481,11 +485,15 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
     final store = AnnotationWorkspaceRuntime.document.store;
     switch (store.kindAt(annotationIndex)) {
       case AnnotationKind.text:
-        final row = _rowForAnnotation(store.text.annotationIndices, annotationIndex);
+        final row =
+            _rowForAnnotation(store.text.annotationIndices, annotationIndex);
         return row == null ? null : store.strings[store.text.stringIds[row]];
       case AnnotationKind.tag:
-        final row = _rowForAnnotation(store.tags.annotationIndices, annotationIndex);
-        return row == null ? null : store.strings[store.tags.labelStringIds[row]];
+        final row =
+            _rowForAnnotation(store.tags.annotationIndices, annotationIndex);
+        return row == null
+            ? null
+            : store.strings[store.tags.labelStringIds[row]];
       case AnnotationKind.linearDimension:
       case AnnotationKind.detailLine:
       case AnnotationKind.symbol:

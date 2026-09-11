@@ -1,6 +1,5 @@
 import 'dart:math' as math;
 
-import 'family_constraint_models.dart';
 import '../document/family_document.dart';
 import '../parameters/family_parameter_resolver.dart';
 
@@ -44,7 +43,8 @@ abstract final class FamilyConstraintSolver {
 
     final count = sketch.points.length;
     if (count == 0 && constraints.isNotEmpty) {
-      throw FormatException('Sketch ${sketch.name} has constraints but no points.');
+      throw FormatException(
+          'Sketch ${sketch.name} has constraints but no points.');
     }
 
     final x = _CoordinateSystem(count);
@@ -253,19 +253,19 @@ abstract final class FamilyConstraintSolver {
         }
         final source = ab * (1.0 / abLength);
         final cdLength = cd.length;
-        final current = cdLength <= _tolerance
-            ? source
-            : cd * (1.0 / cdLength);
+        final current = cdLength <= _tolerance ? source : cd * (1.0 / cdLength);
         final length = constraint.kind == FamilySketchConstraintKind.equalLength
             ? abLength
             : (cdLength <= _tolerance ? abLength : cdLength);
         final _Vec2 desiredDirection;
         if (constraint.kind == FamilySketchConstraintKind.parallel) {
           desiredDirection = source.dot(current) < 0.0 ? source * -1.0 : source;
-        } else if (constraint.kind == FamilySketchConstraintKind.perpendicular) {
+        } else if (constraint.kind ==
+            FamilySketchConstraintKind.perpendicular) {
           final plus = _Vec2(-source.y, source.x);
           final minus = plus * -1.0;
-          desiredDirection = plus.dot(current) >= minus.dot(current) ? plus : minus;
+          desiredDirection =
+              plus.dot(current) >= minus.dot(current) ? plus : minus;
         } else if (constraint.kind == FamilySketchConstraintKind.equalLength) {
           desiredDirection = current;
         } else {
@@ -279,7 +279,8 @@ abstract final class FamilyConstraintSolver {
             math.cos(sourceAngle - radians),
             math.sin(sourceAngle - radians),
           );
-          desiredDirection = plus.dot(current) >= minus.dot(current) ? plus : minus;
+          desiredDirection =
+              plus.dot(current) >= minus.dot(current) ? plus : minus;
         }
         points[dIndex] = points[dIndex].copyWith(
           x: c.x + desiredDirection.x * length,
@@ -593,8 +594,8 @@ final class _CoordinateSystem {
     final groupValue = <int, double>{};
     for (final entry in sums.entries) {
       final root = entry.key;
-      groupValue[root] = normalizedFixed[root]?.value ??
-          entry.value / (counts[root] ?? 1);
+      groupValue[root] =
+          normalizedFixed[root]?.value ?? entry.value / (counts[root] ?? 1);
     }
     return <double>[
       for (var index = 0; index < originals.length; index++)

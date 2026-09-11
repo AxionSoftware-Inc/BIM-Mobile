@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../../../authoring/domain/surface_draw_mode.dart';
 import '../../domain/view/view_configuration.dart';
 import '../../../../core/application/render_scene/render_scene_models.dart';
 

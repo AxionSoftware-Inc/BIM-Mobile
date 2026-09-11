@@ -3,13 +3,17 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
-import '../lib/src/model_import/ifc_source_inventory.dart';
-import '../lib/src/model_import/model_import_audit.dart';
-import '../lib/src/render_scene_models.dart';
+import 'package:viewer_flutter/src/features/projects/application/import/ifc_source_inventory.dart';
+import 'package:viewer_flutter/src/features/projects/application/import/model_import_audit.dart';
+import 'package:viewer_flutter/src/features/projects/infrastructure/import/ifc_source_inventory_reader.dart';
+import 'package:viewer_flutter/src/core/application/render_scene/render_scene_models.dart';
 
 void main() {
-  test('IFC inventory counts renderable products without loading whole model API', () async {
-    final directory = await Directory.systemTemp.createTemp('tbe_ifc_inventory_');
+  test(
+      'IFC inventory counts renderable products without loading whole model API',
+      () async {
+    final directory =
+        await Directory.systemTemp.createTemp('tbe_ifc_inventory_');
     addTearDown(() => directory.delete(recursive: true));
     final file = File('${directory.path}/inventory.ifc');
     await file.writeAsString('''
@@ -23,21 +27,25 @@ ENDSEC;
 END-ISO-10303-21;
 ''');
 
-    final inventory = await const IfcSourceInventoryReader().readPath(file.path);
+    final inventory =
+        await const IfcSourceInventoryReader().readPath(file.path);
 
     expect(inventory.physicalProductCount, 2);
     expect(inventory.typeCounts['IFCWALL'], 1);
     expect(inventory.typeCounts['IFCFURNISHINGELEMENT'], 1);
-    expect(inventory.products.map((item) => item.globalId), containsAll(<String>['W1', 'F1']));
+    expect(inventory.products.map((item) => item.globalId),
+        containsAll(<String>['W1', 'F1']));
   });
 
-  test('audit exposes uncovered IFC products instead of silently dropping them', () {
+  test('audit exposes uncovered IFC products instead of silently dropping them',
+      () {
     const source = IfcSourceInventory(
       assignmentCount: 4,
       physicalProductCount: 2,
       products: <IfcSourceProduct>[
         IfcSourceProduct(stepId: 10, entityType: 'IFCWALL', globalId: 'W1'),
-        IfcSourceProduct(stepId: 11, entityType: 'IFCFURNISHINGELEMENT', globalId: 'F1'),
+        IfcSourceProduct(
+            stepId: 11, entityType: 'IFCFURNISHINGELEMENT', globalId: 'F1'),
       ],
       typeCounts: <String, int>{'IFCWALL': 1, 'IFCFURNISHINGELEMENT': 1},
     );
