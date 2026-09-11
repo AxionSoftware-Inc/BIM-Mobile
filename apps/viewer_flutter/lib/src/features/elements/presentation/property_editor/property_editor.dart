@@ -5,6 +5,10 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../../../authoring/application/authoring_command_service.dart';
+import '../../../authoring/application/scene/render_scene_editor.dart';
+import '../../../../core/application/render_scene/render_scene_models.dart';
+import '../../../../core/domain/assemblies/wall_type_catalog.dart';
+import '../../../../core/domain/units/project_unit_settings.dart';
 import '../../application/bim_element_registry.dart';
 import '../../domain/bim_element_module.dart';
 import '../../application/element_parameter_values.dart';
@@ -15,7 +19,6 @@ import '../../application/opening_element_parameters.dart';
 import '../../application/parameters/roof_element_parameters.dart';
 import '../../application/parameters/stair_element_parameters.dart';
 import '../../application/parameters/surface_element_parameters.dart';
-import '../../domain/types/wall_type_catalog.dart';
 import '../../application/wall_element_parameters.dart';
 import '../../../families/infrastructure/catalog/built_in_family_catalog.dart';
 import '../../../families/domain/document/family_document.dart';
@@ -24,9 +27,6 @@ import '../../../families/domain/geometry/family_geometry.dart';
 import '../../../families/application/representation/family_plan_symbol.dart';
 import '../../../families/application/family_instance_adapter.dart';
 import '../inspector_controller.dart';
-import '../../../../core/domain/units/project_unit_settings.dart';
-import '../../../../render_scene_editor.dart';
-import '../../../../render_scene_models.dart';
 
 part 'elements/inspectors/object_inspector_router.dart';
 part 'elements/inspectors/floor_inspector.dart';
