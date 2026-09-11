@@ -1,4 +1,4 @@
-import '../../../render_scene_models.dart';
+import '../render_scene/render_scene_models.dart';
 
 /// Read-only native scene query boundary used by viewport/navigation features.
 abstract interface class ViewerSceneGateway {
