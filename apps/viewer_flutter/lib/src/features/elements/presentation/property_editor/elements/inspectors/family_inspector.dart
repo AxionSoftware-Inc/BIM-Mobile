@@ -5,7 +5,16 @@ Widget _buildFamilyInspector(_ObjectInspectorContext context) {
     context.object,
     'property.family_asset_id',
   );
-  if (familyId == null) return _buildGenericInspector(context);
+  if (familyId == null) {
+    return BimReadOnlyObjectSection(
+      object: context.object,
+      title: '${bimInspectorLabel(context.object)} properties',
+      rows: <String, String>{
+        'Level': context.object.levelId?.toString() ?? '-',
+        'Material': context.object.materialCategory,
+      },
+    );
+  }
   return _FamilyPropertiesSection(
     object: context.object,
     scene: context.scene,

@@ -33,7 +33,6 @@ part 'elements/inspectors/opening_inspector.dart';
 part 'elements/inspectors/roof_inspector.dart';
 part 'elements/inspectors/stair_inspector.dart';
 part 'elements/inspectors/linear_inspector.dart';
-part 'elements/inspectors/generic_inspector.dart';
 part 'elements/inspectors/family_inspector.dart';
 
 typedef ApplyInspectorResult = Future<void> Function(
