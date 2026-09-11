@@ -9,6 +9,17 @@ void main() {
     const canonicalByFacade = <String, String>{
       'render_scene_models.dart':
           'core/application/render_scene/render_scene_models.dart',
+      'render_scene_editor.dart':
+          'features/authoring/application/scene/render_scene_editor.dart',
+      'render_scene_estimator.dart':
+          'features/schedules/application/render_scene_estimator.dart',
+      'render_scene_level_binding.dart':
+          'features/authoring/application/scene/render_scene_level_binding.dart',
+      'wall_authoring_geometry.dart':
+          'features/authoring/application/geometry/wall_authoring_geometry.dart',
+      'plan_sketch_geometry.dart':
+          'features/authoring/application/geometry/plan_sketch_geometry.dart',
+      'tbe_ffi.dart': 'platform/native_engine/ffi/tbe_ffi.dart',
       'bim_compact_instance_store.dart':
           'features/viewer/application/runtime/bim_compact_instance_store.dart',
       'bim_spatial_grid_index.dart':
