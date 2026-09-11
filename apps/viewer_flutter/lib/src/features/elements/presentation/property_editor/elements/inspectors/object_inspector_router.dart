@@ -7,6 +7,7 @@ class _ObjectInspectorContext {
     required this.levels,
     required this.units,
     required this.commands,
+    required this.familyAssets,
     required this.onApplied,
   });
   final RenderSceneObject object;
@@ -14,6 +15,7 @@ class _ObjectInspectorContext {
   final List<RenderSceneLevel> levels;
   final ProjectUnitSettings units;
   final AuthoringCommandService commands;
+  final FamilyAssetRepository familyAssets;
   final ApplyInspectorResult onApplied;
 }
 
@@ -26,6 +28,7 @@ class _ObjectInspectorRouter extends StatelessWidget {
     required this.levels,
     required this.units,
     required this.commands,
+    required this.familyAssets,
     required this.onApplied,
   });
 
@@ -34,6 +37,7 @@ class _ObjectInspectorRouter extends StatelessWidget {
   final List<RenderSceneLevel> levels;
   final ProjectUnitSettings units;
   final AuthoringCommandService commands;
+  final FamilyAssetRepository familyAssets;
   final ApplyInspectorResult onApplied;
 
   static final BimElementInspectorAdapterRegistry _standaloneAdapters =
@@ -110,6 +114,7 @@ class _ObjectInspectorRouter extends StatelessWidget {
           levels: levels,
           units: units,
           commands: commands,
+          familyAssets: familyAssets,
           onApplied: onApplied,
         ),
       );
