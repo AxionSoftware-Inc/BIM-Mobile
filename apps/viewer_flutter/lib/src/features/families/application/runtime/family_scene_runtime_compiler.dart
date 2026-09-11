@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:math' as math;
 
-import '../render_scene_models.dart';
+import '../../../../core/application/render_scene/render_scene_models.dart';
 import 'family_2d_asset_library.dart';
 import 'family_instance_store.dart';
 import 'family_representation.dart';
