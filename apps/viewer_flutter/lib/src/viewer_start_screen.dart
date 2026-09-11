@@ -18,10 +18,12 @@ class ViewerApp extends StatefulWidget {
   const ViewerApp({
     super.key,
     this.source,
+    this.startDependencies,
     this.preferEngineBackedBundledSample = false,
   });
 
   final RenderSceneSource? source;
+  final ViewerStartDependencies? startDependencies;
   final bool preferEngineBackedBundledSample;
 
   @override
@@ -30,10 +32,15 @@ class ViewerApp extends StatefulWidget {
 
 class _ViewerAppState extends State<ViewerApp> {
   ViewerAppSettings _settings = const ViewerAppSettings.defaults();
+  late final ViewerStartDependencies _startDependencies;
 
   @override
   void initState() {
     super.initState();
+    _startDependencies = widget.startDependencies ??
+        ViewerStartDependencies.production(
+          projectLabel: '${ArvelaBrand.name} projects',
+        );
     _loadSettings();
   }
 
@@ -72,6 +79,7 @@ class _ViewerAppState extends State<ViewerApp> {
       home: widget.source == null
           ? _settings.onboardingComplete
               ? _StartScreenGate(
+                  dependencies: _startDependencies,
                   preferEngineBackedBundledSample:
                       widget.preferEngineBackedBundledSample,
                   appTheme: _settings.appTheme,
@@ -112,6 +120,7 @@ class _ViewerAppState extends State<ViewerApp> {
 
 class _StartScreenGate extends StatefulWidget {
   const _StartScreenGate({
+    required this.dependencies,
     required this.preferEngineBackedBundledSample,
     required this.appTheme,
     required this.viewportTheme,
@@ -125,6 +134,7 @@ class _StartScreenGate extends StatefulWidget {
     required this.onTextScaleChanged,
   });
 
+  final ViewerStartDependencies dependencies;
   final bool preferEngineBackedBundledSample;
   final AppThemeMode appTheme;
   final AppViewportTheme viewportTheme;
@@ -151,10 +161,8 @@ class _StartScreenGateState extends State<_StartScreenGate> {
   void initState() {
     super.initState();
     _launch = ProjectLaunchController()..addListener(_handleLaunchChanged);
-    _recoveryRepository = FileStartScreenRecoveryRepository();
-    _projectPicker = FileProjectOpenDocumentPicker(
-      label: '${ArvelaBrand.name} projects',
-    );
+    _recoveryRepository = widget.dependencies.recovery;
+    _projectPicker = widget.dependencies.projectPicker;
     unawaited(_loadRecoveryEntry());
   }
 
@@ -270,8 +278,7 @@ class _StartScreenGateState extends State<_StartScreenGate> {
       onCreateFamily: () => unawaited(_createFamily()),
       onSelectTemplate: _selectTemplate,
       onSettings: () => _showSettings(context),
-      templatePreferencesRepository:
-          const FileStartScreenTemplatePreferencesRepository(),
+      templatePreferencesRepository: widget.dependencies.templatePreferences,
       recoveryEntry: recoveryEntry == null
           ? null
           : ProjectRecoverySummary(projectName: recoveryEntry.projectName),
