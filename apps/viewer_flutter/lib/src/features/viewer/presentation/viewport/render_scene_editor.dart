@@ -1,3 +1,3 @@
-// COMPATIBILITY: local bridge while RenderScene editor ownership is migrated separately.
-// REMOVE WHEN: viewport presentation imports the canonical authoring/read-model contract directly.
-export '../../../../render_scene_editor.dart';
+// COMPATIBILITY: local bridge while viewport presentation imports are migrated.
+// REMOVE WHEN: viewport presentation imports the canonical authoring scene contract directly.
+export '../../../authoring/application/scene/render_scene_editor.dart';
