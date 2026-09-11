@@ -144,6 +144,7 @@ class _StartScreenGate extends StatefulWidget {
 class _StartScreenGateState extends State<_StartScreenGate> {
   late final ProjectLaunchController _launch;
   late final StartScreenRecoveryRepository _recoveryRepository;
+  late final ProjectOpenDocumentPicker _projectPicker;
   StartScreenRecoveryCandidate? _recoveryEntry;
 
   @override
@@ -151,6 +152,9 @@ class _StartScreenGateState extends State<_StartScreenGate> {
     super.initState();
     _launch = ProjectLaunchController()..addListener(_handleLaunchChanged);
     _recoveryRepository = FileStartScreenRecoveryRepository();
+    _projectPicker = FileProjectOpenDocumentPicker(
+      label: '${ArvelaBrand.name} projects',
+    );
     unawaited(_loadRecoveryEntry());
   }
 
@@ -199,18 +203,12 @@ class _StartScreenGateState extends State<_StartScreenGate> {
     if (_launch.state.busy) return;
     AppTelemetry.track('project_open_started');
     try {
-      const typeGroup = XTypeGroup(
-        label: '${ArvelaBrand.name} projects',
-        extensions: <String>['json', 'tbe.json'],
-      );
-      final file = await openFile(acceptedTypeGroups: <XTypeGroup>[typeGroup]);
-      if (file == null) return;
-      final json = await file.readAsString();
-      if (!mounted) return;
+      final document = await _projectPicker.pick();
+      if (document == null || !mounted) return;
       _launch.openProject(
-        json: json,
-        projectName: file.name,
-        projectPath: file.path,
+        json: document.json,
+        projectName: document.projectName,
+        projectPath: document.projectPath,
       );
       AppTelemetry.track('project_opened');
     } catch (error) {
