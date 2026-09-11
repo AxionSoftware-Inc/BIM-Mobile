@@ -3,8 +3,11 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
-import '../../../../render_scene_models.dart';
-import '../../../../render_scene_viewport.dart';
+import '../../../../core/application/render_scene/render_scene_models.dart';
+import '../../../viewer/presentation/viewport/render_scene_viewport_controller.dart';
+import '../../../viewer/presentation/viewport/render_scene_viewport_projection.dart';
+import '../../../viewer/presentation/viewport/render_scene_viewport_types.dart';
+import '../../../viewer/presentation/viewport/render_scene_viewport_widget.dart';
 import '../../application/integration/family_authoring_scene_builder.dart';
 import '../../application/integration/family_render_scene_adapter.dart';
 import '../../domain/document/family_document.dart';
