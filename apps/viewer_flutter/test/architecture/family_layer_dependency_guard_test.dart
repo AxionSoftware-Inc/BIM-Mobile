@@ -13,23 +13,14 @@ void main() {
     );
     expect(applicationRoot.existsSync(), isTrue);
 
-    final directivePattern =
-        RegExp(r'''(?:import|export)\s+['"]([^'"]+)['"]''');
-    final violations = <String>[];
-
-    for (final file in _dartFiles(applicationRoot)) {
-      final source = file.readAsStringSync();
-      final relativeFile = _relativeTo(sourceRoot, file).replaceAll('\\', '/');
-      for (final match in directivePattern.allMatches(source)) {
-        final raw = match.group(1)!.replaceAll('\\', '/');
-        final target = _resolveImportTarget(relativeFile, raw);
-        if (target.contains('features/families/infrastructure/') ||
-            target.contains('features/families/presentation/') ||
-            target.contains('family_authoring/')) {
-          violations.add('$relativeFile -> $target');
-        }
-      }
-    }
+    final violations = _dependencyViolations(
+      sourceRoot: sourceRoot,
+      layerRoot: applicationRoot,
+      isForbidden: (target) =>
+          target.contains('features/families/infrastructure/') ||
+          target.contains('features/families/presentation/') ||
+          target.contains('family_authoring/'),
+    );
 
     expect(
       violations,
@@ -37,6 +28,53 @@ void main() {
       reason: 'Family application services may depend on domain and ports only.',
     );
   });
+
+  test('Family presentation layer does not depend on infrastructure or legacy',
+      () {
+    final sourceRoot = _sourceRoot();
+    final presentationRoot = Directory(
+      '${sourceRoot.path}${Platform.pathSeparator}features'
+      '${Platform.pathSeparator}families'
+      '${Platform.pathSeparator}presentation',
+    );
+    expect(presentationRoot.existsSync(), isTrue);
+
+    final violations = _dependencyViolations(
+      sourceRoot: sourceRoot,
+      layerRoot: presentationRoot,
+      isForbidden: (target) =>
+          target.contains('features/families/infrastructure/') ||
+          target.contains('family_authoring/'),
+    );
+
+    expect(
+      violations,
+      isEmpty,
+      reason: 'Family presentation must consume application/domain contracts; '
+          'storage, bundled catalogs and legacy authoring stay outside UI.',
+    );
+  });
+}
+
+List<String> _dependencyViolations({
+  required Directory sourceRoot,
+  required Directory layerRoot,
+  required bool Function(String target) isForbidden,
+}) {
+  final directivePattern =
+      RegExp(r'''(?:import|export)\s+['"]([^'"]+)['"]''');
+  final violations = <String>[];
+
+  for (final file in _dartFiles(layerRoot)) {
+    final source = file.readAsStringSync();
+    final relativeFile = _relativeTo(sourceRoot, file).replaceAll('\\', '/');
+    for (final match in directivePattern.allMatches(source)) {
+      final raw = match.group(1)!.replaceAll('\\', '/');
+      final target = _resolveImportTarget(relativeFile, raw);
+      if (isForbidden(target)) violations.add('$relativeFile -> $target');
+    }
+  }
+  return violations;
 }
 
 Directory _sourceRoot() {
