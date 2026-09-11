@@ -31,6 +31,29 @@ void main() {
     );
   });
 
+  test('start gate consumes composition-owned adapters', () {
+    final sourceRoot = _sourceRoot();
+    final start = File(
+      '${sourceRoot.path}${Platform.pathSeparator}viewer_start_screen.dart',
+    ).readAsStringSync();
+
+    expect(start, contains('final ViewerStartDependencies dependencies;'));
+    expect(start, contains('_recoveryRepository = widget.dependencies.recovery;'));
+    expect(start, contains('_projectPicker = widget.dependencies.projectPicker;'));
+    expect(
+      start,
+      contains(
+        'templatePreferencesRepository: widget.dependencies.templatePreferences',
+      ),
+    );
+    expect(start, isNot(contains('FileStartScreenRecoveryRepository(')));
+    expect(start, isNot(contains('FileProjectOpenDocumentPicker(')));
+    expect(
+      start,
+      isNot(contains('FileStartScreenTemplatePreferencesRepository(')),
+    );
+  });
+
   test('legacy RenderScene source path stays a thin compatibility facade', () {
     final sourceRoot = _sourceRoot();
     final facade = File(
