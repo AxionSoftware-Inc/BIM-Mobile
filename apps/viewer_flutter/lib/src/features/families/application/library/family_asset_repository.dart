@@ -9,6 +9,16 @@ import 'family_asset_file.dart';
 abstract interface class FamilyAssetRepository {
   Future<List<FamilyAssetFile>> listStored();
 
+  /// Resolves the semantic Family document referenced by one project element.
+  ///
+  /// [assetPath] is an opaque infrastructure locator. Implementations may use
+  /// it first, then fall back to app-owned or bundled assets identified by
+  /// [assetId]. Presentation/application callers never inspect the filesystem.
+  Future<FamilyDocument?> resolveDocument({
+    required String assetId,
+    String assetPath = '',
+  });
+
   Future<String?> save(FamilyDocument document);
 
   Future<String> saveAsset(
