@@ -18,7 +18,7 @@ export 'features/elements/presentation/property_editor/property_editor.dart'
 
 class PropertyEditor extends canonical.PropertyEditor {
   const PropertyEditor({
-    super.key,
+    Key? key,
     required RenderScene scene,
     required InspectorTarget target,
     required AuthoringCommandService commands,
@@ -30,6 +30,7 @@ class PropertyEditor extends canonical.PropertyEditor {
     required bool showPlanViewRange,
     required RenderSceneLevel? activePlanLevel,
   }) : super(
+          key: key,
           scene: scene,
           target: target,
           commands: commands,
