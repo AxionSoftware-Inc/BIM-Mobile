@@ -1,4 +1,4 @@
-import '../../../../render_scene_models.dart';
+import '../../../../core/domain/scene/render_scene_models.dart';
 import '../element_parameter_values.dart';
 
 /// Typed compatibility read-model for stair instances.
