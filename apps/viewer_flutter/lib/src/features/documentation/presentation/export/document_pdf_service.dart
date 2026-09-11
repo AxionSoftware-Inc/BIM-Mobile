@@ -7,13 +7,13 @@ import 'package:flutter/material.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
+import '../../../../core/application/render_scene/render_scene_models.dart';
 import '../../../../core/infrastructure/io/atomic_file_writer.dart';
 import '../../../../core/infrastructure/storage/app_project_storage.dart';
 import '../../../../core/presentation/design_system/arvela_brand.dart';
-import '../../../../render_scene_models.dart';
-import '../../../../render_scene_viewport_painter.dart';
-import '../../../../render_scene_viewport_planar.dart';
-import '../../../../render_scene_viewport_types.dart';
+import '../../../viewer/presentation/viewport/render_scene_viewport_painter.dart';
+import '../../../viewer/presentation/viewport/render_scene_viewport_planar.dart';
+import '../../../viewer/presentation/viewport/render_scene_viewport_types.dart';
 import '../../application/document_models.dart';
 
 /// Converts authoritative RenderScene views into a printable A3 sheet set.
