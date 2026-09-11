@@ -5,8 +5,5 @@ final class WallElementModule extends BimElementModule {
       : super.withIdentity(
           identity: BimElementKindCatalog.wall,
           typeFamily: BimElementTypeFamily.wall,
-          isLevelHosted: true,
-          isPlanCore: true,
-          levelLockedByDefault: true,
         );
 }

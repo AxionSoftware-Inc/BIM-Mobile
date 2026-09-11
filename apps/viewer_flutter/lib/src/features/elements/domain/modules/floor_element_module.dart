@@ -6,8 +6,5 @@ final class FloorElementModule extends BimElementModule {
           identity: BimElementKindCatalog.floor,
           typeFamily: BimElementTypeFamily.floor,
           inspectorAdapterKey: BimElementInspectorKeys.surface,
-          isLevelHosted: true,
-          isPlanCore: true,
-          levelLockedByDefault: true,
         );
 }

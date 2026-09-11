@@ -5,7 +5,5 @@ final class LevelElementModule extends BimElementModule {
       : super.withIdentity(
           identity: BimElementKindCatalog.level,
           typeFamily: BimElementTypeFamily.none,
-          isArchitectural: false,
-          defaultVisibleIn3d: false,
         );
 }

@@ -6,6 +6,5 @@ final class ProxyElementModule extends BimElementModule {
           identity: BimElementKindCatalog.proxy,
           typeFamily: BimElementTypeFamily.none,
           inspectorAdapterKey: BimElementInspectorKeys.family,
-          isArchitectural: false,
         );
 }

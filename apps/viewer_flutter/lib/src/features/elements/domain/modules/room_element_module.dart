@@ -5,6 +5,5 @@ final class RoomElementModule extends BimElementModule {
       : super.withIdentity(
           identity: BimElementKindCatalog.room,
           typeFamily: BimElementTypeFamily.none,
-          isPlanCore: true,
         );
 }

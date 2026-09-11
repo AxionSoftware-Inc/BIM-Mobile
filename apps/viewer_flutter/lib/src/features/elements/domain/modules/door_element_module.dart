@@ -6,9 +6,5 @@ final class DoorElementModule extends BimElementModule {
           identity: BimElementKindCatalog.door,
           typeFamily: BimElementTypeFamily.door,
           inspectorAdapterKey: BimElementInspectorKeys.opening,
-          isLevelHosted: true,
-          isPlanCore: true,
-          isOpening: true,
-          levelLockedByDefault: true,
         );
 }

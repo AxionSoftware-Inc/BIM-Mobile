@@ -1,18 +1,30 @@
-/// Renderer- and UI-neutral identity for one BIM element kind.
+/// Renderer- and UI-neutral identity and capabilities for one BIM element kind.
 ///
-/// This is the authoritative owner of canonical kind keys, display names and
-/// import aliases. Capability modules may add authoring/inspection behavior,
-/// but must reuse these descriptors instead of maintaining another alias map.
+/// This is the authoritative owner of canonical kind keys, display names,
+/// import aliases and cross-cutting semantic capabilities. Feature modules may
+/// add authoring/type/inspection behavior, but must reuse these descriptors.
 final class BimElementKindDescriptor {
   const BimElementKindDescriptor({
     required this.kindKey,
     required this.displayName,
     this.aliases = const <String>{},
+    this.isArchitectural = true,
+    this.isLevelHosted = false,
+    this.isPlanCore = false,
+    this.isOpening = false,
+    this.defaultVisibleIn3d = true,
+    this.levelLockedByDefault = false,
   });
 
   final String kindKey;
   final String displayName;
   final Set<String> aliases;
+  final bool isArchitectural;
+  final bool isLevelHosted;
+  final bool isPlanCore;
+  final bool isOpening;
+  final bool defaultVisibleIn3d;
+  final bool levelLockedByDefault;
 }
 
 abstract final class BimElementKindCatalog {
@@ -20,61 +32,94 @@ abstract final class BimElementKindCatalog {
     kindKey: 'level',
     displayName: 'Level',
     aliases: <String>{'level'},
+    isArchitectural: false,
+    defaultVisibleIn3d: false,
   );
   static const wall = BimElementKindDescriptor(
     kindKey: 'wall',
     displayName: 'Wall',
     aliases: <String>{'wall'},
+    isLevelHosted: true,
+    isPlanCore: true,
+    levelLockedByDefault: true,
   );
   static const door = BimElementKindDescriptor(
     kindKey: 'door',
     displayName: 'Door',
     aliases: <String>{'door', 'opening'},
+    isLevelHosted: true,
+    isPlanCore: true,
+    isOpening: true,
+    levelLockedByDefault: true,
   );
   static const window = BimElementKindDescriptor(
     kindKey: 'window',
     displayName: 'Window',
     aliases: <String>{'window'},
+    isLevelHosted: true,
+    isPlanCore: true,
+    isOpening: true,
+    levelLockedByDefault: true,
   );
   static const room = BimElementKindDescriptor(
     kindKey: 'room',
     displayName: 'Room',
     aliases: <String>{'room'},
+    isPlanCore: true,
   );
   static const floor = BimElementKindDescriptor(
     kindKey: 'floor',
     displayName: 'Floor',
     aliases: <String>{'floor', 'floorsystem'},
+    isLevelHosted: true,
+    isPlanCore: true,
+    levelLockedByDefault: true,
   );
   static const ceiling = BimElementKindDescriptor(
     kindKey: 'ceiling',
     displayName: 'Ceiling',
     aliases: <String>{'ceiling', 'ceilingsystem'},
+    isLevelHosted: true,
+    isPlanCore: true,
+    levelLockedByDefault: true,
   );
   static const roof = BimElementKindDescriptor(
     kindKey: 'roof',
     displayName: 'Roof',
     aliases: <String>{'roof'},
+    isLevelHosted: true,
+    levelLockedByDefault: true,
   );
   static const slab = BimElementKindDescriptor(
     kindKey: 'slab',
     displayName: 'Slab',
     aliases: <String>{'slab'},
+    isLevelHosted: true,
+    levelLockedByDefault: true,
   );
   static const column = BimElementKindDescriptor(
     kindKey: 'column',
     displayName: 'Column',
     aliases: <String>{'column'},
+    isLevelHosted: true,
+    isPlanCore: true,
+    levelLockedByDefault: true,
   );
   static const beam = BimElementKindDescriptor(
     kindKey: 'beam',
     displayName: 'Beam',
     aliases: <String>{'beam'},
+    isLevelHosted: true,
+    isPlanCore: true,
+    levelLockedByDefault: true,
   );
   static const stair = BimElementKindDescriptor(
     kindKey: 'stair',
     displayName: 'Stair',
     aliases: <String>{'stair'},
+    isLevelHosted: true,
+    isPlanCore: true,
+    levelLockedByDefault: true,
   );
   static const proxy = BimElementKindDescriptor(
     kindKey: 'proxy',
@@ -96,6 +141,7 @@ abstract final class BimElementKindCatalog {
       'externalmesh',
       'foreignmesh',
     },
+    isArchitectural: false,
   );
 
   static const List<BimElementKindDescriptor> standard =
@@ -138,6 +184,9 @@ abstract final class BimElementKindCatalog {
         .map((part) => '${part[0].toUpperCase()}${part.substring(1)}')
         .join(' ');
   }
+
+  static bool isLevelLockedByDefault(String value) =>
+      resolve(value)?.levelLockedByDefault ?? false;
 
   static Map<String, BimElementKindDescriptor> _buildIndex() {
     final result = <String, BimElementKindDescriptor>{};

@@ -1,4 +1,4 @@
-import 'elements/bim_element_registry.dart';
+import 'core/domain/elements/bim_element_kind_catalog.dart';
 
 /// The single source of truth for fallback RenderScene level relationships.
 ///
@@ -58,7 +58,7 @@ class RenderSceneLevelBinding {
 
     for (final object in objects) {
       final kind = kindKey(object);
-      if (!BimElementRegistry.standard.isLevelLockedByDefault(kind)) {
+      if (!BimElementKindCatalog.isLevelLockedByDefault(kind)) {
         continue;
       }
       final metadata = metadataOf(object);
@@ -100,12 +100,11 @@ class RenderSceneLevelBinding {
     final value = metadataOf(object)['level_locked'];
     return value is bool
         ? value
-        : BimElementRegistry.standard.isLevelLockedByDefault(kindKey(object));
+        : BimElementKindCatalog.isLevelLockedByDefault(kindKey(object));
   }
 
   static String kindKey(Map<String, Object?> object) =>
-      BimElementRegistry.standard
-          .normalizeKind(object['kind']?.toString() ?? '');
+      BimElementKindCatalog.normalizeKind(object['kind']?.toString() ?? '');
 
   static int? elementId(Map<String, Object?> object) =>
       toInt(object['element_id']) ?? toInt(object['elementId']);

@@ -5,8 +5,5 @@ final class StairElementModule extends BimElementModule {
       : super.withIdentity(
           identity: BimElementKindCatalog.stair,
           typeFamily: BimElementTypeFamily.stair,
-          isLevelHosted: true,
-          isPlanCore: true,
-          levelLockedByDefault: true,
         );
 }

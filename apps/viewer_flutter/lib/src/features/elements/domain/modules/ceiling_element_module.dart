@@ -6,8 +6,5 @@ final class CeilingElementModule extends BimElementModule {
           identity: BimElementKindCatalog.ceiling,
           typeFamily: BimElementTypeFamily.ceiling,
           inspectorAdapterKey: BimElementInspectorKeys.ceiling,
-          isLevelHosted: true,
-          isPlanCore: true,
-          levelLockedByDefault: true,
         );
 }

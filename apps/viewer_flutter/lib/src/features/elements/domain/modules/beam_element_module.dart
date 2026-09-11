@@ -6,8 +6,5 @@ final class BeamElementModule extends BimElementModule {
           identity: BimElementKindCatalog.beam,
           typeFamily: BimElementTypeFamily.beam,
           inspectorAdapterKey: BimElementInspectorKeys.linear,
-          isLevelHosted: true,
-          isPlanCore: true,
-          levelLockedByDefault: true,
         );
 }

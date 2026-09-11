@@ -6,8 +6,5 @@ final class ColumnElementModule extends BimElementModule {
           identity: BimElementKindCatalog.column,
           typeFamily: BimElementTypeFamily.column,
           inspectorAdapterKey: BimElementInspectorKeys.linear,
-          isLevelHosted: true,
-          isPlanCore: true,
-          levelLockedByDefault: true,
         );
 }

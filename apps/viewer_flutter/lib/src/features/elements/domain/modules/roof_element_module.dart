@@ -5,7 +5,5 @@ final class RoofElementModule extends BimElementModule {
       : super.withIdentity(
           identity: BimElementKindCatalog.roof,
           typeFamily: BimElementTypeFamily.roof,
-          isLevelHosted: true,
-          levelLockedByDefault: true,
         );
 }

@@ -6,7 +6,5 @@ final class SlabElementModule extends BimElementModule {
           identity: BimElementKindCatalog.slab,
           typeFamily: BimElementTypeFamily.slab,
           inspectorAdapterKey: BimElementInspectorKeys.surface,
-          isLevelHosted: true,
-          levelLockedByDefault: true,
         );
 }

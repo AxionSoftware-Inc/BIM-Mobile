@@ -6,9 +6,5 @@ final class WindowElementModule extends BimElementModule {
           identity: BimElementKindCatalog.window,
           typeFamily: BimElementTypeFamily.window,
           inspectorAdapterKey: BimElementInspectorKeys.opening,
-          isLevelHosted: true,
-          isPlanCore: true,
-          isOpening: true,
-          levelLockedByDefault: true,
         );
 }
