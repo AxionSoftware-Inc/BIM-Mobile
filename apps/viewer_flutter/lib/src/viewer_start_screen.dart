@@ -143,13 +143,14 @@ class _StartScreenGate extends StatefulWidget {
 
 class _StartScreenGateState extends State<_StartScreenGate> {
   late final ProjectLaunchController _launch;
-  ProjectRecoveryEntry? _recoveryEntry;
-  final ProjectRecoveryStore _recoveryStore = ProjectRecoveryStore();
+  late final StartScreenRecoveryRepository _recoveryRepository;
+  StartScreenRecoveryCandidate? _recoveryEntry;
 
   @override
   void initState() {
     super.initState();
     _launch = ProjectLaunchController()..addListener(_handleLaunchChanged);
+    _recoveryRepository = FileStartScreenRecoveryRepository();
     unawaited(_loadRecoveryEntry());
   }
 
@@ -167,7 +168,7 @@ class _StartScreenGateState extends State<_StartScreenGate> {
 
   Future<void> _loadRecoveryEntry() async {
     try {
-      final entries = await _recoveryStore.list();
+      final entries = await _recoveryRepository.list();
       if (mounted && entries.isNotEmpty) {
         setState(() => _recoveryEntry = entries.first);
       }
@@ -178,7 +179,7 @@ class _StartScreenGateState extends State<_StartScreenGate> {
     final entry = _recoveryEntry;
     if (_launch.state.busy || entry == null) return;
     try {
-      final json = await entry.readJson();
+      final json = await _recoveryRepository.readJson(entry);
       if (!mounted) return;
       _launch.recoverProject(json: json, projectName: entry.projectName);
     } catch (error) {
@@ -190,7 +191,7 @@ class _StartScreenGateState extends State<_StartScreenGate> {
   Future<void> _dismissRecovery() async {
     final entry = _recoveryEntry;
     if (entry == null) return;
-    await _recoveryStore.deleteEntry(entry);
+    await _recoveryRepository.delete(entry);
     if (mounted) setState(() => _recoveryEntry = null);
   }
 
