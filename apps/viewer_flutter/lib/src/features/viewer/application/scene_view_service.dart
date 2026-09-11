@@ -1,7 +1,7 @@
 import '../../../core/application/engine/viewer_engine_contracts.dart';
 import '../../../core/application/engine/viewer_scene_gateway.dart';
 import '../../../core/application/engine/viewer_scene_gateway_resolver.dart';
-import '../../../core/domain/scene/render_scene_models.dart';
+import '../../../core/application/render_scene/render_scene_models.dart';
 
 /// Application service for refreshing and navigating authoritative scenes.
 ///
