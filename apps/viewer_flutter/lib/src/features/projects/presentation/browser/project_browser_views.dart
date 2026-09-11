@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:viewer_flutter/src/documentation/document_models.dart';
-import 'package:viewer_flutter/src/render_scene_models.dart';
-import 'package:viewer_flutter/src/render_scene_viewport_planar.dart';
-import 'package:viewer_flutter/src/render_scene_viewport_types.dart';
-import 'package:viewer_flutter/src/view_tabs.dart';
-import 'package:viewer_flutter/src/view_workspace_store.dart';
+import 'package:viewer_flutter/src/core/application/render_scene/render_scene_models.dart';
+import 'package:viewer_flutter/src/features/documentation/application/document_models.dart';
+import 'package:viewer_flutter/src/features/viewer/application/workspace/opened_view_tab.dart';
+import 'package:viewer_flutter/src/features/viewer/application/workspace/view_workspace_store.dart';
+import 'package:viewer_flutter/src/features/viewer/presentation/viewport/render_scene_viewport_planar.dart';
+import 'package:viewer_flutter/src/features/viewer/presentation/viewport/render_scene_viewport_types.dart';
 
 /// Presentation-only view tree for the Project Browser.
 ///
