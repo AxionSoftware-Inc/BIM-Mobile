@@ -1,5 +1,5 @@
+import '../../../../core/domain/scene/render_scene_models.dart';
 import '../../../schedules/domain/project_schedule_kind.dart';
-import '../../../../render_scene_models.dart';
 import '../../domain/view/view_configuration.dart';
 import '../../domain/view/view_presentation.dart';
 
