@@ -1,5 +1,5 @@
 import '../../../core/application/signals/application_notifier.dart';
-import '../../../core/domain/scene/render_scene_models.dart';
+import '../../../core/application/render_scene/render_scene_models.dart';
 import '../domain/annotation_view_key.dart';
 import 'annotation_document_controller.dart';
 
