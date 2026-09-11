@@ -5,7 +5,6 @@ import 'dart:math' as math;
 
 import 'package:ffi/ffi.dart';
 import '../../../core/application/concurrency/async_serial_queue.dart';
-import '../../../core/application/engine/viewer_authoring_gateway.dart';
 import '../../../core/application/engine/viewer_bim_cache_gateway.dart';
 import '../../../core/application/engine/viewer_engine_contracts.dart';
 import '../../../core/application/engine/viewer_project_session.dart';
@@ -16,6 +15,7 @@ import '../../../core/domain/geometry/wall_arc_geometry.dart';
 import '../../../core/infrastructure/io/atomic_file_writer.dart';
 import '../../../core/infrastructure/storage/app_project_storage.dart';
 import '../../../features/elements/application/wall_element_parameters.dart';
+import '../../../features/families/application/family_authoring_gateway.dart';
 import '../native_engine_library_loader.dart';
 
 part 'tbe_ffi_bindings.dart';

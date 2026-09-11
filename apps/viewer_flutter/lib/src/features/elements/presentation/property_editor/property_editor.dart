@@ -24,6 +24,7 @@ import '../../../families/application/library/family_asset_repository.dart';
 import '../../../families/domain/document/family_document.dart';
 import '../../../families/application/representation/family_plan_symbol.dart';
 import '../../../families/application/family_instance_adapter.dart';
+import '../../../families/application/family_command_service.dart';
 import '../inspector_controller.dart';
 
 part 'elements/inspectors/object_inspector_router.dart';
@@ -48,6 +49,7 @@ class PropertyEditor extends StatelessWidget {
     required this.scene,
     required this.target,
     required this.commands,
+    this.familyCommands,
     required this.familyAssets,
     required this.onApplied,
     required this.onClearSelection,
@@ -61,6 +63,7 @@ class PropertyEditor extends StatelessWidget {
   final RenderScene scene;
   final InspectorTarget target;
   final AuthoringCommandService commands;
+  final FamilyCommandService? familyCommands;
   final FamilyAssetRepository familyAssets;
   final ApplyInspectorResult onApplied;
   final VoidCallback onClearSelection;
@@ -116,6 +119,7 @@ class PropertyEditor extends StatelessWidget {
               levels: scene.levels,
               units: units,
               commands: commands,
+              familyCommands: familyCommands,
               familyAssets: familyAssets,
               onApplied: onApplied,
             ),

@@ -184,7 +184,7 @@ void registerArchitectureModuleTests() {
     );
     final wall = scene.objects.firstWhere((object) => object.kindKey == 'wall');
     final commands = AuthoringCommandService(
-      repository: () => null,
+      ports: () => null,
       creationGateway: () => null,
       engineEnabled: () => false,
     );

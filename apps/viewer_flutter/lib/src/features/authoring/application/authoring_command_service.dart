@@ -1,9 +1,9 @@
-import '../../../core/application/engine/viewer_authoring_gateway.dart';
 import '../../../core/application/engine/viewer_element_creation_gateway.dart';
 import '../../../core/application/engine/viewer_engine_contracts.dart';
 import '../../../core/application/render_scene/render_scene_models.dart';
 import '../../../core/domain/assemblies/wall_type_catalog.dart';
 import 'geometry/wall_authoring_geometry.dart';
+import 'viewer_authoring_ports.dart';
 
 /// Engine-first authoring commands used by Inspector and workspace features.
 ///
@@ -12,14 +12,14 @@ import 'geometry/wall_authoring_geometry.dart';
 /// verification) belongs to [SceneMutationService], not here.
 class AuthoringCommandService {
   AuthoringCommandService({
-    required ViewerAuthoringGateway? Function() repository,
+    required ViewerAuthoringPorts? Function() ports,
     required ViewerElementCreationGateway? Function() creationGateway,
     required bool Function() engineEnabled,
-  })  : _repository = repository,
+  })  : _ports = ports,
         _creationGateway = creationGateway,
         _engineEnabled = engineEnabled;
 
-  final ViewerAuthoringGateway? Function() _repository;
+  final ViewerAuthoringPorts? Function() _ports;
   final ViewerElementCreationGateway? Function() _creationGateway;
   final bool Function() _engineEnabled;
 
@@ -32,12 +32,12 @@ class AuthoringCommandService {
     required double elevationMeters,
     required double defaultWallHeightMeters,
   }) =>
-      _requireRepository().updateLevel(
-        levelId: levelId,
-        name: name,
-        elevationMeters: elevationMeters,
-        defaultWallHeightMeters: defaultWallHeightMeters,
-      );
+      _requirePorts().levels.updateLevel(
+            levelId: levelId,
+            name: name,
+            elevationMeters: elevationMeters,
+            defaultWallHeightMeters: defaultWallHeightMeters,
+          );
 
   Future<RenderSceneLoadResult> setWallConstraints({
     required int wallId,
@@ -47,23 +47,23 @@ class AuthoringCommandService {
     double baseOffsetMeters = 0,
     double topOffsetMeters = 0,
   }) =>
-      _requireRepository().setWallLevelConstraints(
-        wallId: wallId,
-        baseLevelId: baseLevelId,
-        topLevelId: topLevelId,
-        heightMode: heightMode,
-        baseOffsetMeters: baseOffsetMeters,
-        topOffsetMeters: topOffsetMeters,
-      );
+      _requirePorts().walls.setWallLevelConstraints(
+            wallId: wallId,
+            baseLevelId: baseLevelId,
+            topLevelId: topLevelId,
+            heightMode: heightMode,
+            baseOffsetMeters: baseOffsetMeters,
+            topOffsetMeters: topOffsetMeters,
+          );
 
   Future<RenderSceneLoadResult> setWallType({
     required int wallId,
     required int wallTypeId,
   }) =>
-      _requireRepository().setWallType(
-        wallId: wallId,
-        wallTypeId: wallTypeId,
-      );
+      _requirePorts().walls.setWallType(
+            wallId: wallId,
+            wallTypeId: wallTypeId,
+          );
 
   /// Legacy raw engine entry point kept only while callers finish migrating.
   /// Interactive straight/curved wall creation must use [SceneMutationService]
@@ -76,13 +76,13 @@ class AuthoringCommandService {
     required double thicknessMeters,
     required double heightMeters,
   }) =>
-      _requireRepository().createCurvedWall(
-        name: name,
-        levelId: levelId,
-        geometry: geometry,
-        thicknessMeters: thicknessMeters,
-        heightMeters: heightMeters,
-      );
+      _requirePorts().walls.createCurvedWall(
+            name: name,
+            levelId: levelId,
+            geometry: geometry,
+            thicknessMeters: thicknessMeters,
+            heightMeters: heightMeters,
+          );
 
   Future<RenderSceneLoadResult> createWallTypeForWall({
     required int wallId,
@@ -90,64 +90,64 @@ class AuthoringCommandService {
     required String name,
     required List<WallTypeLayerDefinition> layers,
   }) =>
-      _requireRepository().createWallTypeForWall(
-        wallId: wallId,
-        category: category,
-        name: name,
-        layers: layers,
-      );
+      _requirePorts().walls.createWallTypeForWall(
+            wallId: wallId,
+            category: category,
+            name: name,
+            layers: layers,
+          );
 
   Future<RenderSceneLoadResult> setElementAssembly({
     required int elementId,
     required int assemblyId,
   }) =>
-      _requireRepository().setElementAssembly(
-        elementId: elementId,
-        assemblyId: assemblyId,
-      );
+      _requirePorts().elements.setElementAssembly(
+            elementId: elementId,
+            assemblyId: assemblyId,
+          );
 
   Future<RenderSceneLoadResult> setWallAxis({
     required int wallId,
     required RenderScenePoint start,
     required RenderScenePoint end,
   }) =>
-      _requireRepository().setWallAxis(
-        wallId: wallId,
-        start: start,
-        end: end,
-      );
+      _requirePorts().walls.setWallAxis(
+            wallId: wallId,
+            start: start,
+            end: end,
+          );
 
   Future<RenderSceneLoadResult> setCurvedWallGeometry({
     required int wallId,
     required WallArcGeometry geometry,
   }) =>
-      _requireRepository().setCurvedWallGeometry(
-        wallId: wallId,
-        geometry: geometry,
-      );
+      _requirePorts().walls.setCurvedWallGeometry(
+            wallId: wallId,
+            geometry: geometry,
+          );
 
   Future<RenderSceneLoadResult> autoJoinWalls() =>
-      _requireRepository().autoJoinWalls();
+      _requirePorts().walls.autoJoinWalls();
 
   Future<RenderSceneLoadResult> moveLevelElevation({
     required int levelId,
     required double elevationMeters,
   }) =>
-      _requireRepository().moveLevelElevation(
-        levelId: levelId,
-        elevationMeters: elevationMeters,
-      );
+      _requirePorts().levels.moveLevelElevation(
+            levelId: levelId,
+            elevationMeters: elevationMeters,
+          );
 
   Future<RenderSceneLoadResult> moveElement({
     required int elementId,
     required double deltaX,
     required double deltaY,
   }) =>
-      _requireRepository().moveElement(
-        elementId: elementId,
-        deltaX: deltaX,
-        deltaY: deltaY,
-      );
+      _requirePorts().elements.moveElement(
+            elementId: elementId,
+            deltaX: deltaX,
+            deltaY: deltaY,
+          );
 
   Future<RenderSceneLoadResult> trimExtendWalls({
     required int firstWallId,
@@ -155,12 +155,12 @@ class AuthoringCommandService {
     required int secondWallId,
     required bool secondUsesStart,
   }) =>
-      _requireRepository().trimExtendWalls(
-        firstWallId: firstWallId,
-        firstUsesStart: firstUsesStart,
-        secondWallId: secondWallId,
-        secondUsesStart: secondUsesStart,
-      );
+      _requirePorts().walls.trimExtendWalls(
+            firstWallId: firstWallId,
+            firstUsesStart: firstUsesStart,
+            secondWallId: secondWallId,
+            secondUsesStart: secondUsesStart,
+          );
 
   Future<RenderSceneLoadResult> updateOpening({
     required RenderSceneObject object,
@@ -171,35 +171,35 @@ class AuthoringCommandService {
   }) async {
     final id = object.elementId;
     if (id == null) throw TbeApiException('Opening has no stable element ID');
-    return _requireRepository().updateHostedOpening(
-      openingId: id,
-      kind: object.kindKey,
-      offsetMeters: offsetMeters,
-      widthMeters: widthMeters,
-      heightMeters: heightMeters,
-      sillHeightMeters: sillHeightMeters,
-    );
+    return _requirePorts().openings.updateHostedOpening(
+          openingId: id,
+          kind: object.kindKey,
+          offsetMeters: offsetMeters,
+          widthMeters: widthMeters,
+          heightMeters: heightMeters,
+          sillHeightMeters: sillHeightMeters,
+        );
   }
 
   Future<RenderSceneLoadResult> setOpeningLevelLock({
     required int openingId,
     required bool locked,
   }) =>
-      _requireRepository().setOpeningLevelLock(
-        openingId: openingId,
-        locked: locked,
-      );
+      _requirePorts().openings.setOpeningLevelLock(
+            openingId: openingId,
+            locked: locked,
+          );
 
   Future<RenderSceneLoadResult> setOpeningLevelConstraint({
     required int openingId,
     required int levelId,
     required double levelOffsetMeters,
   }) =>
-      _requireRepository().setOpeningLevelConstraint(
-        openingId: openingId,
-        levelId: levelId,
-        levelOffsetMeters: levelOffsetMeters,
-      );
+      _requirePorts().openings.setOpeningLevelConstraint(
+            openingId: openingId,
+            levelId: levelId,
+            levelOffsetMeters: levelOffsetMeters,
+          );
 
   Future<RenderSceneLoadResult> updateRoofProperties({
     required int roofId,
@@ -207,12 +207,12 @@ class AuthoringCommandService {
     double? slopeDegrees,
     double? overhangMeters,
   }) =>
-      _requireRepository().updateRoofProperties(
-        roofId: roofId,
-        roofType: roofType,
-        slopeDegrees: slopeDegrees,
-        overhangMeters: overhangMeters,
-      );
+      _requirePorts().roofs.updateRoofProperties(
+            roofId: roofId,
+            roofType: roofType,
+            slopeDegrees: slopeDegrees,
+            overhangMeters: overhangMeters,
+          );
 
   Future<RenderSceneLoadResult> updateStairLayout({
     required int stairId,
@@ -222,17 +222,17 @@ class AuthoringCommandService {
     required int layoutKind,
     required bool railingEnabled,
   }) =>
-      _requireRepository().updateStairLayout(
-        stairId: stairId,
-        pathPoints: pathPoints,
-        widthMeters: widthMeters,
-        landingDepthMeters: landingDepthMeters,
-        layoutKind: layoutKind,
-        railingEnabled: railingEnabled,
-      );
+      _requirePorts().stairs.updateStairLayout(
+            stairId: stairId,
+            pathPoints: pathPoints,
+            widthMeters: widthMeters,
+            landingDepthMeters: landingDepthMeters,
+            layoutKind: layoutKind,
+            railingEnabled: railingEnabled,
+          );
 
   Future<RenderSceneLoadResult> deleteElement(int elementId) =>
-      _requireRepository().deleteElement(elementId: elementId);
+      _requirePorts().elements.deleteElement(elementId: elementId);
 
   Future<RenderSceneLoadResult> createLevel({
     required String name,
@@ -342,50 +342,6 @@ class AuthoringCommandService {
         materialId: materialId,
       );
 
-  Future<RenderSceneLoadResult> setElementFamilyReference({
-    required int elementId,
-    required String familyAssetId,
-    required String familyName,
-    required String familyTypeId,
-    required String familyTypeName,
-    required String familyCategory,
-    String familyAssetPath = '',
-    String familyParameterDefinitionsJson = '',
-    String familyParameterValuesJson = '',
-    String familyPlanSvg = '',
-  }) =>
-      _requireRepository().setElementFamilyReference(
-        elementId: elementId,
-        familyAssetId: familyAssetId,
-        familyName: familyName,
-        familyTypeId: familyTypeId,
-        familyTypeName: familyTypeName,
-        familyCategory: familyCategory,
-        familyAssetPath: familyAssetPath,
-        familyParameterDefinitionsJson: familyParameterDefinitionsJson,
-        familyParameterValuesJson: familyParameterValuesJson,
-        familyPlanSvg: familyPlanSvg,
-      );
-
-  Future<RenderSceneLoadResult> updateFamilyInstance({
-    required int elementId,
-    required RenderScenePoint position,
-    required double widthMeters,
-    required double depthMeters,
-    required double heightMeters,
-    required List<RenderScenePoint> vertices,
-    required List<int> indices,
-  }) =>
-      _requireRepository().updateFamilyInstance(
-        elementId: elementId,
-        position: position,
-        widthMeters: widthMeters,
-        depthMeters: depthMeters,
-        heightMeters: heightMeters,
-        vertices: vertices,
-        indices: indices,
-      );
-
   Future<RenderSceneLoadResult> createProfile({
     required int targetKind,
     required int draftMode,
@@ -419,12 +375,12 @@ class AuthoringCommandService {
   Future<int?> defaultAssemblyId(String kind) =>
       _requireCreationGateway().defaultAssemblyId(kind);
 
-  ViewerAuthoringGateway _requireRepository() {
-    final repository = _repository();
-    if (!_engineEnabled() || repository == null) {
+  ViewerAuthoringPorts _requirePorts() {
+    final ports = _ports();
+    if (!_engineEnabled() || ports == null) {
       throw TbeApiException('Authoritative engine is required for this edit');
     }
-    return repository;
+    return ports;
   }
 
   ViewerElementCreationGateway _requireCreationGateway() {

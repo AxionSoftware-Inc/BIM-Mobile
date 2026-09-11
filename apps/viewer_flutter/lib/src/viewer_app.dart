@@ -17,6 +17,7 @@ import 'core/domain/units/project_unit_settings.dart';
 import 'core/infrastructure/telemetry/app_telemetry.dart';
 import 'core/presentation/design_system/arvela_brand.dart';
 import 'app/composition/viewer_app_dependencies.dart';
+import 'app/composition/project_model_import_session_loader.dart';
 import 'app/composition/viewer_start_dependencies.dart';
 import 'app/routing/onboarding_page.dart';
 import 'app/settings/app_settings_model.dart';
@@ -28,9 +29,12 @@ import 'features/documentation/presentation/sheet_canvas.dart';
 import 'features/documentation/presentation/sheet_workspace_controller.dart';
 import 'family_authoring/family_authoring_module.dart';
 import 'features/authoring/application/authoring_command_service.dart';
+import 'features/authoring/application/viewer_authoring_ports.dart';
 import 'features/authoring/application/roof/automatic_flat_roof_planner.dart';
 import 'features/authoring/application/room/room_placement_preview_planner.dart';
 import 'features/families/application/family_instance_adapter.dart';
+import 'features/families/application/family_authoring_gateway.dart';
+import 'features/families/application/family_command_service.dart';
 import 'features/elements/application/bim_element_registry.dart';
 import 'features/elements/application/opening_element_parameters.dart';
 import 'core/domain/assemblies/floor_type_catalog.dart';
@@ -123,6 +127,7 @@ class _ViewerHomePageState extends State<ViewerHomePage>
   late final SelectionController _selectionController;
   late final InspectorController _inspectorController;
   late final AuthoringCommandService _authoringCommands;
+  late final FamilyCommandService _familyCommands;
   late final ViewerAppDependencies _dependencies;
   late final ProjectLifecycleService<ViewerEngineSession> _projectLifecycle;
   late final ProjectPersistenceService _projectPersistence;
@@ -393,8 +398,22 @@ class _ViewerHomePageState extends State<ViewerHomePage>
     _selectionController.addListener(_onSelectionChangedForWorkspace);
     _inspectorController = InspectorController(_selectionController);
     _authoringCommands = AuthoringCommandService(
-      repository: () => _engineRepository,
+      ports: () {
+        final session = _engineRepository;
+        if (!_engineBackedMode || session == null) return null;
+        return ViewerAuthoringPorts.fromSession(session);
+      },
       creationGateway: () => _engineRepository,
+      engineEnabled: () => _engineBackedMode,
+    );
+    _familyCommands = FamilyCommandService(
+      gateway: () {
+        final session = _engineRepository;
+        if (session is FamilyAuthoringGateway) {
+          return session as FamilyAuthoringGateway;
+        }
+        return null;
+      },
       engineEnabled: () => _engineBackedMode,
     );
     _dependencies = widget.dependencies ?? ViewerAppDependencies.production();
@@ -518,7 +537,7 @@ class _ViewerHomePageState extends State<ViewerHomePage>
   Future<void> _importIfc() async {
     if (_isBusy) return;
     final importService = ModelImportService<ViewerEngineSession>.standard(
-      lifecycle: _projectLifecycle,
+      lifecycle: ProjectModelImportSessionLoader(_projectLifecycle),
     );
     try {
       final typeGroup = XTypeGroup(
@@ -549,7 +568,7 @@ class _ViewerHomePageState extends State<ViewerHomePage>
     if (_isBusy) return;
     final generation = ++_sceneLoadGeneration;
     final importService = ModelImportService<ViewerEngineSession>.standard(
-      lifecycle: _projectLifecycle,
+      lifecycle: ProjectModelImportSessionLoader(_projectLifecycle),
     );
     ModelImportCandidate<ViewerEngineSession>? candidate;
     var committed = false;

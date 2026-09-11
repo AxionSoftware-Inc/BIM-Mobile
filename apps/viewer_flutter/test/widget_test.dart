@@ -43,6 +43,7 @@ import 'package:viewer_flutter/src/features/elements/presentation/inspector_cont
 import 'package:viewer_flutter/src/features/elements/presentation/property_editor/property_editor.dart';
 import 'package:viewer_flutter/src/features/families/infrastructure/library/local_family_asset_repository.dart';
 import 'package:viewer_flutter/src/features/authoring/application/authoring_command_service.dart';
+import 'package:viewer_flutter/src/features/authoring/application/viewer_authoring_ports.dart';
 import 'package:viewer_flutter/src/platform/native_engine/ffi/tbe_ffi.dart';
 import 'package:viewer_flutter/src/core/application/engine/viewer_engine_contracts.dart';
 import 'package:viewer_flutter/src/core/application/engine/viewer_project_gateway.dart';

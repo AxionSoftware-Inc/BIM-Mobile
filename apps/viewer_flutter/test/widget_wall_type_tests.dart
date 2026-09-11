@@ -152,7 +152,7 @@ void registerWallTypeTests() {
       diagnostics: parsed.diagnostics,
     );
     final commands = AuthoringCommandService(
-      repository: () => null,
+      ports: () => null,
       creationGateway: () => null,
       engineEnabled: () => false,
     );

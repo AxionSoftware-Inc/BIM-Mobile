@@ -612,7 +612,7 @@ void registerEngineIntegrationTests() {
     );
     final before = (await repository.currentRenderScene()).scene!;
     final outcome =
-        await SceneMutationService(engineRepository: repository).createWall(
+        await SceneMutationService(wallAuthoringGateway: repository).createWall(
       CreateWallRequest(
         scene: before,
         start: const RenderScenePoint(x: 12, y: 1, z: 0),

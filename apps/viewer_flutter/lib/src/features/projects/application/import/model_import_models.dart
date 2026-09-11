@@ -73,7 +73,27 @@ class ModelImportProgress {
   final String message;
 }
 
-typedef ModelImportProgressCallback = void Function(ModelImportProgress progress);
+typedef ModelImportProgressCallback = void Function(
+    ModelImportProgress progress);
+
+/// Neutral session-loading port used by the import feature.
+///
+/// The importer does not own project lifecycle, companion documents or the
+/// active workspace. The composition root supplies those concerns through
+/// this small adapter.
+abstract interface class ModelImportSessionLoader<
+    T extends ViewerEngineSession> {
+  Future<T> loadJson({
+    required String projectName,
+    required String json,
+    String? sourcePath,
+  });
+
+  Future<T> loadIfc({
+    required String projectName,
+    required String ifcPath,
+  });
+}
 
 /// A fully validated candidate. Ownership is transferred to the workspace only
 /// after this object is returned; failed imports dispose their candidate session

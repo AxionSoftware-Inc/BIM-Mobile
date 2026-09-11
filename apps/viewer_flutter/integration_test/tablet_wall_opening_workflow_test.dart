@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:viewer_flutter/src/features/authoring/application/authoring_command_service.dart';
+import 'package:viewer_flutter/src/features/authoring/application/viewer_authoring_ports.dart';
 import 'package:viewer_flutter/src/core/application/render_scene/render_scene_models.dart';
 import 'package:viewer_flutter/src/platform/native_engine/ffi/tbe_ffi.dart';
 
@@ -13,7 +14,7 @@ void main() {
       final repository = ViewerRepository(TbeViewerApi.load());
       addTearDown(repository.dispose);
       final commands = AuthoringCommandService(
-        repository: () => repository,
+        ports: () => ViewerAuthoringPorts.fromSession(repository),
         creationGateway: () => repository,
         engineEnabled: () => true,
       );

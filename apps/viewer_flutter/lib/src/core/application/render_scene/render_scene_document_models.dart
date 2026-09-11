@@ -612,11 +612,11 @@ List<RenderSceneLevel> _inferLevelsFromObjects(
 }
 
 String normalizeSceneKind(String value) {
-  return BimElementRegistry.standard.normalizeKind(value);
+  return BimElementKindCatalog.normalizeKind(value);
 }
 
 String prettySceneKind(String value) {
-  return BimElementRegistry.standard.displayName(value);
+  return BimElementKindCatalog.displayName(value);
 }
 
 String toSceneString(Object? value, {required String fallback}) {

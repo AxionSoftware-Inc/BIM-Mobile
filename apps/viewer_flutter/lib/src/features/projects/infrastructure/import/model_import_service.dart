@@ -6,14 +6,13 @@ import '../../../../core/application/engine/viewer_scene_gateway.dart';
 import '../../../../core/application/render_scene/render_scene_models.dart';
 import '../../application/import/model_import_audit.dart';
 import '../../application/import/model_import_models.dart';
-import '../../application/project_lifecycle_service.dart';
 import 'ifc_source_inventory_reader.dart';
 import 'model_import_cache.dart';
 
 abstract interface class ModelImportAdapter<T extends ViewerEngineSession> {
   ModelImportFormatDescriptor get descriptor;
 
-  Future<ProjectSessionResult<T>> importSource(ModelImportSource source);
+  Future<T> importSource(ModelImportSource source);
 
   Future<String> semanticCheckpoint(T session);
 }
@@ -21,17 +20,17 @@ abstract interface class ModelImportAdapter<T extends ViewerEngineSession> {
 class IfcModelImportAdapter<T extends ViewerEngineSession>
     implements ModelImportAdapter<T> {
   IfcModelImportAdapter({
-    required ProjectLifecycleService<T> lifecycle,
+    required ModelImportSessionLoader<T> lifecycle,
     required this.descriptor,
   }) : _lifecycle = lifecycle;
 
-  final ProjectLifecycleService<T> _lifecycle;
+  final ModelImportSessionLoader<T> _lifecycle;
 
   @override
   final ModelImportFormatDescriptor descriptor;
 
   @override
-  Future<ProjectSessionResult<T>> importSource(ModelImportSource source) {
+  Future<T> importSource(ModelImportSource source) {
     return _lifecycle.loadIfc(
       projectName: source.displayName,
       ifcPath: source.path,
@@ -51,7 +50,7 @@ class IfcModelImportAdapter<T extends ViewerEngineSession>
 /// This keeps a malformed source or stale cache from corrupting the open model.
 class ModelImportService<T extends ViewerEngineSession> {
   ModelImportService({
-    required ProjectLifecycleService<T> lifecycle,
+    required ModelImportSessionLoader<T> lifecycle,
     required this.registry,
     required Iterable<ModelImportAdapter<T>> adapters,
     ModelImportCacheStore? cache,
@@ -65,7 +64,7 @@ class ModelImportService<T extends ViewerEngineSession> {
             ifcInventoryReader ?? const IfcSourceInventoryReader();
 
   factory ModelImportService.standard({
-    required ProjectLifecycleService<T> lifecycle,
+    required ModelImportSessionLoader<T> lifecycle,
   }) {
     final registry = ModelImportRegistry.standard();
     final ifc = registry.formats.firstWhere((format) => format.id == 'ifc');
@@ -78,7 +77,7 @@ class ModelImportService<T extends ViewerEngineSession> {
     );
   }
 
-  final ProjectLifecycleService<T> _lifecycle;
+  final ModelImportSessionLoader<T> _lifecycle;
   final Map<String, ModelImportAdapter<T>> _adapters;
   final ModelImportCacheStore _cache;
   final IfcSourceInventoryReader _ifcInventoryReader;
@@ -210,7 +209,7 @@ class ModelImportService<T extends ViewerEngineSession> {
     );
     final cached = await _cache.readSemantic(source);
     if (cached != null) {
-      ProjectSessionResult<T>? cachedLaunch;
+      T? cachedLaunch;
       try {
         cachedLaunch = await _lifecycle.loadJson(
           projectName: source.displayName,
@@ -223,7 +222,7 @@ class ModelImportService<T extends ViewerEngineSession> {
           0.62,
           'Validating cached BIM scene…',
         );
-        final initialScene = await _validatedInitialScene(cachedLaunch.session);
+        final initialScene = await _validatedInitialScene(cachedLaunch);
         final audit = ModelImportAudit.build(
           source: sourceInventory,
           scene: initialScene.scene!,
@@ -235,7 +234,7 @@ class ModelImportService<T extends ViewerEngineSession> {
           audit.compactSummary,
         );
         return ModelImportCandidate<T>(
-          session: cachedLaunch.session,
+          session: cachedLaunch,
           source: source,
           initialScene: initialScene,
           origin: ModelImportOrigin.semanticCache,
@@ -243,14 +242,14 @@ class ModelImportService<T extends ViewerEngineSession> {
           audit: audit,
         );
       } catch (_) {
-        cachedLaunch?.session.dispose();
+        cachedLaunch?.dispose();
         await _cache.invalidateSemantic(source);
         // A stale or incompatible cache is never fatal. Fall through to the
         // original source and rebuild a clean checkpoint.
       }
     }
 
-    ProjectSessionResult<T>? launch;
+    T? launch;
     try {
       _progress(
         onProgress,
@@ -265,7 +264,7 @@ class ModelImportService<T extends ViewerEngineSession> {
         0.68,
         'Validating imported BIM scene…',
       );
-      final initialScene = await _validatedInitialScene(launch.session);
+      final initialScene = await _validatedInitialScene(launch);
       final audit = ModelImportAudit.build(
         source: sourceInventory,
         scene: initialScene.scene!,
@@ -276,7 +275,7 @@ class ModelImportService<T extends ViewerEngineSession> {
         0.78,
         'Writing semantic checkpoint…',
       );
-      final semanticJson = await adapter.semanticCheckpoint(launch.session);
+      final semanticJson = await adapter.semanticCheckpoint(launch);
       await _cache.writeSemantic(source, semanticJson);
       _progress(
         onProgress,
@@ -292,7 +291,7 @@ class ModelImportService<T extends ViewerEngineSession> {
         audit.compactSummary,
       );
       return ModelImportCandidate<T>(
-        session: launch.session,
+        session: launch,
         source: source,
         initialScene: initialScene,
         origin: ModelImportOrigin.sourceFile,
@@ -300,7 +299,7 @@ class ModelImportService<T extends ViewerEngineSession> {
         audit: audit,
       );
     } catch (_) {
-      launch?.session.dispose();
+      launch?.dispose();
       rethrow;
     }
   }

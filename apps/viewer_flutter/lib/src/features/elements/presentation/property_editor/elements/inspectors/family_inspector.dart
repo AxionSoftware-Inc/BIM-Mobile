@@ -15,12 +15,24 @@ Widget _buildFamilyInspector(_ObjectInspectorContext context) {
       },
     );
   }
+  final familyCommands = context.familyCommands;
+  if (familyCommands == null) {
+    return BimReadOnlyObjectSection(
+      object: context.object,
+      title: '${bimInspectorLabel(context.object)} properties',
+      rows: <String, String>{
+        'Family': familyId,
+        'Status': 'Family authoring is unavailable in this shell.',
+      },
+    );
+  }
   return _FamilyPropertiesSection(
     object: context.object,
     scene: context.scene,
     levels: context.levels,
     units: context.units,
     commands: context.commands,
+    familyCommands: familyCommands,
     familyAssets: context.familyAssets,
     onApplied: context.onApplied,
   );
@@ -114,6 +126,7 @@ class _FamilyPropertiesSection extends StatefulWidget {
     required this.levels,
     required this.units,
     required this.commands,
+    required this.familyCommands,
     required this.familyAssets,
     required this.onApplied,
   });
@@ -123,6 +136,7 @@ class _FamilyPropertiesSection extends StatefulWidget {
   final List<RenderSceneLevel> levels;
   final ProjectUnitSettings units;
   final AuthoringCommandService commands;
+  final FamilyCommandService? familyCommands;
   final FamilyAssetRepository familyAssets;
   final ApplyInspectorResult onApplied;
 
@@ -520,7 +534,11 @@ class _FamilyPropertiesSectionState extends State<_FamilyPropertiesSection> {
                 fallback: object.bounds.height,
               ),
             );
-      await widget.commands.updateFamilyInstance(
+      final familyCommands = widget.familyCommands;
+      if (familyCommands == null) {
+        throw StateError('Family authoring is unavailable in this shell.');
+      }
+      await familyCommands.updateFamilyInstance(
         elementId: object.elementId!,
         position: position,
         widthMeters: dimensions.width,
@@ -543,7 +561,11 @@ class _FamilyPropertiesSectionState extends State<_FamilyPropertiesSection> {
       }
     }
 
-    final result = await widget.commands.setElementFamilyReference(
+    final familyCommands = widget.familyCommands;
+    if (familyCommands == null) {
+      throw StateError('Family authoring is unavailable in this shell.');
+    }
+    final result = await familyCommands.setElementFamilyReference(
       elementId: object.elementId!,
       familyAssetId: instance.assetId,
       familyName: instance.name,

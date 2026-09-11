@@ -196,8 +196,6 @@ void main() {
             'core/application/engine/viewer_spatial_gateway.dart',
         'viewer_element_creation_gateway.dart':
             'core/application/engine/viewer_element_creation_gateway.dart',
-        'viewer_authoring_gateway.dart':
-            'core/application/engine/viewer_authoring_gateway.dart',
         'viewer_project_session.dart':
             'core/application/engine/viewer_project_session.dart',
         'viewer_bim_cache_gateway.dart':

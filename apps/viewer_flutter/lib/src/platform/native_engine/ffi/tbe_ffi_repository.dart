@@ -7,7 +7,7 @@ part of 'tbe_ffi.dart';
 /// this class maps those services to the application gateway contracts.
 class ViewerRepository
     implements
-        ViewerAuthoringGateway,
+        FamilyAuthoringGateway,
         ViewerBimRuntimeCacheGateway,
         ViewerEngineSession,
         ViewerSceneGateway,

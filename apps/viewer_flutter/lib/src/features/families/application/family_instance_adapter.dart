@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'dart:math' as math;
 
-import '../../../core/application/engine/viewer_authoring_gateway.dart';
 import '../../../core/application/engine/viewer_element_creation_gateway.dart';
 import '../../../core/application/render_scene/render_scene_models.dart';
 import '../../authoring/application/scene/render_scene_editor.dart';
@@ -10,6 +9,7 @@ import '../domain/document/family_document.dart';
 import '../domain/geometry/family_geometry.dart';
 import '../domain/parameters/family_parameter_resolver.dart';
 import 'representation/family_plan_symbol.dart';
+import 'family_authoring_gateway.dart';
 import '../domain/validation/family_validation.dart';
 
 /// Result of mapping one reusable family type to a native project instance.
@@ -166,7 +166,7 @@ abstract final class FamilyInstanceAdapter {
     required int levelId,
     required RenderScenePoint position,
     required ViewerElementCreationGateway creationGateway,
-    required ViewerAuthoringGateway authoringGateway,
+    required FamilyAuthoringGateway authoringGateway,
     Iterable<FamilyDocument> availableDocuments = const <FamilyDocument>[],
     int? hostWallId,
     RenderSceneObject? hostWall,

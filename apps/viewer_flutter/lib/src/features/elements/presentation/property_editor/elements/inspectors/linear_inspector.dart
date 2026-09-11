@@ -50,6 +50,8 @@ Widget _buildLinearInspectorFromParameters(
       null) {
     return card;
   }
+  final familyCommands = context.familyCommands;
+  if (familyCommands == null) return card;
   return Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: <Widget>[
@@ -61,6 +63,7 @@ Widget _buildLinearInspectorFromParameters(
         levels: context.levels,
         units: context.units,
         commands: context.commands,
+        familyCommands: familyCommands,
         familyAssets: context.familyAssets,
         onApplied: context.onApplied,
       ),

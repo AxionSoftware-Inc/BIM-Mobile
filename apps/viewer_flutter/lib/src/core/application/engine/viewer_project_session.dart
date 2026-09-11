@@ -1,9 +1,14 @@
 import '../render_scene/render_scene_models.dart';
-import 'viewer_authoring_gateway.dart';
+import 'viewer_element_authoring_gateway.dart';
 import 'viewer_element_creation_gateway.dart';
+import 'viewer_level_authoring_gateway.dart';
+import 'viewer_opening_authoring_gateway.dart';
 import 'viewer_project_gateway.dart';
+import 'viewer_roof_authoring_gateway.dart';
 import 'viewer_scene_gateway.dart';
 import 'viewer_spatial_gateway.dart';
+import 'viewer_stair_authoring_gateway.dart';
+import 'viewer_wall_authoring_gateway.dart';
 
 /// Native command required to create an engine-owned starter project.
 abstract interface class ViewerTemplateGateway {
@@ -34,10 +39,15 @@ abstract interface class ViewerProjectSession
 abstract interface class ViewerEngineSession
     implements
         ViewerProjectSession,
-        ViewerAuthoringGateway,
+        ViewerElementAuthoringGateway,
         ViewerElementCreationGateway,
+        ViewerLevelAuthoringGateway,
+        ViewerOpeningAuthoringGateway,
+        ViewerRoofAuthoringGateway,
         ViewerSceneGateway,
-        ViewerSpatialGateway {}
+        ViewerSpatialGateway,
+        ViewerStairAuthoringGateway,
+        ViewerWallAuthoringGateway {}
 
 /// Composition boundary for creating application-facing engine sessions.
 abstract interface class ViewerSessionFactory<T extends ViewerProjectSession> {

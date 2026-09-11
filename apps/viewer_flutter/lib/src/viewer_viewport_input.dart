@@ -566,7 +566,7 @@ extension _ViewerViewportInput on _ViewerHomePageState {
     final queued = _wallCommitTail.then<void>((_) async {
       try {
         final mutation = SceneMutationService(
-          engineRepository: _engineBackedMode ? _engineRepository : null,
+          wallAuthoringGateway: _engineBackedMode ? _engineRepository : null,
         );
         var outcome = await mutation.createCurvedWall(
           CreateCurvedWallRequest(
@@ -679,7 +679,7 @@ extension _ViewerViewportInput on _ViewerHomePageState {
       return;
     }
     final mutation = SceneMutationService(
-      engineRepository: _engineBackedMode ? _engineRepository : null,
+      wallAuthoringGateway: _engineBackedMode ? _engineRepository : null,
     );
     var outcome = await mutation.createWall(
       CreateWallRequest(

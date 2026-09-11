@@ -50,6 +50,11 @@ extension _ViewerViewCommands on _ViewerHomePageState {
         hostWall: hostWall,
       );
       if (!mounted || placement == null) return;
+      if (session is! FamilyAuthoringGateway) {
+        throw StateError(
+            'Current project session does not expose Family edits.');
+      }
+      final familyGateway = session as FamilyAuthoringGateway;
       _updateViewportState(() {
         _isBusy = true;
         _loadError = null;
@@ -63,7 +68,7 @@ extension _ViewerViewCommands on _ViewerHomePageState {
         position: RenderScenePoint(x: placement.x, y: placement.y, z: 0.0),
         offsetMeters: placement.offsetMeters,
         creationGateway: session,
-        authoringGateway: session,
+        authoringGateway: familyGateway,
         availableDocuments: storedFamilies.map((family) => family.document),
         hostWallId: hostWall?.elementId,
         hostWall: hostWall,

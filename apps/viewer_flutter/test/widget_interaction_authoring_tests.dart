@@ -189,7 +189,7 @@ void registerInteractionAuthoringTests() {
       json: File('assets/sample_project.json').readAsStringSync(),
     );
     final commands = AuthoringCommandService(
-      repository: () => repository,
+      ports: () => ViewerAuthoringPorts.fromSession(repository),
       creationGateway: () => repository,
       engineEnabled: () => true,
     );

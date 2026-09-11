@@ -1,6 +1,6 @@
 import 'dart:math' as math;
 
-import '../../../core/application/engine/viewer_authoring_gateway.dart';
+import '../../../core/application/engine/viewer_wall_authoring_gateway.dart';
 import '../../../core/application/render_scene/render_scene_models.dart';
 import 'geometry/wall_authoring_geometry.dart';
 import 'scene/render_scene_editor.dart';
@@ -69,16 +69,16 @@ class CreateCurvedWallRequest {
 /// local geometry helpers remain available only for transient preview/math and
 /// must never manufacture a second semantic source of truth.
 class SceneMutationService {
-  const SceneMutationService({this.engineRepository});
+  const SceneMutationService({this.wallAuthoringGateway});
 
-  final ViewerAuthoringGateway? engineRepository;
+  final ViewerWallAuthoringGateway? wallAuthoringGateway;
 
   Future<SceneMutationOutcome> createWall(CreateWallRequest request) async {
     final trace = <String>[
       'request wall base=${request.baseLevelId} top=${request.topLevelId}',
       'start=${_pointLabel(request.start)} end=${_pointLabel(request.end)}',
     ];
-    final engine = engineRepository;
+    final engine = wallAuthoringGateway;
     if (engine == null) {
       trace.add('engine unavailable: permanent wall mutation rejected');
       return SceneMutationOutcome(
@@ -177,7 +177,7 @@ class SceneMutationService {
       'start=${_pointLabel(request.geometry.start)} end=${_pointLabel(request.geometry.end)}',
       'radius=${request.geometry.radiusMeters.toStringAsFixed(3)} sweep=${request.geometry.sweepDegrees.toStringAsFixed(1)}',
     ];
-    final engine = engineRepository;
+    final engine = wallAuthoringGateway;
     if (engine == null) {
       trace.add('engine unavailable: permanent curved wall mutation rejected');
       return SceneMutationOutcome(

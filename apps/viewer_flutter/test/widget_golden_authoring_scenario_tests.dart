@@ -6,7 +6,7 @@ void registerGoldenAuthoringScenarioTests() {
     final repository = ViewerRepository(TbeViewerApi.load());
     addTearDown(repository.dispose);
     final commands = AuthoringCommandService(
-      repository: () => repository,
+      ports: () => ViewerAuthoringPorts.fromSession(repository),
       creationGateway: () => repository,
       engineEnabled: () => true,
     );

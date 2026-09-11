@@ -7,6 +7,7 @@ class _OpeningPropertiesSection extends StatefulWidget {
       required this.levels,
       required this.units,
       required this.commands,
+      required this.familyCommands,
       required this.familyAssets,
       required this.onApplied});
   final RenderSceneObject object;
@@ -14,6 +15,7 @@ class _OpeningPropertiesSection extends StatefulWidget {
   final List<RenderSceneLevel> levels;
   final ProjectUnitSettings units;
   final AuthoringCommandService commands;
+  final FamilyCommandService? familyCommands;
   final FamilyAssetRepository familyAssets;
   final ApplyInspectorResult onApplied;
   @override
@@ -141,13 +143,15 @@ class _OpeningPropertiesSectionState extends State<_OpeningPropertiesSection> {
           title: _label(widget.object),
           icon: _icon(widget.object.kindKey),
           children: <Widget>[
-            if (_FamilyInstanceStateData.fromObject(widget.object) != null)
+            if (_FamilyInstanceStateData.fromObject(widget.object) != null &&
+                widget.familyCommands != null)
               _FamilyPropertiesSection(
                 object: widget.object,
                 scene: widget.scene,
                 levels: widget.levels,
                 units: widget.units,
                 commands: widget.commands,
+                familyCommands: widget.familyCommands,
                 familyAssets: widget.familyAssets,
                 onApplied: widget.onApplied,
               ),
