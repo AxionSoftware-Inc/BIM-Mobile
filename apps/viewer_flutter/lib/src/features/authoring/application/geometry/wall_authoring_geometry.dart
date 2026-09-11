@@ -1,10 +1,14 @@
 import 'dart:math' as math;
 
 import '../../../../core/application/render_scene/render_scene_models.dart';
+import '../../../../core/domain/geometry/wall_arc_geometry.dart';
 import '../../../../core/domain/units/project_unit_settings.dart';
 import '../../../viewer/domain/view/view_configuration.dart';
 import '../scene/render_scene_editor.dart';
 import 'plan_sketch_geometry.dart';
+
+export '../../../../core/domain/geometry/wall_arc_geometry.dart'
+    show WallArcGeometry;
 
 /// Precomputed wall axes used by live snapping. Building this once per scene
 /// avoids extracting endpoints and recomputing wall vectors for every pointer
@@ -934,24 +938,4 @@ final class WallAuthoringGeometry {
     }
     return activeLevelId;
   }
-}
-
-class WallArcGeometry {
-  const WallArcGeometry({
-    required this.center,
-    required this.start,
-    required this.end,
-    required this.radiusMeters,
-    required this.sweepRadians,
-    required this.points,
-  });
-
-  final RenderScenePoint center;
-  final RenderScenePoint start;
-  final RenderScenePoint end;
-  final double radiusMeters;
-  final double sweepRadians;
-  final List<RenderScenePoint> points;
-
-  double get sweepDegrees => sweepRadians * 180.0 / math.pi;
 }
