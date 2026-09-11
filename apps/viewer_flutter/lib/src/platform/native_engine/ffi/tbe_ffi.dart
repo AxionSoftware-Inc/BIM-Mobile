@@ -12,9 +12,9 @@ import '../../../core/application/engine/viewer_project_session.dart';
 import '../../../core/application/engine/viewer_scene_gateway.dart';
 import '../../../core/application/render_scene/render_scene_models.dart';
 import '../../../core/domain/assemblies/wall_type_catalog.dart';
+import '../../../core/domain/geometry/wall_arc_geometry.dart';
 import '../../../core/infrastructure/io/atomic_file_writer.dart';
 import '../../../core/infrastructure/storage/app_project_storage.dart';
-import '../../../features/authoring/application/geometry/wall_authoring_geometry.dart';
 import '../../../features/elements/application/wall_element_parameters.dart';
 import '../native_engine_library_loader.dart';
 
