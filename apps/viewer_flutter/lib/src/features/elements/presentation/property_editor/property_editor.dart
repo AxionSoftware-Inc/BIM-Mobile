@@ -20,9 +20,8 @@ import '../../application/parameters/roof_element_parameters.dart';
 import '../../application/parameters/stair_element_parameters.dart';
 import '../../application/parameters/surface_element_parameters.dart';
 import '../../application/wall_element_parameters.dart';
-import '../../../families/infrastructure/catalog/built_in_family_catalog.dart';
+import '../../../families/application/library/family_asset_repository.dart';
 import '../../../families/domain/document/family_document.dart';
-import '../../../families/infrastructure/library/family_file_store.dart';
 import '../../../families/domain/geometry/family_geometry.dart';
 import '../../../families/application/representation/family_plan_symbol.dart';
 import '../../../families/application/family_instance_adapter.dart';
@@ -52,6 +51,7 @@ class PropertyEditor extends StatelessWidget {
     required this.scene,
     required this.target,
     required this.commands,
+    required this.familyAssets,
     required this.onApplied,
     required this.onClearSelection,
     required this.units,
@@ -64,6 +64,7 @@ class PropertyEditor extends StatelessWidget {
   final RenderScene scene;
   final InspectorTarget target;
   final AuthoringCommandService commands;
+  final FamilyAssetRepository familyAssets;
   final ApplyInspectorResult onApplied;
   final VoidCallback onClearSelection;
   final ProjectUnitSettings units;
@@ -118,6 +119,7 @@ class PropertyEditor extends StatelessWidget {
               levels: scene.levels,
               units: units,
               commands: commands,
+              familyAssets: familyAssets,
               onApplied: onApplied,
             ),
           ],
