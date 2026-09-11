@@ -1,6 +1,6 @@
-import '../../../features/elements/domain/types/wall_type_catalog.dart';
-import '../../../render_scene_models.dart';
+import '../../domain/assemblies/wall_type_catalog.dart';
 import '../../../tools/wall_authoring_geometry.dart';
+import '../render_scene/render_scene_models.dart';
 
 /// Application boundary used by authoring and Inspector use-cases.
 ///
