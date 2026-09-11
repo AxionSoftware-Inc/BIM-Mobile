@@ -1,10 +1,10 @@
 import 'dart:isolate';
 
+import '../../../core/application/render_scene/render_scene_models.dart';
+import '../../authoring/application/scene/render_scene_editor.dart';
 import '../../viewer/application/runtime/bim_compact_instance_store.dart';
-import '../../../render_scene_editor.dart';
-import '../../../render_scene_estimator.dart';
-import '../../../render_scene_models.dart';
 import 'bim_compact_estimator.dart';
+import 'render_scene_estimator.dart';
 
 /// Lazy result used only by schedule/quantity surfaces.
 final class QuantityScheduleResult {

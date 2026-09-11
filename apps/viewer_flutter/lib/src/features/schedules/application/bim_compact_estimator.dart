@@ -1,7 +1,7 @@
 import 'dart:math' as math;
 
 import '../../viewer/application/runtime/bim_compact_instance_store.dart';
-import '../../../render_scene_estimator.dart';
+import 'render_scene_estimator.dart';
 
 /// Quantity estimator that scans dense typed arrays rather than a graph of
 /// RenderSceneObject + metadata maps.
