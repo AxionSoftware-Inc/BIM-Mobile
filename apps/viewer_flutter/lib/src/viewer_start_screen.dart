@@ -142,20 +142,27 @@ class _StartScreenGate extends StatefulWidget {
 }
 
 class _StartScreenGateState extends State<_StartScreenGate> {
-  WorkspaceTemplate? _selectedTemplate;
-  String? _projectJson;
-  String? _projectName;
-  String? _projectPath;
-  String? _errorMessage;
-  bool _createBlank = false;
-  bool _busy = false;
+  late final ProjectLaunchController _launch;
   ProjectRecoveryEntry? _recoveryEntry;
   final ProjectRecoveryStore _recoveryStore = ProjectRecoveryStore();
 
   @override
   void initState() {
     super.initState();
+    _launch = ProjectLaunchController()..addListener(_handleLaunchChanged);
     unawaited(_loadRecoveryEntry());
+  }
+
+  @override
+  void dispose() {
+    _launch
+      ..removeListener(_handleLaunchChanged)
+      ..dispose();
+    super.dispose();
+  }
+
+  void _handleLaunchChanged() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _loadRecoveryEntry() async {
@@ -169,21 +176,14 @@ class _StartScreenGateState extends State<_StartScreenGate> {
 
   Future<void> _recoverProject() async {
     final entry = _recoveryEntry;
-    if (_busy || entry == null) return;
+    if (_launch.state.busy || entry == null) return;
     try {
       final json = await entry.readJson();
       if (!mounted) return;
-      setState(() {
-        _projectJson = json;
-        _projectName = entry.projectName;
-        _projectPath = null;
-        _selectedTemplate = null;
-        _createBlank = false;
-      });
+      _launch.recoverProject(json: json, projectName: entry.projectName);
     } catch (error) {
       if (!mounted) return;
-      setState(
-          () => _errorMessage = 'Recovery file could not be opened: $error');
+      _launch.fail('Recovery file could not be opened: $error');
     }
   }
 
@@ -195,7 +195,7 @@ class _StartScreenGateState extends State<_StartScreenGate> {
   }
 
   Future<void> _openProject() async {
-    if (_busy) return;
+    if (_launch.state.busy) return;
     AppTelemetry.track('project_open_started');
     try {
       const typeGroup = XTypeGroup(
@@ -206,75 +206,60 @@ class _StartScreenGateState extends State<_StartScreenGate> {
       if (file == null) return;
       final json = await file.readAsString();
       if (!mounted) return;
-      setState(() {
-        _errorMessage = null;
-        _projectJson = json;
-        _projectName = file.name;
-        _projectPath = file.path;
-        _selectedTemplate = null;
-        _createBlank = false;
-      });
+      _launch.openProject(
+        json: json,
+        projectName: file.name,
+        projectPath: file.path,
+      );
       AppTelemetry.track('project_opened');
     } catch (error) {
       if (!mounted) return;
-      setState(() => _errorMessage = 'Could not open the project: $error');
+      _launch.fail('Could not open the project: $error');
     }
   }
 
   Future<void> _createProject() async {
-    if (_busy) return;
+    if (_launch.state.busy) return;
     AppTelemetry.track('blank_project_started');
-    setState(() {
-      _errorMessage = null;
-      _selectedTemplate = null;
-      _projectJson = null;
-      _projectName = null;
-      _projectPath = null;
-      _createBlank = true;
-    });
+    _launch.createBlankProject();
   }
 
   Future<void> _createFamily() async {
-    if (_busy) return;
+    if (_launch.state.busy) return;
     AppTelemetry.track('family_create_started');
     await FamilyAuthoringModule.createFamily(context);
   }
 
   void _selectTemplate(ProjectTemplate template) {
-    if (_busy) return;
-    final workspaceTemplate = WorkspaceTemplate.values.byName(template.name);
+    if (_launch.state.busy) return;
     AppTelemetry.track(
       'template_selected',
       properties: <String, Object?>{'template': template.name},
     );
-    setState(() {
-      _errorMessage = null;
-      _selectedTemplate = workspaceTemplate;
-      _projectJson = null;
-      _projectName = null;
-      _projectPath = null;
-      _busy = true;
-    });
+    _launch.selectTemplate(template);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) _launch.finishTemplateSelection();
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    final template = _selectedTemplate;
-    final json = _projectJson;
-    if (template != null || json != null || _createBlank) {
+    final launch = _launch.state;
+    final template = launch.selectedTemplate == null
+        ? null
+        : WorkspaceTemplate.values.byName(launch.selectedTemplate!.name);
+    final json = launch.projectJson;
+    if (launch.hasLaunchTarget) {
       final Object gateKey = template ?? json ?? 'blank-project';
       return ViewerHomePage(
         key: ValueKey<Object>(gateKey),
         source: const AssetRenderSceneSource(),
         preferEngineBackedBundledSample: true,
         initialTemplate: template,
-        initialBlankProject: _createBlank,
+        initialBlankProject: launch.createBlank,
         initialProjectJson: json,
-        initialProjectName: _projectName,
-        initialProjectPath: _projectPath,
+        initialProjectName: launch.projectName,
+        initialProjectPath: launch.projectPath,
         viewportTheme: widget.viewportTheme.renderSceneTheme,
         onReturnToStart: _returnToStart,
       );
@@ -293,8 +278,8 @@ class _StartScreenGateState extends State<_StartScreenGate> {
           : ProjectRecoverySummary(projectName: recoveryEntry.projectName),
       onRecover: _recoverProject,
       onDismissRecovery: () => unawaited(_dismissRecovery()),
-      busy: _busy,
-      errorMessage: _errorMessage,
+      busy: launch.busy,
+      errorMessage: launch.errorMessage,
     );
   }
 
@@ -317,15 +302,8 @@ class _StartScreenGateState extends State<_StartScreenGate> {
   }
 
   Future<void> _returnToStart() async {
-    if (_busy) return;
-    setState(() {
-      _selectedTemplate = null;
-      _projectJson = null;
-      _projectName = null;
-      _projectPath = null;
-      _errorMessage = null;
-      _createBlank = false;
-    });
+    if (_launch.state.busy) return;
+    _launch.returnToStart();
   }
 }
 
