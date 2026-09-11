@@ -1,9 +1,9 @@
 import 'dart:math' as math;
 import 'dart:ui';
 
-import '../../../render_scene_models.dart';
-import '../../../render_scene_viewport_controller.dart';
-import '../../../render_scene_viewport_projection.dart';
+import '../../../core/application/render_scene/render_scene_models.dart';
+import '../../viewer/presentation/viewport/render_scene_viewport_controller.dart';
+import '../../viewer/presentation/viewport/render_scene_viewport_projection.dart';
 import '../domain/annotation_store.dart';
 
 final class AnnotationHit {
