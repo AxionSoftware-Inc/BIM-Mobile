@@ -4,9 +4,11 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
-import '../../../../render_scene_models.dart';
-import '../../../../render_scene_viewport.dart';
-import '../../../../tools/plan_sketch_geometry.dart';
+import '../../../../core/application/render_scene/render_scene_models.dart';
+import '../../../authoring/application/geometry/plan_sketch_geometry.dart';
+import '../../../viewer/presentation/viewport/render_scene_viewport_controller.dart';
+import '../../../viewer/presentation/viewport/render_scene_viewport_types.dart';
+import '../../../viewer/presentation/viewport/render_scene_viewport_widget.dart';
 import '../../domain/document/family_document.dart';
 
 /// 2D Family sketch editor hosted by the shared project RenderScene viewport.
