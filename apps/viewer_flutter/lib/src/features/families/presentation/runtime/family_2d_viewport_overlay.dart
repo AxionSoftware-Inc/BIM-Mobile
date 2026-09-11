@@ -3,11 +3,11 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-import '../render_scene_models.dart';
-import '../render_scene_viewport_controller.dart';
-import '../render_scene_viewport_projection.dart';
-import '../render_scene_viewport_types.dart';
-import '../workspace_view_runtime_context.dart';
+import '../../../../app/workspace/workspace_view_runtime_context.dart';
+import '../../../../core/application/render_scene/render_scene_models.dart';
+import '../../../viewer/presentation/viewport/render_scene_viewport_controller.dart';
+import '../../../viewer/presentation/viewport/render_scene_viewport_projection.dart';
+import '../../../viewer/presentation/viewport/render_scene_viewport_types.dart';
 import 'family_2d_asset_library.dart';
 import 'family_instance_store.dart';
 import 'family_render_batches.dart';
