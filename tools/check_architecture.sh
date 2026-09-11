@@ -15,26 +15,27 @@ fail_if_found() {
 }
 
 flutter_root="apps/viewer_flutter/lib/src"
+viewport_root="$flutter_root/features/viewer/presentation/viewport"
+workspace_root="$flutter_root/features/viewer/presentation/workspace"
+project_browser_root="$flutter_root/features/projects/presentation/browser"
+authoring_root="$flutter_root/features/authoring"
+elements_root="$flutter_root/features/elements"
 
 # Presentation and viewport modules only consume immutable scene models and
 # callbacks. Native bridge details must stay below feature/application code.
 fail_if_found \
   "presentation or sketch modules import native bridge" \
   "(tbe_ffi|native_engine_library_loader|native_viewer_session_factory)\\.dart" \
-  "$flutter_root/render_scene_viewport.dart" \
-  "$flutter_root/render_scene_viewport_controller.dart" \
-  "$flutter_root/render_scene_viewport_painter.dart" \
-  "$flutter_root/render_scene_viewport_planar.dart" \
-  "$flutter_root/project_browser_panel.dart" \
-  "$flutter_root/project_browser_views.dart" \
-  "$flutter_root/workspace_chrome.dart" \
-  "$flutter_root/tools/plan_sketch_geometry.dart" \
-  "$flutter_root/tools/trim_extend_tool_controller.dart"
+  "$viewport_root" \
+  "$project_browser_root" \
+  "$workspace_root/workspace_chrome.dart" \
+  "$authoring_root/application/geometry/plan_sketch_geometry.dart" \
+  "$authoring_root/presentation/tools/trim_extend_tool_controller.dart"
 
 fail_if_found \
   "engine contracts depend on FFI or Flutter" \
   "(dart:(ffi|io)|package:flutter)" \
-  "$flutter_root/viewer_engine_contracts.dart"
+  "$flutter_root/core/application/engine/viewer_engine_contracts.dart"
 
 fail_if_found \
   "application shell constructs native sessions directly" \
@@ -54,8 +55,8 @@ fail_if_found \
 fail_if_found \
   "Flutter viewport reconstructs opening contours from wall metadata" \
   "opening_profile|profile_corners" \
-  "$flutter_root/render_scene_viewport_painter.dart" \
-  "$flutter_root/render_scene_painter_render.dart"
+  "$viewport_root/render_scene_viewport_painter.dart" \
+  "$viewport_root/render_scene_painter_render.dart"
 
 # Inspector adapters must consume their element-family parameter model. Keep
 # raw metadata decoding in one small boundary so adding a property cannot
@@ -63,7 +64,7 @@ fail_if_found \
 fail_if_found \
   "Inspector adapters bypass typed element parameters" \
   "metadata\\[|metadata\\." \
-  "$flutter_root/elements/inspectors"
+  "$elements_root/presentation/property_editor/elements/inspectors"
 
 # A hosted opening is one semantic change. Presentation/UI code cannot fall
 # back to the old move-then-resize sequence, which could leave an invalid wall
@@ -71,6 +72,6 @@ fail_if_found \
 fail_if_found \
   "viewport performs split hosted-opening mutations" \
   "(moveHostedOpening|resizeOpening)" \
-  "$flutter_root/authoring_command_service.dart" \
+  "$authoring_root/application/authoring_command_service.dart" \
   "$flutter_root/viewer_viewport_surface_editing.dart" \
   "$flutter_root/viewer_workspace_ui_interactions.dart"

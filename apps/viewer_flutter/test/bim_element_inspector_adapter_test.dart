@@ -4,8 +4,8 @@ import 'package:viewer_flutter/src/features/elements/presentation/bim_element_in
 
 void main() {
   test('Inspector adapter registry resolves unique keys', () {
-    final wall = _FakeInspectorAdapter('wall');
-    final generic = _FakeInspectorAdapter('generic');
+    const wall = _FakeInspectorAdapter('wall');
+    const generic = _FakeInspectorAdapter('generic');
     final registry = BimElementInspectorAdapterRegistry(<BimElementInspectorAdapter>[
       wall,
       generic,
@@ -19,8 +19,8 @@ void main() {
   test('Inspector adapter registry rejects duplicate keys', () {
     expect(
       () => BimElementInspectorAdapterRegistry(<BimElementInspectorAdapter>[
-        _FakeInspectorAdapter('wall'),
-        _FakeInspectorAdapter('wall'),
+        const _FakeInspectorAdapter('wall'),
+        const _FakeInspectorAdapter('wall'),
       ]),
       throwsA(isA<StateError>()),
     );
@@ -29,7 +29,7 @@ void main() {
   test('Inspector adapter registry rejects an empty key', () {
     expect(
       () => BimElementInspectorAdapterRegistry(<BimElementInspectorAdapter>[
-        _FakeInspectorAdapter('   '),
+        const _FakeInspectorAdapter('   '),
       ]),
       throwsA(isA<StateError>()),
     );

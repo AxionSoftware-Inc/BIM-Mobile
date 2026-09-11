@@ -3,7 +3,7 @@ import 'package:viewer_flutter/src/features/projects/application/import/ifc_impo
 
 void main() {
   test('native-first requires both native viewport and threshold-sized IFC', () {
-    final threshold = IfcImportPolicy.nativeFirstThresholdBytes;
+    const threshold = IfcImportPolicy.nativeFirstThresholdBytes;
 
     expect(
       IfcImportPolicy.shouldPreferNativeFirst(

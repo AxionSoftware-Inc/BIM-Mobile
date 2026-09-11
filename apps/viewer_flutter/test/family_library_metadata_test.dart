@@ -17,7 +17,7 @@ void main() {
 
   test('metadata summarizes formulas constraints nested booleans and meshes', () {
     final base = FamilyDocument.starter(name: 'Capabilities');
-    final formula = FamilyParameterDefinition(
+    const formula = FamilyParameterDefinition(
       id: 'half_width',
       label: 'Half width',
       kind: FamilyParameterKind.length,
