@@ -6,29 +6,39 @@ void main() {
   test('workspace consumes composition-owned persistence and scene services',
       () {
     final sourceRoot = _sourceRoot();
-    final app =
+    final app = StringBuffer()
+      ..write(
         File('${sourceRoot.path}${Platform.pathSeparator}viewer_app.dart')
-            .readAsStringSync();
+            .readAsStringSync(),
+      )
+      ..write(
+        File(
+          '${sourceRoot.path}${Platform.pathSeparator}features'
+          '${Platform.pathSeparator}viewer${Platform.pathSeparator}presentation'
+          '${Platform.pathSeparator}workspace${Platform.pathSeparator}'
+          'viewer_home_page_state.dart',
+        ).readAsStringSync(),
+      );
 
     expect(
-      app,
+      app.toString(),
       contains('_projectPersistence = _dependencies.projectPersistence;'),
       reason: 'The workspace must reuse the companion-aware persistence stack '
           'assembled by ViewerAppDependencies.',
     );
     expect(
-      app,
+      app.toString(),
       contains('_sceneViews = _dependencies.createSceneViewService();'),
       reason:
           'Scene gateway/session resolution belongs to the composition root.',
     );
     expect(
-      app,
+      app.toString(),
       isNot(contains('_projectPersistence = ProjectPersistenceService(')),
       reason: 'Presentation code must not create a parallel persistence stack.',
     );
     expect(
-      app,
+      app.toString(),
       isNot(contains('_sceneViews = SceneViewService(')),
       reason:
           'Presentation code must not coordinate scene repository callbacks.',
