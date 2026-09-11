@@ -8,7 +8,9 @@ import '../../features/projects/application/project_companion_document.dart';
 import '../../features/projects/application/project_lifecycle_service.dart';
 import '../../features/projects/application/project_persistence_service.dart';
 import '../../features/projects/application/project_session_controller.dart';
+import '../../features/projects/application/recovery/project_recovery_checkpoint_repository.dart';
 import '../../features/projects/infrastructure/persistence/native_project_save_path_resolver.dart';
+import '../../features/projects/infrastructure/recovery/file_project_recovery_checkpoint_repository.dart';
 import '../../features/viewer/application/scene_view_service.dart';
 import '../../platform/native_engine/native_viewer_session_factory.dart';
 import 'project_session_scene_gateway_resolver.dart';
@@ -30,6 +32,7 @@ final class ViewerAppDependencies {
     required this.projectLifecycle,
     required this.projectPersistence,
     required this.projectSession,
+    required this.projectRecovery,
     required this.familyAssets,
     required this.elements,
     required this.inspectors,
@@ -56,6 +59,7 @@ final class ViewerAppDependencies {
         companions: companions,
       ),
       projectSession: projectSession,
+      projectRecovery: FileProjectRecoveryCheckpointRepository(),
       familyAssets: const LocalFamilyAssetRepository(),
       elements: elements,
       inspectors: BimElementInspectorRegistry(elements),
@@ -65,6 +69,7 @@ final class ViewerAppDependencies {
   final ProjectLifecycleService<ViewerEngineSession> projectLifecycle;
   final ProjectPersistenceService projectPersistence;
   final ProjectSessionController<ViewerEngineSession> projectSession;
+  final ProjectRecoveryCheckpointRepository projectRecovery;
   final FamilyAssetRepository familyAssets;
   final BimElementRegistry elements;
   final BimElementInspectorRegistry inspectors;
