@@ -129,10 +129,7 @@ void main() {
 
     for (final file in _dartFiles(sourceRoot)) {
       final relativeFile = _relativeTo(sourceRoot, file).replaceAll('\\', '/');
-      final migrated = relativeFile.startsWith('app/') ||
-          relativeFile.startsWith('core/') ||
-          relativeFile.startsWith('features/') ||
-          relativeFile.startsWith('platform/');
+      final migrated = _isMigratedPath(relativeFile);
       if (!migrated) continue;
 
       final text = file.readAsStringSync();
@@ -144,7 +141,15 @@ void main() {
         final basename = target.split('/').last;
         final canonical = canonicalByFacade[basename];
         if (canonical == null || target.contains(canonical)) continue;
-        violations.add('$relativeFile -> $target');
+
+        // This guard protects migrated code from legacy/root compatibility
+        // paths. Different canonical modules may legitimately share a basename
+        // (for example the app workspace adapter and the viewer application
+        // store), so basename alone must never classify a migrated owner as a
+        // facade. More specific feature-to-feature rules belong in dependency
+        // guards, not in this root-facade check.
+        if (_isMigratedPath(target)) continue;
+        violations.add('$relativeFile -> $target (use $canonical)');
       }
     }
 
@@ -166,6 +171,12 @@ Directory _sourceRoot() {
 
   throw StateError('Could not locate apps/viewer_flutter/lib/src.');
 }
+
+bool _isMigratedPath(String path) =>
+    path.startsWith('app/') ||
+    path.startsWith('core/') ||
+    path.startsWith('features/') ||
+    path.startsWith('platform/');
 
 Iterable<File> _dartFiles(Directory root) sync* {
   for (final entity in root.listSync(recursive: true, followLinks: false)) {
