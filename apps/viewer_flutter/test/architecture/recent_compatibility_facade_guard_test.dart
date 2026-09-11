@@ -38,6 +38,10 @@ void main() {
           'features/viewer/presentation/viewport/viewport_interaction.dart',
       'viewport_gesture_controller.dart':
           'features/viewer/presentation/viewport/viewport_gesture_controller.dart',
+      'render_scene_viewport_controller.dart':
+          'features/viewer/presentation/viewport/render_scene_viewport_controller.dart',
+      'render_scene_viewport_painter.dart':
+          'features/viewer/presentation/viewport/render_scene_viewport_painter.dart',
       'render_scene_viewport_types.dart':
           'features/viewer/presentation/viewport/render_scene_viewport_types.dart',
       'render_scene_viewport_planar.dart':
@@ -56,6 +60,8 @@ void main() {
           'features/elements/presentation/inspector_controller.dart',
       'material_layer_editor.dart':
           'features/elements/presentation/material_layer_editor.dart',
+      'property_editor.dart':
+          'features/elements/presentation/property_editor/property_editor.dart',
       'authoring_command_service.dart':
           'features/authoring/application/authoring_command_service.dart',
       'scene_mutation_service.dart':
