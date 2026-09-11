@@ -3,10 +3,10 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
-import '../../../render_scene_models.dart';
-import '../../../render_scene_viewport_painter.dart';
-import '../../../render_scene_viewport_planar.dart';
-import '../../../render_scene_viewport_types.dart';
+import '../../../core/application/render_scene/render_scene_models.dart';
+import '../../viewer/presentation/viewport/render_scene_viewport_painter.dart';
+import '../../viewer/presentation/viewport/render_scene_viewport_planar.dart';
+import '../../viewer/presentation/viewport/render_scene_viewport_types.dart';
 import '../application/document_models.dart';
 import 'sheet_workspace_controller.dart';
 
