@@ -5,7 +5,7 @@ import '../../../elements/application/opening_element_parameters.dart';
 import '../../../elements/application/parameters/room_element_parameters.dart';
 import '../../../elements/application/parameters/surface_element_parameters.dart';
 import '../../../elements/application/wall_element_parameters.dart';
-import '../../../../render_scene_models.dart';
+import '../../../../core/application/render_scene/render_scene_models.dart';
 
 /// Compact, data-oriented semantic storage for large BIM scenes.
 ///
