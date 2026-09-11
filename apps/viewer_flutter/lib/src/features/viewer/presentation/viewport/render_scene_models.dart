@@ -1,3 +1,3 @@
-// COMPATIBILITY: temporary bridge to the legacy RenderScene read-model during viewport migration.
-// REMOVE WHEN: RenderScene model ownership moves behind the canonical core/viewer contract.
-export '../../../../render_scene_models.dart';
+// COMPATIBILITY: local bridge to the canonical RenderScene read-model.
+// REMOVE WHEN: viewport files import core/application/render_scene directly.
+export '../../../../core/application/render_scene/render_scene_models.dart';

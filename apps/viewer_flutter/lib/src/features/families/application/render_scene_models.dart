@@ -1,3 +1,3 @@
-// COMPATIBILITY: temporary adapter to the RenderScene compatibility read-model.
-// REMOVE WHEN: family runtime compilation consumes the canonical viewer/core read-model contract.
-export '../../../render_scene_models.dart';
+// COMPATIBILITY: local bridge to the canonical RenderScene read-model.
+// REMOVE WHEN: family runtime files import core/application/render_scene directly.
+export '../../../core/application/render_scene/render_scene_models.dart';
