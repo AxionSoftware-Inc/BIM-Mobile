@@ -23,6 +23,22 @@ void main() {
           'features/viewer/presentation/selection_controller.dart',
       'viewport_interaction.dart':
           'features/viewer/presentation/viewport/viewport_interaction.dart',
+      'viewport_gesture_controller.dart':
+          'features/viewer/presentation/viewport/viewport_gesture_controller.dart',
+      'render_scene_viewport_types.dart':
+          'features/viewer/presentation/viewport/render_scene_viewport_types.dart',
+      'render_scene_viewport_planar.dart':
+          'features/viewer/presentation/viewport/render_scene_viewport_planar.dart',
+      'render_scene_viewport_projection.dart':
+          'features/viewer/presentation/viewport/render_scene_viewport_projection.dart',
+      'workspace_chrome.dart':
+          'features/viewer/presentation/workspace/workspace_chrome.dart',
+      'workspace_view_runtime_context.dart':
+          'app/workspace/workspace_view_runtime_context.dart',
+      'view_workspace_store.dart':
+          'app/workspace/view_workspace_store_adapter.dart',
+      'native_engine_library_loader.dart':
+          'platform/native_engine/native_engine_library_loader.dart',
       'inspector_controller.dart':
           'features/elements/presentation/inspector_controller.dart',
       'material_layer_editor.dart':
