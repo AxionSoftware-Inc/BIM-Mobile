@@ -1,4 +1,4 @@
-import '../../../render_scene_models.dart';
+import '../render_scene/render_scene_models.dart';
 
 /// Semantic creation and room/surface authoring boundary.
 ///
