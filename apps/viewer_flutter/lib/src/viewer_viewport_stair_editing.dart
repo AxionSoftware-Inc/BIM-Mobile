@@ -77,11 +77,13 @@ extension _ViewerViewportStairEditing on _ViewerHomePageState {
       return;
     }
     if (_stairTool.layoutKind != 0) {
-      var totalRun = 0.0;
-      for (var index = 1; index < pathPoints.length; index += 1) {
-        totalRun += pathPoints[index].distanceTo(pathPoints[index - 1]);
-      }
-      if (pathPoints.length < _stairTool.requiredPointCount || totalRun < 0.8) {
+      final metrics = StairAuthoringGeometry.layoutMetrics(
+        pathPoints: pathPoints,
+        requiredPointCount: _stairTool.requiredPointCount,
+        baseLevel: base,
+        topLevel: top,
+      );
+      if (metrics == null) {
         _updateViewportState(() => _editStatusMessage =
             'Stair path must contain complete flights and be at least 0.8 m long.');
         return;
@@ -91,11 +93,9 @@ extension _ViewerViewportStairEditing on _ViewerHomePageState {
         topLevelId: top.levelId,
         pathPoints: pathPoints,
         widthMeters: _stairTool.widthMeters,
-        totalRiseMeters: top.elevationMeters - base.elevationMeters,
-        riserCount: math
-            .max(1, (top.elevationMeters - base.elevationMeters) / 0.18)
-            .round(),
-        treadCount: math.max(2, (totalRun / 0.28).round()),
+        totalRiseMeters: metrics.totalRiseMeters,
+        riserCount: metrics.riserCount,
+        treadCount: metrics.treadCount,
         landingDepthMeters: _stairTool.landingDepthMeters,
         layoutKind: _stairTool.layoutKind,
         railingEnabled: _stairTool.railingEnabled,
