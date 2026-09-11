@@ -1,4 +1,4 @@
-import '../../../../core/domain/scene/render_scene_models.dart';
+import '../../../../core/application/render_scene/render_scene_models.dart';
 import '../../../elements/application/bim_element_registry.dart';
 import '../../domain/view/view_configuration.dart';
 
