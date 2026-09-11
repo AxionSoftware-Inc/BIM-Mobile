@@ -4,9 +4,9 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
 import '../../elements/application/parameters/room_element_parameters.dart';
-import '../../../render_scene_editor.dart';
-import '../../../render_scene_estimator.dart';
-import '../../../render_scene_models.dart';
+import '../../authoring/application/scene/render_scene_editor.dart';
+import '../application/render_scene_estimator.dart';
+import '../../../core/application/render_scene/render_scene_models.dart';
 import '../application/quantity_schedule_service.dart';
 import '../domain/project_schedule_kind.dart';
 
@@ -104,7 +104,8 @@ class _ScheduleFutureBody extends StatelessWidget {
       builder: (context, snapshot) {
         if (snapshot.hasError) {
           return Center(
-            child: SelectableText('Schedule calculation failed: ${snapshot.error}'),
+            child: SelectableText(
+                'Schedule calculation failed: ${snapshot.error}'),
           );
         }
         final result = snapshot.data;
@@ -394,18 +395,50 @@ class _QuantityScheduleTable extends StatelessWidget {
   Widget build(BuildContext context) {
     final rows = <({String label, String quantity, String unit})>[
       (label: 'Rooms', quantity: summary.roomCount.toString(), unit: 'pcs'),
-      (label: 'Room area', quantity: summary.totalRoomArea.toStringAsFixed(2), unit: 'm²'),
+      (
+        label: 'Room area',
+        quantity: summary.totalRoomArea.toStringAsFixed(2),
+        unit: 'm²'
+      ),
       (label: 'Walls', quantity: summary.wallCount.toString(), unit: 'pcs'),
-      (label: 'Net wall volume', quantity: summary.wallNetVolume.toStringAsFixed(2), unit: 'm³'),
-      (label: 'Brick masonry', quantity: summary.brickCount.toString(), unit: 'pcs'),
+      (
+        label: 'Net wall volume',
+        quantity: summary.wallNetVolume.toStringAsFixed(2),
+        unit: 'm³'
+      ),
+      (
+        label: 'Brick masonry',
+        quantity: summary.brickCount.toString(),
+        unit: 'pcs'
+      ),
       (label: 'Floors', quantity: summary.floorCount.toString(), unit: 'pcs'),
-      (label: 'Floor area', quantity: summary.floorArea.toStringAsFixed(2), unit: 'm²'),
-      (label: 'Concrete', quantity: summary.floorConcreteVolume.toStringAsFixed(2), unit: 'm³'),
-      (label: 'Ceilings', quantity: summary.ceilingCount.toString(), unit: 'pcs'),
-      (label: 'Ceiling area', quantity: summary.ceilingArea.toStringAsFixed(2), unit: 'm²'),
+      (
+        label: 'Floor area',
+        quantity: summary.floorArea.toStringAsFixed(2),
+        unit: 'm²'
+      ),
+      (
+        label: 'Concrete',
+        quantity: summary.floorConcreteVolume.toStringAsFixed(2),
+        unit: 'm³'
+      ),
+      (
+        label: 'Ceilings',
+        quantity: summary.ceilingCount.toString(),
+        unit: 'pcs'
+      ),
+      (
+        label: 'Ceiling area',
+        quantity: summary.ceilingArea.toStringAsFixed(2),
+        unit: 'm²'
+      ),
       (label: 'Doors', quantity: summary.doorCount.toString(), unit: 'pcs'),
       (label: 'Windows', quantity: summary.windowCount.toString(), unit: 'pcs'),
-      (label: 'Opening area', quantity: summary.openingArea.toStringAsFixed(2), unit: 'm²'),
+      (
+        label: 'Opening area',
+        quantity: summary.openingArea.toStringAsFixed(2),
+        unit: 'm²'
+      ),
     ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,

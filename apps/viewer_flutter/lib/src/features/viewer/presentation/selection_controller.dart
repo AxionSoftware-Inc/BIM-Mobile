@@ -1,7 +1,7 @@
 import 'package:flutter/foundation.dart';
 
-import '../../../render_scene_models.dart';
-import '../../../render_scene_viewport_types.dart';
+import '../../../core/application/render_scene/render_scene_models.dart';
+import 'viewport/render_scene_viewport_types.dart';
 
 /// The one selection authority used by every view and by the Inspector.
 ///

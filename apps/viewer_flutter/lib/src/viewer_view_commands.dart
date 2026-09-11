@@ -64,6 +64,7 @@ extension _ViewerViewCommands on _ViewerHomePageState {
         offsetMeters: placement.offsetMeters,
         creationGateway: session,
         authoringGateway: session,
+        availableDocuments: storedFamilies.map((family) => family.document),
         hostWallId: hostWall?.elementId,
         hostWall: hostWall,
       );

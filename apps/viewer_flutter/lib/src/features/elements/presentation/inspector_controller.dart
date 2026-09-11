@@ -1,6 +1,6 @@
 import 'package:flutter/foundation.dart';
 
-import '../../../render_scene_models.dart';
+import '../../../core/application/render_scene/render_scene_models.dart';
 import '../../viewer/presentation/selection_controller.dart';
 
 enum InspectorTargetKind { empty, level, object, multiple }

@@ -72,7 +72,7 @@ final class BimElementTypeCatalog {
 }
 
 class BimElementModule {
-  const BimElementModule({
+  BimElementModule({
     required String kindKey,
     required String displayName,
     required this.typeFamily,

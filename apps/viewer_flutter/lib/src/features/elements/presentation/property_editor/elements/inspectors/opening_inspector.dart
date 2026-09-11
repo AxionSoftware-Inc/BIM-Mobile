@@ -7,12 +7,14 @@ class _OpeningPropertiesSection extends StatefulWidget {
       required this.levels,
       required this.units,
       required this.commands,
+      required this.familyAssets,
       required this.onApplied});
   final RenderSceneObject object;
   final RenderScene scene;
   final List<RenderSceneLevel> levels;
   final ProjectUnitSettings units;
   final AuthoringCommandService commands;
+  final FamilyAssetRepository familyAssets;
   final ApplyInspectorResult onApplied;
   @override
   State<_OpeningPropertiesSection> createState() =>
@@ -146,6 +148,7 @@ class _OpeningPropertiesSectionState extends State<_OpeningPropertiesSection> {
                 levels: widget.levels,
                 units: widget.units,
                 commands: widget.commands,
+                familyAssets: widget.familyAssets,
                 onApplied: widget.onApplied,
               ),
             _row(

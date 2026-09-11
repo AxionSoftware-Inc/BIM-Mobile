@@ -65,7 +65,8 @@ abstract final class FamilyInstanceAdapter {
     required double offsetMeters,
   }) {
     final center = RenderSceneQueries.wallPointAtOffset(hostWall, offsetMeters);
-    final tangent = RenderSceneQueries.wallTangentAtOffset(hostWall, offsetMeters);
+    final tangent =
+        RenderSceneQueries.wallTangentAtOffset(hostWall, offsetMeters);
     if (center == null || tangent == null) {
       throw const FormatException('Wall host has no usable centerline.');
     }
@@ -139,13 +140,21 @@ abstract final class FamilyInstanceAdapter {
   /// document uses the schema-v6 nested-family feature.
   static Future<FamilyEvaluatedMesh> evaluatedMesh(
     FamilyDocument family,
-    FamilyTypeDefinition type,
-  ) async {
+    FamilyTypeDefinition type, {
+    Iterable<FamilyDocument> availableDocuments = const <FamilyDocument>[],
+  }) async {
     final hasNested = family.features.any(
       (feature) => feature.kind == FamilyFeatureKind.nestedFamily,
     );
     final resolvedFamily = hasNested
-        ? await FamilyDependencyResolver.resolveFromLibrary(family, type)
+        ? FamilyDependencyResolver.resolve(
+            family,
+            type,
+            availableDocuments: <FamilyDocument>[
+              family,
+              ...availableDocuments,
+            ],
+          )
         : family;
     return FamilyGeometryEvaluator.evaluateMesh(resolvedFamily, type);
   }
@@ -158,6 +167,7 @@ abstract final class FamilyInstanceAdapter {
     required RenderScenePoint position,
     required ViewerElementCreationGateway creationGateway,
     required ViewerAuthoringGateway authoringGateway,
+    Iterable<FamilyDocument> availableDocuments = const <FamilyDocument>[],
     int? hostWallId,
     RenderSceneObject? hostWall,
     double offsetMeters = 0.0,
@@ -174,7 +184,11 @@ abstract final class FamilyInstanceAdapter {
 
     final resolver = FamilyParameterResolver(family, type);
     final resolved = resolver.resolveAll();
-    final evaluatedMesh = await FamilyInstanceAdapter.evaluatedMesh(family, type);
+    final evaluatedMesh = await FamilyInstanceAdapter.evaluatedMesh(
+      family,
+      type,
+      availableDocuments: availableDocuments,
+    );
     if (evaluatedMesh.vertices.isEmpty || evaluatedMesh.faces.isEmpty) {
       throw const FormatException('Family type has no usable solid geometry.');
     }
@@ -210,7 +224,8 @@ abstract final class FamilyInstanceAdapter {
       case FamilyCategory.door:
         final wallId = hostWallId;
         if (wallId == null) {
-          throw const FormatException('A door family must be hosted by a wall.');
+          throw const FormatException(
+              'A door family must be hosted by a wall.');
         }
         created = await creationGateway.createDoor(
           name: family.name,
@@ -222,7 +237,8 @@ abstract final class FamilyInstanceAdapter {
       case FamilyCategory.window:
         final wallId = hostWallId;
         if (wallId == null) {
-          throw const FormatException('A window family must be hosted by a wall.');
+          throw const FormatException(
+              'A window family must be hosted by a wall.');
         }
         created = await creationGateway.createWindow(
           name: family.name,
@@ -239,7 +255,8 @@ abstract final class FamilyInstanceAdapter {
       case FamilyCategory.wallSweep:
         final wallId = hostWallId;
         if (wallId == null || hostWall == null) {
-          throw const FormatException('A wall sweep family must be hosted by a wall.');
+          throw const FormatException(
+              'A wall sweep family must be hosted by a wall.');
         }
         final wallLength = RenderSceneQueries.wallLength(hostWall);
         final sweepWidth = _resolvedLength(resolver, 'width');
@@ -254,8 +271,9 @@ abstract final class FamilyInstanceAdapter {
         created = await _createMeshInstance(
           family: family,
           type: type,
-          position: RenderSceneQueries.wallPointAtOffset(hostWall, offsetMeters) ??
-              position,
+          position:
+              RenderSceneQueries.wallPointAtOffset(hostWall, offsetMeters) ??
+                  position,
           levelId: levelId,
           evaluatedMesh: evaluatedMesh,
           creationGateway: creationGateway,

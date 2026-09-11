@@ -61,6 +61,7 @@ Widget _buildLinearInspectorFromParameters(
         levels: context.levels,
         units: context.units,
         commands: context.commands,
+        familyAssets: context.familyAssets,
         onApplied: context.onApplied,
       ),
     ],

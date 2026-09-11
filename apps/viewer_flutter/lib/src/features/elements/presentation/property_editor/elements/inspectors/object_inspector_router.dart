@@ -67,6 +67,7 @@ class _ObjectInspectorRouter extends StatelessWidget {
           levels: context.levels,
           units: context.units,
           commands: context.commands,
+          familyAssets: context.familyAssets,
           onApplied: context.onApplied,
         ),
     BimElementInspectorKeys.surface: (context) => _FloorPropertiesSection(

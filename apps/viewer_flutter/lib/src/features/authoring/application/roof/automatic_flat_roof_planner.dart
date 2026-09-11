@@ -1,4 +1,4 @@
-import '../../../../render_scene_models.dart';
+import '../../../../core/application/render_scene/render_scene_models.dart';
 import '../../../elements/application/wall_element_parameters.dart';
 
 /// Immutable selection plan for the automatic flat-roof workflow.
@@ -78,8 +78,7 @@ abstract final class AutomaticFlatRoofPlanner {
       roofLevelId: roofLevelId,
       boundWalls: List<RenderSceneObject>.unmodifiable(boundWalls),
       existingRoof: scene.objects.any(
-        (object) =>
-            object.kindKey == 'roof' && object.levelId == roofLevelId,
+        (object) => object.kindKey == 'roof' && object.levelId == roofLevelId,
       ),
     );
   }

@@ -13,7 +13,7 @@ import 'family_instance_store.dart';
 import 'family_render_batches.dart';
 import 'family_representation.dart';
 import 'family_runtime_scene_cache.dart';
-import 'family_spatial_streaming.dart';
+import '../../application/runtime/family_spatial_streaming.dart';
 
 /// Lightweight family overlay for floor/elevation/section views.
 ///
@@ -44,11 +44,9 @@ class Family2dViewportOverlay extends StatelessWidget {
     // and deliberately suppresses their 3D mesh. Drawing this Flutter overlay
     // on top would double strokes and double per-frame projection work. Keep
     // Flutter as the fallback renderer and as the elevation/section path.
-    final nativeAndroidPlan =
-        defaultTargetPlatform == TargetPlatform.android &&
-            controller.backend == RenderSceneViewportBackend.native &&
-            WorkspaceViewRuntimeContext.kind ==
-                WorkspaceRuntimeViewKind.floorPlan;
+    final nativeAndroidPlan = defaultTargetPlatform == TargetPlatform.android &&
+        controller.backend == RenderSceneViewportBackend.native &&
+        WorkspaceViewRuntimeContext.kind == WorkspaceRuntimeViewKind.floorPlan;
     if (nativeAndroidPlan) return const SizedBox.shrink();
 
     final runtime = FamilyRuntimeSceneCache.forScene(scene);

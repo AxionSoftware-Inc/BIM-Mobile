@@ -222,6 +222,12 @@ class _RecordingProjectGateway implements ViewerProjectGateway {
       );
 }
 
+final class _FixedProjectSavePathResolver implements ProjectSavePathResolver {
+  @override
+  Future<String> savePath(ViewerProjectGateway repository) async =>
+      '/tmp/example.tbe.json';
+}
+
 class _RecordingProjectSession extends _RecordingProjectGateway
     implements ViewerProjectSession {
   int? buildingCount;

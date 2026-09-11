@@ -2,7 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
-import '../../../../render_scene_models.dart';
+import '../../../../core/application/render_scene/render_scene_models.dart';
 import 'render_scene_viewport_types.dart';
 
 enum RenderSceneAxis { x, y, z }
@@ -27,7 +27,8 @@ class RenderScenePlanarDescriptor {
 
   bool get isElevation => verticalAxis == RenderSceneAxis.z;
 
-  double axisValue(RenderScenePoint point, RenderSceneAxis axis) => switch (axis) {
+  double axisValue(RenderScenePoint point, RenderSceneAxis axis) =>
+      switch (axis) {
         RenderSceneAxis.x => point.x,
         RenderSceneAxis.y => point.y,
         RenderSceneAxis.z => point.z,
@@ -100,10 +101,13 @@ class RenderScenePlanarDescriptor {
   double projectDepth(RenderScenePoint point) =>
       axisValue(point, depthAxis) * depthSign;
 
-  double boundsWidth(RenderSceneBounds bounds) => _axisSpan(bounds, horizontalAxis);
-  double boundsHeight(RenderSceneBounds bounds) => _axisSpan(bounds, verticalAxis);
+  double boundsWidth(RenderSceneBounds bounds) =>
+      _axisSpan(bounds, horizontalAxis);
+  double boundsHeight(RenderSceneBounds bounds) =>
+      _axisSpan(bounds, verticalAxis);
 
-  double _axisSpan(RenderSceneBounds bounds, RenderSceneAxis axis) => switch (axis) {
+  double _axisSpan(RenderSceneBounds bounds, RenderSceneAxis axis) =>
+      switch (axis) {
         RenderSceneAxis.x => bounds.width,
         RenderSceneAxis.y => bounds.depth,
         RenderSceneAxis.z => bounds.height,
@@ -128,13 +132,15 @@ class RenderScenePlanarDescriptor {
     );
   }
 
-  double minAxis(RenderSceneBounds bounds, RenderSceneAxis axis) => switch (axis) {
+  double minAxis(RenderSceneBounds bounds, RenderSceneAxis axis) =>
+      switch (axis) {
         RenderSceneAxis.x => bounds.min.x,
         RenderSceneAxis.y => bounds.min.y,
         RenderSceneAxis.z => bounds.min.z,
       };
 
-  double maxAxis(RenderSceneBounds bounds, RenderSceneAxis axis) => switch (axis) {
+  double maxAxis(RenderSceneBounds bounds, RenderSceneAxis axis) =>
+      switch (axis) {
         RenderSceneAxis.x => bounds.max.x,
         RenderSceneAxis.y => bounds.max.y,
         RenderSceneAxis.z => bounds.max.z,
@@ -182,7 +188,8 @@ class RenderSceneProjectionSpec {
 }
 
 const Map<RenderSceneProjectionMode, RenderSceneProjectionSpec>
-    kRenderSceneProjectionSpecs = <RenderSceneProjectionMode, RenderSceneProjectionSpec>{
+    kRenderSceneProjectionSpecs =
+    <RenderSceneProjectionMode, RenderSceneProjectionSpec>{
   RenderSceneProjectionMode.topDown: RenderSceneProjectionSpec(
     mode: RenderSceneProjectionMode.topDown,
     shortLabel: '2D',

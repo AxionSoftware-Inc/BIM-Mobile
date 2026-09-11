@@ -47,7 +47,7 @@ void registerElementModuleRegistryTests() {
         'layer_count': 4,
       },
     );
-    const customModule = BimElementModule(
+    final customModule = BimElementModule(
       kindKey: 'furniture',
       displayName: 'Furniture',
       typeFamily: BimElementTypeFamily.none,

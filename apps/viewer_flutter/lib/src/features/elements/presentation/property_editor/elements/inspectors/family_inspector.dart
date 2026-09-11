@@ -464,7 +464,18 @@ class _FamilyPropertiesSectionState extends State<_FamilyPropertiesSection> {
             position;
       }
 
-      final mesh = await FamilyInstanceAdapter.evaluatedMesh(document, type);
+      final availableDocuments = document.features.any(
+        (feature) => feature.kind == FamilyFeatureKind.nestedFamily,
+      )
+          ? (await widget.familyAssets.listStored())
+              .map((asset) => asset.document)
+              .toList(growable: false)
+          : const <FamilyDocument>[];
+      final mesh = await FamilyInstanceAdapter.evaluatedMesh(
+        document,
+        type,
+        availableDocuments: availableDocuments,
+      );
       final vertices = isWallSweep
           ? FamilyInstanceAdapter.projectWallHostedVertices(
               mesh: mesh,

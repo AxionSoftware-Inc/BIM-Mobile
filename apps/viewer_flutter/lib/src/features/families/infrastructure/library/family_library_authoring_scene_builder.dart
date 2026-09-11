@@ -1,4 +1,4 @@
-import '../../../../render_scene_models.dart';
+import '../../../../core/application/render_scene/render_scene_models.dart';
 import '../../application/integration/family_authoring_scene_builder.dart';
 import '../../domain/document/family_document.dart';
 import 'family_file_store.dart';

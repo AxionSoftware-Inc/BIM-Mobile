@@ -15,10 +15,12 @@ void main() {
           .split('\n')
           .where((line) => line.trim().isNotEmpty)
           .toList(growable: false);
+      final hasImportDirective =
+          RegExp(r'^\s*import\s+', multiLine: true).hasMatch(text);
       final isFacade = text.contains('COMPATIBILITY:') &&
           text.contains('REMOVE WHEN:') &&
           text.contains('export ') &&
-          !text.contains('import ') &&
+          !hasImportDirective &&
           nonEmptyLines.length <= 6;
       if (!isFacade) violations.add(_basename(entity.path));
     }

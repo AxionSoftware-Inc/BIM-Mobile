@@ -2,7 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 
-import '../../../render_scene_models.dart';
+import '../../../core/application/render_scene/render_scene_models.dart';
 
 /// Fallback/demo RenderScene input boundary.
 ///

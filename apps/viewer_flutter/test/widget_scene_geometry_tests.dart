@@ -144,8 +144,7 @@ void registerSceneGeometryTests() {
     expect(created.metadata['footprint_mode'], 'picked_wall_polygon');
   });
 
-  test('fallback keeps curved walls semantic and cuts curved openings',
-      () async {
+  test('curved walls stay semantic and cut curved openings', () {
     final base = parseRenderSceneJson(
       File('test/fixtures/render_scene_sample.json').readAsStringSync(),
       source: 'curved fallback test',
@@ -158,25 +157,32 @@ void registerSceneGeometryTests() {
       sweepRadians: math.pi / 2,
       points: <RenderScenePoint>[],
     );
-    final created = await const SceneMutationService().createCurvedWall(
-      CreateCurvedWallRequest(
-        scene: base,
-        geometry: geometry,
-        baseLevelId: 1,
-        topLevelId: 2,
-        heightMeters: 3,
-        thicknessMeters: 0.3,
+    final createdScene = RenderSceneEditor.addCurvedWall(
+      scene: base,
+      start: geometry.start,
+      end: geometry.end,
+      center: geometry.center,
+      radiusMeters: geometry.radiusMeters,
+      startAngleRadians: math.atan2(
+        geometry.start.y - geometry.center.y,
+        geometry.start.x - geometry.center.x,
       ),
+      sweepRadians: geometry.sweepRadians,
+      heightMeters: 3,
+      thicknessMeters: 0.3,
+      levelId: 1,
+      topLevelId: 2,
     );
-    expect(created.success, isTrue);
-    final curved = created.scene!.objectById(created.createdElementId)!;
+    final curved = createdScene.objects.lastWhere(
+      (object) => object.kindKey == 'wall',
+    );
     expect(curved.kindKey, 'wall');
     expect(
       RenderSceneEditor.wallCenterlinePoints(curved).length,
       greaterThan(3),
     );
     final opened = RenderSceneEditor.addWindow(
-      scene: created.scene!,
+      scene: createdScene,
       hostWall: curved,
       offsetMeters: 3.0,
       widthMeters: 1.0,
@@ -193,7 +199,7 @@ void registerSceneGeometryTests() {
     expect(rebuiltWall.featureEdges, isNotEmpty);
   });
 
-  test('floor and ceiling profiles follow a semantic curved wall', () async {
+  test('floor and ceiling profiles follow a semantic curved wall', () {
     var scene = parseRenderSceneJson(
       File('test/fixtures/render_scene_sample.json').readAsStringSync(),
       source: 'curved surface profile test',
@@ -206,19 +212,25 @@ void registerSceneGeometryTests() {
       sweepRadians: math.pi / 2,
       points: <RenderScenePoint>[],
     );
-    final curvedResult = await const SceneMutationService().createCurvedWall(
-      CreateCurvedWallRequest(
-        scene: scene,
-        geometry: geometry,
-        baseLevelId: 1,
-        topLevelId: 2,
-        heightMeters: 3,
-        thicknessMeters: 0.2,
+    scene = RenderSceneEditor.addCurvedWall(
+      scene: scene,
+      start: geometry.start,
+      end: geometry.end,
+      center: geometry.center,
+      radiusMeters: geometry.radiusMeters,
+      startAngleRadians: math.atan2(
+        geometry.start.y - geometry.center.y,
+        geometry.start.x - geometry.center.x,
       ),
+      sweepRadians: geometry.sweepRadians,
+      heightMeters: 3,
+      thicknessMeters: 0.2,
+      levelId: 1,
+      topLevelId: 2,
     );
-    expect(curvedResult.success, isTrue);
-    scene = curvedResult.scene!;
-    final wallIds = <int>[curvedResult.createdElementId!];
+    final wallIds = <int>[
+      scene.objects.lastWhere((object) => object.kindKey == 'wall').elementId!,
+    ];
     const straightEdges = <({RenderScenePoint start, RenderScenePoint end})>[
       (
         start: RenderScenePoint(x: 0, y: 5, z: 0),
@@ -521,6 +533,7 @@ void registerSceneGeometryTests() {
     final service = ProjectPersistenceService(
       repository: () => gateway,
       engineEnabled: () => true,
+      savePathResolver: _FixedProjectSavePathResolver(),
     );
 
     expect(await service.exportJson(), '{"schema_version": 1}');

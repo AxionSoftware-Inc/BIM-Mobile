@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/presentation/design_system/arvela_brand.dart';
-import '../../render_scene_viewport_types.dart';
+import '../../features/viewer/presentation/viewport/render_scene_viewport_types.dart';
 import 'app_settings_model.dart';
 
 /// Material-specific labels/icons for the persisted theme enum.

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../../render_scene_models.dart';
+import '../../../core/application/render_scene/render_scene_models.dart';
 import '../application/bim_element_registry.dart';
 
 /// Shared Inspector card chrome for standalone element adapters.

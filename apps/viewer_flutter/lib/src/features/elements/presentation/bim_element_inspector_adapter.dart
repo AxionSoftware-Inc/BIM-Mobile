@@ -1,7 +1,7 @@
 import 'package:flutter/widgets.dart';
 
 import '../../../core/domain/units/project_unit_settings.dart';
-import '../../../render_scene_models.dart';
+import '../../../core/application/render_scene/render_scene_models.dart';
 import '../../authoring/application/authoring_command_service.dart';
 
 /// Applies an authoritative engine snapshot produced by an Inspector command.

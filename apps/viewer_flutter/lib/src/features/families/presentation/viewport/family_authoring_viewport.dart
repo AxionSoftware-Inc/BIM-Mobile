@@ -71,18 +71,21 @@ class FamilyAuthoringViewport extends StatefulWidget {
   final bool showDiagnostics;
 
   @override
-  State<FamilyAuthoringViewport> createState() => _FamilyAuthoringViewportState();
+  State<FamilyAuthoringViewport> createState() =>
+      _FamilyAuthoringViewportState();
 }
 
 class _FamilyAuthoringViewportState extends State<FamilyAuthoringViewport> {
   late final RenderSceneViewportController _controller;
   String? _sceneKey;
   String? _lastReportedFeatureId;
+  bool _rebuildQueued = false;
 
   @override
   void initState() {
     super.initState();
-    _controller = RenderSceneViewportController(visibleKinds: <String>{'proxy'});
+    _controller =
+        RenderSceneViewportController(visibleKinds: <String>{'proxy'});
     _controller.addListener(_handleControllerChanged);
     unawaited(_configureAndLoad(resetView: true));
   }
@@ -119,10 +122,19 @@ class _FamilyAuthoringViewportState extends State<FamilyAuthoringViewport> {
       _lastReportedFeatureId = null;
     } else if (featureId != _lastReportedFeatureId) {
       _lastReportedFeatureId = featureId;
-      widget.onFeatureSelected?.call(featureId);
-      widget.onFinalFeatureSelected?.call(featureId);
+      final reportedFeatureId = featureId;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _lastReportedFeatureId != reportedFeatureId) return;
+        widget.onFeatureSelected?.call(reportedFeatureId);
+        widget.onFinalFeatureSelected?.call(reportedFeatureId);
+      });
     }
-    if (mounted) setState(() {});
+    if (!mounted || _rebuildQueued) return;
+    _rebuildQueued = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _rebuildQueued = false;
+      if (mounted) setState(() {});
+    });
   }
 
   Future<void> _configureAndLoad({required bool resetView}) async {
@@ -294,10 +306,10 @@ class _FamilyAuthoringViewportState extends State<FamilyAuthoringViewport> {
                 IconButton.filledTonal(
                   tooltip: 'Solid / shaded',
                   onPressed: () {
-                    final next =
-                        _controller.displayStyle == RenderSceneDisplayStyle.shaded
-                            ? RenderSceneDisplayStyle.solid
-                            : RenderSceneDisplayStyle.shaded;
+                    final next = _controller.displayStyle ==
+                            RenderSceneDisplayStyle.shaded
+                        ? RenderSceneDisplayStyle.solid
+                        : RenderSceneDisplayStyle.shaded;
                     unawaited(_controller.setDisplayStyle(next));
                   },
                   icon: const Icon(Icons.contrast_outlined),
@@ -408,9 +420,11 @@ class _FamilyViewportGizmoState extends State<_FamilyViewportGizmo> {
         }
 
         if (widget.mode == FamilyGizmoMode.extrude) {
-          final endpoint = projection.project(
-            RenderScenePoint(x: center3.x, y: center3.y + 1, z: center3.z),
-          ).screen;
+          final endpoint = projection
+              .project(
+                RenderScenePoint(x: center3.x, y: center3.y + 1, z: center3.z),
+              )
+              .screen;
           return Stack(
             children: <Widget>[
               IgnorePointer(

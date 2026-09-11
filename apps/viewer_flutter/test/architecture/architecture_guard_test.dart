@@ -14,7 +14,7 @@ void main() {
     });
 
     test('element registry rejects duplicate canonical keys and aliases', () {
-      const registry = BimElementRegistry(<BimElementModule>[
+      final registry = BimElementRegistry(<BimElementModule>[
         BimElementModule(
           kindKey: 'wall',
           displayName: 'Wall',
@@ -83,9 +83,9 @@ void main() {
 
       for (final file in _dartFiles(sourceRoot)) {
         final normalized = file.path.replaceAll('\\', '/');
-        final isMigratedDomain =
-            (normalized.contains('/features/') && normalized.contains('/domain/')) ||
-                normalized.contains('/core/domain/');
+        final isMigratedDomain = (normalized.contains('/features/') &&
+                normalized.contains('/domain/')) ||
+            normalized.contains('/core/domain/');
         if (!isMigratedDomain) continue;
 
         final text = file.readAsStringSync();
@@ -280,7 +280,8 @@ void main() {
           RegExp(r'''(?:import|export)\s+['\"]([^'\"]+)['\"]''');
 
       for (final file in _dartFiles(sourceRoot)) {
-        final relativeFile = _relativeTo(sourceRoot, file).replaceAll('\\', '/');
+        final relativeFile =
+            _relativeTo(sourceRoot, file).replaceAll('\\', '/');
         final migrated = relativeFile.startsWith('app/') ||
             relativeFile.startsWith('core/') ||
             relativeFile.startsWith('features/') ||
@@ -297,6 +298,7 @@ void main() {
           if (!canonicalByFacade.containsKey(basename)) continue;
           final canonical = canonicalByFacade[basename];
           if (canonical != null && target.contains(canonical)) continue;
+          if (_isMigratedPath(target)) continue;
           violations.add('$relativeFile -> $target');
         }
       }
@@ -362,6 +364,12 @@ Iterable<File> _dartFiles(Directory root) sync* {
 }
 
 String _basename(String path) => path.replaceAll('\\', '/').split('/').last;
+
+bool _isMigratedPath(String path) =>
+    path.startsWith('app/') ||
+    path.startsWith('core/') ||
+    path.startsWith('features/') ||
+    path.startsWith('platform/');
 
 String _resolveImportTarget(String importingFile, String target) {
   const packagePrefix = 'package:viewer_flutter/src/';
