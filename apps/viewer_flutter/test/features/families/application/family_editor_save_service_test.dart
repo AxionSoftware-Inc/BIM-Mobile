@@ -78,6 +78,17 @@ final class _FakeFamilyAssetRepository implements FamilyAssetRepository {
       List<FamilyAssetFile>.unmodifiable(assets);
 
   @override
+  Future<FamilyDocument?> resolveDocument({
+    required String assetId,
+    String assetPath = '',
+  }) async {
+    for (final asset in assets) {
+      if (asset.document.id == assetId) return asset.document;
+    }
+    return null;
+  }
+
+  @override
   Future<String?> save(FamilyDocument document) async {
     saved.add(document.name);
     return '/families/${document.name}.bimfamily';
