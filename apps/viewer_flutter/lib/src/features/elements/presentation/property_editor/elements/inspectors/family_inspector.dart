@@ -12,6 +12,7 @@ Widget _buildFamilyInspector(_ObjectInspectorContext context) {
     levels: context.levels,
     units: context.units,
     commands: context.commands,
+    familyAssets: context.familyAssets,
     onApplied: context.onApplied,
   );
 }
@@ -104,6 +105,7 @@ class _FamilyPropertiesSection extends StatefulWidget {
     required this.levels,
     required this.units,
     required this.commands,
+    required this.familyAssets,
     required this.onApplied,
   });
 
@@ -112,6 +114,7 @@ class _FamilyPropertiesSection extends StatefulWidget {
   final List<RenderSceneLevel> levels;
   final ProjectUnitSettings units;
   final AuthoringCommandService commands;
+  final FamilyAssetRepository familyAssets;
   final ApplyInspectorResult onApplied;
 
   @override
@@ -138,7 +141,8 @@ class _FamilyPropertiesSectionState extends State<_FamilyPropertiesSection> {
   void didUpdateWidget(covariant _FamilyPropertiesSection oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.object.elementId != widget.object.elementId ||
-        oldWidget.object.revision != widget.object.revision) {
+        oldWidget.object.revision != widget.object.revision ||
+        !identical(oldWidget.familyAssets, widget.familyAssets)) {
       _resetFromObject(widget.object);
     } else if (oldWidget.units != widget.units) {
       _syncControllers();
@@ -159,11 +163,10 @@ class _FamilyPropertiesSectionState extends State<_FamilyPropertiesSection> {
     if (instance == null) return;
     if (mounted) setState(() => _loading = true);
 
-    FamilyDocument? document;
-    if (instance.assetPath.isNotEmpty) {
-      document = (await FamilyFileStore.loadPath(instance.assetPath))?.document;
-    }
-    document ??= _findBuiltIn(instance.assetId);
+    final document = await widget.familyAssets.resolveDocument(
+      assetId: instance.assetId,
+      assetPath: instance.assetPath,
+    );
     if (!mounted || _instance?.assetId != instance.assetId) return;
 
     if (document == null) {
@@ -197,13 +200,6 @@ class _FamilyPropertiesSectionState extends State<_FamilyPropertiesSection> {
       _document = document;
       _syncControllers();
     });
-  }
-
-  FamilyDocument? _findBuiltIn(String id) {
-    for (final family in BuiltInFamilyCatalog.families) {
-      if (family.id == id) return family;
-    }
-    return null;
   }
 
   FamilyTypeDefinition _sourceType(
@@ -356,7 +352,11 @@ class _FamilyPropertiesSectionState extends State<_FamilyPropertiesSection> {
 
   Future<RenderSceneLoadResult> _applyValues() async {
     final instance = _instance!;
-    final document = _document ?? _findBuiltIn(instance.assetId);
+    final document = _document ??
+        await widget.familyAssets.resolveDocument(
+          assetId: instance.assetId,
+          assetPath: instance.assetPath,
+        );
     if (document == null) {
       throw const FormatException('Family asset is unavailable.');
     }
