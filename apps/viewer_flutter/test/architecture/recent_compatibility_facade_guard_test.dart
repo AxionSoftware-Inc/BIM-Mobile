@@ -7,6 +7,8 @@ void main() {
       () {
     final sourceRoot = _sourceRoot();
     const canonicalByFacade = <String, String>{
+      'render_scene_models.dart':
+          'core/application/render_scene/render_scene_models.dart',
       'bim_compact_instance_store.dart':
           'features/viewer/application/runtime/bim_compact_instance_store.dart',
       'bim_spatial_grid_index.dart':
