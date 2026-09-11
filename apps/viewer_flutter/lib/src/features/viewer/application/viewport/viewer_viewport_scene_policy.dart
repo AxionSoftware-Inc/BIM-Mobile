@@ -1,5 +1,5 @@
+import '../../../../core/domain/scene/render_scene_models.dart';
 import '../../../elements/application/bim_element_registry.dart';
-import '../../../../render_scene_models.dart';
 import '../../domain/view/view_configuration.dart';
 
 /// Defines the presentation boundary between the authoritative BIM snapshot
@@ -9,10 +9,6 @@ import '../../domain/view/view_configuration.dart';
 /// never decide how walls, doors, or other domain objects are regenerated.
 /// Keeping this decision in a small value object prevents an authoring change
 /// from accidentally changing rendering policy in a widget callback.
-///
-/// MIGRATION: RenderScene is still a root engine DTO library. Keep that known
-/// dependency explicit until the render-scene contract is split from Flutter
-/// annotations and element-registry helpers; do not hide it behind a facade.
 final class ViewerViewportScenePolicy {
   const ViewerViewportScenePolicy({
     required this.projectionMode,
@@ -124,7 +120,7 @@ final class ViewerViewportScenePolicy {
     double toleranceMeters = 1.4,
   }) {
     if (modelPoint == null ||
-        !(projectionMode.isElevation ||
+        !(projectionMode.isElevationProjection ||
             projectionMode.supportsPlanFootprintEditing)) {
       return null;
     }
