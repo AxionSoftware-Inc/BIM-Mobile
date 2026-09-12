@@ -147,6 +147,20 @@ extension _RenderSceneViewportCamera on RenderSceneViewportController {
     return _nativeBridgeQueue.run<T>(operation);
   }
 
+  /// Queues only the newest value for a renderer state command. The serial
+  /// lane still preserves ordering with scene transactions, but old selection,
+  /// filter and style updates become no-ops when they finally reach the lane.
+  /// This prevents a long authoring session from filling the MethodChannel
+  /// with states that the user has already replaced.
+  Future<void> _invokeLatest(String method, [Object? arguments]) {
+    final revision = (_nativeCoalescedCommandRevisions[method] ?? 0) + 1;
+    _nativeCoalescedCommandRevisions[method] = revision;
+    return _runNativeBridgeBatch<void>(() async {
+      if (_nativeCoalescedCommandRevisions[method] != revision) return;
+      await _invokeNow(method, arguments);
+    });
+  }
+
   Future<void> _invoke(String method, [Object? arguments]) {
     return _runNativeBridgeBatch<void>(
       () => _invokeNow(method, arguments),

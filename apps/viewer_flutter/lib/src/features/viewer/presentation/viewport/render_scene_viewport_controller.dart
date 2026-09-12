@@ -42,6 +42,12 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
 
   int _fitRevision = 0;
   int _sceneRevision = 0;
+  // A scene commit can arrive faster than Android can rebuild Filament
+  // renderables. Older JSON snapshots are no longer useful once a newer
+  // snapshot exists; keep their queued bridge transactions cancellable at the
+  // queue boundary so they cannot repaint an old model over the new one.
+  int _nativeSceneTransactionRevision = 0;
+  final Map<String, int> _nativeCoalescedCommandRevisions = <String, int>{};
   bool _nativeCameraSyncScheduled = false;
   bool _nativeCameraSyncPending = false;
   bool _nativeCameraSyncSending = false;
@@ -332,6 +338,8 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
   }
 
   void detachNativeBridge() {
+    _nativeSceneTransactionRevision += 1;
+    _nativeCoalescedCommandRevisions.clear();
     _channel?.setMethodCallHandler(null);
     _channel = null;
     // The Android PlatformView may be recreated while the Flutter controller
@@ -381,6 +389,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     _scene = scene;
     _sceneBounds = scene.bounds;
     _sceneRevision += 1;
+    final nativeSceneTransactionRevision = ++_nativeSceneTransactionRevision;
     _fitRevision += 1;
 
     if (resetView) {
@@ -398,8 +407,18 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     // producing a mixed frame where some elements move and others appear
     // frozen.
     await _runNativeBridgeBatch<void>(() async {
-      if (_backend != RenderSceneViewportBackend.native) return;
+      if (_backend != RenderSceneViewportBackend.native ||
+          nativeSceneTransactionRevision != _nativeSceneTransactionRevision) {
+        return;
+      }
       await _loadRememberedNativeBimCacheNow();
+      // Cache preparation can yield back to the Dart event loop. A newer
+      // authoring commit may have superseded this transaction while the
+      // native cache was opening, so check again before sending a large mesh
+      // payload to Android.
+      if (nativeSceneTransactionRevision != _nativeSceneTransactionRevision) {
+        return;
+      }
       if (visibleKinds != null) {
         await _invokeNow('setVisibleKinds', _visibleKinds.toList());
       }
@@ -424,6 +443,8 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
 
   @override
   Future<void> clearScene() async {
+    _nativeSceneTransactionRevision += 1;
+    _nativeCoalescedCommandRevisions.clear();
     _nativeGeometryActive = false;
     _nativeCacheRequest = null;
     _nativeCacheNeedsReplay = false;
@@ -489,7 +510,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
   Future<void> setVisibleKinds(Set<String> kinds) async {
     _visibleKinds = kinds;
     notifyListeners();
-    await _invoke('setVisibleKinds', kinds.toList());
+    await _invokeLatest('setVisibleKinds', kinds.toList());
   }
 
   @override
@@ -535,7 +556,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
 
     _displayStyle = style;
     notifyListeners();
-    await _invoke('setDisplayStyle', style.name);
+    await _invokeLatest('setDisplayStyle', style.name);
   }
 
   @override
@@ -543,7 +564,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     if (_viewportTheme == theme) return;
     _viewportTheme = theme;
     notifyListeners();
-    await _invoke('setViewportTheme', theme.name);
+    await _invokeLatest('setViewportTheme', theme.name);
   }
 
   @override
@@ -551,7 +572,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     if (_hdriVisible == visible) return;
     _hdriVisible = visible;
     notifyListeners();
-    await _invoke('setHdriVisible', visible);
+    await _invokeLatest('setHdriVisible', visible);
   }
 
   @override
@@ -559,7 +580,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     if (_shadowsEnabled == enabled) return;
     _shadowsEnabled = enabled;
     notifyListeners();
-    await _invoke('setShadowsEnabled', enabled);
+    await _invokeLatest('setShadowsEnabled', enabled);
   }
 
   /// Native ClipVolume for the live 3D viewport. It clips render triangles
@@ -568,7 +589,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     _sectionBox = bounds;
     if (bounds != null) _sectionView = null;
     notifyListeners();
-    await _invoke('setSectionBox', <String, Object?>{
+    await _invokeLatest('setSectionBox', <String, Object?>{
       'enabled': bounds != null,
       if (bounds != null) 'min': bounds.min.toJson(),
       if (bounds != null) 'max': bounds.max.toJson(),
@@ -581,7 +602,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     _sectionView = section;
     if (section != null) _sectionBox = null;
     notifyListeners();
-    await _invoke('setSectionView', <String, Object?>{
+    await _invokeLatest('setSectionView', <String, Object?>{
       'enabled': section != null,
       if (section != null) 'start': section.start.toJson(),
       if (section != null) 'end': section.end.toJson(),
@@ -881,7 +902,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     _activeElementId = resolvedActive;
     _selectedLevelId = null;
     notifyListeners();
-    await _invoke('setSelection', <String, Object?>{
+    await _invokeLatest('setSelection', <String, Object?>{
       'ids': normalized.toList(),
       'activeId': resolvedActive,
     });
@@ -900,7 +921,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     _activeElementId = null;
     _highlightedElementId = null;
     notifyListeners();
-    await _invoke('setSelection', <String, Object?>{
+    await _invokeLatest('setSelection', <String, Object?>{
       'ids': const <String>[],
       'activeId': null,
       'levelId': levelId,
@@ -909,7 +930,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
     // own hover/preview tint. Clear that native state explicitly before the
     // local null value makes [highlightElement] a no-op.
     if (nativeHighlightMustClear) {
-      await _invoke('highlightElement', null);
+      await _invokeLatest('highlightElement', null);
     }
   }
 
@@ -921,7 +942,7 @@ class RenderSceneViewportController extends RenderSceneViewportActions {
 
     _highlightedElementId = elementId;
     notifyListeners();
-    await _invoke('highlightElement', elementId);
+    await _invokeLatest('highlightElement', elementId);
   }
 
   /// Delegates a 3D tap to Filament after keeping its coordinates independent

@@ -12,6 +12,10 @@ class _AndroidRenderSceneView extends StatelessWidget {
   Widget build(BuildContext context) {
     final nativeClipOwnsInteraction = controller.nativeOwnsClipGestures;
     return AndroidView(
+      // Controller notifications are frequent during pan/zoom and authoring.
+      // Keep the PlatformView identity stable so Flutter rebuilds its wrapper
+      // without tearing down TextureView/Filament underneath it.
+      key: ValueKey<RenderSceneViewportController>(controller),
       viewType: 'tbe/render_scene_view',
       layoutDirection: TextDirection.ltr,
       // Scene transfer is intentionally deferred to the per-view channel as

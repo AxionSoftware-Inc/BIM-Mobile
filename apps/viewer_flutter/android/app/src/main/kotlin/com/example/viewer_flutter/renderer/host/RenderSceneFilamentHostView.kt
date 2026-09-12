@@ -571,6 +571,10 @@ internal class RenderSceneFilamentHostView(
   private var movePreviewDelta = ScenePoint(0.0, 0.0, 0.0)
   private var framePosted = false
   private var renderDirty = true
+  private var frameWatchdogPosted = false
+  private var consecutiveBeginFrameFailures = 0
+  private var beginFrameFailureCount = 0L
+  private var lastFrameCallbackElapsedRealtimeMs = 0L
   private var renderedFrameCount = 0L
   private var lastRenderedFrameNanos = 0L
   private var interactiveUntilMs = 0L
@@ -590,6 +594,26 @@ internal class RenderSceneFilamentHostView(
         requestRender()
         renderSurface.postInvalidateOnAnimation()
         postDelayed(this, 16L)
+      }
+    }
+  }
+  // TextureView/PlatformView composition can occasionally lose a VSYNC
+  // callback while the surface is resized or while Flutter is committing a
+  // large overlay tree. Keep a lightweight watchdog only while a frame is
+  // actually needed; it re-arms the frame request without running a permanent
+  // render loop or rebuilding Filament state.
+  private val frameWatchdog = object : Runnable {
+    override fun run() {
+      frameWatchdogPosted = false
+      if (disposed) return
+      val needsFrame = surfaceReady &&
+        (renderDirty || touching || orbitInertiaActive ||
+          rendererBenchmark != null ||
+          SystemClock.uptimeMillis() < interactiveUntilMs)
+      if (needsFrame) {
+        renderSurface.postInvalidateOnAnimation()
+        scheduleFrame()
+        postFrameWatchdog()
       }
     }
   }
@@ -2068,6 +2092,7 @@ internal class RenderSceneFilamentHostView(
       renderer?.let { displayHelper.attach(it, display) }
     }
     requestRender()
+    postFrameWatchdog()
   }
 
   override fun onDetachedFromSurface() {
@@ -2081,6 +2106,8 @@ internal class RenderSceneFilamentHostView(
     Log.i(TAG, statusMessage)
     updateStatus()
     cancelFrame()
+    sectionBoxHandler.removeCallbacks(frameWatchdog)
+    frameWatchdogPosted = false
   }
 
   override fun onResized(width: Int, height: Int) {
@@ -2104,6 +2131,7 @@ internal class RenderSceneFilamentHostView(
 
   override fun doFrame(frameTimeNanos: Long) {
     framePosted = false
+    lastFrameCallbackElapsedRealtimeMs = SystemClock.elapsedRealtime()
     updateOrbitInertia(frameTimeNanos)
     driveAutomatedBenchmark(frameTimeNanos)
     val renderer = renderer
@@ -2116,18 +2144,33 @@ internal class RenderSceneFilamentHostView(
     val benchmarking = rendererBenchmark != null
     val interactive = touching || orbitInertiaActive || benchmarking || SystemClock.uptimeMillis() < interactiveUntilMs
     val shouldRender = renderDirty || interactive
-    if (shouldRender && renderer != null && view != null && swapChain != null && renderer.beginFrame(swapChain, frameTimeNanos)) {
-      val submitStartedNanos = SystemClock.elapsedRealtimeNanos()
-      renderer.render(view)
-      renderer.endFrame()
-      val submitMs = (SystemClock.elapsedRealtimeNanos() - submitStartedNanos).toDouble() / 1_000_000.0
-      renderedFrameCount += 1
-      lastRenderedFrameNanos = frameTimeNanos
-      renderDirty = false
-      recordAutomatedBenchmarkFrame(frameTimeNanos, submitMs)
-      sampleTelemetry()
+    if (shouldRender && renderer != null && view != null && swapChain != null) {
+      if (renderer.beginFrame(swapChain, frameTimeNanos)) {
+        consecutiveBeginFrameFailures = 0
+        val submitStartedNanos = SystemClock.elapsedRealtimeNanos()
+        renderer.render(view)
+        renderer.endFrame()
+        val submitMs = (SystemClock.elapsedRealtimeNanos() - submitStartedNanos).toDouble() / 1_000_000.0
+        renderedFrameCount += 1
+        lastRenderedFrameNanos = frameTimeNanos
+        renderDirty = false
+        recordAutomatedBenchmarkFrame(frameTimeNanos, submitMs)
+        sampleTelemetry()
+      } else {
+        // Do not consume the dirty bit when the swapchain rejects a frame.
+        // The old code could then go idle permanently, leaving a stale
+        // TextureView tile while Flutter's overlay continued to move.
+        consecutiveBeginFrameFailures += 1
+        beginFrameFailureCount += 1L
+        if (consecutiveBeginFrameFailures == 1 || consecutiveBeginFrameFailures % 30 == 0) {
+          Log.w(TAG, "Filament beginFrame failed; retrying (consecutive=$consecutiveBeginFrameFailures)")
+        }
+      }
     }
-    if (interactive || (renderDirty && surfaceReady)) scheduleFrame()
+    if (interactive || (renderDirty && surfaceReady)) {
+      scheduleFrame()
+      postFrameWatchdog()
+    }
   }
 
   private fun driveAutomatedBenchmark(frameTimeNanos: Long) {
@@ -2304,6 +2347,8 @@ internal class RenderSceneFilamentHostView(
     disposed = true
     sectionBoxHandler.removeCallbacks(sectionBoxRebuild)
     sectionBoxHandler.removeCallbacks(shadowResume)
+    sectionBoxHandler.removeCallbacks(frameWatchdog)
+    frameWatchdogPosted = false
     cancelFrame()
     uiHelper.detach()
     displayHelper.detach()
@@ -5890,6 +5935,14 @@ internal class RenderSceneFilamentHostView(
     "materialReady" to (material != null),
     "surfaceReady" to surfaceReady,
     "swapChainReady" to (swapChain != null),
+    "framePosted" to framePosted,
+    "renderDirty" to renderDirty,
+    "beginFrameFailures" to beginFrameFailureCount,
+    "consecutiveBeginFrameFailures" to consecutiveBeginFrameFailures,
+    "lastFrameAgeMs" to if (lastRenderedFrameNanos == 0L) -1L else
+      (SystemClock.elapsedRealtimeNanos() - lastRenderedFrameNanos) / 1_000_000L,
+    "lastFrameCallbackAgeMs" to if (lastFrameCallbackElapsedRealtimeMs == 0L) -1L else
+      SystemClock.elapsedRealtime() - lastFrameCallbackElapsedRealtimeMs,
     "renderedFrames" to renderedFrameCount,
     "cpuPercent" to cpuPercent,
     "fps" to framesPerSecond,
@@ -5931,6 +5984,12 @@ internal class RenderSceneFilamentHostView(
     }
   }
 
+  private fun postFrameWatchdog() {
+    if (disposed || frameWatchdogPosted) return
+    frameWatchdogPosted = true
+    sectionBoxHandler.postDelayed(frameWatchdog, 250L)
+  }
+
   private fun requestRender(interactiveForMs: Long = 0L) {
     renderDirty = true
     if (interactiveForMs > 0L) {
@@ -5952,6 +6011,7 @@ internal class RenderSceneFilamentHostView(
       // screen while the Android overlay continues to repaint.
       renderSurface.postInvalidateOnAnimation()
       scheduleFrame()
+      postFrameWatchdog()
     }
   }
 
