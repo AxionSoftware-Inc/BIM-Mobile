@@ -541,6 +541,7 @@ extension _ViewerWorkspaceLayout on _ViewerHomePageState {
       return QuantityScheduleWorkspace(
         scene: scene,
         kind: activeTab?.scheduleKind ?? ProjectScheduleKind.rooms,
+        csvExportService: _dependencies.scheduleCsvExport,
       );
     }
     if (sheet != null && scene != null) {

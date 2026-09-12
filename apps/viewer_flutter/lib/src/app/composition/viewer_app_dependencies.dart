@@ -12,6 +12,8 @@ import '../../features/projects/application/recovery/project_recovery_checkpoint
 import '../../features/projects/infrastructure/persistence/native_project_save_path_resolver.dart';
 import '../../features/projects/infrastructure/recovery/file_project_recovery_checkpoint_repository.dart';
 import '../../features/viewer/application/scene_view_service.dart';
+import '../../features/schedules/application/schedule_csv_export_service.dart';
+import '../../features/schedules/infrastructure/platform_schedule_csv_export_port.dart';
 import '../../platform/native_engine/native_viewer_session_factory.dart';
 import 'project_session_scene_gateway_resolver.dart';
 
@@ -36,6 +38,7 @@ final class ViewerAppDependencies {
     required this.familyAssets,
     required this.elements,
     required this.inspectors,
+    required this.scheduleCsvExport,
   });
 
   factory ViewerAppDependencies.production() {
@@ -63,6 +66,9 @@ final class ViewerAppDependencies {
       familyAssets: const LocalFamilyAssetRepository(),
       elements: elements,
       inspectors: BimElementInspectorRegistry(elements),
+      scheduleCsvExport: const ScheduleCsvExportService(
+        PlatformScheduleCsvExportPort(),
+      ),
     );
   }
 
@@ -73,6 +79,7 @@ final class ViewerAppDependencies {
   final FamilyAssetRepository familyAssets;
   final BimElementRegistry elements;
   final BimElementInspectorRegistry inspectors;
+  final ScheduleCsvExportService scheduleCsvExport;
 
   /// Builds the viewer scene use-case against the same project session owned by
   /// this composition root. Presentation code should use this instead of
