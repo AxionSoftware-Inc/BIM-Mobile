@@ -82,6 +82,13 @@ class RenderSceneViewport extends StatefulWidget {
 }
 
 class _RenderSceneViewportState extends State<RenderSceneViewport> {
+  TextEditingController? _annotationTextController;
+  FocusNode? _annotationTextFocusNode;
+  Completer<String?>? _annotationTextCompleter;
+  String _annotationTextTitle = '';
+  String _annotationTextHint = '';
+  String _annotationTextActionLabel = 'Place';
+
   @override
   void initState() {
     super.initState();
@@ -105,6 +112,10 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
 
   @override
   void dispose() {
+    final textEditorCompleter = _annotationTextCompleter;
+    if (textEditorCompleter != null && !textEditorCompleter.isCompleted) {
+      textEditorCompleter.complete(null);
+    }
     widget.controller.removeListener(_handleControllerChanged);
     AnnotationWorkspaceRuntime.document
         .removeListener(_handleAnnotationChanged);
@@ -195,9 +206,95 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
             onDelete: _deleteSelectedAnnotation,
             onClear: AnnotationWorkspaceRuntime.clearSelection,
           ),
+          if (_annotationTextController != null)
+            _buildAnnotationTextEditor(context),
         ],
       ),
     );
+  }
+
+  Widget _buildAnnotationTextEditor(BuildContext context) {
+    final controller = _annotationTextController!;
+    final focusNode = _annotationTextFocusNode!;
+    final theme = Theme.of(context);
+    return Positioned.fill(
+      child: Material(
+        color: Colors.black.withValues(alpha: 0.42),
+        child: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(24),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 560),
+                child: Card(
+                  elevation: 8,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 20, 24, 16),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: <Widget>[
+                        Text(
+                          _annotationTextTitle,
+                          style: theme.textTheme.headlineSmall,
+                        ),
+                        const SizedBox(height: 16),
+                        TextField(
+                          controller: controller,
+                          focusNode: focusNode,
+                          autofocus: true,
+                          minLines: 1,
+                          maxLines: 3,
+                          textInputAction: TextInputAction.done,
+                          decoration: InputDecoration(
+                            labelText: _annotationTextHint,
+                            border: const OutlineInputBorder(),
+                          ),
+                          onSubmitted: (_) =>
+                              _finishAnnotationTextEditor(controller.text),
+                        ),
+                        const SizedBox(height: 16),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: <Widget>[
+                            TextButton(
+                              onPressed: _cancelAnnotationTextEditor,
+                              child: const Text('Cancel'),
+                            ),
+                            const SizedBox(width: 8),
+                            FilledButton(
+                              onPressed: () => _finishAnnotationTextEditor(
+                                controller.text,
+                              ),
+                              child: Text(_annotationTextActionLabel),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _finishAnnotationTextEditor(String rawValue) {
+    final completer = _annotationTextCompleter;
+    if (completer == null || completer.isCompleted) return;
+    final value = rawValue.trim();
+    _annotationTextFocusNode?.unfocus();
+    completer.complete(value.isEmpty ? null : value);
+  }
+
+  void _cancelAnnotationTextEditor() {
+    final completer = _annotationTextCompleter;
+    if (completer == null || completer.isCompleted) return;
+    _annotationTextFocusNode?.unfocus();
+    completer.complete(null);
   }
 
   Widget _buildViewport(BuildContext context) {
@@ -449,19 +546,17 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
         );
         _showAnnotationMessage('Detail line placed.');
       case AnnotationWorkspaceTool.symbol:
-        final assetKey = await _promptText(
-          title: 'Annotation symbol',
-          hint: 'Shared symbol key',
-          initialValue: 'builtin:marker',
-        );
-        if (!mounted || assetKey == null || assetKey.isEmpty) return;
         AnnotationWorkspaceRuntime.document.addSymbol(
           viewId: viewId,
           levelId: levelId,
           x: point.x,
           y: point.y,
           z: point.z,
-          assetKey: assetKey,
+          // Keep the first placement one-tap on a touch device. The marker is
+          // the built-in, renderer-independent fallback; a future symbol
+          // library can add a picker without putting a raw asset key in the
+          // primary placement flow.
+          assetKey: 'builtin:marker',
         );
         _showAnnotationMessage('Symbol placed.');
     }
@@ -552,37 +647,37 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
     String initialValue = '',
     String actionLabel = 'Place',
   }) async {
-    final textController = TextEditingController(text: initialValue);
-    try {
-      return await showDialog<String>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: Text(title),
-          content: TextField(
-            controller: textController,
-            autofocus: true,
-            minLines: 1,
-            maxLines: 3,
-            decoration: InputDecoration(hintText: hint),
-            onSubmitted: (value) =>
-                Navigator.of(dialogContext).pop(value.trim()),
-          ),
-          actions: <Widget>[
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () =>
-                  Navigator.of(dialogContext).pop(textController.text.trim()),
-              child: Text(actionLabel),
-            ),
-          ],
-        ),
-      );
-    } finally {
-      textController.dispose();
+    if (_annotationTextCompleter != null) return null;
+    final controller = TextEditingController(text: initialValue);
+    final focusNode = FocusNode();
+    final completer = Completer<String?>();
+    setState(() {
+      _annotationTextController = controller;
+      _annotationTextFocusNode = focusNode;
+      _annotationTextCompleter = completer;
+      _annotationTextTitle = title;
+      _annotationTextHint = hint;
+      _annotationTextActionLabel = actionLabel;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && identical(_annotationTextFocusNode, focusNode)) {
+        focusNode.requestFocus();
+      }
+    });
+
+    final value = await completer.future;
+    await SystemChannels.textInput.invokeMethod<void>('TextInput.hide');
+    await Future<void>.delayed(Duration.zero);
+    if (mounted && identical(_annotationTextController, controller)) {
+      setState(() {
+        _annotationTextController = null;
+        _annotationTextFocusNode = null;
+        _annotationTextCompleter = null;
+      });
     }
+    controller.dispose();
+    focusNode.dispose();
+    return value;
   }
 
   void _showAnnotationMessage(String value) {
