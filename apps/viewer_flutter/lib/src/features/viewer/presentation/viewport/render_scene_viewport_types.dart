@@ -143,6 +143,7 @@ class RenderSceneTapDetails {
     required this.modelPoint,
     required this.pickedObject,
     this.pickedLevel,
+    this.gestureStartPosition,
     this.pointerCount = 1,
   });
 
@@ -151,6 +152,11 @@ class RenderSceneTapDetails {
   final RenderScenePoint? modelPoint;
   final RenderSceneObject? pickedObject;
   final RenderSceneLevel? pickedLevel;
+
+  /// Original pointer-down location for a drag callback. The current
+  /// [screenPosition] may already be beyond the drag threshold by the time a
+  /// start callback is emitted.
+  final Offset? gestureStartPosition;
   final int pointerCount;
 }
 

@@ -43,6 +43,7 @@ class _FallbackRenderSceneView extends StatefulWidget {
     this.onSceneMultiTouchStart,
     required this.onSceneSecondaryTap,
     required this.onSceneHover,
+    this.annotationGestureMode = false,
     required this.authoringPickKinds,
     required this.directSurfaceDrag,
     required this.planPickResolver,
@@ -66,6 +67,11 @@ class _FallbackRenderSceneView extends StatefulWidget {
   final VoidCallback? onSceneMultiTouchStart;
   final ValueChanged<RenderSceneTapDetails>? onSceneSecondaryTap;
   final ValueChanged<RenderSceneTapDetails>? onSceneHover;
+
+  /// Annotation gestures are kept on the shared Flutter surface even when a
+  /// native 3D renderer is present. This prevents a one-finger annotation
+  /// drag from being interpreted simultaneously as a Filament camera gesture.
+  final bool annotationGestureMode;
   final Set<String> authoringPickKinds;
   final bool directSurfaceDrag;
   final RenderScenePlanPickResolver? planPickResolver;
@@ -133,7 +139,8 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
     _longPressTimer?.cancel();
     _touchRectangleArmed = false;
     if (!_usesTouchNavigation(event) ||
-        widget.interactionMode != RenderSceneInteractionMode.select) {
+        widget.interactionMode != RenderSceneInteractionMode.select ||
+        widget.annotationGestureMode) {
       return;
     }
     _longPressTimer = Timer(const Duration(milliseconds: 420), () {
@@ -254,8 +261,9 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
         // flag only covered section-box handles, so normal 3D pinch updates
         // could also reach Flutter's camera controller and replay a stale orbit
         // snapshot when the pinch ended.
-        final nativeOwnedInteraction =
-            widget.nativeRenderer && controller.projectionMode.is3D;
+        final nativeOwnedInteraction = widget.nativeRenderer &&
+            controller.projectionMode.is3D &&
+            !widget.annotationGestureMode;
         controller.setViewportSize(size);
         RenderSceneLevel? inlineLevel;
         Offset? inlineLevelOrigin;
@@ -372,7 +380,8 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                   position: event.localPosition,
                   elementId: picked?.elementId?.toString(),
                   modifiers: _selectionModifiers(),
-                  allowObjectDrag: !controller.projectionMode.is3D,
+                  allowObjectDrag: !controller.projectionMode.is3D &&
+                      !widget.annotationGestureMode,
                   requireRectangleArm: _usesTouchNavigation(event),
                 );
               }
@@ -477,8 +486,20 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
               }
 
               final delta = event.localPosition - last;
-              if (widget.interactionMode == RenderSceneInteractionMode.select &&
+              if (widget.annotationGestureMode &&
+                  !_sceneDragStarted &&
                   !_isSecondaryDrag) {
+                widget.onSceneHover?.call(_sceneDetails(
+                  scene,
+                  size,
+                  event.localPosition,
+                  event.position,
+                  touchFriendly: _usesTouchNavigation(event),
+                ));
+              }
+              if (widget.interactionMode == RenderSceneInteractionMode.select &&
+                  !_isSecondaryDrag &&
+                  !widget.annotationGestureMode) {
                 final rectangle = _interaction.update(event.localPosition);
                 if (_interaction.intent == ViewportDragIntent.rectangleSelect) {
                   controller.setSelectionRectangle(
@@ -499,7 +520,8 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
               }
               if (!_sceneDragStarted &&
                   widget.interactionMode == RenderSceneInteractionMode.select &&
-                  !controller.projectionMode.is3D &&
+                  (!controller.projectionMode.is3D ||
+                      widget.annotationGestureMode) &&
                   _pointerDownPosition != null &&
                   (event.localPosition - _pointerDownPosition!).distance >
                       _tapDistanceThreshold(event)) {
@@ -538,6 +560,7 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                   modelPoint: modelPoint,
                   pickedObject: pickedLevel == null ? picked : null,
                   pickedLevel: pickedLevel,
+                  gestureStartPosition: _pointerDownPosition,
                 ));
                 _sceneDragStarted = true;
               }
@@ -570,7 +593,8 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                           RenderSceneInteractionMode.moveLevel ||
                       widget.interactionMode ==
                           RenderSceneInteractionMode.moveOpening ||
-                      _usesDirectAuthoringDrag)) {
+                      _usesDirectAuthoringDrag ||
+                      widget.annotationGestureMode)) {
                 final details = widget.interactionMode ==
                             RenderSceneInteractionMode.select ||
                         widget.interactionMode ==
@@ -693,7 +717,8 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
                           RenderSceneInteractionMode.moveLevel ||
                       widget.interactionMode ==
                           RenderSceneInteractionMode.moveOpening ||
-                      _usesDirectAuthoringDrag)) {
+                      _usesDirectAuthoringDrag ||
+                      widget.annotationGestureMode)) {
                 final details = widget.interactionMode ==
                             RenderSceneInteractionMode.select ||
                         widget.interactionMode ==
@@ -724,7 +749,9 @@ class _FallbackRenderSceneViewState extends State<_FallbackRenderSceneView> {
               // Its ray picker reports the front-most triangle through the
               // platform channel. A second Flutter projection pick here can
               // overwrite that result with an object behind the touched face.
-              if (widget.nativeRenderer && controller.projectionMode.is3D) {
+              if (widget.nativeRenderer &&
+                  controller.projectionMode.is3D &&
+                  !widget.annotationGestureMode) {
                 if (moved < _tapDistanceThreshold(event)) {
                   await controller.pickNativeAt(event.localPosition, size);
                 }

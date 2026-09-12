@@ -5,8 +5,10 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../../annotations/application/annotation_snap_service.dart';
 import '../../../annotations/presentation/annotation_history_controls.dart';
 import '../../../annotations/presentation/annotation_hit_test.dart';
+import '../../../annotations/presentation/annotation_interaction_overlay.dart';
 import '../../../annotations/presentation/annotation_selection_controls.dart';
 import '../../../annotations/domain/annotation_store.dart';
 import '../../../families/presentation/runtime/family_2d_viewport_overlay.dart';
@@ -88,6 +90,15 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
   String _annotationTextTitle = '';
   String _annotationTextHint = '';
   String _annotationTextActionLabel = 'Place';
+  AnnotationSnapResult? _annotationSnapPreview;
+  Offset? _annotationDraftStartScreen;
+  Offset? _annotationDraftEndScreen;
+  Offset? _annotationDragStartScreen;
+  Offset? _annotationDragEndScreen;
+  int? _annotationDragId;
+  RenderScenePoint? _annotationDragOrigin;
+  bool _annotationDragMoved = false;
+  bool _annotationDraftDragging = false;
 
   @override
   void initState() {
@@ -136,7 +147,20 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
   }
 
   void _handleWorkspaceToolChanged() {
+    _clearAnnotationInteractionPreview();
     if (mounted) setState(() {});
+  }
+
+  void _clearAnnotationInteractionPreview() {
+    _annotationSnapPreview = null;
+    _annotationDraftStartScreen = null;
+    _annotationDraftEndScreen = null;
+    _annotationDragStartScreen = null;
+    _annotationDragEndScreen = null;
+    _annotationDragId = null;
+    _annotationDragOrigin = null;
+    _annotationDragMoved = false;
+    _annotationDraftDragging = false;
   }
 
   bool get _shouldUseNativeAndroidView {
@@ -191,6 +215,14 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
               selectedAnnotationId:
                   AnnotationWorkspaceRuntime.selectedAnnotationId.value,
               units: widget.units,
+            ),
+          if (_annotationModeActive)
+            AnnotationInteractionOverlay(
+              snapPoint: _annotationSnapPreview?.screenPoint,
+              draftStart: _annotationDraftStartScreen,
+              draftEnd: _annotationDraftEndScreen,
+              dragStart: _annotationDragStartScreen,
+              dragEnd: _annotationDragEndScreen,
             ),
           AnnotationHistoryControls(visible: _annotationModeActive),
           AnnotationSelectionControls(
@@ -311,13 +343,14 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
       return _FallbackRenderSceneView(
         controller: widget.controller,
         interactionMode: widget.interactionMode,
+        annotationGestureMode: _annotationModeActive,
         onSceneTap: _routeSceneTap,
-        onSceneDragStart: widget.onSceneDragStart,
-        onSceneDragUpdate: widget.onSceneDragUpdate,
-        onSceneDragEnd: widget.onSceneDragEnd,
+        onSceneDragStart: _routeSceneDragStart,
+        onSceneDragUpdate: _routeSceneDragUpdate,
+        onSceneDragEnd: _routeSceneDragEnd,
+        onSceneHover: _routeSceneHover,
         onSceneMultiTouchStart: widget.onSceneMultiTouchStart,
         onSceneSecondaryTap: widget.onSceneSecondaryTap,
-        onSceneHover: widget.onSceneHover,
         authoringPickKinds: widget.authoringPickKinds,
         directSurfaceDrag: widget.directSurfaceDrag,
         planPickResolver: widget.planPickResolver,
@@ -333,8 +366,9 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
           // Native Filament owns gestures only for the 3D Section Box. Planar
           // section views use the shared Flutter camera/gesture path so the
           // model, levels and authoring hit tests cannot drift apart.
-          ignoring: !nativeClipOwnsInteraction &&
-              !widget.controller.projectionMode.is3D,
+          ignoring: _annotationModeActive ||
+              (!nativeClipOwnsInteraction &&
+                  !widget.controller.projectionMode.is3D),
           child: _AndroidRenderSceneView(controller: widget.controller),
         ),
       );
@@ -343,13 +377,14 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
     return _FallbackRenderSceneView(
       controller: widget.controller,
       interactionMode: widget.interactionMode,
+      annotationGestureMode: _annotationModeActive,
       onSceneTap: _routeSceneTap,
-      onSceneDragStart: widget.onSceneDragStart,
-      onSceneDragUpdate: widget.onSceneDragUpdate,
-      onSceneDragEnd: widget.onSceneDragEnd,
+      onSceneDragStart: _routeSceneDragStart,
+      onSceneDragUpdate: _routeSceneDragUpdate,
+      onSceneDragEnd: _routeSceneDragEnd,
+      onSceneHover: _routeSceneHover,
       onSceneMultiTouchStart: widget.onSceneMultiTouchStart,
       onSceneSecondaryTap: widget.onSceneSecondaryTap,
-      onSceneHover: widget.onSceneHover,
       authoringPickKinds: widget.authoringPickKinds,
       directSurfaceDrag: widget.directSurfaceDrag,
       planPickResolver: widget.planPickResolver,
@@ -363,6 +398,446 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
     );
   }
 
+  RenderSceneProjection? _annotationProjection() {
+    final scene = widget.controller.scene;
+    final size = context.size;
+    if (scene == null || size == null || size.isEmpty) return null;
+    return RenderSceneProjection(
+      sceneBounds: scene.bounds,
+      canvasSize: size,
+      projectionMode: widget.controller.projectionMode,
+      orbitProjectionStyle: widget.controller.orbitProjectionStyle,
+      planCamera: widget.controller.planCamera,
+      camera: widget.controller.camera,
+      padding: 48,
+    );
+  }
+
+  RenderSceneObject? _annotationObjectAt(Offset position) {
+    final scene = widget.controller.scene;
+    final size = context.size;
+    if (scene == null || size == null || size.isEmpty) return null;
+    return RenderSceneViewportHitTest.objectAtPosition(
+      scene: scene,
+      controller: widget.controller,
+      size: size,
+      position: position,
+      interactionMode: RenderSceneInteractionMode.select,
+      authoringPickKinds: const <String>{},
+      touchFriendly: true,
+    );
+  }
+
+  void _addAnnotationObjectSnapGeometry({
+    required RenderSceneObject object,
+    required RenderSceneProjection projection,
+    required List<AnnotationSnapCandidate> points,
+    required List<AnnotationSnapSegment> segments,
+  }) {
+    final elementId = object.elementId;
+    final edges = object.featureEdges.where((edge) => edge.isFinite).take(128);
+    var hasEdges = false;
+    for (final edge in edges) {
+      hasEdges = true;
+      final startScreen = projection.project(edge.start).screen;
+      final endScreen = projection.project(edge.end).screen;
+      final midpoint = RenderScenePoint(
+        x: (edge.start.x + edge.end.x) * 0.5,
+        y: (edge.start.y + edge.end.y) * 0.5,
+        z: (edge.start.z + edge.end.z) * 0.5,
+      );
+      points
+        ..add(AnnotationSnapCandidate(
+          modelPoint: edge.start,
+          screenPoint: startScreen,
+          kind: AnnotationSnapKind.endpoint,
+          elementId: elementId,
+        ))
+        ..add(AnnotationSnapCandidate(
+          modelPoint: edge.end,
+          screenPoint: endScreen,
+          kind: AnnotationSnapKind.endpoint,
+          elementId: elementId,
+        ))
+        ..add(AnnotationSnapCandidate(
+          modelPoint: midpoint,
+          screenPoint: Offset(
+            (startScreen.dx + endScreen.dx) * 0.5,
+            (startScreen.dy + endScreen.dy) * 0.5,
+          ),
+          kind: AnnotationSnapKind.midpoint,
+          elementId: elementId,
+        ));
+      segments.add(AnnotationSnapSegment(
+        start: edge.start,
+        end: edge.end,
+        startScreen: startScreen,
+        endScreen: endScreen,
+        elementId: elementId,
+      ));
+    }
+    if (hasEdges) return;
+
+    // Imported/detail objects do not always expose semantic feature edges.
+    // Their projected bounding box still gives reliable endpoint/center snaps
+    // without walking a potentially massive mesh on every touch.
+    final bounds = object.bounds;
+    final z = (bounds.min.z + bounds.max.z) * 0.5;
+    final corners = <RenderScenePoint>[
+      RenderScenePoint(x: bounds.min.x, y: bounds.min.y, z: z),
+      RenderScenePoint(x: bounds.max.x, y: bounds.min.y, z: z),
+      RenderScenePoint(x: bounds.max.x, y: bounds.max.y, z: z),
+      RenderScenePoint(x: bounds.min.x, y: bounds.max.y, z: z),
+    ];
+    final projected = corners
+        .map((point) => projection.project(point).screen)
+        .toList(growable: false);
+    for (var index = 0; index < corners.length; index++) {
+      points.add(AnnotationSnapCandidate(
+        modelPoint: corners[index],
+        screenPoint: projected[index],
+        kind: AnnotationSnapKind.endpoint,
+        elementId: elementId,
+      ));
+      final next = (index + 1) % corners.length;
+      segments.add(AnnotationSnapSegment(
+        start: corners[index],
+        end: corners[next],
+        startScreen: projected[index],
+        endScreen: projected[next],
+        elementId: elementId,
+      ));
+    }
+    points.add(AnnotationSnapCandidate(
+      modelPoint: bounds.center,
+      screenPoint: projection.project(bounds.center).screen,
+      kind: AnnotationSnapKind.center,
+      elementId: elementId,
+    ));
+  }
+
+  AnnotationSnapResult? _resolveAnnotationSnap({
+    required Offset screenPoint,
+    RenderScenePoint? fallbackModelPoint,
+    RenderSceneObject? pickedObject,
+    int? excludeAnnotationId,
+  }) {
+    final scene = widget.controller.scene;
+    final projection = _annotationProjection();
+    if (scene == null || projection == null) return null;
+
+    final points = <AnnotationSnapCandidate>[];
+    final segments = <AnnotationSnapSegment>[];
+    final object = pickedObject ?? _annotationObjectAt(screenPoint);
+    if (object != null) {
+      _addAnnotationObjectSnapGeometry(
+        object: object,
+        projection: projection,
+        points: points,
+        segments: segments,
+      );
+    }
+
+    final annotationTargets = <AnnotationSnapCandidate>[];
+    final store = AnnotationWorkspaceRuntime.document.store;
+    final viewId = AnnotationWorkspaceRuntime.activeViewId;
+    if (viewId != 0) {
+      for (final annotationIndex in store.queryView(viewId)) {
+        if (annotationIndex >= store.length ||
+            store.annotationIds[annotationIndex] == excludeAnnotationId) {
+          continue;
+        }
+        final anchor = annotationIndex * 3;
+        final modelPoint = RenderScenePoint(
+          x: store.anchors[anchor],
+          y: store.anchors[anchor + 1],
+          z: store.anchors[anchor + 2],
+        );
+        final target = AnnotationSnapCandidate(
+          modelPoint: modelPoint,
+          screenPoint: projection.project(modelPoint).screen,
+          kind: AnnotationSnapKind.center,
+          elementId: null,
+        );
+        annotationTargets.add(target);
+        points.add(target);
+      }
+    }
+
+    // Alignment snaps keep notes/labels tidy without forcing the user to hit
+    // the exact existing anchor. They are intentionally planar because a
+    // screen-space horizontal/vertical alignment has no single 3D meaning.
+    if (widget.controller.projectionMode.isPlanar) {
+      const alignmentTolerance = 14.0;
+      for (final target in annotationTargets) {
+        final dx = (target.screenPoint.dx - screenPoint.dx).abs();
+        final dy = (target.screenPoint.dy - screenPoint.dy).abs();
+        if (dx <= alignmentTolerance && dy > 2) {
+          final aligned = projection.unprojectPlan(
+            Offset(target.screenPoint.dx, screenPoint.dy),
+          );
+          if (aligned != null) {
+            points.add(AnnotationSnapCandidate(
+              modelPoint: aligned,
+              screenPoint: Offset(target.screenPoint.dx, screenPoint.dy),
+              kind: AnnotationSnapKind.alignment,
+            ));
+          }
+        }
+        if (dy <= alignmentTolerance && dx > 2) {
+          final aligned = projection.unprojectPlan(
+            Offset(screenPoint.dx, target.screenPoint.dy),
+          );
+          if (aligned != null) {
+            points.add(AnnotationSnapCandidate(
+              modelPoint: aligned,
+              screenPoint: Offset(screenPoint.dx, target.screenPoint.dy),
+              kind: AnnotationSnapKind.alignment,
+            ));
+          }
+        }
+      }
+    }
+
+    final semanticSnap = AnnotationSnapResolver.resolve(
+      pointer: screenPoint,
+      points: points,
+      segments: segments,
+      tolerancePixels: 28,
+    );
+    if (semanticSnap != null ||
+        fallbackModelPoint == null ||
+        !widget.controller.projectionMode.isPlanar) {
+      return semanticSnap;
+    }
+
+    // Grid is the deterministic fallback, not a competitor to a nearby wall
+    // endpoint/edge or an alignment guide. Otherwise every touch would snap
+    // to the nearest 100 mm grid point even when the user is clearly aiming
+    // at a BIM feature.
+    final gridPoint = snapAnnotationPointToGrid(fallbackModelPoint);
+    return AnnotationSnapResolver.resolve(
+      pointer: screenPoint,
+      points: <AnnotationSnapCandidate>[
+        AnnotationSnapCandidate(
+          modelPoint: gridPoint,
+          screenPoint: projection.project(gridPoint).screen,
+          kind: AnnotationSnapKind.grid,
+        ),
+      ],
+      tolerancePixels: 28,
+    );
+  }
+
+  RenderScenePoint? _annotationModelPoint(
+    RenderSceneTapDetails details, {
+    AnnotationSnapResult? snap,
+  }) =>
+      snap?.modelPoint ?? details.modelPoint;
+
+  int _annotationLevelId(RenderSceneTapDetails details) {
+    final scene = widget.controller.scene;
+    return AnnotationWorkspaceRuntime.activeLevelId != 0
+        ? AnnotationWorkspaceRuntime.activeLevelId
+        : details.pickedObject?.levelId ??
+            (scene != null && scene.levels.isNotEmpty
+                ? scene.levels.first.levelId
+                : 0);
+  }
+
+  AnnotationHit? _annotationHit(Offset screenPoint) {
+    final size = context.size;
+    final viewId = AnnotationWorkspaceRuntime.activeViewId;
+    if (size == null || size.isEmpty || viewId == 0) return null;
+    return AnnotationHitTester.hitTest(
+      store: AnnotationWorkspaceRuntime.document.store,
+      viewId: viewId,
+      controller: widget.controller,
+      canvasSize: size,
+      screenPoint: screenPoint,
+      tolerancePixels: 24,
+    );
+  }
+
+  void _routeSceneDragStart(RenderSceneTapDetails details) {
+    if (!_annotationModeActive) {
+      widget.onSceneDragStart?.call(details);
+      return;
+    }
+    _clearAnnotationInteractionPreview();
+    final tool = WorkspaceToolSelection.annotationTool;
+    if (tool == AnnotationWorkspaceTool.dimension ||
+        tool == AnnotationWorkspaceTool.detailLine) {
+      final kind = tool == AnnotationWorkspaceTool.dimension
+          ? AnnotationDraftKind.dimension
+          : AnnotationDraftKind.detailLine;
+      final existing = AnnotationWorkspaceRuntime.draftStart;
+      final start = details.gestureStartPosition ?? details.screenPosition;
+      final snap = _resolveAnnotationSnap(
+        screenPoint: start,
+        fallbackModelPoint: details.modelPoint,
+        pickedObject: details.pickedObject,
+      );
+      final point = _annotationModelPoint(details, snap: snap);
+      if (point == null) return;
+      if (existing == null || existing.kind != kind) {
+        AnnotationWorkspaceRuntime.draftStart = AnnotationDraftPoint(
+          kind: kind,
+          point: point,
+          referenceElementId:
+              snap?.elementId ?? details.pickedObject?.elementId,
+        );
+        _annotationDraftStartScreen = snap?.screenPoint ?? start;
+      } else {
+        _annotationDraftStartScreen =
+            _annotationProjection()?.project(existing.point).screen ?? start;
+      }
+      _annotationDraftDragging = true;
+      _annotationSnapPreview = snap;
+      _annotationDraftEndScreen = snap?.screenPoint ?? details.screenPosition;
+      if (mounted) setState(() {});
+      return;
+    }
+    if (tool != AnnotationWorkspaceTool.select) {
+      // A one-finger drag belongs to the active annotation command. Never let
+      // it leak into BIM selection/authoring, which was the source of the
+      // apparent frozen objects and accidental model movement on tablets.
+      return;
+    }
+    final start = details.gestureStartPosition ?? details.screenPosition;
+    final hit = _annotationHit(start);
+    if (hit == null) {
+      AnnotationWorkspaceRuntime.clearSelection();
+      return;
+    }
+    final store = AnnotationWorkspaceRuntime.document.store;
+    final anchor = hit.annotationIndex * 3;
+    _annotationDragId = hit.annotationId;
+    _annotationDragOrigin = RenderScenePoint(
+      x: store.anchors[anchor],
+      y: store.anchors[anchor + 1],
+      z: store.anchors[anchor + 2],
+    );
+    _annotationDragStartScreen = start;
+    _annotationDragEndScreen = details.screenPosition;
+    AnnotationWorkspaceRuntime.selectAnnotation(hit.annotationId);
+    if (mounted) setState(() {});
+  }
+
+  void _routeSceneDragUpdate(RenderSceneTapDetails details) {
+    if (!_annotationModeActive) {
+      widget.onSceneDragUpdate?.call(details);
+      return;
+    }
+    final selectedId = _annotationDragId;
+    if (_annotationDraftDragging) {
+      final snap = _resolveAnnotationSnap(
+        screenPoint: details.screenPosition,
+        fallbackModelPoint: details.modelPoint,
+        pickedObject: details.pickedObject,
+      );
+      final point = _annotationModelPoint(details, snap: snap);
+      if (point != null) {
+        _annotationSnapPreview = snap;
+        _annotationDraftEndScreen = snap?.screenPoint ?? details.screenPosition;
+        if (mounted) setState(() {});
+      }
+      return;
+    }
+    if (selectedId == null) return;
+    final snap = _resolveAnnotationSnap(
+      screenPoint: details.screenPosition,
+      fallbackModelPoint: details.modelPoint,
+      excludeAnnotationId: selectedId,
+    );
+    final point = _annotationModelPoint(details, snap: snap);
+    if (point == null) return;
+    _annotationSnapPreview = snap;
+    _annotationDragEndScreen = snap?.screenPoint ?? details.screenPosition;
+    _annotationDragMoved = true;
+    if (mounted) setState(() {});
+  }
+
+  void _routeSceneDragEnd(RenderSceneTapDetails details) {
+    if (!_annotationModeActive) {
+      widget.onSceneDragEnd?.call(details);
+      return;
+    }
+    if (_annotationDraftDragging) {
+      final draft = AnnotationWorkspaceRuntime.draftStart;
+      final snap = _resolveAnnotationSnap(
+        screenPoint: details.screenPosition,
+        fallbackModelPoint: details.modelPoint,
+        pickedObject: details.pickedObject,
+      );
+      final point = _annotationModelPoint(details, snap: snap);
+      if (draft != null && point != null) {
+        AnnotationWorkspaceRuntime.cancelDraft();
+        final levelId = _annotationLevelId(details);
+        if (draft.kind == AnnotationDraftKind.dimension) {
+          AnnotationWorkspaceRuntime.document.addLinearDimension(
+            viewId: AnnotationWorkspaceRuntime.activeViewId,
+            levelId: levelId,
+            anchorX: (draft.point.x + point.x) * 0.5,
+            anchorY: (draft.point.y + point.y) * 0.5,
+            anchorZ: (draft.point.z + point.z) * 0.5,
+            startX: draft.point.x,
+            startY: draft.point.y,
+            startZ: draft.point.z,
+            endX: point.x,
+            endY: point.y,
+            endZ: point.z,
+            referenceAId: draft.referenceElementId,
+            referenceBId: snap?.elementId,
+          );
+          _showAnnotationMessage('Dimension placed and aligned.');
+        } else {
+          AnnotationWorkspaceRuntime.document.addDetailLine(
+            viewId: AnnotationWorkspaceRuntime.activeViewId,
+            levelId: levelId,
+            startX: draft.point.x,
+            startY: draft.point.y,
+            startZ: draft.point.z,
+            endX: point.x,
+            endY: point.y,
+            endZ: point.z,
+          );
+          _showAnnotationMessage('Detail line placed and aligned.');
+        }
+      }
+      _clearAnnotationInteractionPreview();
+      if (mounted) setState(() {});
+      return;
+    }
+    final selectedId = _annotationDragId;
+    final origin = _annotationDragOrigin;
+    if (selectedId == null || origin == null) {
+      _clearAnnotationInteractionPreview();
+      return;
+    }
+    final snap = _resolveAnnotationSnap(
+      screenPoint: details.screenPosition,
+      fallbackModelPoint: details.modelPoint,
+      excludeAnnotationId: selectedId,
+    );
+    final point = _annotationModelPoint(details, snap: snap);
+    if (_annotationDragMoved && point != null) {
+      final moved = AnnotationWorkspaceRuntime.document.moveAnnotation(
+        selectedId,
+        dx: point.x - origin.x,
+        dy: point.y - origin.y,
+        dz: point.z - origin.z,
+      );
+      _showAnnotationMessage(
+        moved
+            ? 'Annotation moved and aligned.'
+            : 'Annotation position unchanged.',
+      );
+    }
+    _clearAnnotationInteractionPreview();
+    if (mounted) setState(() {});
+  }
+
   void _routeSceneTap(RenderSceneTapDetails details) {
     if (!_annotationModeActive) {
       widget.onSceneTap?.call(details);
@@ -371,6 +846,27 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
     // Annotation taps are consumed here and never forwarded to model
     // authoring. This keeps view documentation outside wall/floor rebuilds.
     unawaited(_handleAnnotationTap(details));
+  }
+
+  void _routeSceneHover(RenderSceneTapDetails details) {
+    if (!_annotationModeActive) {
+      widget.onSceneHover?.call(details);
+      return;
+    }
+    final snap = _resolveAnnotationSnap(
+      screenPoint: details.screenPosition,
+      fallbackModelPoint: details.modelPoint,
+      pickedObject: details.pickedObject,
+      excludeAnnotationId: _annotationDragId,
+    );
+    _annotationSnapPreview = snap;
+    final draft = AnnotationWorkspaceRuntime.draftStart;
+    if (draft != null && !_annotationDraftDragging) {
+      _annotationDraftStartScreen ??=
+          _annotationProjection()?.project(draft.point).screen;
+      _annotationDraftEndScreen = snap?.screenPoint ?? details.screenPosition;
+    }
+    if (mounted) setState(() {});
   }
 
   Future<void> _handleAnnotationTap(RenderSceneTapDetails details) async {
@@ -384,7 +880,13 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
         final selectedId =
             AnnotationWorkspaceRuntime.selectedAnnotationId.value;
         final selectedIndex = _selectedAnnotationIndex();
-        final point = details.modelPoint;
+        final snap = _resolveAnnotationSnap(
+          screenPoint: details.screenPosition,
+          fallbackModelPoint: details.modelPoint,
+          pickedObject: details.pickedObject,
+          excludeAnnotationId: selectedId,
+        );
+        final point = _annotationModelPoint(details, snap: snap);
         if (selectedId == null || selectedIndex == null) {
           AnnotationWorkspaceRuntime.clearSelection();
           return;
@@ -404,37 +906,29 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
         );
         AnnotationWorkspaceRuntime.cancelSelectedMove();
         _showAnnotationMessage(
-          moved ? 'Annotation moved.' : 'Annotation position unchanged.',
+          moved
+              ? 'Annotation moved and aligned.'
+              : 'Annotation position unchanged.',
         );
         return;
       }
 
-      final size = context.size;
-      if (size == null || size.isEmpty) return;
-      final hit = AnnotationHitTester.hitTest(
-        store: AnnotationWorkspaceRuntime.document.store,
-        viewId: viewId,
-        controller: widget.controller,
-        canvasSize: size,
-        screenPoint: details.screenPosition,
-        tolerancePixels: 16,
-      );
+      final hit = _annotationHit(details.screenPosition);
       AnnotationWorkspaceRuntime.selectAnnotation(hit?.annotationId);
       return;
     }
 
-    final point = details.modelPoint;
+    final snap = _resolveAnnotationSnap(
+      screenPoint: details.screenPosition,
+      fallbackModelPoint: details.modelPoint,
+      pickedObject: details.pickedObject,
+    );
+    final point = _annotationModelPoint(details, snap: snap);
     if (point == null) {
       _showAnnotationMessage('Tap inside the active model view.');
       return;
     }
-    final scene = widget.controller.scene;
-    final levelId = AnnotationWorkspaceRuntime.activeLevelId != 0
-        ? AnnotationWorkspaceRuntime.activeLevelId
-        : details.pickedObject?.levelId ??
-            (scene != null && scene.levels.isNotEmpty
-                ? scene.levels.first.levelId
-                : 0);
+    final levelId = _annotationLevelId(details);
     final pickedId = details.pickedObject?.elementId;
 
     // Single-tap tools do not own a two-point draft. Clear any unfinished
@@ -465,6 +959,7 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
           value: value,
         );
         _showAnnotationMessage('Text note placed.');
+        _clearAnnotationInteractionPreview();
       case AnnotationWorkspaceTool.dimension:
         final start = AnnotationWorkspaceRuntime.draftStart;
         if (start == null || start.kind != AnnotationDraftKind.dimension) {
@@ -473,6 +968,11 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
             point: point,
             referenceElementId: pickedId,
           );
+          _annotationDraftStartScreen =
+              snap?.screenPoint ?? details.screenPosition;
+          _annotationDraftEndScreen = _annotationDraftStartScreen;
+          _annotationSnapPreview = snap;
+          if (mounted) setState(() {});
           _showAnnotationMessage('Dimension start set. Tap the second point.');
           return;
         }
@@ -492,6 +992,7 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
           referenceAId: start.referenceElementId,
           referenceBId: pickedId,
         );
+        _clearAnnotationInteractionPreview();
         _showAnnotationMessage('Dimension placed.');
       case AnnotationWorkspaceTool.tag:
         final object = details.pickedObject;
@@ -522,6 +1023,7 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
           label: label,
         );
         _showAnnotationMessage('Tag placed.');
+        _clearAnnotationInteractionPreview();
       case AnnotationWorkspaceTool.detailLine:
         final start = AnnotationWorkspaceRuntime.draftStart;
         if (start == null || start.kind != AnnotationDraftKind.detailLine) {
@@ -530,6 +1032,11 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
             point: point,
             referenceElementId: pickedId,
           );
+          _annotationDraftStartScreen =
+              snap?.screenPoint ?? details.screenPosition;
+          _annotationDraftEndScreen = _annotationDraftStartScreen;
+          _annotationSnapPreview = snap;
+          if (mounted) setState(() {});
           _showAnnotationMessage('Detail-line start set. Tap the end point.');
           return;
         }
@@ -544,6 +1051,7 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
           endY: point.y,
           endZ: point.z,
         );
+        _clearAnnotationInteractionPreview();
         _showAnnotationMessage('Detail line placed.');
       case AnnotationWorkspaceTool.symbol:
         AnnotationWorkspaceRuntime.document.addSymbol(
@@ -558,6 +1066,7 @@ class _RenderSceneViewportState extends State<RenderSceneViewport> {
           // primary placement flow.
           assetKey: 'builtin:marker',
         );
+        _clearAnnotationInteractionPreview();
         _showAnnotationMessage('Symbol placed.');
     }
   }
